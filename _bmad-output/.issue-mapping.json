@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-01T16:36:42.843268Z",
+  "last_sync": "2026-05-01T16:41:00.398009Z",
   "epics": {
     "1": {
       "issue_id": 4364867372,
@@ -31,6 +31,11 @@
     "1-1-initialize-go-project": {
       "issue_id": 4365467977,
       "issue_number": 7,
+      "parent_epic": "1"
+    },
+    "1-2-json-rpc-streaming-proxy": {
+      "issue_id": 4365518210,
+      "issue_number": 8,
       "parent_epic": "1"
     }
   }
