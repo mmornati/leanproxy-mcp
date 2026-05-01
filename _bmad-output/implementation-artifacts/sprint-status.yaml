@@ -1,0 +1,40 @@
+# Sprint Status - tokengate-mcp
+# Generated: 2026-05-01
+---
+development_status:
+  epic-1: backlog
+  epic-1-retrospective: backlog
+  epic-2: backlog
+  epic-2-retrospective: backlog
+  epic-3: backlog
+  epic-3-retrospective: backlog
+  epic-4: backlog
+  epic-4-retrospective: backlog
+  epic-5: backlog
+  epic-5-retrospective: backlog
+  1-1-initialize-go-project: ready-for-dev
+  1-2-json-rpc-streaming-proxy: ready-for-dev
+  1-3-server-lifecycle-management: ready-for-dev
+  1-4-shadow-manifesting: ready-for-dev
+  1-5-dynamic-server-registry: ready-for-dev
+  2-1-core-redaction-engine: ready-for-dev
+  2-2-allow-list-redaction: ready-for-dev
+  2-3-custom-redaction-patterns: ready-for-dev
+  2-4-in-memory-only: ready-for-dev
+  2-5-redaction-alerts: ready-for-dev
+  3-1-discovery-signatures: ready-for-dev
+  3-2-jit-schema-injection: ready-for-dev
+  3-3-manifest-compactor: ready-for-dev
+  3-4-manual-re-distillation: ready-for-dev
+  3-5-boilerplate-blindness: ready-for-dev
+  4-1-dry-run-mode: ready-for-dev
+  4-2-posix-compliant-cli: ready-for-dev
+  4-3-ide-extension-socket: ready-for-dev
+  4-4-universal-installer: ready-for-dev
+  4-5-shell-completion: ready-for-dev
+  5-1-token-savings-calculator: ready-for-dev
+  5-2-markdown-report-generation: ready-for-dev
+  5-3-real-time-server-health: ready-for-dev
+
+last_updated: 2026-05-01
+sprint_goal: Implement all 23 stories across 5 epics
