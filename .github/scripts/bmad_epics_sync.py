@@ -57,6 +57,14 @@ def parse_epics_md(content: str) -> list[dict]:
     return epics
 
 
+def extract_epic_content(content: str, epic_key: str) -> str:
+    pattern = re.compile(r"##\s+Epic\s+" + epic_key + r":\s*(.+?)(?=\n##\s+Epic\s+\d+:|\n##\s+LeanProxy|\Z)", re.DOTALL)
+    match = pattern.search(content)
+    if match:
+        return match.group(0).strip()
+    return ""
+
+
 def process_epic(repo: str, token: str, mapping: dict, epic: dict, content: str) -> dict:
     epic_key = epic["key"]
     epic_title = f"Epic {epic_key}: {epic['title']}"
@@ -78,7 +86,7 @@ def process_epic(repo: str, token: str, mapping: dict, epic: dict, content: str)
         return mapping
 
     ensure_label_exists(repo, token)
-    epic_body = build_issue_body(content)
+    epic_body = extract_epic_content(content, epic_key)
     issue_id, issue_number = create_issue(repo, token, epic_title, epic_body, [LABEL_NAME])
 
     mapping["epics"][epic_key] = {
