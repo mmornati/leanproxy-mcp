@@ -70,6 +70,15 @@ def get_changed_files() -> tuple[list[str], list[str]]:
     return list(new_files), list(modified_files)
 
 
+def get_all_files() -> tuple[list[str], list[str]]:
+    all_files = []
+    for f in BMAD_OUTPUT_DIR.rglob("*.md"):
+        file_path = str(f)
+        if file_path.startswith("_bmad-output/"):
+            all_files.append(file_path)
+    return all_files, []
+
+
 def parse_epics_md(content: str) -> list[dict[str, Any]]:
     epics = []
     current_epic = None
@@ -145,8 +154,14 @@ def ensure_label_exists(repo: str, token: str) -> None:
 
     data = json.dumps({"name": LABEL_NAME, "color": "FF5722", "description": "BMad managed issue"}).encode()
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    with urllib.request.urlopen(request) as response:
-        response.read()
+    try:
+        with urllib.request.urlopen(request) as response:
+            response.read()
+    except urllib.error.HTTPError as e:
+        if e.code == 422:
+            pass
+        else:
+            raise
 
 
 def create_issue(repo: str, token: str, title: str, body: str, labels: list[str]) -> tuple[int, int]:
@@ -304,13 +319,19 @@ Story file has been modified. Manual review may be needed.
 def main():
     repo = os.environ.get("GITHUB_REPOSITORY")
     token = os.environ.get("GITHUB_TOKEN")
+    sync_all = os.environ.get("SYNC_ALL", "false").lower() == "true"
 
     if not repo or not token:
         print("ERROR: GITHUB_REPOSITORY and GITHUB_TOKEN must be set")
         sys.exit(1)
 
     mapping = load_mapping()
-    new_files, modified_files = get_changed_files()
+
+    if sync_all:
+        all_files, _ = get_all_files()
+        new_files, modified_files = all_files, []
+    else:
+        new_files, modified_files = get_changed_files()
 
     for file_path in new_files:
         if "planning-artifacts/epics.md" in file_path:

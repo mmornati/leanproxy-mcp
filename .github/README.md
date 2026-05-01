@@ -7,19 +7,30 @@ Automatically syncs BMad planning artifacts to GitHub Issues and Epics.
 ```
 .github/
 ├── scripts/
-│   └── bmad_sync.py          # Main sync script
+│   ├── bmad_sync.py          # Main sync script
+│   └── requirements.txt      # Runtime dependencies (pyyaml)
 ├── tests/
-│   ├── requirements.txt      # Python dependencies
-│   └── test_bmad_sync.py     # Unit tests (23 tests)
-├── fixtures/
-│   ├── epics-test.md         # Mock epics for testing
-│   └── implementation-artifacts/
-│       └── *.md              # Mock stories for testing
+│   ├── requirements.txt      # Test dependencies (includes scripts/requirements.txt)
+│   ├── test_bmad_sync.py     # Unit tests (23 tests)
+│   └── fixtures/
+│       ├── epics-test.md     # Mock epics for testing
+│       └── implementation-artifacts/
+│           └── *.md          # Mock stories for testing
 └── workflows/
-    └── bmad-sync.yml        # GitHub Actions workflow
+    ├── bmad-sync.yml         # Sync workflow (triggered by _bmad-output/**)
+    └── bmad-sync-tests.yml   # Test workflow (triggered by .github/** changes)
 ```
 
 ## How It Works
+
+### Workflows
+
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| `bmad-sync.yml` | Push to `_bmad-output/**/*.md` | Creates/updates GitHub issues |
+| `bmad-sync-tests.yml` | Changes to `.github/` files | Runs tests + actionlint |
+
+### File Actions
 
 | File Changed | Action |
 |--------------|--------|
@@ -50,12 +61,7 @@ New issues are automatically labeled with `bmad` (created if not exists).
 
 ## Quickstart
 
-### 1. Add GitHub Token Secret
-
-1. Go to GitHub repo → Settings → Secrets → Actions
-2. Add `BMAD_GITHUB_TOKEN` with your Personal Access Token
-
-### 2. Run Locally
+### 1. Run Locally
 
 ```bash
 # Create virtual environment (if not exists)
@@ -65,7 +71,7 @@ python3 -m venv .venv
 source .venv/bin/activate  # Linux/macOS
 # or: .\.venv\Scripts\Activate.ps1  # Windows
 
-# Install dependencies
+# Install dependencies (includes test deps)
 pip install -r .github/tests/requirements.txt
 
 # Run tests
@@ -75,9 +81,9 @@ pytest .github/tests/test_bmad_sync.py -v
 GITHUB_REPOSITORY=owner/repo GITHUB_TOKEN=your_token python .github/scripts/bmad_sync.py
 ```
 
-### 3. Test the Workflow
+### 2. Test the Workflow
 
-Push a markdown file to `_bmad-output/` to trigger the workflow:
+Push a markdown file to `_bmad-output/` to trigger the sync workflow:
 
 ```bash
 git add _bmad-output/planning-artifacts/epics.md
@@ -105,11 +111,12 @@ Story description...
 ...
 ```
 
-## Workflow Configuration
+## Dependencies
 
-- **Trigger**: Push to `_bmad-output/**/*.md`
-- **Python**: 3.11
-- **Runs**: `sync` job (creates issues) + `test` job (runs tests + actionlint)
+| File | Contents |
+|------|----------|
+| `scripts/requirements.txt` | Runtime: pyyaml |
+| `tests/requirements.txt` | Test: pyyaml + pytest + pytest-mock |
 
 ## Extending
 

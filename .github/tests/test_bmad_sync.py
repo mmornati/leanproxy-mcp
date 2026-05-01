@@ -315,16 +315,15 @@ class TestGetChangedFiles:
             return mock
 
         mock_run.side_effect = [
-            create_mock_result("_bmad-output/file1.md\n_bmad-output/file2.md\n", 0),
-            create_mock_result("", 0),
+            create_mock_result("_bmad-output/new-file.md", 0),
             create_mock_result("", 0),
             create_mock_result("", 1),
         ]
 
         new_files, modified_files = bmad_sync.get_changed_files()
 
-        assert "_bmad-output/file2.md" in new_files
-        assert "_bmad-output/file1.md" in modified_files
+        assert "_bmad-output/new-file.md" in new_files
+        assert len(modified_files) == 0
 
 
 if __name__ == "__main__":

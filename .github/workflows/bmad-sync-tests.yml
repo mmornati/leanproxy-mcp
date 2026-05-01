@@ -1,0 +1,33 @@
+name: BMad Sync Tests
+
+on:
+  push:
+    paths:
+      - '.github/tests/**'
+      - '.github/scripts/**'
+      - '.github/workflows/**'
+  pull_request:
+    paths:
+      - '.github/tests/**'
+      - '.github/scripts/**'
+      - '.github/workflows/**'
+
+jobs:
+  test-bmad-workflow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: .github/tests/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r .github/tests/requirements.txt
+
+      - name: Run unit tests
+        run: pytest .github/tests/test_bmad_sync.py -v
