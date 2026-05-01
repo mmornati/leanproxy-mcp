@@ -1,7 +1,25 @@
-# BMad GitHub Sync Workflow
+# Binaries
+leanproxy-mcp
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 
-# Python virtual environment
-.venv/
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, particularly when used with IDE
+*.out
+
+# Go workspace file
+go.work
+
+# Go module cache
+.go/
+
+# Dependency directories
+vendor/
 
 # Python cache
 __pycache__/
@@ -9,17 +27,22 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# Issue mapping (committed to track GitHub issue associations)
-
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
 
 # IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+*~
 
 # Environment
 .env
 .env.local
+.env.*.local
+
+# Logs
+*.log
