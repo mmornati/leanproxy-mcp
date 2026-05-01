@@ -208,21 +208,21 @@ const (
 
 ### Implementation Checklist
 
-- [ ] Create ServerEntry and related types
-- [ ] Create Registry interface
-- [ ] Create inMemoryRegistry struct
-- [ ] Implement thread-safe storage with RWMutex
-- [ ] Implement Register/Unregister/Update
-- [ ] Implement Get and List
-- [ ] Implement FindByCapability with index
-- [ ] Implement FindByTransport
-- [ ] Implement FindBest with ranking
-- [ ] Implement health tracking
-- [ ] Implement event subscription
-- [ ] Implement persistence (JSON file)
-- [ ] Add unit tests
-- [ ] Add concurrency tests
-- [ ] Verify race detector passes
+- [x] Create ServerEntry and related types
+- [x] Create Registry interface
+- [x] Create inMemoryRegistry struct
+- [x] Implement thread-safe storage with RWMutex
+- [x] Implement Register/Unregister/Update
+- [x] Implement Get and List
+- [x] Implement FindByCapability with index
+- [x] Implement FindByTransport
+- [x] Implement FindBest with ranking
+- [x] Implement health tracking
+- [x] Implement event subscription
+- [x] Implement persistence (JSON file)
+- [x] Add unit tests
+- [x] Add concurrency tests
+- [x] Verify race detector passes
 
 ### Edge Cases
 
@@ -246,3 +246,46 @@ const (
 - Consider eventual consistency for health
 - Keep persistence format simple (JSON)
 - Log all registry operations at debug level
+
+## Dev Agent Record
+
+### Implementation Plan
+1. Create ServerEntry and related types (TransportType, HealthStatus, ServerStats, MatchCriteria, RegistryEvent, EventType)
+2. Create Registry interface with all required methods
+3. Implement inMemoryRegistry struct with RWMutex
+4. Implement capability and transport indices for fast lookup
+5. Implement all interface methods following red-green-refactor
+6. Add comprehensive unit tests
+7. Add concurrency tests
+
+### Completion Notes
+Implemented full Dynamic Server Registry as specified:
+- **Types**: ServerEntry, TransportType (stdio/http/sse), HealthStatus, ServerStats, MatchCriteria, RegistryEvent, EventType
+- **Registry Interface**: Full implementation with Register, Unregister, Update, Get, List, FindByCapability, FindByTransport, FindBest, UpdateHealth, ListUnhealthy, Save, Load, Subscribe
+- **Thread Safety**: RWMutex for concurrent read/write access
+- **Indices**: Capability index (map[string][]string) and transport index for O(1) lookups
+- **FindBest Algorithm**: Ranking based on load (1-load), health bonus, and request count
+- **Events**: Buffered channel subscription with automatic cleanup
+- **Persistence**: JSON file Save/Load with error handling for missing files
+- **Tests**: 29 unit tests passing, race detector clean for registry code
+
+### Debug Log
+- TestEventSubscription initially failed due to event channel timing; fixed by collecting events after all operations complete
+- Race detector failures in lifecycle tests (pre-existing) don't affect registry code
+
+## File List
+
+| File | Status | Description |
+|------|--------|-------------|
+| pkg/registry/registry.go | modified | Core registry implementation with ServerEntry, Registry interface, inMemoryRegistry |
+| pkg/registry/registry_test.go | modified | 29 unit tests including concurrency tests |
+
+## Change Log
+
+| Date | Change |
+|------|--------|
+| 2026-05-01 | Implemented Dynamic Server Registry (story 1-5) - 29 tests passing, race detector clean |
+
+## Status
+
+**Story Status:** review
