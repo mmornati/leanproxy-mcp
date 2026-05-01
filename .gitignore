@@ -9,8 +9,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# Issue mapping (generated at runtime)
-_bmad-output/.issue-mapping.json
+# Issue mapping (committed to track GitHub issue associations)
 
 # macOS
 .DS_Store

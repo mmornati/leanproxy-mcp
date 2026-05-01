@@ -284,7 +284,7 @@ def commit_file_to_git(file_path: str, message: str, repo_path: Path | None = No
     if repo_path is None:
         repo_path = Path(__file__).parent.parent.parent
     try:
-        subprocess.run(["git", "add", file_path], capture_output=True, cwd=repo_path, check=True)
+        subprocess.run(["git", "add", "-f", file_path], capture_output=True, cwd=repo_path, check=True)
         subprocess.run(
             ["git", "commit", "-m", message],
             capture_output=True,

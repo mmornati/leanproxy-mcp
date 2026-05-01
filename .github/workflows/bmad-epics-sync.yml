@@ -44,7 +44,7 @@ jobs:
         run: |
           git config --local user.email "bmad-bot@github.com"
           git config --local user.name "BMad Bot"
-          git add _bmad-output/.issue-mapping.json
+          git add -f _bmad-output/.issue-mapping.json
           git diff --cached --quiet || git commit -m "BMad epics sync: update issue mapping"
           git push
 
