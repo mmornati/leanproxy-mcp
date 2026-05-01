@@ -1,7 +1,13 @@
 name: BMad Story Delivery
 
 on:
+  pull_request:
+    paths:
+      - '_bmad-output/implementation-artifacts/*.md'
   push:
+    branches:
+      - main
+      - master
     paths:
       - '_bmad-output/implementation-artifacts/*.md'
   workflow_dispatch:
@@ -33,3 +39,4 @@ jobs:
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}

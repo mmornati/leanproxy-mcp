@@ -354,6 +354,13 @@ class TestLinkPrToIssue:
         mock_urlopen.side_effect = urllib.error.HTTPError(url="", code=422, msg="", hdrs={}, fp=None)
         link_pr_to_issue("owner/repo", "token", 42, 10)
 
+    @patch("urllib.request.urlopen")
+    def test_handles_404_error(self, mock_urlopen):
+        import urllib.error
+
+        mock_urlopen.side_effect = urllib.error.HTTPError(url="", code=404, msg="", hdrs={}, fp=None)
+        link_pr_to_issue("owner/repo", "token", 42, 10)
+
 
 class TestUpdatePrBody:
     @patch("urllib.request.urlopen")

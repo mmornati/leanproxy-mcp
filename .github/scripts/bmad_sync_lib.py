@@ -349,7 +349,7 @@ def link_pr_to_issue(repo: str, token: str, pr_number: int, issue_number: int) -
         with urllib.request.urlopen(request):
             pass
     except urllib.error.HTTPError as e:
-        if e.code == 422:
+        if e.code in (404, 422):
             pass
         else:
             raise
