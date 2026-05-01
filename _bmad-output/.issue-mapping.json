@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-01T19:22:03.880425Z",
+  "last_sync": "2026-05-01T19:33:38.569532Z",
   "epics": {
     "1": {
       "issue_id": 4364867372,
@@ -35,10 +35,10 @@
       "commit_sha": "6074740"
     },
     "1-2-json-rpc-streaming-proxy": {
-      "issue_id": 4365518210,
-      "issue_number": 8,
+      "issue_id": 4366296119,
+      "issue_number": 32,
       "parent_epic": "1",
-      "commit_sha": "7677f39"
+      "commit_sha": "b3a5db4"
     },
     "3-5-boilerplate-blindness": {
       "issue_id": 4365553449,
