@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-01T20:57:27.782124Z",
+  "last_sync": "2026-05-01T20:59:04.619479Z",
   "epics": {
     "1": {
       "issue_id": 4364867372,
@@ -71,10 +71,10 @@
       "commit_sha": "22c0dd8"
     },
     "1-5-dynamic-server-registry": {
-      "issue_id": 4365554010,
-      "issue_number": 14,
+      "issue_id": 4366649842,
+      "issue_number": 38,
       "parent_epic": "1",
-      "commit_sha": "26620eb"
+      "commit_sha": "5e97ece"
     },
     "1-4-shadow-manifesting": {
       "issue_id": 4366546919,
