@@ -339,20 +339,42 @@ def get_pr_for_commit(repo: str, token: str, sha: str) -> dict | None:
 
 
 def link_pr_to_issue(repo: str, token: str, pr_number: int, issue_number: int) -> bool:
-    url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/issues"
+    print(f"WARNING: link_pr_to_issue API is deprecated, skipping PR-to-issue linking")
+    return False
+
+
+def update_comment(repo: str, token: str, comment_id: int, body: str) -> None:
+    url = f"https://api.github.com/repos/{repo}/issues/comments/{comment_id}"
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json",
         "Content-Type": "application/json",
     }
-    data = json.dumps({"issue_numbers": [issue_number]}).encode()
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    data = json.dumps({"body": body}).encode()
+    request = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
+    with urllib.request.urlopen(request):
+        pass
+
+
+def get_comments(repo: str, token: str, issue_number: int) -> list[dict]:
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(request):
-            return True
-    except urllib.error.HTTPError as e:
-        print(f"WARNING: Failed to link PR #{pr_number} to issue #{issue_number}: HTTP {e.code}")
-        return False
+        with urllib.request.urlopen(request) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError:
+        return []
+
+
+def find_delivery_comment(comments: list[dict]) -> dict | None:
+    for comment in comments:
+        if "Story Delivered" in comment.get("body", ""):
+            return comment
+    return None
 
 
 def update_pr_body(repo: str, token: str, pr_number: int, body_addition: str) -> None:
