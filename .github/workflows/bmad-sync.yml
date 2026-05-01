@@ -1,0 +1,55 @@
+name: BMad Sync
+
+on:
+  push:
+    paths:
+      - '_bmad-output/**/*.md'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: .github/tests/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r .github/tests/requirements.txt
+
+      - name: Run BMad sync
+        run: python .github/scripts/bmad_sync.py
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.BMAD_GITHUB_TOKEN }}
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: .github/tests/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r .github/tests/requirements.txt
+
+      - name: Run unit tests
+        run: pytest .github/tests/test_bmad_sync.py -v
+
+      - name: Run actionlint
+        uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color .github/workflows/*.yml

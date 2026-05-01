@@ -1,0 +1,26 @@
+# BMad GitHub Sync Workflow
+
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Issue mapping (generated at runtime)
+_bmad-output/.issue-mapping.json
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
