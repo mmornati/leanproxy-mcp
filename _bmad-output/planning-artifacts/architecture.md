@@ -1,10 +1,11 @@
 ---
 stepsCompleted: [1, 2, 3, 4, 5, 6, 7]
 inputDocuments:
-  - /Users/mmornati/Projects/tokengate-mcp/_bmad-output/planning-artifacts/prd.md
-  - /Users/mmornati/Projects/tokengate-mcp/_bmad-output/planning-artifacts/product-brief-LeanProxy-MCP.md
+  - /Users/mmornati/Projects/leanproxy-mcp/_bmad-output/planning-artifacts/prd.md
+  - /Users/mmornati/Projects/leanproxy-mcp/_bmad-output/planning-artifacts/product-brief-LeanProxy-MCP.md
+  - /Users/mmornati/Projects/leanproxy-mcp/_bmad-output/planning-artifacts/epics.md
 workflowType: 'architecture'
-project_name: 'tokengate-mcp'
+project_name: 'LeanProxy-MCP'
 user_name: 'mmornati'
 date: '2026-05-01'
 ---
@@ -105,6 +106,75 @@ go get github.com/spf13/cobra@latest
 - **Decision:** GitHub Actions CI/CD for multi-platform binary generation.
 - **Rationale:** Enables "zero-config" distribution and easy downloads for users.
 
+## Epic 5: Reporting & Insights Architecture
+
+### Decision: Token Savings Calculator (`pkg/reporter/`)
+
+- **Algorithm:** Character-count heuristic (1 token ≈ 4 characters) for estimation without external dependencies.
+- **Tracking:** Per-session cumulative savings stored in-memory; resets on proxy restart.
+- **Breakdown:** Aggregate by MCP server to show which tools generate most savings.
+- **Output:** Real-time logging to stderr via `slog.Info`; no stdout pollution.
+
+### Decision: Markdown Report Generation
+
+- **Format:** IDE-preview-optimized Markdown with tables and badges.
+- **Sections:** Summary metrics → per-server breakdown → security events → session details.
+- **Trigger:** On `leanproxy report` command or dry-run session end.
+- **Output:** Writes to stdout for piping/redirection.
+
+### Decision: Real-Time Health Monitor (`pkg/health/`)
+
+- **Heartbeat:** 1-second polling interval for process health checks.
+- **Metrics:** Status (running/error/stopped), uptime, last response time, memory usage, request count.
+- **Watch Mode:** Streaming output with 1-second refresh; graceful exit on SIGINT.
+- **Failure Detection:** Sub-1-second detection per NFR8; exponential backoff restart.
+
+## Epic 6: Server Configuration & Migration Architecture
+
+### Decision: Config Schema (`pkg/migrate/config.go`)
+
+- **Primary Config:** `~/.config/leanproxy_servers.yaml` (YAML).
+- **Discovery Locations:**
+  - OpenCode: `~/.config/opencode/mcp.json`
+  - Claude Code: `~/.claude.json`, `~/.config/claude/mcp_config.json`
+  - VS Code: `settings.json` (MCP extensions section)
+  - Cursor: `~/.cursor/mcp.json`
+  - Generic: `~/.config/mcp.json`
+- **Schema Validation:** Custom Go struct validation with descriptive error messages.
+- **Conflict Resolution:** Local config wins for duplicates; imported servers get `_opencode`, `_claude` suffixes.
+
+### Decision: Migration Engine (`pkg/migrate/`)
+
+- **Phase 1 — Scan:** Detect all known config file locations; collect server definitions.
+- **Phase 2 — Validate:** Check executables in PATH, validate transport types, confirm required fields.
+- **Phase 3 — Import:** Merge into `leanproxy_servers.yaml` with duplicate handling.
+- **Validation Output:** "Server 'name': command 'cmd' not found in PATH" style errors.
+
+### Decision: IDE Socket API (`pkg/socket/`)
+
+- **Path Convention:**
+  - macOS: `~/.leanproxy/socket`
+  - Linux: `~/.leanproxy/socket`
+  - Windows: `\\.\pipe\leanproxy`
+- **Protocol:** JSON-RPC 2.0 over raw socket (same as stdio transport).
+- **Auth:** Local-only socket with filesystem permissions (no auth token needed).
+- **Ephemeral Updates:** In-memory config changes via socket; original file untouched.
+
+## Story 4.3-4.5: Developer Experience Extensions
+
+### Decision: Universal Installer
+
+- **Primary:** `curl -fsSL https://get.leanproxy.dev | sh` pointing to GitHub Releases.
+- **Verification:** SHA-256 checksum verification post-download.
+- **Homebrew:** Official tap at `leanproxy/tap/leanproxy` for macOS/Linux.
+- **Cross-platform:** GitHub Actions matrix for x64/ARM64 across darwin/linux/windows.
+
+### Decision: Shell Completion
+
+- **Implementation:** Cobra built-in completion generation for bash/zsh/fish/powershell.
+- **Commands:** `leanproxy completion [bash|zsh|fish|powershell]`.
+- **Auto-install:** Homebrew installation handles shell config automatically.
+
 ## Implementation Patterns & Consistency Rules
 
 ### Naming Patterns
@@ -125,7 +195,7 @@ go get github.com/spf13/cobra@latest
 
 ### Complete Project Directory Structure
 ```
-tokengate-mcp/
+leanproxy-mcp/
 ├── .github/
 │   └── workflows/
 │       └── release.yml     # CI/CD: Cross-compilation + Binary upload
@@ -136,6 +206,10 @@ tokengate-mcp/
 │   ├── bouncer/            # Redaction/Security logic (Regex engine)
 │   ├── proxy/              # JSON-RPC 2.0 streaming handler
 │   ├── registry/           # Shadow Manifesting (config merging)
+│   ├── reporter/          # Token savings calculator, Markdown reports
+│   ├── health/             # Real-time server health monitoring
+│   ├── migrate/            # Auto-detection and config migration
+│   ├── socket/             # IDE extension Unix/Windows socket API
 │   └── utils/              # Shared helper functions
 ├── internal/               # Non-exported logic (e.g., dry-run simulator)
 ├── tests/
@@ -150,6 +224,10 @@ tokengate-mcp/
 - **`pkg/proxy/`**: High-performance JSON-RPC protocol handling.
 - **`pkg/bouncer/`**: Interceptor for data governance.
 - **`pkg/registry/`**: Configuration management.
+- **`pkg/reporter/`**: Token savings tracking and report generation.
+- **`pkg/health/`**: Server process health monitoring.
+- **`pkg/migrate/`**: IDE config detection and migration.
+- **`pkg/socket/`**: IDE extension socket API.
 
 ## Architecture Validation Results
 
@@ -159,8 +237,11 @@ tokengate-mcp/
 - **Structure Alignment:** Verified. The proposed directory structure fully supports the architecture.
 
 ### Requirements Coverage Validation ✅
-- **Epic/Feature Coverage:** All core proxy and security features are supported.
-- **Functional Requirements:** All 23 FRs are supported.
+- **Epic/Feature Coverage:** All 6 epics and 28 FRs supported.
+- **Epic 1-4:** Fully covered in original architecture.
+- **Epic 5 (Reporting):** `pkg/reporter/` and `pkg/health/` decisions added.
+- **Epic 6 (Migration):** `pkg/migrate/` and config schema decisions added.
+- **Functional Requirements:** All 28 FRs supported (FR1-FR28).
 - **Non-Functional Requirements:** Performance (<50ms), security (in-memory), and distribution (<20MB) are prioritized.
 
 ### Implementation Readiness Validation ✅
