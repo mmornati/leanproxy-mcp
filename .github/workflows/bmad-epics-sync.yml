@@ -1,19 +1,19 @@
-name: BMad Sync
+name: BMad Epics Sync
 
 on:
   push:
     paths:
-      - '_bmad-output/**/*.md'
+      - '_bmad-output/planning-artifacts/epics.md'
   workflow_dispatch:
     inputs:
       sync_all:
-        description: 'Sync all files (ignore git history)'
+        description: 'Sync all epics (ignore git history)'
         required: false
         default: 'false'
         type: boolean
 
 jobs:
-  bmad-epics-stories-sync:
+  sync-epics:
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -33,9 +33,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r .github/scripts/requirements.txt
 
-      - name: Run BMad sync
-        run: python .github/scripts/bmad_sync.py
+      - name: Run BMad Epics sync
+        run: python .github/scripts/bmad_epics_sync.py
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SYNC_ALL: ${{ inputs.sync_all }}
+
+      - name: Upload issue mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue-mapping
+          path: _bmad-output/.issue-mapping.json
+          retention-days: 1

@@ -30,4 +30,4 @@ jobs:
         run: pip install -r .github/tests/requirements.txt
 
       - name: Run unit tests
-        run: pytest .github/tests/test_bmad_sync.py -v
+        run: pytest .github/tests/ -v

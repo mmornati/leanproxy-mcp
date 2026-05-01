@@ -1,0 +1,23 @@
+{
+  "last_sync": "2026-05-01T12:00:00Z",
+  "epics": {
+    "1": {
+      "issue_id": 1001,
+      "issue_number": 10,
+      "title": "Core Infrastructure"
+    },
+    "2": {
+      "issue_id": 1002,
+      "issue_number": 20,
+      "title": "Security Features"
+    }
+  },
+  "stories": {
+    "1-1-existing-story": {
+      "issue_id": 2001,
+      "issue_number": 11,
+      "parent_epic": "1",
+      "commit_sha": "abc1234"
+    }
+  }
+}
