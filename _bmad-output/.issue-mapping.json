@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-01T16:41:00.398009Z",
+  "last_sync": "2026-05-01T16:45:34.634213Z",
   "epics": {
     "1": {
       "issue_id": 4364867372,
@@ -37,6 +37,132 @@
       "issue_id": 4365518210,
       "issue_number": 8,
       "parent_epic": "1"
+    },
+    "3-5-boilerplate-blindness": {
+      "issue_id": 4365553449,
+      "issue_number": 9,
+      "parent_epic": "3",
+      "commit_sha": "22c0dd8"
+    },
+    "3-3-manifest-compactor": {
+      "issue_id": 4365553539,
+      "issue_number": 10,
+      "parent_epic": "3",
+      "commit_sha": "22c0dd8"
+    },
+    "2-2-allow-list-redaction": {
+      "issue_id": 4365553631,
+      "issue_number": 11,
+      "parent_epic": "2",
+      "commit_sha": "22c0dd8"
+    },
+    "3-1-discovery-signatures": {
+      "issue_id": 4365553711,
+      "issue_number": 12,
+      "parent_epic": "3",
+      "commit_sha": "22c0dd8"
+    },
+    "3-2-jit-schema-injection": {
+      "issue_id": 4365553904,
+      "issue_number": 13,
+      "parent_epic": "3",
+      "commit_sha": "22c0dd8"
+    },
+    "1-5-dynamic-server-registry": {
+      "issue_id": 4365554010,
+      "issue_number": 14,
+      "parent_epic": "1",
+      "commit_sha": "22c0dd8"
+    },
+    "1-4-shadow-manifesting": {
+      "issue_id": 4365554070,
+      "issue_number": 15,
+      "parent_epic": "1",
+      "commit_sha": "22c0dd8"
+    },
+    "2-3-custom-redaction-patterns": {
+      "issue_id": 4365554147,
+      "issue_number": 16,
+      "parent_epic": "2",
+      "commit_sha": "22c0dd8"
+    },
+    "2-1-core-redaction-engine": {
+      "issue_id": 4365554212,
+      "issue_number": 17,
+      "parent_epic": "2",
+      "commit_sha": "22c0dd8"
+    },
+    "2-4-in-memory-only": {
+      "issue_id": 4365554295,
+      "issue_number": 18,
+      "parent_epic": "2",
+      "commit_sha": "22c0dd8"
+    },
+    "4-1-dry-run-mode": {
+      "issue_id": 4365554368,
+      "issue_number": 19,
+      "parent_epic": "4",
+      "commit_sha": "22c0dd8"
+    },
+    "3-4-manual-re-distillation": {
+      "issue_id": 4365554457,
+      "issue_number": 20,
+      "parent_epic": "3",
+      "commit_sha": "22c0dd8"
+    },
+    "4-3-ide-extension-socket": {
+      "issue_id": 4365554531,
+      "issue_number": 21,
+      "parent_epic": "4",
+      "commit_sha": "22c0dd8"
+    },
+    "5-1-token-savings-calculator": {
+      "issue_id": 4365554612,
+      "issue_number": 22,
+      "parent_epic": "5",
+      "commit_sha": "22c0dd8"
+    },
+    "1-3-server-lifecycle-management": {
+      "issue_id": 4365554679,
+      "issue_number": 23,
+      "parent_epic": "1",
+      "commit_sha": "22c0dd8"
+    },
+    "4-4-universal-installer": {
+      "issue_id": 4365554743,
+      "issue_number": 24,
+      "parent_epic": "4",
+      "commit_sha": "22c0dd8"
+    },
+    "4-5-shell-completion": {
+      "issue_id": 4365554978,
+      "issue_number": 25,
+      "parent_epic": "4",
+      "commit_sha": "22c0dd8"
+    },
+    "5-3-real-time-server-health": {
+      "issue_id": 4365555071,
+      "issue_number": 26,
+      "parent_epic": "5",
+      "commit_sha": "22c0dd8"
+    },
+    "4-2-posix-compliant-cli": {
+      "issue_id": 4365555155,
+      "issue_number": 27,
+      "parent_epic": "4",
+      "commit_sha": "22c0dd8"
+    },
+    "5-2-markdown-report-generation": {
+      "issue_id": 4365555236,
+      "issue_number": 28,
+      "parent_epic": "5",
+      "commit_sha": "22c0dd8"
+    },
+    "2-5-redaction-alerts": {
+      "issue_id": 4365555326,
+      "issue_number": 29,
+      "parent_epic": "2",
+      "commit_sha": "22c0dd8"
     }
   }
 }
