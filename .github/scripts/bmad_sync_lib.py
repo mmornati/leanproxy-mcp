@@ -280,6 +280,140 @@ def format_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def is_story_implemented(content: str) -> bool:
+    lower = content.lower()
+    if "story implemented" in lower:
+        return True
+    if re.search(r"story\s+\d+[.-]\d+\s+implemented", lower):
+        return True
+    return False
+
+
+def get_commit_author(file_path: str, repo_path: Path | None = None) -> str | None:
+    if repo_path is None:
+        repo_path = Path(__file__).parent.parent.parent
+
+    result = subprocess.run(
+        ["git", "log", "-1", "--format=%a", "--", file_path],
+        capture_output=True,
+        text=True,
+        cwd=repo_path,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return None
+
+
+def get_pr_for_commit(repo: str, token: str, sha: str) -> dict | None:
+    url = f"https://api.github.com/repos/{repo}/commits/{sha}/pulls"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request) as response:
+            prs = json.loads(response.read())
+            if prs:
+                return {"number": prs[0]["number"], "title": prs[0]["title"], "body": prs[0]["body"] or ""}
+    except urllib.error.HTTPError:
+        pass
+    return None
+
+
+def link_pr_to_issue(repo: str, token: str, pr_number: int, issue_number: int) -> None:
+    url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/issues"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+    }
+    data = json.dumps({"issue_numbers": [issue_number]}).encode()
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request):
+            pass
+    except urllib.error.HTTPError as e:
+        if e.code == 422:
+            pass
+        else:
+            raise
+
+
+def update_pr_body(repo: str, token: str, pr_number: int, body_addition: str) -> None:
+    existing_pr = None
+    url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+    }
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request) as response:
+            existing_pr = json.loads(response.read())
+    except urllib.error.HTTPError:
+        pass
+
+    if existing_pr:
+        current_body = existing_pr.get("body") or ""
+        if body_addition not in current_body:
+            new_body = f"{current_body}\n\n{body_addition}".strip()
+            data = json.dumps({"body": new_body}).encode()
+            patch_request = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
+            with urllib.request.urlopen(patch_request):
+                pass
+
+
+def close_issue(repo: str, token: str, issue_number: int) -> None:
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+    }
+    data = json.dumps({"state": "closed"}).encode()
+    request = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
+    with urllib.request.urlopen(request):
+        pass
+
+
+def assign_issue(repo: str, token: str, issue_number: int, assignee: str) -> None:
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/assignees"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+    }
+    data = json.dumps({"assignees": [assignee]}).encode()
+    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request):
+            pass
+    except urllib.error.HTTPError as e:
+        if e.code == 422:
+            pass
+        else:
+            raise
+
+
+def get_issue_from_mapping(mapping: dict, file_stem: str) -> int | None:
+    if file_stem in mapping.get("stories", {}):
+        return mapping["stories"][file_stem].get("issue_number")
+    return None
+
+
+def is_direct_push_to_main() -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0 and result.stdout.strip() in ("main", "master"):
+        return True
+    return False
+
+
 def commit_file_to_git(file_path: str, message: str, repo_path: Path | None = None) -> bool:
     if repo_path is None:
         repo_path = Path(__file__).parent.parent.parent

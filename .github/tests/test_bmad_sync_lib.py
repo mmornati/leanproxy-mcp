@@ -10,18 +10,27 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 from bmad_sync_lib import (
     add_comment,
+    assign_issue,
     build_issue_body,
+    close_issue,
     create_issue,
     ensure_label_exists,
     extract_epic_key,
     format_timestamp,
+    get_commit_author,
     get_file_commit_sha,
+    get_issue_from_mapping,
+    get_pr_for_commit,
+    is_direct_push_to_main,
     is_step_04_completed,
+    is_story_implemented,
+    link_pr_to_issue,
     link_sub_issue,
     load_mapping,
     parse_frontmatter,
     parse_story_title,
     save_mapping,
+    update_pr_body,
 )
 
 
@@ -244,3 +253,152 @@ class TestSaveMapping:
         assert mapping_file.exists()
         saved = json.loads(mapping_file.read_text())
         assert saved["last_sync"] is not None
+
+
+class TestIsStoryImplemented:
+    def test_detects_story_implemented_marker(self):
+        content = "## Change Log\n- 2026-05-01: Story 1.1 implemented"
+        assert is_story_implemented(content) is True
+
+    def test_detects_story_implemented_case_insensitive(self):
+        content = "## Change Log\n- 2026-05-01: Story 2.1 IMPLEMENTED"
+        assert is_story_implemented(content) is True
+
+    def test_detects_plain_story_implemented(self):
+        content = "## Change Log\n- 2026-05-01: Story 3.1 implemented — Added feature"
+        assert is_story_implemented(content) is True
+
+    def test_no_marker_returns_false(self):
+        content = "## Change Log\n- 2026-05-01: Story updated"
+        assert is_story_implemented(content) is False
+
+    def test_empty_content_returns_false(self):
+        assert is_story_implemented("") is False
+
+
+class TestGetCommitAuthor:
+    @patch("subprocess.run")
+    def test_returns_author_from_git_log(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="john.doe@example.com\n")
+        result = get_commit_author("test.md")
+        assert result == "john.doe@example.com"
+
+    @patch("subprocess.run")
+    def test_returns_none_on_error(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stdout="")
+        result = get_commit_author("test.md")
+        assert result is None
+
+
+class TestGetPrForCommit:
+    @patch("urllib.request.urlopen")
+    def test_returns_pr_info(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'[{"number": 42, "title": "Feature PR", "body": "Fixes #1"}]'
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        result = get_pr_for_commit("owner/repo", "token", "abc123")
+        assert result == {"number": 42, "title": "Feature PR", "body": "Fixes #1"}
+
+    @patch("urllib.request.urlopen")
+    def test_returns_none_when_no_prs(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'[]'
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        result = get_pr_for_commit("owner/repo", "token", "abc123")
+        assert result is None
+
+
+class TestLinkPrToIssue:
+    @patch("urllib.request.urlopen")
+    def test_links_pr_to_issue(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        link_pr_to_issue("owner/repo", "token", 42, 10)
+        mock_urlopen.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    def test_handles_422_error(self, mock_urlopen):
+        import urllib.error
+
+        mock_urlopen.side_effect = urllib.error.HTTPError(url="", code=422, msg="", hdrs={}, fp=None)
+        link_pr_to_issue("owner/repo", "token", 42, 10)
+
+
+class TestUpdatePrBody:
+    @patch("urllib.request.urlopen")
+    def test_updates_pr_body_with_closes_marker(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'{"body": "Existing body"}'
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        update_pr_body("owner/repo", "token", 42, "Closes #10")
+        assert mock_urlopen.call_count == 2
+
+
+class TestCloseIssue:
+    @patch("urllib.request.urlopen")
+    def test_closes_issue(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        close_issue("owner/repo", "token", 10)
+        mock_urlopen.assert_called_once()
+
+
+class TestAssignIssue:
+    @patch("urllib.request.urlopen")
+    def test_assigns_issue_to_user(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        assign_issue("owner/repo", "token", 10, "john.doe")
+        mock_urlopen.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    def test_handles_422_error(self, mock_urlopen):
+        import urllib.error
+
+        mock_urlopen.side_effect = urllib.error.HTTPError(url="", code=422, msg="", hdrs={}, fp=None)
+        assign_issue("owner/repo", "token", 10, "john.doe")
+
+
+class TestIsDirectPushToMain:
+    @patch("subprocess.run")
+    def test_returns_true_for_main_branch(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="main\n")
+        assert is_direct_push_to_main() is True
+
+    @patch("subprocess.run")
+    def test_returns_true_for_master_branch(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="master\n")
+        assert is_direct_push_to_main() is True
+
+    @patch("subprocess.run")
+    def test_returns_false_for_feature_branch(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="feature/login\n")
+        assert is_direct_push_to_main() is False
+
+
+class TestGetIssueFromMapping:
+    def test_returns_issue_number(self):
+        mapping = {"stories": {"1-1-user-login": {"issue_number": 10}}}
+        assert get_issue_from_mapping(mapping, "1-1-user-login") == 10
+
+    def test_returns_none_when_not_found(self):
+        mapping = {"stories": {}}
+        assert get_issue_from_mapping(mapping, "1-1-user-login") is None
