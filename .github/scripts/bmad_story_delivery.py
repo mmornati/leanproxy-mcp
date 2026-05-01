@@ -7,15 +7,17 @@ from bmad_sync_lib import (
     add_comment,
     assign_issue,
     close_issue,
+    find_delivery_comment,
     format_timestamp,
+    get_comments,
     get_commit_author,
     get_file_commit_sha,
     get_issue_from_mapping,
     is_direct_push_to_main,
     is_story_implemented,
-    link_pr_to_issue,
     load_mapping,
     parse_story_title,
+    update_comment,
     update_pr_body,
 )
 
@@ -48,13 +50,7 @@ def process_delivery(repo: str, token: str, mapping: dict, file_path: str, conte
         close_issue(repo, token, issue_number)
         print(f"  Closed issue #{issue_number}")
     elif pr_number:
-        print(f"PR delivery for {story_title} - linking PR #{pr_number} to issue #{issue_number}")
-
-        try:
-            link_pr_to_issue(repo, token, pr_number, issue_number)
-            print(f"  Linked PR #{pr_number} to issue #{issue_number}")
-        except Exception as e:
-            print(f"  WARNING: Could not link PR #{pr_number} to issue #{issue_number}: {e}")
+        print(f"PR delivery for {story_title} - PR #{pr_number} to issue #{issue_number}")
 
         closes_marker = f"Closes #{issue_number}"
         update_pr_body(repo, token, pr_number, closes_marker)
@@ -71,8 +67,15 @@ Story [{story_title}](https://github.com/{repo_env}/blob/main/{file_path}) has b
 
 Commit: [{commit_sha}](https://github.com/{repo_env}/commit/{commit_sha})
 """
-        add_comment(repo, token, issue_number, comment)
-        print(f"  Added delivery comment to issue #{issue_number}")
+
+        existing_comments = get_comments(repo, token, issue_number)
+        existing_delivery = find_delivery_comment(existing_comments)
+        if existing_delivery:
+            update_comment(repo, token, existing_delivery["id"], comment)
+            print(f"  Updated delivery comment on issue #{issue_number}")
+        else:
+            add_comment(repo, token, issue_number, comment)
+            print(f"  Added delivery comment to issue #{issue_number}")
     else:
         print(f"  WARNING: No PR number available and not direct push to main. Cannot deliver via PR.")
 

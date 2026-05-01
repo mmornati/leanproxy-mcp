@@ -16,7 +16,9 @@ from bmad_sync_lib import (
     create_issue,
     ensure_label_exists,
     extract_epic_key,
+    find_delivery_comment,
     format_timestamp,
+    get_comments,
     get_commit_author,
     get_file_commit_sha,
     get_issue_from_mapping,
@@ -30,6 +32,7 @@ from bmad_sync_lib import (
     parse_frontmatter,
     parse_story_title,
     save_mapping,
+    update_comment,
     update_pr_body,
 )
 
@@ -300,16 +303,17 @@ All done!"""
 
 class TestGetCommitAuthor:
     @patch("subprocess.run")
-    def test_returns_author_from_git_log(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout="john.doe@example.com\n")
+    def test_returns_author_name_from_git_log(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="John Doe\n")
         result = get_commit_author("test.md")
-        assert result == "john.doe@example.com"
+        assert result == "John Doe"
 
+    @patch.dict(os.environ, {"GITHUB_ACTOR": "test-user"}, clear=False)
     @patch("subprocess.run")
-    def test_returns_none_on_error(self, mock_run):
+    def test_returns_github_actor_on_error(self, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stdout="")
         result = get_commit_author("test.md")
-        assert result is None
+        assert result == "test-user"
 
 
 class TestGetPrForCommit:
@@ -337,29 +341,65 @@ class TestGetPrForCommit:
 
 
 class TestLinkPrToIssue:
+    def test_returns_false_with_warning(self):
+        result = link_pr_to_issue("owner/repo", "token", 42, 10)
+        assert result is False
+
+
+class TestGetComments:
     @patch("urllib.request.urlopen")
-    def test_links_pr_to_issue(self, mock_urlopen):
+    def test_returns_comments_list(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = b'[{"id": 1, "body": "Test comment"}]'
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        result = get_comments("owner/repo", "token", 10)
+        assert len(result) == 1
+        assert result[0]["id"] == 1
+
+    @patch("urllib.request.urlopen")
+    def test_returns_empty_on_error(self, mock_urlopen):
+        import urllib.error
+
+        mock_urlopen.side_effect = urllib.error.HTTPError(url="", code=404, msg="", hdrs={}, fp=None)
+        result = get_comments("owner/repo", "token", 10)
+        assert result == []
+
+
+class TestFindDeliveryComment:
+    def test_finds_existing_delivery_comment(self):
+        comments = [
+            {"id": 1, "body": "Some other comment"},
+            {"id": 2, "body": "**Story Delivered** via PR #42"},
+            {"id": 3, "body": "Another comment"},
+        ]
+        result = find_delivery_comment(comments)
+        assert result["id"] == 2
+
+    def test_returns_none_when_not_found(self):
+        comments = [
+            {"id": 1, "body": "Some other comment"},
+        ]
+        result = find_delivery_comment(comments)
+        assert result is None
+
+    def test_returns_none_for_empty_list(self):
+        result = find_delivery_comment([])
+        assert result is None
+
+
+class TestUpdateComment:
+    @patch("urllib.request.urlopen")
+    def test_updates_comment(self, mock_urlopen):
         mock_response = MagicMock()
         mock_response.__enter__.return_value = mock_response
         mock_response.__exit__.return_value = None
         mock_urlopen.return_value = mock_response
 
-        link_pr_to_issue("owner/repo", "token", 42, 10)
+        update_comment("owner/repo", "token", 100, "Updated body")
         mock_urlopen.assert_called_once()
-
-    @patch("urllib.request.urlopen")
-    def test_handles_422_error(self, mock_urlopen):
-        import urllib.error
-
-        mock_urlopen.side_effect = urllib.error.HTTPError(url="", code=422, msg="", hdrs={}, fp=None)
-        link_pr_to_issue("owner/repo", "token", 42, 10)
-
-    @patch("urllib.request.urlopen")
-    def test_handles_404_error(self, mock_urlopen):
-        import urllib.error
-
-        mock_urlopen.side_effect = urllib.error.HTTPError(url="", code=404, msg="", hdrs={}, fp=None)
-        link_pr_to_issue("owner/repo", "token", 42, 10)
 
 
 class TestUpdatePrBody:

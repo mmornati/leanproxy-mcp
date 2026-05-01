@@ -309,14 +309,16 @@ def get_commit_author(file_path: str, repo_path: Path | None = None) -> str | No
         repo_path = Path(__file__).parent.parent.parent
 
     result = subprocess.run(
-        ["git", "log", "-1", "--format=%a", "--", file_path],
+        ["git", "log", "-1", "--format=%an", "--", file_path],
         capture_output=True,
         text=True,
         cwd=repo_path,
     )
     if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
-    return None
+        author = result.stdout.strip()
+        if author and not author.startswith("%"):
+            return author
+    return os.environ.get("GITHUB_ACTOR")
 
 
 def get_pr_for_commit(repo: str, token: str, sha: str) -> dict | None:
@@ -336,23 +338,43 @@ def get_pr_for_commit(repo: str, token: str, sha: str) -> dict | None:
     return None
 
 
-def link_pr_to_issue(repo: str, token: str, pr_number: int, issue_number: int) -> None:
-    url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/issues"
+def link_pr_to_issue(repo: str, token: str, pr_number: int, issue_number: int) -> bool:
+    print(f"WARNING: link_pr_to_issue API is deprecated, skipping PR-to-issue linking")
+    return False
+
+
+def update_comment(repo: str, token: str, comment_id: int, body: str) -> None:
+    url = f"https://api.github.com/repos/{repo}/issues/comments/{comment_id}"
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json",
         "Content-Type": "application/json",
     }
-    data = json.dumps({"issue_numbers": [issue_number]}).encode()
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    data = json.dumps({"body": body}).encode()
+    request = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
+    with urllib.request.urlopen(request):
+        pass
+
+
+def get_comments(repo: str, token: str, issue_number: int) -> list[dict]:
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/comments"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(request):
-            pass
-    except urllib.error.HTTPError as e:
-        if e.code in (404, 422):
-            pass
-        else:
-            raise
+        with urllib.request.urlopen(request) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError:
+        return []
+
+
+def find_delivery_comment(comments: list[dict]) -> dict | None:
+    for comment in comments:
+        if "Story Delivered" in comment.get("body", ""):
+            return comment
+    return None
 
 
 def update_pr_body(repo: str, token: str, pr_number: int, body_addition: str) -> None:
