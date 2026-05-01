@@ -1,9 +1,9 @@
 {
-  "last_sync": "2026-05-01T20:59:04.619479Z",
+  "last_sync": "2026-05-01T21:34:17.303698Z",
   "epics": {
     "1": {
-      "issue_id": 4364867372,
-      "issue_number": 2,
+      "issue_id": 4366778556,
+      "issue_number": 39,
       "title": "Core Proxy Infrastructure"
     },
     "2": {
@@ -25,6 +25,11 @@
       "issue_id": 4364867480,
       "issue_number": 6,
       "title": "Reporting & Insights"
+    },
+    "6": {
+      "issue_id": 4366778698,
+      "issue_number": 40,
+      "title": "Server Configuration & Migration"
     }
   },
   "stories": {
