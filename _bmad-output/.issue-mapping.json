@@ -1,5 +1,37 @@
 {
-  "last_sync": null,
-  "epics": {},
-  "stories": {}
+  "last_sync": "2026-05-01T16:36:42.843268Z",
+  "epics": {
+    "1": {
+      "issue_id": 4364867372,
+      "issue_number": 2,
+      "title": "Core Proxy Infrastructure"
+    },
+    "2": {
+      "issue_id": 4364867400,
+      "issue_number": 3,
+      "title": "Security & Data Governance (The Bouncer)"
+    },
+    "3": {
+      "issue_id": 4364867428,
+      "issue_number": 4,
+      "title": "Context Optimization (JIT Discovery & Compactor)"
+    },
+    "4": {
+      "issue_id": 4364867452,
+      "issue_number": 5,
+      "title": "Developer Experience & CLI Interface"
+    },
+    "5": {
+      "issue_id": 4364867480,
+      "issue_number": 6,
+      "title": "Reporting & Insights"
+    }
+  },
+  "stories": {
+    "1-1-initialize-go-project": {
+      "issue_id": 4365467977,
+      "issue_number": 7,
+      "parent_epic": "1"
+    }
+  }
 }
