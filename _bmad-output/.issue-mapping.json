@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-01T19:08:21.529102Z",
+  "last_sync": "2026-05-01T19:16:45.456311Z",
   "epics": {
     "1": {
       "issue_id": 4364867372,
@@ -32,7 +32,7 @@
       "issue_id": 4365467977,
       "issue_number": 7,
       "parent_epic": "1",
-      "commit_sha": "bee68fe"
+      "commit_sha": "6074740"
     },
     "1-2-json-rpc-streaming-proxy": {
       "issue_id": 4365518210,
