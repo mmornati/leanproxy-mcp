@@ -190,12 +190,11 @@ class TestIsDirectPushToMain:
 class TestProcessDelivery:
     @patch("bmad_story_delivery.get_commit_author")
     @patch("bmad_story_delivery.is_direct_push_to_main")
-    @patch("bmad_sync_lib.get_pr_for_commit")
     @patch("bmad_story_delivery.get_file_commit_sha")
     @patch("bmad_story_delivery.assign_issue")
     @patch("bmad_story_delivery.close_issue")
     def test_skips_in_progress_story(
-        self, mock_close, mock_assign, mock_sha, mock_pr, mock_direct, mock_author
+        self, mock_close, mock_assign, mock_sha, mock_direct, mock_author
     ):
         from bmad_story_delivery import process_delivery
 
@@ -208,7 +207,6 @@ class TestProcessDelivery:
 
     @patch("bmad_story_delivery.get_commit_author")
     @patch("bmad_story_delivery.is_direct_push_to_main")
-    @patch("bmad_sync_lib.get_pr_for_commit")
     @patch("bmad_story_delivery.get_file_commit_sha")
     @patch("bmad_story_delivery.assign_issue")
     @patch("bmad_story_delivery.close_issue")
@@ -216,7 +214,7 @@ class TestProcessDelivery:
     @patch("bmad_story_delivery.link_pr_to_issue")
     @patch("bmad_story_delivery.update_pr_body")
     def test_delivers_on_pr_branch(
-        self, mock_update, mock_link, mock_comment, mock_close, mock_assign, mock_sha, mock_pr, mock_direct, mock_author
+        self, mock_update, mock_link, mock_comment, mock_close, mock_assign, mock_sha, mock_direct, mock_author
     ):
         from bmad_story_delivery import process_delivery
 
@@ -226,9 +224,8 @@ class TestProcessDelivery:
         mock_sha.return_value = "abc123"
         mock_author.return_value = "john.doe"
         mock_direct.return_value = False
-        mock_pr.return_value = {"number": 42, "title": "Feature PR", "body": ""}
 
-        result = process_delivery("owner/repo", "token", mapping, "1-1-user-login.md", content)
+        result = process_delivery("owner/repo", "token", mapping, "1-1-user-login.md", content, pr_number=42)
 
         mock_link.assert_called_once_with("owner/repo", "token", 42, 10)
         mock_update.assert_called_once()
@@ -237,7 +234,6 @@ class TestProcessDelivery:
 
     @patch("bmad_story_delivery.get_commit_author")
     @patch("bmad_story_delivery.is_direct_push_to_main")
-    @patch("bmad_sync_lib.get_pr_for_commit")
     @patch("bmad_story_delivery.get_file_commit_sha")
     @patch("bmad_story_delivery.assign_issue")
     @patch("bmad_story_delivery.close_issue")
@@ -245,7 +241,7 @@ class TestProcessDelivery:
     @patch("bmad_story_delivery.link_pr_to_issue")
     @patch("bmad_story_delivery.update_pr_body")
     def test_delivers_on_direct_push_to_main(
-        self, mock_update, mock_link, mock_comment, mock_close, mock_assign, mock_sha, mock_pr, mock_direct, mock_author
+        self, mock_update, mock_link, mock_comment, mock_close, mock_assign, mock_sha, mock_direct, mock_author
     ):
         from bmad_story_delivery import process_delivery
 
@@ -264,10 +260,9 @@ class TestProcessDelivery:
 
     @patch("bmad_story_delivery.get_commit_author")
     @patch("bmad_story_delivery.is_direct_push_to_main")
-    @patch("bmad_sync_lib.get_pr_for_commit")
     @patch("bmad_story_delivery.get_file_commit_sha")
     def test_warns_when_no_issue_in_mapping(
-        self, mock_sha, mock_pr, mock_direct, mock_author
+        self, mock_sha, mock_direct, mock_author
     ):
         from bmad_story_delivery import process_delivery
 
@@ -279,6 +274,28 @@ class TestProcessDelivery:
         mock_direct.return_value = True
 
         result = process_delivery("owner/repo", "token", mapping, "1-1-user-login.md", content)
+
+    @patch("bmad_story_delivery.get_commit_author")
+    @patch("bmad_story_delivery.is_direct_push_to_main")
+    @patch("bmad_story_delivery.get_file_commit_sha")
+    @patch("bmad_story_delivery.assign_issue")
+    @patch("bmad_story_delivery.close_issue")
+    def test_warns_when_no_pr_and_not_direct_push(
+        self, mock_close, mock_assign, mock_sha, mock_direct, mock_author
+    ):
+        from bmad_story_delivery import process_delivery
+
+        content = "# Story 1-1: User Login\n\n## Change Log\n- 2026-05-01: Story 1.1 implemented"
+        mapping = {"stories": {"1-1-user-login": {"issue_number": 10}}}
+
+        mock_sha.return_value = "abc123"
+        mock_author.return_value = "john.doe"
+        mock_direct.return_value = False
+
+        result = process_delivery("owner/repo", "token", mapping, "1-1-user-login.md", content)
+
+        mock_assign.assert_not_called()
+        mock_close.assert_not_called()
 
 
 class TestGetIssueFromMapping:

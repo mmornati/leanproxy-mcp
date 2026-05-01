@@ -20,7 +20,7 @@ from bmad_sync_lib import (
 )
 
 
-def process_delivery(repo: str, token: str, mapping: dict, file_path: str, content: str) -> dict:
+def process_delivery(repo: str, token: str, mapping: dict, file_path: str, content: str, pr_number: int | None = None) -> dict:
     file_stem = Path(file_path).stem
 
     if not is_story_implemented(content):
@@ -47,35 +47,34 @@ def process_delivery(repo: str, token: str, mapping: dict, file_path: str, conte
             print(f"  Assigned to {commit_author}")
         close_issue(repo, token, issue_number)
         print(f"  Closed issue #{issue_number}")
-    else:
-        print(f"PR delivery for {story_title} - linking PR to issue #{issue_number}")
-        from bmad_sync_lib import get_pr_for_commit
-        pr_info = get_pr_for_commit(repo, token, commit_sha) if commit_sha else None
+    elif pr_number:
+        print(f"PR delivery for {story_title} - linking PR #{pr_number} to issue #{issue_number}")
 
-        if pr_info:
-            pr_number = pr_info["number"]
+        try:
             link_pr_to_issue(repo, token, pr_number, issue_number)
             print(f"  Linked PR #{pr_number} to issue #{issue_number}")
+        except Exception as e:
+            print(f"  WARNING: Could not link PR #{pr_number} to issue #{issue_number}: {e}")
 
-            closes_marker = f"Closes #{issue_number}"
-            update_pr_body(repo, token, pr_number, closes_marker)
-            print(f"  Added '{closes_marker}' to PR #{pr_number} body")
+        closes_marker = f"Closes #{issue_number}"
+        update_pr_body(repo, token, pr_number, closes_marker)
+        print(f"  Added '{closes_marker}' to PR #{pr_number} body")
 
-            if commit_author:
-                assign_issue(repo, token, issue_number, commit_author)
-                print(f"  Assigned issue #{issue_number} to {commit_author}")
+        if commit_author:
+            assign_issue(repo, token, issue_number, commit_author)
+            print(f"  Assigned issue #{issue_number} to {commit_author}")
 
-            timestamp = format_timestamp()
-            comment = f"""**Story Delivered** - {timestamp}
+        timestamp = format_timestamp()
+        comment = f"""**Story Delivered** - {timestamp}
 
 Story [{story_title}](https://github.com/{repo_env}/blob/main/{file_path}) has been delivered via PR #{pr_number}.
 
 Commit: [{commit_sha}](https://github.com/{repo_env}/commit/{commit_sha})
 """
-            add_comment(repo, token, issue_number, comment)
-            print(f"  Added delivery comment to issue #{issue_number}")
-        else:
-            print(f"  WARNING: Could not find PR for commit {commit_sha}. Skipping PR-linked actions.")
+        add_comment(repo, token, issue_number, comment)
+        print(f"  Added delivery comment to issue #{issue_number}")
+    else:
+        print(f"  WARNING: No PR number available and not direct push to main. Cannot deliver via PR.")
 
     return mapping
 
@@ -83,10 +82,17 @@ Commit: [{commit_sha}](https://github.com/{repo_env}/commit/{commit_sha})
 def main():
     repo = os.environ.get("GITHUB_REPOSITORY")
     token = os.environ.get("GITHUB_TOKEN")
+    pr_number = os.environ.get("PULL_REQUEST_NUMBER")
 
     if not repo or not token:
         print("ERROR: GITHUB_REPOSITORY and GITHUB_TOKEN must be set")
         sys.exit(1)
+
+    if pr_number:
+        try:
+            pr_number = int(pr_number)
+        except ValueError:
+            pr_number = None
 
     mapping = load_mapping()
 
@@ -97,7 +103,7 @@ def main():
 
     for file_path in story_files:
         content = Path(file_path).read_text()
-        mapping = process_delivery(repo, token, mapping, file_path, content)
+        mapping = process_delivery(repo, token, mapping, file_path, content, pr_number)
 
     from bmad_sync_lib import save_mapping
     save_mapping(mapping)
