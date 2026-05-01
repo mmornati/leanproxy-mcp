@@ -79,6 +79,15 @@ def get_all_files() -> tuple[list[str], list[str]]:
     return all_files, []
 
 
+def is_step_04_completed(content: str) -> bool:
+    steps_pattern = re.compile(r"^stepsCompleted:\s*\[(.+)\]", re.MULTILINE)
+    match = steps_pattern.search(content)
+    if match:
+        steps = match.group(1)
+        return "step-04-final-validation" in steps
+    return False
+
+
 def parse_epics_md(content: str) -> list[dict[str, Any]]:
     epics = []
     current_epic = None
@@ -152,8 +161,9 @@ def ensure_label_exists(repo: str, token: str) -> None:
         if e.code != 404:
             return
 
+    create_url = f"https://api.github.com/repos/{repo}/labels"
     data = json.dumps({"name": LABEL_NAME, "color": "FF5722", "description": "BMad managed issue"}).encode()
-    request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    request = urllib.request.Request(create_url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request) as response:
             response.read()
@@ -214,6 +224,10 @@ def link_sub_issue(repo: str, token: str, parent_number: int, sub_issue_id: int)
 
 
 def process_epics_new(repo: str, token: str, mapping: dict[str, Any], content: str) -> dict[str, Any]:
+    if not is_step_04_completed(content):
+        print("Skipping epics creation: step-04-final-validation not completed")
+        return mapping
+
     epics = parse_epics_md(content)
     ensure_label_exists(repo, token)
 

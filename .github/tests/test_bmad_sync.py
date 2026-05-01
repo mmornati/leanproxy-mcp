@@ -210,7 +210,11 @@ class TestProcessEpicsNew:
             (333, 33),
         ]
 
-        content = """# Epic 1: Auth
+        content = """---
+stepsCompleted: [step-01-validate-prerequisites, step-02-design-epics, step-03-create-stories, step-04-final-validation]
+---
+
+# Epic 1: Auth
 
 ## Stories
 
@@ -224,6 +228,27 @@ class TestProcessEpicsNew:
         assert result["epics"]["1"]["issue_id"] == 111
         assert "1-1-user-login" in result["stories"]
         assert result["stories"]["1-1-user-login"]["issue_id"] == 222
+
+    @patch.object(bmad_sync, "ensure_label_exists")
+    @patch.object(bmad_sync, "create_issue")
+    @patch.object(bmad_sync, "link_sub_issue")
+    def test_process_new_epics_step04_not_completed(self, mock_link, mock_create, mock_ensure):
+        content = """---
+stepsCompleted: [step-01-validate-prerequisites, step-02-design-epics]
+---
+
+# Epic 1: Auth
+
+## Stories
+
+### 1.1 User Login
+"""
+        mapping = {"epics": {}, "stories": {}}
+
+        result = bmad_sync.process_epics_new("owner/repo", "token", mapping, content)
+
+        assert "1" not in result["epics"]
+        mock_create.assert_not_called()
 
 
 class TestProcessEpicsModified:
