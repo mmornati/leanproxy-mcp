@@ -309,14 +309,16 @@ def get_commit_author(file_path: str, repo_path: Path | None = None) -> str | No
         repo_path = Path(__file__).parent.parent.parent
 
     result = subprocess.run(
-        ["git", "log", "-1", "--format=%a", "--", file_path],
+        ["git", "log", "-1", "--format=%an", "--", file_path],
         capture_output=True,
         text=True,
         cwd=repo_path,
     )
     if result.returncode == 0 and result.stdout.strip():
-        return result.stdout.strip()
-    return None
+        author = result.stdout.strip()
+        if author and not author.startswith("%"):
+            return author
+    return os.environ.get("GITHUB_ACTOR")
 
 
 def get_pr_for_commit(repo: str, token: str, sha: str) -> dict | None:
@@ -336,7 +338,7 @@ def get_pr_for_commit(repo: str, token: str, sha: str) -> dict | None:
     return None
 
 
-def link_pr_to_issue(repo: str, token: str, pr_number: int, issue_number: int) -> None:
+def link_pr_to_issue(repo: str, token: str, pr_number: int, issue_number: int) -> bool:
     url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}/issues"
     headers = {
         "Authorization": f"token {token}",
@@ -347,12 +349,10 @@ def link_pr_to_issue(repo: str, token: str, pr_number: int, issue_number: int) -
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request):
-            pass
+            return True
     except urllib.error.HTTPError as e:
-        if e.code in (404, 422):
-            pass
-        else:
-            raise
+        print(f"WARNING: Failed to link PR #{pr_number} to issue #{issue_number}: HTTP {e.code}")
+        return False
 
 
 def update_pr_body(repo: str, token: str, pr_number: int, body_addition: str) -> None:

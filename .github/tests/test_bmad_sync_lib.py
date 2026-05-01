@@ -352,14 +352,26 @@ class TestLinkPrToIssue:
         import urllib.error
 
         mock_urlopen.side_effect = urllib.error.HTTPError(url="", code=422, msg="", hdrs={}, fp=None)
-        link_pr_to_issue("owner/repo", "token", 42, 10)
+        result = link_pr_to_issue("owner/repo", "token", 42, 10)
+        assert result is False
 
     @patch("urllib.request.urlopen")
     def test_handles_404_error(self, mock_urlopen):
         import urllib.error
 
         mock_urlopen.side_effect = urllib.error.HTTPError(url="", code=404, msg="", hdrs={}, fp=None)
-        link_pr_to_issue("owner/repo", "token", 42, 10)
+        result = link_pr_to_issue("owner/repo", "token", 42, 10)
+        assert result is False
+
+    @patch("urllib.request.urlopen")
+    def test_returns_true_on_success(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = None
+        mock_urlopen.return_value = mock_response
+
+        result = link_pr_to_issue("owner/repo", "token", 42, 10)
+        assert result is True
 
 
 class TestUpdatePrBody:

@@ -50,11 +50,11 @@ def process_delivery(repo: str, token: str, mapping: dict, file_path: str, conte
     elif pr_number:
         print(f"PR delivery for {story_title} - linking PR #{pr_number} to issue #{issue_number}")
 
-        try:
-            link_pr_to_issue(repo, token, pr_number, issue_number)
+        linked = link_pr_to_issue(repo, token, pr_number, issue_number)
+        if linked:
             print(f"  Linked PR #{pr_number} to issue #{issue_number}")
-        except Exception as e:
-            print(f"  WARNING: Could not link PR #{pr_number} to issue #{issue_number}: {e}")
+        else:
+            print(f"  WARNING: Failed to link PR #{pr_number} to issue #{issue_number}")
 
         closes_marker = f"Closes #{issue_number}"
         update_pr_body(repo, token, pr_number, closes_marker)
