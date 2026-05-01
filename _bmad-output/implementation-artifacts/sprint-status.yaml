@@ -12,6 +12,8 @@ development_status:
   epic-4-retrospective: backlog
   epic-5: backlog
   epic-5-retrospective: backlog
+  epic-6: backlog
+  epic-6-retrospective: backlog
   1-1-initialize-go-project: ready-for-dev
   1-2-json-rpc-streaming-proxy: review
   1-3-server-lifecycle-management: review
@@ -35,6 +37,10 @@ development_status:
   5-1-token-savings-calculator: ready-for-dev
   5-2-markdown-report-generation: ready-for-dev
   5-3-real-time-server-health: ready-for-dev
+  6-1-define-leanproxy-servers-yaml-schema: ready-for-dev
+  6-2-auto-detect-migration: ready-for-dev
+  6-3-validate-imported-server-configs: ready-for-dev
+  6-4-ide-configuration-documentation: ready-for-dev
 
 last_updated: 2026-05-01
-sprint_goal: Implement all 23 stories across 5 epics
+sprint_goal: Implement all 27 stories across 6 epics
