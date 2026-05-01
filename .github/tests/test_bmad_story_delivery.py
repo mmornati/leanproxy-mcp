@@ -47,17 +47,18 @@ class TestGetCommitAuthor:
     def test_returns_author_from_git_log(self, mock_run):
         from bmad_sync_lib import get_commit_author
 
-        mock_run.return_value = MagicMock(returncode=0, stdout="john.doe@example.com\n")
+        mock_run.return_value = MagicMock(returncode=0, stdout="John Doe\n")
         result = get_commit_author("test.md")
-        assert result == "john.doe@example.com"
+        assert result == "John Doe"
 
+    @patch.dict(os.environ, {"GITHUB_ACTOR": "test-user"}, clear=False)
     @patch("subprocess.run")
-    def test_returns_none_on_error(self, mock_run):
+    def test_returns_github_actor_on_error(self, mock_run):
         from bmad_sync_lib import get_commit_author
 
         mock_run.return_value = MagicMock(returncode=1, stdout="")
         result = get_commit_author("test.md")
-        assert result is None
+        assert result == "test-user"
 
 
 class TestGetPrForCommit:
