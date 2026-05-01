@@ -286,7 +286,22 @@ def is_story_implemented(content: str) -> bool:
         return True
     if re.search(r"story\s+\d+[.-]\d+\s+implemented", lower):
         return True
+    all_checklist_complete = "implementation checklist" in lower and _all_implementation_items_checked(content)
+    has_completion_notes = "### completion notes" in lower or "## completion notes" in lower
+    if all_checklist_complete and has_completion_notes:
+        return True
     return False
+
+
+def _all_implementation_items_checked(content: str) -> bool:
+    checklist_section = re.search(r"##\s+implementation checklist\s*\n([\s\S]*?)(?=\n##|\Z)", content, re.IGNORECASE)
+    if not checklist_section:
+        checklist_section = re.search(r"###\s+implementation checklist\s*\n([\s\S]*?)(?=\n###|\n##|\Z)", content, re.IGNORECASE)
+    if not checklist_section:
+        return False
+    checklist_text = checklist_section.group(1)
+    unchecked = re.findall(r"- \[\s\]", checklist_text)
+    return len(unchecked) == 0
 
 
 def get_commit_author(file_path: str, repo_path: Path | None = None) -> str | None:

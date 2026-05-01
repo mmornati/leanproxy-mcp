@@ -268,12 +268,34 @@ class TestIsStoryImplemented:
         content = "## Change Log\n- 2026-05-01: Story 3.1 implemented — Added feature"
         assert is_story_implemented(content) is True
 
+    def test_detects_all_checkboxes_checked_with_completion_notes(self):
+        content = """## Implementation Checklist
+- [x] Task 1
+- [x] Task 2
+### Completion Notes
+All done!"""
+        assert is_story_implemented(content) is True
+
     def test_no_marker_returns_false(self):
         content = "## Change Log\n- 2026-05-01: Story updated"
         assert is_story_implemented(content) is False
 
     def test_empty_content_returns_false(self):
         assert is_story_implemented("") is False
+
+    def test_incomplete_checklist_returns_false(self):
+        content = """## Implementation Checklist
+- [x] Task 1
+- [ ] Task 2
+### Completion Notes
+All done!"""
+        assert is_story_implemented(content) is False
+
+    def test_missing_completion_notes_returns_false(self):
+        content = """## Implementation Checklist
+- [x] Task 1
+- [x] Task 2"""
+        assert is_story_implemented(content) is False
 
 
 class TestGetCommitAuthor:
