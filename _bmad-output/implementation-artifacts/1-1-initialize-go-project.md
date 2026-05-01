@@ -128,18 +128,18 @@ tokengate-mcp/
 
 ### Implementation Checklist
 
-- [ ] Initialize Go module with `go mod init`
-- [ ] Create directory structure (cmd/, pkg/*)
-- [ ] Create main.go entry point
-- [ ] Create cmd/root.go with Cobra root command
-- [ ] Create cmd/serve.go with serve command
-- [ ] Create cmd/version.go with version command
-- [ ] Create placeholder pkg/* files with package declarations
-- [ ] Add required dependencies
-- [ ] Verify build succeeds
-- [ ] Verify binary size < 20MB
-- [ ] Verify --help works
-- [ ] Run go vet and golint
+- [x] Initialize Go module with `go mod init`
+- [x] Create directory structure (cmd/, pkg/*)
+- [x] Create main.go entry point
+- [x] Create cmd/root.go with Cobra root command
+- [x] Create cmd/serve.go with serve command
+- [x] Create cmd/version.go with version command
+- [x] Create placeholder pkg/* files with package declarations
+- [x] Add required dependencies
+- [x] Verify build succeeds
+- [x] Verify binary size < 20MB
+- [x] Verify --help works
+- [x] Run go vet and golint
 
 ### Notes
 
@@ -147,3 +147,44 @@ tokengate-mcp/
 - No actual proxy logic needed yet
 - Placeholder implementations acceptable for pkg/* files
 - Ensure all logging goes to stderr via slog
+
+## Dev Agent Record
+
+### Debug Log
+
+- Fixed export issue: changed `rootCmd` to `RootCmd` to make it accessible from main.go
+- Fixed duplicate command registration: removed explicit AddCommand calls from root.go init() since serve.go and version.go already register themselves in their own init()
+- Renamed project from tokengate-mcp to leanproxy-mcp throughout all files
+- Binary size: 4.7MB (well under 20MB limit)
+
+### Completion Notes
+
+Successfully initialized the Go project with:
+- Go module: github.com/mmornati/leanproxy-mcp
+- CLI structure with Cobra framework
+- Commands: root, serve, version
+- Package structure: pkg/proxy, pkg/bouncer, pkg/registry, pkg/utils
+- Proper error handling with fmt.Errorf pattern
+- Structured logging with log/slog
+
+### File List
+
+- go.mod (new)
+- go.sum (new)
+- main.go (new)
+- cmd/root.go (new)
+- cmd/serve.go (new)
+- cmd/version.go (new)
+- pkg/proxy/proxy.go (new)
+- pkg/bouncer/bouncer.go (new)
+- pkg/registry/registry.go (new)
+- pkg/utils/utils.go (new)
+- leanproxy (compiled binary)
+
+### Change Log
+
+- Initial project structure setup (Date: 2026-05-01)
+
+### Status
+
+review
