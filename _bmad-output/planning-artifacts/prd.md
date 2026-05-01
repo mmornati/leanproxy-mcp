@@ -149,7 +149,44 @@ LeanProxy-MCP is a performance-optimized Go CLI that serves as a specialized MCP
 ### Configuration Schema
 - **Global Config**: Reads from `~/.config/mcp_config.json` for laptop-wide tool access.
 - **Local Config**: Supports a project-level `leanproxy.yaml` (or `mcp_local.json`) to provide a clean separation between standard MCP data and proxy-specific optimization settings (redaction rules, token caps).
-- **Redaction Rules**: Custom regex patterns for \"The Bouncer\" can be defined in the local config or via environment variables.
+- **Redaction Rules**: Custom regex patterns for "The Bouncer" can be defined in the local config or via environment variables.
+
+#### Server Entry Schema
+The `leanproxy_servers.yaml` file defines each MCP server proxied through LeanProxy-MCP:
+
+```yaml
+servers:
+  - name: string              # Unique identifier (e.g., "github", "slack")
+    enabled: boolean          # Whether server is active (default: true)
+    transport: string         # "stdio" | "http" | "sse"
+    # For stdio transport:
+    command: string           # Executable path (e.g., "npx", "uv", "/usr/local/bin/nexus-dev")
+    args: [string]            # Arguments passed to command
+    env:                      # Environment variables (secrets should use $ENV_VAR references)
+      KEY: "value"
+    cwd: string               # Working directory for the subprocess
+    # For http/sse transport:
+    url: string               # Remote server URL
+    headers:                  # HTTP headers (for auth tokens)
+      Authorization: "Bearer ..."
+    # Common options:
+    timeout: float            # Request timeout in seconds (default: 30.0)
+    connect_timeout: float    # Connection timeout in seconds (default: 10.0)
+    cache:
+      enabled: boolean        # Enable response caching (default: true)
+      ttl_seconds: float      # Cache TTL (default: 300)
+    summarize:
+      enabled: boolean        # Enable output summarization (default: true)
+      max_output_chars: int   # Max output characters before summarization
+```
+
+#### Default Server Config Locations (Auto-Detection)
+LeanProxy-MCP auto-detects existing MCP configurations for migration:
+- **OpenCode**: `~/.config/opencode/mcp.json`
+- **Claude Code**: `~/.claude.json` (or `~/.config/claude/mcp_config.json`)
+- **VS Code**: `settings.json` (MCP extensions section)
+- **Generic MCP**: `~/.config/mcp.json` (standard location)
+- **Cursor**: `~/.cursor/mcp.json`
 
 ### Distribution & Installation
 - **Universal Access**: Provided as a standalone binary via a `curl | sh` universal installer.
@@ -181,14 +218,15 @@ LeanProxy-MCP is a performance-optimized Go CLI that serves as a specialized MCP
 ### Post-MVP Features
 
 **Phase 2 (Growth)**:
-- **`http/sse` Support**: Extending the \"Token Firewall\" to remote and web-based MCP servers.
+- **`http/sse` Support**: Extending the "Token Firewall" to remote and web-based MCP servers.
 - **Budget Sentry**: Hard-capping and session termination based on real-time token spend.
 - **Boilerplate Blindness**: Content-aware stripping of common imports, headers, and license blocks.
 - **Local Persistence**: A caching layer for distilled signatures.
+- **IDE Configuration Docs**: Documentation for configuring LeanProxy-MCP as an MCP server endpoint in Claude Desktop, Cursor, OpenCode, and Windsurf.
 
 **Phase 3 (Vision)**:
 - **Drafting Sidecar**: Offloading redaction and discovery to a local, tiny LLM (e.g., Llama-3-8B).
-- **IDE Extensions**: Deep integration with OpenCode and VS Code for rich UI metrics.
+- **IDE Extensions**: Deep integration with OpenCode/VS Code to provide rich UI-based usage metrics and "1-click" config management.
 
 ### Risk Mitigation Strategy
 
@@ -228,8 +266,15 @@ Resource Risks**: Open-source maintenance; mitigation via clear documentation an
 
 ### 5. Reporting & Insights
 - **FR21**: The system can calculate and report real-time token savings per session.
-- **FR22**: The system can generate Markdown-formatted reports summarizing \"Total Tokens Saved\" and \"Security Risks Intercepted.\"
+- **FR22**: The system can generate Markdown-formatted reports summarizing "Total Tokens Saved" and "Security Risks Intercepted."
 - **FR23**: The system can provide real-time status of all active proxied servers and their health.
+
+### 6. Server Configuration & Migration
+- **FR24**: Users can define MCP server entries in `leanproxy_servers.yaml` with transport type (stdio/http/sse), command/args, environment variables, and timeouts.
+- **FR25**: Users can add, remove, and list MCP servers via CLI commands (`leanproxy server add`, `leanproxy server remove`, `leanproxy server list`).
+- **FR26**: The system can auto-detect existing MCP configurations from OpenCode, Claude Code, VS Code, Cursor, and generic `mcp.json` locations.
+- **FR27**: Users can run `leanproxy migrate` to auto-detect and import all found MCP configurations into `leanproxy_servers.yaml`, presenting a summary of imported servers.
+- **FR28**: The system validates imported server configurations and reports any errors (missing commands, invalid transport types) during migration.
 
 ## Non-Functional Requirements
 

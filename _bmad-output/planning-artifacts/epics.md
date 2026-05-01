@@ -38,6 +38,11 @@ FR20: The system provides automated shell completion for all management subcomma
 FR21: The system can calculate and report real-time token savings per session.
 FR22: The system can generate Markdown-formatted reports summarizing "Total Tokens Saved" and "Security Risks Intercepted."
 FR23: The system can provide real-time status of all active proxied servers and their health.
+FR24: Users can define MCP server entries in `leanproxy_servers.yaml` with transport type (stdio/http/sse), command/args, environment variables, and timeouts.
+FR25: Users can add, remove, and list MCP servers via CLI commands (`leanproxy server add`, `leanproxy server remove`, `leanproxy server list`).
+FR26: The system can auto-detect existing MCP configurations from OpenCode, Claude Code, VS Code, Cursor, and generic `mcp.json` locations.
+FR27: Users can run `leanproxy migrate` to auto-detect and import all found MCP configurations into `leanproxy_servers.yaml`, presenting a summary of imported servers.
+FR28: The system validates imported server configurations and reports any errors (missing commands, invalid transport types) during migration.
 
 ### NonFunctional Requirements
 
@@ -93,6 +98,11 @@ FR20: Epic 4 - Automated shell completion for all subcommands
 FR21: Epic 5 - Calculate and report real-time token savings per session
 FR22: Epic 5 - Generate Markdown reports on tokens saved and risks intercepted
 FR23: Epic 5 - Provide real-time status of all active proxied servers
+FR24: Epic 6 - Define server entries with transport type (stdio/http/sse), command/args, env, timeouts
+FR25: Epic 6 - Add, remove, list servers via CLI commands
+FR26: Epic 6 - Auto-detect MCP configs from OpenCode, Claude Code, VS Code, Cursor, generic mcp.json
+FR27: Epic 6 - Migrate all found MCP configs with summary
+FR28: Epic 6 - Validate imported server configs and report errors
 
 ## Epic List
 
@@ -115,6 +125,10 @@ Users can install, configure, and interact with the proxy via a polished POSIX C
 ### Epic 5: Reporting & Insights
 Users can see real-time metrics on token savings and security events.
 **FRs covered:** FR21, FR22, FR23
+
+### Epic 6: Server Configuration & Migration
+Users can define server entries with rich configuration and migrate from existing MCP tools.
+**FRs covered:** FR24, FR25, FR26, FR27, FR28
 
 ## Epic 1: Core Proxy Infrastructure
 
@@ -714,3 +728,122 @@ Reporting & Insights goal: Users can see real-time metrics on token savings and 
 **Given** verbose mode is enabled
 **When** status is displayed
 **Then** additional details are shown: memory usage, request count, error rate
+
+## Epic 6: Server Configuration & Migration
+
+Server Configuration & Migration goal: Users can define server entries with rich configuration and migrate from existing MCP tools.
+
+### Story 6.1: Define LeanProxy Servers YAML Schema
+
+**As a** developer,
+**I want to** define a comprehensive `leanproxy_servers.yaml` schema,
+**So that** users can configure MCP servers with transport type, command/args, env vars, and timeouts.
+
+**Acceptance Criteria:**
+
+**Given** a user configuring their MCP servers
+**When** they create `~/.config/leanproxy_servers.yaml`
+**Then** they can specify servers with: name, enabled flag, transport type (stdio/http/sse)
+**And** for stdio transport: command, args, env variables, cwd
+**And** for http/sse transport: url, headers
+**And** common options: timeout, connect_timeout, cache settings, summarize settings
+
+**Given** a minimal server entry
+**When** only name and command are specified
+**Then** defaults are applied for all other settings (enabled: true, timeout: 30s, etc.)
+
+**Given** an invalid schema (missing required fields)
+**When** the proxy starts
+**Then** it reports the validation error
+**And** exits with a helpful error message
+
+### Story 6.2: Implement Auto-Detection and Migration
+
+**As a** user,
+**I want to** run `leanproxy migrate` to auto-detect and import all MCP configs,
+**So that** I can move from OpenCode, Claude Code, VS Code, or Cursor without manual setup.
+
+**Acceptance Criteria:**
+
+**Given** existing MCP configurations on the system
+**When** the user runs `leanproxy migrate`
+**Then** the system scans known locations:
+- `~/.config/opencode/mcp.json`
+- `~/.claude.json` and `~/.config/claude/mcp_config.json`
+- VS Code settings.json (MCP extensions section)
+- `~/.cursor/mcp.json`
+- `~/.config/mcp.json`
+
+**Given** multiple MCP configs are found
+**When** the scan completes
+**Then** a summary is displayed showing:
+- Number of configs found
+- Servers to be imported per tool
+- Total server count
+
+**Given** the user confirms the migration
+**When** the import proceeds
+**Then** servers are merged into `leanproxy_servers.yaml`
+**And** duplicate server names are handled with suffix (_opencode, _claude, etc.)
+**And** a success message shows imported servers
+
+**Given** no MCP configs are found
+**When** the migrate command runs
+**Then** a message explains no configs were found
+**And** suggests manual server addition
+
+### Story 6.3: Validate Imported Server Configurations
+
+**As a** user,
+**I want to** see validation errors during migration,
+**So that** I know which servers might not work and why.
+
+**Acceptance Criteria:**
+
+**Given** an imported server with a missing executable command
+**When** the migration validates the config
+**Then** an error is reported: "Server 'github': command 'npx' not found in PATH"
+
+**Given** an imported server with invalid transport type
+**When** the migration validates the config
+**Then** an error is reported: "Server 'myserver': invalid transport 'ftp'. Must be stdio, http, or sse"
+
+**Given** an imported server with missing required field
+**When** the migration validates the config
+**Then** an error is reported with the specific field missing
+
+**Given** validation errors occur during migration
+**When** the import completes
+**Then** the summary shows: "Imported X servers, Y warnings"
+**And** warnings are displayed but don't block import
+
+**Given** the user runs `leanproxy migrate --validate-only`
+**When** the command executes
+**Then** only validation runs without importing
+**And** all validation errors are reported
+
+### Story 6.4: Add IDE Configuration Documentation
+
+**As a** user,
+**I want to** configure LeanProxy-MCP as an MCP server in my IDE,
+**So that** I can use it with Claude Desktop, Cursor, OpenCode, or Windsurf.
+
+**Acceptance Criteria:**
+
+**Given** a user reading the README documentation
+**When** they navigate to the IDE configuration section
+**Then** they find instructions for:
+- **Claude Desktop**: Adding `leanproxy` to `mcpServers` in `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Cursor**: Adding to `~/.cursor/mcp.json`
+- **OpenCode**: Adding to `~/.config/opencode/mcp.json`
+- **Windsurf**: Adding to `~/.windsurf/mcp.json`
+
+**Given** the documentation for each IDE
+**When** the user follows the steps
+**Then** they see how to set the transport (stdio) and command path
+**And** they see how to verify the connection works
+
+**Given** a user migrating from another MCP tool
+**When** they use the leanproxy migrate command
+**Then** the resulting config is immediately usable by their IDE
+**And** no manual editing of IDE config files is required
