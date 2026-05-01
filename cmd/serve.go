@@ -1,0 +1,66 @@
+package cmd
+
+import (
+	"fmt"
+	"log/slog"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/spf13/cobra"
+)
+
+var serveCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Start the JSON-RPC streaming proxy server",
+	Long:  `Start the LeanProxy MCP proxy server which listens for incoming connections and forwards JSON-RPC requests.`,
+	Run:   runServe,
+}
+
+var serveFlags struct {
+	listenAddr string
+	upstreamURL string
+}
+
+func init() {
+	serveCmd.Flags().StringVar(&serveFlags.listenAddr, "listen", "127.0.0.1:8080", "Address to listen on")
+	serveCmd.Flags().StringVar(&serveFlags.upstreamURL, "upstream", "http://localhost:8081", "Upstream JSON-RPC server URL")
+	RootCmd.AddCommand(serveCmd)
+}
+
+func runServe(cmd *cobra.Command, args []string) {
+	slog.Info("starting server", "listen", serveFlags.listenAddr, "upstream", serveFlags.upstreamURL)
+
+	ln, err := net.Listen("tcp", serveFlags.listenAddr)
+	if err != nil {
+		logError("failed to listen: %v", err)
+	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		slog.Info("shutting down server")
+		ln.Close()
+		os.Exit(0)
+	}()
+
+	slog.Info("server ready", "address", ln.Addr().String())
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			slog.Warn("accept error", "error", err)
+			continue
+		}
+		slog.Debug("connection accepted", "remote", conn.RemoteAddr())
+		go handleConnection(conn)
+	}
+}
+
+func handleConnection(conn net.Conn) {
+	defer conn.Close()
+	fmt.Fprintf(conn, "JSON-RPC streaming proxy ready\n")
+}
