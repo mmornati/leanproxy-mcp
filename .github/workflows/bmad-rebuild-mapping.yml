@@ -1,31 +1,19 @@
-name: BMad Stories Sync
+name: BMad Rebuild Mapping
 
 on:
-  push:
-    paths:
-      - '_bmad-output/implementation-artifacts/*.md'
   workflow_dispatch:
-    inputs:
-      sync_all:
-        description: 'Sync all stories (ignore git history)'
-        required: false
-        default: 'false'
-        type: boolean
-  workflow_run:
-    workflows: [BMad Epics Sync]
-    types: [completed]
-    branches: [main]
 
 jobs:
-  sync-stories:
+  rebuild-mapping:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -37,17 +25,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r .github/scripts/requirements.txt
 
-      - name: Run BMad Stories sync
-        run: python .github/scripts/bmad_stories_sync.py
+      - name: Rebuild mapping
+        run: python .github/scripts/bmad_rebuild_mapping.py
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SYNC_ALL: ${{ inputs.sync_all }}
 
       - name: Push mapping changes
         run: |
           git config --local user.email "bmad-bot@github.com"
           git config --local user.name "BMad Bot"
           git add _bmad-output/.issue-mapping.json
-          git diff --cached --quiet || git commit -m "BMad sync: update issue mapping"
+          git diff --cached --quiet || git commit -m "BMad rebuild: synchronized issue mapping with GitHub"
           git push

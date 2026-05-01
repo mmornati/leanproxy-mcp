@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 from pathlib import Path
@@ -9,7 +8,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
-STORIES_DIR = FIXTURES_DIR / "stories"
 EPICS_DIR = FIXTURES_DIR / "epics"
 
 
@@ -37,84 +35,57 @@ class TestEpicParsing:
         assert is_step_04_completed(content) is True
 
 
-class TestEpicProcessNew:
-    @patch("bmad_sync_lib.get_file_commit_sha")
-    @patch("bmad_epics_sync.save_mapping")
-    @patch("bmad_epics_sync.load_mapping")
-    @patch("bmad_epics_sync.link_sub_issue")
-    @patch("bmad_epics_sync.ensure_label_exists")
+class TestProcessEpic:
+    @patch("bmad_epics_sync.find_issue_by_title")
     @patch("bmad_epics_sync.create_issue")
-    def test_creates_epic_issues(
-        self, mock_create, mock_ensure, mock_link, mock_load, mock_save, mock_sha
-    ):
-        mock_sha.return_value = "abc123"
-        mock_load.return_value = {"last_sync": None, "epics": {}, "stories": {}}
-        mock_create.side_effect = [(100, 10), (200, 11), (201, 12), (300, 13), (301, 14), (302, 15), (303, 16), (304, 17)]
-
-        from bmad_epics_sync import process_epics_new
-
-        content = (EPICS_DIR / "epics-complete.md").read_text()
-        mapping = process_epics_new("owner/repo", "token", {"epics": {}, "stories": {}}, content)
-
-        assert "1" in mapping["epics"]
-        assert "2" in mapping["epics"]
-        assert "3" in mapping["epics"]
-        assert mock_create.call_count >= 8  # 3 epics + 5 stories
-
     @patch("bmad_epics_sync.ensure_label_exists")
-    @patch("bmad_epics_sync.create_issue")
-    @patch("bmad_epics_sync.load_mapping")
-    @patch("bmad_epics_sync.save_mapping")
-    def test_skips_incomplete_epics(self, mock_save, mock_load, mock_create, mock_ensure):
-        mock_load.return_value = {"last_sync": None, "epics": {}, "stories": {}}
-
-        from bmad_epics_sync import process_epics_new
-
-        content = (EPICS_DIR / "epics-incomplete.md").read_text()
-        result = process_epics_new("owner/repo", "token", {"epics": {}, "stories": {}}, content)
-
-        assert result["epics"] == {}
-        mock_create.assert_not_called()
-
-
-class TestEpicProcessModified:
-    @patch("bmad_sync_lib.add_comment")
-    @patch("bmad_sync_lib.get_file_commit_sha")
-    @patch("bmad_epics_sync.load_mapping")
-    @patch("bmad_epics_sync.save_mapping")
-    def test_adds_comment_on_modification(
-        self, mock_save, mock_load, mock_sha, mock_add_comment
+    def test_creates_new_epic_when_not_on_github(
+        self, mock_ensure, mock_create, mock_find
     ):
-        mock_sha.return_value = "def456"
-        mock_load.return_value = {
-            "last_sync": None,
-            "epics": {"1": {"issue_number": 10}},
-            "stories": {},
-        }
+        mock_find.return_value = None
+        mock_create.return_value = (100, 10)
 
-        from bmad_epics_sync import process_epics_modified
+        from bmad_epics_sync import process_epic
 
-        content = (EPICS_DIR / "epics-complete.md").read_text()
-        mapping = process_epics_modified("owner/repo", "token", mock_load.return_value, content)
-
-        assert mock_add_comment.called
-
-
-class TestEpicLinking:
-    @patch("bmad_epics_sync.save_mapping")
-    @patch("bmad_epics_sync.link_sub_issue")
-    @patch("bmad_epics_sync.ensure_label_exists")
-    @patch("bmad_epics_sync.create_issue")
-    def test_links_stories_as_sub_issues(
-        self, mock_create, mock_ensure, mock_link, mock_save
-    ):
-        mock_create.side_effect = [(100, 10), (200, 11), (201, 12), (300, 13), (301, 14), (302, 15), (303, 16), (304, 17)]
-
-        from bmad_epics_sync import process_epics_new
-
-        content = (EPICS_DIR / "epics-complete.md").read_text()
+        epic = {"key": "1", "title": "Test Epic", "stories": []}
         mapping = {"epics": {}, "stories": {}}
-        process_epics_new("owner/repo", "token", mapping, content)
+        content = (EPICS_DIR / "epics-complete.md").read_text()
+        result = process_epic("owner/repo", "token", mapping, epic, content)
 
-        assert mock_link.call_count >= 5  # 5 total stories linked to their epics
-        assert "epics" in mapping
+        assert "1" in result["epics"]
+        assert result["epics"]["1"]["issue_number"] == 10
+        mock_create.assert_called_once()
+
+    @patch("bmad_epics_sync.find_issue_by_title")
+    def test_skips_existing_epic_on_github(
+        self, mock_find
+    ):
+        mock_find.return_value = {"id": "123", "number": 20, "state": "open"}
+
+        from bmad_epics_sync import process_epic
+
+        epic = {"key": "1", "title": "Test Epic", "stories": []}
+        mapping = {"epics": {}, "stories": {}}
+        content = (EPICS_DIR / "epics-complete.md").read_text()
+        result = process_epic("owner/repo", "token", mapping, epic, content)
+
+        assert "1" in result["epics"]
+        assert result["epics"]["1"]["issue_number"] == 20
+
+    @patch("bmad_epics_sync.find_issue_by_title")
+    @patch("bmad_epics_sync.create_issue")
+    @patch("bmad_epics_sync.ensure_label_exists")
+    def test_skips_epic_without_step04(
+        self, mock_ensure, mock_create, mock_find
+    ):
+        mock_find.return_value = None
+
+        from bmad_epics_sync import process_epic
+
+        epic = {"key": "1", "title": "Test Epic", "stories": []}
+        mapping = {"epics": {}, "stories": {}}
+        content = (EPICS_DIR / "epics-incomplete.md").read_text()
+        result = process_epic("owner/repo", "token", mapping, epic, content)
+
+        assert "1" not in result["epics"]
+        mock_create.assert_not_called()

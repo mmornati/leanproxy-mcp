@@ -245,5 +245,52 @@ def slugify(text: str) -> str:
     return text.strip("-")
 
 
+def find_issue_by_title(repo: str, token: str, title: str) -> dict | None:
+    url = f"https://api.github.com/repos/{repo}/issues?state=open&per_page=100"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request) as response:
+            issues = json.loads(response.read())
+            for issue in issues:
+                if issue.get("title") == title:
+                    return {"id": issue["id"], "number": issue["number"], "state": issue["state"]}
+    except urllib.error.HTTPError:
+        pass
+    return None
+
+
+def update_issue(repo: str, token: str, issue_number: int, body: str) -> None:
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+        "Content-Type": "application/json",
+    }
+    data = json.dumps({"body": body}).encode()
+    request = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
+    with urllib.request.urlopen(request):
+        pass
+
+
 def format_timestamp() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def commit_file_to_git(file_path: str, message: str, repo_path: Path | None = None) -> bool:
+    if repo_path is None:
+        repo_path = Path(__file__).parent.parent.parent
+    try:
+        subprocess.run(["git", "add", file_path], capture_output=True, cwd=repo_path, check=True)
+        subprocess.run(
+            ["git", "commit", "-m", message],
+            capture_output=True,
+            cwd=repo_path,
+            env={**os.environ, "GIT_AUTHOR_NAME": "BMad Bot", "GIT_AUTHOR_EMAIL": "bmad-bot@github.com", "GIT_COMMITTER_NAME": "BMad Bot", "GIT_COMMITTER_EMAIL": "bmad-bot@github.com"},
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False

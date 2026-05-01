@@ -40,7 +40,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SYNC_ALL: ${{ inputs.sync_all }}
 
+      - name: Push mapping changes
+        run: |
+          git config --local user.email "bmad-bot@github.com"
+          git config --local user.name "BMad Bot"
+          git add _bmad-output/.issue-mapping.json
+          git diff --cached --quiet || git commit -m "BMad epics sync: update issue mapping"
+          git push
+
       - name: Upload issue mapping
+        if: false
         uses: actions/upload-artifact@v4
         with:
           name: issue-mapping
