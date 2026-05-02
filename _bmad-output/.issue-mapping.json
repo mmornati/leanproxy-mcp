@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-02T13:43:41.610568Z",
+  "last_sync": "2026-05-02T15:02:21.208954Z",
   "epics": {
     "1": {
       "issue_id": 4366778556,
@@ -222,7 +222,7 @@
       "issue_id": 4368469088,
       "issue_number": 57,
       "parent_epic": "7",
-      "commit_sha": "327f037"
+      "commit_sha": "749ca96"
     },
     "7-3-stdio-pool-manager": {
       "issue_id": 4368469138,
