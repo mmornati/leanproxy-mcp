@@ -41,6 +41,7 @@ development_status:
   6-2-auto-detect-migration: ready-for-dev
   6-3-validate-imported-server-configs: review
   6-4-ide-configuration-documentation: ready-for-dev
+  7-1-tool-to-server-routing: review
 
-last_updated: 2026-05-01
+last_updated: 2026-05-02
 sprint_goal: Implement all 27 stories across 6 epics

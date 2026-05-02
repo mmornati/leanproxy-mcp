@@ -1,6 +1,6 @@
 # Story 7.1: Tool-to-Server Routing Engine
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -147,14 +147,14 @@ pkg/router/
 
 ### Implementation Checklist
 
-- [ ] Create `pkg/router/router.go` with Router interface
-- [ ] Implement method parsing (extract namespace, tool name)
-- [ ] Implement server lookup by namespace
-- [ ] Implement fallback search across all servers
-- [ ] Implement error handling for not found / ambiguous
-- [ ] Implement request forwarding to server stdin/stdout
-- [ ] Add unit tests
-- [ ] Verify < 50ms routing decision overhead
+- [x] Create `pkg/router/router.go` with Router interface
+- [x] Implement method parsing (extract namespace, tool name)
+- [x] Implement server lookup by namespace
+- [x] Implement fallback search across all servers
+- [x] Implement error handling for not found / ambiguous
+- [x] Implement request forwarding to server stdin/stdout
+- [x] Add unit tests
+- [x] Verify < 50ms routing decision overhead
 
 ### Edge Cases
 
