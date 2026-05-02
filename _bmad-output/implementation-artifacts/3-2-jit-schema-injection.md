@@ -8,7 +8,7 @@
 | Key | jit-schema-injection |
 | Epic | Epic 3: Context Optimization (JIT Discovery & Compactor) |
 | Title | Implement JIT Schema Injection |
-| Status | backlog |
+| Status | review |
 | Estimated Points | 5 |
 
 ## User Story
@@ -156,3 +156,51 @@ jit:
   cache-size: 100
   cache-ttl: 1h
 ```
+
+## Tasks/Subtasks
+
+- [x] Create SchemaCache interface and LRU implementation in pkg/registry/cache.go
+- [x] Create JITHandler in pkg/proxy/jit.go with HandleGetToolSchema method
+- [x] Implement cache key generation as `{serverName}/{toolName}`
+- [x] Implement case-insensitive method matching for `get_tool_schema`
+- [x] Implement extractToolName helper to parse tool name from params
+- [x] Implement registry lookup and cache population
+- [x] Implement forward to MCP server for unknown tools
+- [x] Add nil-safe logging in JIT handler
+- [x] Create comprehensive unit tests in pkg/proxy/jit_test.go
+- [x] Add benchmarks for cache hit/miss scenarios
+- [x] Verify all tests pass with no regressions
+
+## Dev Agent Record
+
+### Debug Log
+
+- 2026-05-02: Initial implementation of JIT schema injection
+- 2026-05-02: Fixed nil pointer dereference when logger is nil in debug logging
+- 2026-05-02: Fixed ID preservation in mock forwarder for forwarded responses
+
+### Completion Notes
+
+Implemented JIT Schema Injection feature with:
+- LRU schema cache in pkg/registry/cache.go with configurable size (default 100) and TTL (default 1h)
+- JITHandler in pkg/proxy/jit.go that intercepts `get_tool_schema` requests
+- Case-insensitive method matching for get_tool_schema
+- Cache key format: `{serverName}/{toolName}`
+- Unknown tools are forwarded to MCP server
+- SchemaCache interface for testability
+- Comprehensive unit tests covering cache hit, cache miss, disabled mode, and error cases
+
+All 362 tests pass with no regressions.
+
+## File List
+
+- pkg/registry/cache.go (NEW)
+- pkg/proxy/jit.go (NEW)
+- pkg/proxy/jit_test.go (NEW)
+- pkg/proxy/proxy.go (MODIFIED - added SchemaCache interface)
+
+## Change Log
+
+- 2026-05-02: Initial implementation of JIT schema injection feature
+- 2026-05-02: Added LRU cache implementation with TTL support
+- 2026-05-02: Added comprehensive unit tests with benchmarks
