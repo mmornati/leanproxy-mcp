@@ -433,7 +433,39 @@ def close_issue(repo: str, token: str, issue_number: int) -> None:
         pass
 
 
-def assign_issue(repo: str, token: str, issue_number: int, assignee: str) -> None:
+def get_pr_author(repo: str, token: str, pr_number: int) -> str | None:
+    url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request) as response:
+            pr = json.loads(response.read())
+            return pr.get("user", {}).get("login")
+    except urllib.error.HTTPError:
+        return None
+
+
+def get_issue_state_and_assignees(repo: str, token: str, issue_number: int) -> tuple[str | None, list[str]]:
+    url = f"https://api.github.com/repos/{repo}/issues/{issue_number}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github.v3+json",
+    }
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request) as response:
+            issue = json.loads(response.read())
+            state = issue.get("state")
+            assignees = [a.get("login") for a in issue.get("assignees", []) if a.get("login")]
+            return state, assignees
+    except urllib.error.HTTPError:
+        return None, []
+
+
+def assign_issue(repo: str, token: str, issue_number: int, assignee: str) -> bool:
     url = f"https://api.github.com/repos/{repo}/issues/{issue_number}/assignees"
     headers = {
         "Authorization": f"token {token}",
@@ -444,10 +476,11 @@ def assign_issue(repo: str, token: str, issue_number: int, assignee: str) -> Non
     request = urllib.request.Request(url, data=data, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request):
-            pass
+            return True
     except urllib.error.HTTPError as e:
         if e.code == 422:
-            pass
+            print(f"  WARNING: Could not assign issue #{issue_number} to '{assignee}' - user not found")
+            return False
         else:
             raise
 

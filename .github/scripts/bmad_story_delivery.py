@@ -13,6 +13,8 @@ from bmad_sync_lib import (
     get_commit_author,
     get_file_commit_sha,
     get_issue_from_mapping,
+    get_pr_author,
+    get_issue_state_and_assignees,
     is_direct_push_to_main,
     is_story_implemented,
     load_mapping,
@@ -20,6 +22,31 @@ from bmad_sync_lib import (
     update_comment,
     update_pr_body,
 )
+
+
+BOT_NAMES = ("bmad bot", "github-actions[bot]", "github actions", "bot")
+
+
+def is_bot_name(author: str | None) -> bool:
+    if not author:
+        return True
+    return author.lower() in BOT_NAMES
+
+
+def get_assignee_for_delivery(repo: str, token: str, file_path: str, pr_number: int | None, is_direct: bool) -> str | None:
+    github_actor = os.environ.get("GITHUB_ACTOR")
+
+    if pr_number and not is_direct:
+        pr_author = get_pr_author(repo, token, pr_number)
+        if pr_author:
+            return pr_author
+
+    commit_author = get_commit_author(file_path)
+
+    if is_bot_name(commit_author):
+        return github_actor
+
+    return commit_author
 
 
 def process_delivery(repo: str, token: str, mapping: dict, file_path: str, content: str, pr_number: int | None = None) -> dict:
@@ -37,16 +64,21 @@ def process_delivery(repo: str, token: str, mapping: dict, file_path: str, conte
         return mapping
 
     commit_sha = get_file_commit_sha(file_path)
-    commit_author = get_commit_author(file_path)
     repo_env = os.environ.get("GITHUB_REPOSITORY", "")
 
     is_direct = is_direct_push_to_main()
 
+    issue_state, issue_assignees = get_issue_state_and_assignees(repo, token, issue_number)
+
     if is_direct:
         print(f"Direct push to main for {story_title} - assigning and closing issue #{issue_number}")
-        if commit_author:
-            assign_issue(repo, token, issue_number, commit_author)
-            print(f"  Assigned to {commit_author}")
+        assignee = get_assignee_for_delivery(repo, token, file_path, pr_number, is_direct)
+        if assignee and issue_state != "closed":
+            if issue_assignees:
+                print(f"  Skipping assignment - issue #{issue_number} already assigned to: {', '.join(issue_assignees)}")
+            else:
+                if assign_issue(repo, token, issue_number, assignee):
+                    print(f"  Assigned to {assignee}")
         close_issue(repo, token, issue_number)
         print(f"  Closed issue #{issue_number}")
     elif pr_number:
@@ -56,9 +88,15 @@ def process_delivery(repo: str, token: str, mapping: dict, file_path: str, conte
         update_pr_body(repo, token, pr_number, closes_marker)
         print(f"  Added '{closes_marker}' to PR #{pr_number} body")
 
-        if commit_author:
-            assign_issue(repo, token, issue_number, commit_author)
-            print(f"  Assigned issue #{issue_number} to {commit_author}")
+        assignee = get_assignee_for_delivery(repo, token, file_path, pr_number, is_direct)
+        if assignee:
+            if issue_assignees:
+                print(f"  Skipping assignment - issue #{issue_number} already assigned to: {', '.join(issue_assignees)}")
+            elif issue_state == "closed":
+                print(f"  Skipping assignment - issue #{issue_number} is already closed")
+            else:
+                if assign_issue(repo, token, issue_number, assignee):
+                    print(f"  Assigned issue #{issue_number} to {assignee}")
 
         timestamp = format_timestamp()
         comment = f"""**Story Delivered** - {timestamp}
