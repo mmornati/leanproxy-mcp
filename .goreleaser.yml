@@ -1,0 +1,38 @@
+version: 2
+before:
+  hooks:
+    - go mod download
+builds:
+  - id: leanproxy-mcp
+    main: ./main.go
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -s -w
+    ldflags:
+      - -s -w
+      - -X github.com/mmornati/leanproxy-mcp/cmd.versionString={{.Version}}
+archives:
+  - id: default
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - none:\n
+checksums:
+  sigs:
+    required: true
+  files:
+    - all:'*'
+github:
+  owner: mmornati
+  name: leanproxy-mcp
+  release_template_file: .goreleaser.toml

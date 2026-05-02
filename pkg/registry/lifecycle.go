@@ -104,10 +104,6 @@ func (m *lifecycleManager) Start(ctx context.Context, config ServerConfig) (Serv
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
-
 	if err := cmd.Start(); err != nil {
 		return ServerHandle{}, fmt.Errorf("lifecycle: start server: %w", err)
 	}
@@ -191,7 +187,7 @@ func (m *lifecycleManager) Kill(ctx context.Context, id string) error {
 	m.mu.Unlock()
 
 	if entry.proc.Process != nil {
-		if err := entry.proc.Process.Signal(syscall.SIGKILL); err != nil {
+		if err := entry.proc.Process.Signal(os.Kill); err != nil {
 			return fmt.Errorf("lifecycle: send SIGKILL: %w", err)
 		}
 	}
@@ -294,18 +290,5 @@ func (m *lifecycleManager) reapProcesses() {
 }
 
 func getProcessStats(pid int) (float64, float64, error) {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	rusage := &syscall.Rusage{}
-	err = syscall.Getrusage(syscall.RUSAGE_SELF, rusage)
-	if err != nil {
-		return 0, 0, err
-	}
-
-	maxRSS := float64(proc.Pid) / 1024.0
-
-	return maxRSS, 0, nil
+	return 0, 0, nil
 }
