@@ -45,6 +45,7 @@ development_status:
   7-2-expose-gateway-tools: review
   leanproxy-7-3: review
   leanproxy-7-4: review
+  leanproxy-7-6: review
 
 last_updated: 2026-05-02
 sprint_goal: Implement all 27 stories across 6 epics
