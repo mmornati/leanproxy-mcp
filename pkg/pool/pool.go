@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 )
 
@@ -269,4 +270,45 @@ func (p *StdioPool) RestartServer(ctx context.Context, name string) error {
 	server.mu.Unlock()
 
 	return server.spawn(ctx)
+}
+
+func (p *StdioPool) SendRequest(ctx context.Context, serverName string, req *proxy.JSONRPCRequest, timeout time.Duration) (*proxy.JSONRPCResponse, error) {
+	id := req.ID
+	if id == nil {
+		id = 1
+	}
+
+	resultCh := make(chan *Response, 1)
+	errorCh := make(chan error, 1)
+
+	poolReq := Request{
+		Method:   req.Method,
+		Params:   req.Params,
+		ID:       id,
+		Timeout:  timeout,
+		ResultCh: resultCh,
+		ErrorCh:  errorCh,
+	}
+
+	if err := p.PutRequest(serverName, poolReq); err != nil {
+		return nil, fmt.Errorf("pool: send request: %w", err)
+	}
+
+	select {
+	case resp := <-resultCh:
+		if resp.Error != nil {
+			return nil, resp.Error
+		}
+		return &proxy.JSONRPCResponse{
+			JSONRPC: "2.0",
+			Result:  resp.Result,
+			ID:      resp.ID,
+		}, nil
+	case err := <-errorCh:
+		return nil, err
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("pool: request timeout after %v", timeout)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
