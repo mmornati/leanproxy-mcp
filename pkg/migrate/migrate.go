@@ -31,6 +31,7 @@ type ImportResult struct {
 	Imported   int
 	Duplicates int
 	Errors     []error
+	Validation *ValidationResult
 }
 
 type Migrator struct {
@@ -91,12 +92,27 @@ func (m *Migrator) Summarize(servers []DiscoveredServer) *MigrationSummary {
 	return summary
 }
 
+func (m *Migrator) Validate(servers []DiscoveredServer) *ValidationResult {
+	validator := NewValidator()
+	return validator.ValidateServers(servers)
+}
+
 func (m *Migrator) Import(ctx context.Context, servers []DiscoveredServer, targetPath string, yes bool) (*ImportResult, error) {
 	if len(servers) == 0 {
 		return nil, fmt.Errorf("no servers to import")
 	}
 
 	result := &ImportResult{}
+
+	validator := NewValidatorWithoutExecutableCheck()
+	validationResult := validator.ValidateServers(servers)
+	result.Validation = validationResult
+
+	if validationResult.HasErrors() {
+		for _, err := range validationResult.Errors {
+			result.Errors = append(result.Errors, &err)
+		}
+	}
 
 	configPath := expandPath(targetPath)
 	dir := filepath.Dir(configPath)

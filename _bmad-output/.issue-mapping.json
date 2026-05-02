@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-02T07:19:55.978459Z",
+  "last_sync": "2026-05-02T07:28:00.398328Z",
   "epics": {
     "1": {
       "issue_id": 4366778556,
@@ -175,7 +175,7 @@
       "issue_id": 4366835280,
       "issue_number": 41,
       "parent_epic": "6",
-      "commit_sha": "a60be4d"
+      "commit_sha": "2c8b0f8"
     },
     "6-2-auto-detect-migration": {
       "issue_id": 4368296888,

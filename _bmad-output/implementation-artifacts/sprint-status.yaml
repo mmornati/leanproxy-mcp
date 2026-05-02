@@ -39,7 +39,7 @@ development_status:
   5-3-real-time-server-health: ready-for-dev
   6-1-define-leanproxy-servers-yaml-schema: ready-for-dev
   6-2-auto-detect-migration: ready-for-dev
-  6-3-validate-imported-server-configs: ready-for-dev
+  6-3-validate-imported-server-configs: review
   6-4-ide-configuration-documentation: ready-for-dev
 
 last_updated: 2026-05-01
