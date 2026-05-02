@@ -12,7 +12,7 @@ func TestRedactAWSKey(t *testing.T) {
 	input := `{"api_key": "AKIAIOSFODNN7EXAMPLE"}`
 	expected := `{"api_key": "[SECRET_REDACTED]"}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
@@ -27,7 +27,7 @@ func TestRedactGitHubToken(t *testing.T) {
 	input := `{"token": "ghp_123456789012345678901234567890123456"}`
 	expected := `{"token": "[SECRET_REDACTED]"}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
@@ -42,7 +42,7 @@ func TestRedactGitHubFineGrainedPAT(t *testing.T) {
 	input := `{"token": "github_pat_11AAAAAAAAAAAAAAA_BBBBBBBBBBBBBBBBBBB"}`
 	expected := `{"token": "[SECRET_REDACTED]"}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
@@ -61,7 +61,7 @@ func TestRedactMultipleSecrets(t *testing.T) {
 	input := `{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_123456789012345678901234567890123456"}`
 	expected := `{"aws": "[SECRET_REDACTED]", "github": "[SECRET_REDACTED]"}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
@@ -75,7 +75,7 @@ func TestRedactMultipleSecrets(t *testing.T) {
 func TestRedactNoSecrets(t *testing.T) {
 	input := `{"message": "hello world"}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
@@ -89,7 +89,7 @@ func TestRedactNoSecrets(t *testing.T) {
 func TestRedactJSONStructurePreservation(t *testing.T) {
 	input := `{"data": {"api_key": "AKIAIOSFODNN7EXAMPLE"}, "count": 1}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
@@ -112,7 +112,7 @@ func TestRedactStreamBasic(t *testing.T) {
 	input := `{"api_key": "AKIAIOSFODNN7EXAMPLE"}`
 	expected := `{"api_key": "[SECRET_REDACTED]"}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	reader := strings.NewReader(input)
 	var writer bytes.Buffer
 
@@ -129,7 +129,7 @@ func TestRedactStreamBasic(t *testing.T) {
 func TestRedactStreamNoSecrets(t *testing.T) {
 	input := `{"message": "hello world"}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	reader := strings.NewReader(input)
 	var writer bytes.Buffer
 
@@ -152,7 +152,7 @@ func TestRedactStreamLargePayload(t *testing.T) {
 	sb.WriteString(`", "api_key": "AKIAIOSFODNN7EXAMPLE"}`)
 	input := sb.String()
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	reader := strings.NewReader(input)
 	var writer bytes.Buffer
 
@@ -169,7 +169,7 @@ func TestRedactStreamLargePayload(t *testing.T) {
 func TestRedactInvalidJSON(t *testing.T) {
 	input := `{invalid json}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
 
 	if err != nil {
@@ -185,7 +185,7 @@ func TestRedactBearerToken(t *testing.T) {
 	input := `{"auth": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"}`
 	expected := `{"auth": "[SECRET_REDACTED]"}`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
@@ -200,7 +200,7 @@ func TestRedactAPIKeyCaseInsensitive(t *testing.T) {
 	input := `api_key=abcdefghijklmnopqrstuvwxyz123456`
 	expected := `[SECRET_REDACTED]`
 
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result := redactor.redactString(input)
 
 	if result != expected {
@@ -210,7 +210,7 @@ func TestRedactAPIKeyCaseInsensitive(t *testing.T) {
 
 func BenchmarkRedactSmallMessage(b *testing.B) {
 	input := `{"api_key": "AKIAIOSFODNN7EXAMPLE", "data": "hello world"}`
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -220,7 +220,7 @@ func BenchmarkRedactSmallMessage(b *testing.B) {
 
 func BenchmarkRedactStreamSmallMessage(b *testing.B) {
 	input := `{"api_key": "AKIAIOSFODNN7EXAMPLE", "data": "hello world"}`
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	reader := strings.NewReader(input)
 
 	b.ResetTimer()
@@ -232,7 +232,7 @@ func BenchmarkRedactStreamSmallMessage(b *testing.B) {
 }
 
 func TestNewRedactor(t *testing.T) {
-	redactor := NewRedactor(BuiltInPatterns)
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	if redactor == nil {
 		t.Fatal("expected non-nil redactor")
 	}

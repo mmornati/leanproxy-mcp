@@ -1,13 +1,18 @@
 package bouncer
 
-import "regexp"
+import (
+	"fmt"
+	"regexp"
+)
 
-var BuiltInPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`AKIA[0-9A-Z]{16}`),
-	regexp.MustCompile(`ghp_[A-Za-z0-9]{36}`),
-	regexp.MustCompile(`github_pat_[A-Za-z0-9_]{22,}`),
-	regexp.MustCompile(`sk_live_[A-Za-z0-9]{24}`),
-	regexp.MustCompile(`pk_live_[A-Za-z0-9]{24}`),
-	regexp.MustCompile(`(?i)(api[_-]?key)[_-]?[=]?[A-Za-z0-9]{16,}`),
-	regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_]+`),
+func CompilePatterns(configs []PatternConfig) ([]*regexp.Regexp, error) {
+	var patterns []*regexp.Regexp
+	for _, c := range configs {
+		re, err := regexp.Compile(c.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("invalid pattern %q: %w", c.Name, err)
+		}
+		patterns = append(patterns, re)
+	}
+	return patterns, nil
 }

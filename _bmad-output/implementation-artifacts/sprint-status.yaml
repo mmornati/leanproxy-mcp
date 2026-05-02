@@ -20,7 +20,7 @@ development_status:
   1-4-shadow-manifesting: review
   1-5-dynamic-server-registry: ready-for-dev
   2-1-core-redaction-engine: review
-  2-2-allow-list-redaction: ready-for-dev
+  2-2-allow-list-redaction: review
   2-3-custom-redaction-patterns: ready-for-dev
   2-4-in-memory-only: ready-for-dev
   2-5-redaction-alerts: ready-for-dev

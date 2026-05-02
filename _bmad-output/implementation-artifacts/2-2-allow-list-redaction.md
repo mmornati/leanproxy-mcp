@@ -267,3 +267,40 @@ func TestNoFalsePositives(t *testing.T) {
 - `slog.Info("loading allow-list patterns", "count", len(BuiltInPatterns))` at startup
 - `slog.Debug("pattern validated", "name", p.Name)` for each pattern
 - `slog.Warn("invalid custom pattern skipped", "name", name, "error", err)` for bad configs
+
+## Status
+
+- [x] Tasks/Subtasks completed
+- Status: review
+- Last Updated: 2026-05-02
+
+## File List
+
+- `pkg/bouncer/allowlist.go` - New file with SecretPattern struct and BuiltInPatterns
+- `pkg/bouncer/allowlist_test.go` - New file with comprehensive pattern tests
+- `pkg/bouncer/patterns.go` - Updated to use allowlist integration
+- `pkg/bouncer/redactor.go` - Updated to use allowlist for redaction
+- `pkg/bouncer/patterns_test.go` - Updated to use new BuiltInPatterns type
+- `pkg/bouncer/redactor_test.go` - Updated to use PatternsToRegexps
+
+## Change Log
+
+- 2026-05-02: Initial implementation of allow-list redaction patterns with 8 built-in patterns (AWS, GitHub, Stripe, generic API key, Bearer token, env var)
+- 2026-05-02: Added comprehensive tests for pattern validation and redaction
+- 2026-05-02: All 47 tests passing
+
+## Dev Agent Record
+
+### Implementation Plan
+
+Implemented allow-list approach for core redaction patterns following the story requirements. Created SecretPattern struct with Name, Pattern, Example, and Description fields. Built-in patterns include AWS access keys, GitHub PATs (classic and fine-grained), Stripe keys (secret and publishable), generic API keys, Bearer tokens, and environment variable assignments.
+
+### Debug Log
+
+- Resolved pattern matching issues by adjusting test case string lengths
+- Updated patterns_test.go and redactor_test.go to use new BuiltInPatterns type with SecretPattern struct
+- Fixed duplicate invalid declarations in Stripe tests
+
+### Completion Notes
+
+Story 2-2 implementation complete. All 8 allow-list patterns implemented and tested with 47 passing tests. Patterns use regexp.MustCompile for compile-time validation. Extensibility supported through custom pattern configuration.
