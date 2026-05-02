@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-02T07:10:18.374391Z",
+  "last_sync": "2026-05-02T07:19:55.978459Z",
   "epics": {
     "1": {
       "issue_id": 4366778556,
@@ -178,10 +178,10 @@
       "commit_sha": "a60be4d"
     },
     "6-2-auto-detect-migration": {
-      "issue_id": 4366835328,
-      "issue_number": 42,
+      "issue_id": 4368296888,
+      "issue_number": 48,
       "parent_epic": "6",
-      "commit_sha": "191a8db"
+      "commit_sha": "5bb3262"
     },
     "6-1-define-leanproxy-servers-yaml-schema": {
       "issue_id": 4366835402,
