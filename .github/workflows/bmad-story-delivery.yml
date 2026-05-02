@@ -44,25 +44,46 @@ jobs:
         shell: python
         run: |
             import os
-            pr_num = os.environ.get("INPUT_PR_NUMBER")
-            if pr_num:
+            import json
+
+            pr_num = ""
+
+            # Check workflow_dispatch input first
+            input_pr = os.environ.get("INPUT_PR_NUMBER", "")
+            if input_pr:
+                pr_num = input_pr
                 print(f"Using workflow_dispatch PR number: {pr_num}")
             else:
-                import subprocess
-                branch = os.environ.get("GITHUB_REF_NAME", "")
-                result = subprocess.run(
-                    ["gh", "api", "-q", ".[].number", f'repos/mmornati/leanproxy-mcp/pulls?head={branch}&state=open'],
-                    capture_output=True, text=True
-                )
-                pr_num = result.stdout.strip().split('\n')[0] if result.stdout.strip() else ""
-                print(f"Found PR number for branch {branch}: {pr_num or 'none'}")
+                # For pull_request events, use the PR number from the event
+                pr_payload = os.environ.get("GITHUB_EVENT_PATH", "")
+                if pr_payload and os.path.exists(pr_payload):
+                    with open(pr_payload) as f:
+                        event = json.load(f)
+                        if "pull_request" in event:
+                            pr_num = str(event["pull_request"]["number"])
+                            print(f"Using PR number from event: {pr_num}")
+
+                # If no PR number from event, try to find by branch
+                if not pr_num:
+                    import subprocess
+                    branch = os.environ.get("GITHUB_REF_NAME", "")
+                    actor = os.environ.get("GITHUB_ACTOR", "mmornati")
+                    result = subprocess.run(
+                        ["gh", "api", "-q", ".[].number", f"repos/mmornati/leanproxy-mcp/pulls?head={actor}:{branch}&state=open"],
+                        capture_output=True, text=True
+                    )
+                    pr_num = result.stdout.strip().split('\n')[0] if result.stdout.strip() else ""
+                    print(f"Found PR number for branch {branch}: {pr_num or 'none'}")
+
             with open(os.environ["GITHUB_OUTPUT"], "a") as f:
                 f.write(f"pr_number={pr_num}\n")
 
         env:
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_OUTPUT: ${{ env.GITHUB_OUTPUT }}
+          GITHUB_EVENT_PATH: ${{ env.GITHUB_EVENT_PATH }}
 
       - name: Run BMad Story Delivery
         run: python .github/scripts/bmad_story_delivery.py
