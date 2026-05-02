@@ -8,13 +8,20 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const SecretRedacted = "[SECRET_REDACTED]"
 
+type RedactionMeta struct {
+	MessageID string
+	Method    string
+}
+
 type Redactor struct {
-	patterns   []*regexp.Regexp
-	bufferSize int
+	patterns      []*regexp.Regexp
+	alertManager  *AlertManager
+	bufferSize    int
 }
 
 func NewRedactor(patterns []*regexp.Regexp) *Redactor {
@@ -24,12 +31,21 @@ func NewRedactor(patterns []*regexp.Regexp) *Redactor {
 	}
 }
 
-func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer) error {
+func NewRedactorWithAlerts(patterns []*regexp.Regexp, alertManager *AlertManager) *Redactor {
+	return &Redactor{
+		patterns:     patterns,
+		alertManager: alertManager,
+		bufferSize:   4096,
+	}
+}
+
+func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*RedactionMeta) error {
 	readerBuf := bufio.NewReaderSize(reader, r.bufferSize)
 	writerBuf := bufio.NewWriterSize(writer, r.bufferSize)
 	defer writerBuf.Flush()
 
 	var totalRead, totalWritten int64
+	matchCount := 0
 
 	for {
 		buf := GetBuffer()
@@ -38,7 +54,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer) error {
 		n, err := readerBuf.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
-			redacted := r.redactChunk(chunk)
+			redacted, count := r.redactChunkWithCount(chunk)
 
 			_, writeErr := writerBuf.Write(redacted)
 			if writeErr != nil {
@@ -46,6 +62,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer) error {
 			}
 			totalRead += int64(n)
 			totalWritten += int64(len(redacted))
+			matchCount += count
 			slog.Debug("processing chunk", "size", n)
 		}
 		if err == io.EOF {
@@ -57,7 +74,49 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer) error {
 		}
 	}
 
+	if r.alertManager != nil && matchCount > 0 && len(meta) > 0 && meta[0] != nil {
+		r.alertManager.RecordRedaction(RedactionEvent{
+			PatternName: "streaming_redaction",
+			Count:       matchCount,
+			Timestamp:   time.Now(),
+			MessageID:   meta[0].MessageID,
+			Method:      meta[0].Method,
+		})
+		r.alertManager.EmitSummary(meta[0].MessageID, meta[0].Method)
+	}
+
 	return nil
+}
+
+func (r *Redactor) redactChunkWithCount(chunk []byte) ([]byte, int) {
+	result := make([]byte, 0, len(chunk))
+	remaining := chunk
+	matchCount := 0
+
+	for len(remaining) > 0 {
+		matchIndex := -1
+		matchEnd := -1
+
+		for _, pattern := range r.patterns {
+			loc := pattern.FindIndex(remaining)
+			if loc != nil && (matchIndex == -1 || loc[0] < matchIndex) {
+				matchIndex = loc[0]
+				matchEnd = loc[1]
+			}
+		}
+
+		if matchIndex == -1 {
+			result = append(result, remaining...)
+			break
+		}
+
+		result = append(result, remaining[:matchIndex]...)
+		result = append(result, SecretRedacted...)
+		remaining = remaining[matchEnd:]
+		matchCount++
+	}
+
+	return result, matchCount
 }
 
 func (r *Redactor) redactChunk(chunk []byte) []byte {

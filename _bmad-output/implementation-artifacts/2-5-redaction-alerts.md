@@ -399,3 +399,45 @@ level=INFO msg="redaction_event" pattern=aws-access-key count=1 timestamp=2026-0
 level=INFO msg="redaction_event" pattern=github-classic-pat count=2 timestamp=2026-05-01T10:30:00Z msg_id=abc123 method=tools/call
 level=DEBUG msg="redaction_detail" detail="{\"event\":\"redaction_summary\",\"message_id\":\"abc123\",\"method\":\"tools/call\",\"patterns\":{\"aws-access-key\":1,\"github-classic-pat\":2},\"has_secrets\":true,\"secret_fields\":[\"arguments\"]}"
 ```
+
+---
+
+## Tasks/Subtasks
+
+- [x] Implement AlertManager struct in `pkg/bouncer/alerts.go`
+- [x] Add RecordRedaction and EmitSummary methods
+- [x] Integrate with Redactor and StreamingRedactor
+- [x] Add `--verbose` flag support
+- [x] Write comprehensive tests in `pkg/bouncer/alerts_test.go`
+- [x] Verify all tests pass
+
+## Dev Agent Record
+
+### Debug Log
+
+2026-05-02: Initial implementation started
+
+### Completion Notes
+
+Implemented redaction alerts via stderr as specified. Created:
+- `pkg/bouncer/alerts.go`: AlertManager with RecordRedaction, EmitSummary, SetVerbose, SetEnabled
+- `pkg/bouncer/alerts_test.go`: 12 tests covering all alert scenarios
+- Modified `pkg/bouncer/redactor.go` to support optional alert integration via variadic parameter
+- Modified `pkg/bouncer/streaming.go` to support optional alert integration via variadic parameter
+
+All tests pass (83 total).
+
+## File List
+
+- `pkg/bouncer/alerts.go` (new)
+- `pkg/bouncer/alerts_test.go` (new)
+- `pkg/bouncer/redactor.go` (modified)
+- `pkg/bouncer/streaming.go` (modified)
+
+## Change Log
+
+- 2026-05-02: Initial implementation of redaction alerts via stderr
+
+## Status
+
+review
