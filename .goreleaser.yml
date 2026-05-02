@@ -27,12 +27,9 @@ archives:
         format: zip
     files:
       - none:\n
-checksums:
-  sigs:
-    required: true
-  files:
-    - all:'*'
-github:
-  owner: mmornati
-  name: leanproxy-mcp
-  release_template_file: .goreleaser.toml
+checksum:
+  name_template: "checksums.txt"
+release:
+  github:
+    owner: mmornati
+    name: leanproxy-mcp
