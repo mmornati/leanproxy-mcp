@@ -1,6 +1,6 @@
 # Story 6-4: Add IDE Configuration Documentation
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -81,39 +81,39 @@ Feature: IDE Configuration Documentation
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Document Claude Desktop configuration (AC: 1, 5-6, 8)
-  - [ ] Document config file location
-  - [ ] Provide JSON configuration template
-  - [ ] Document verification steps
-  - [ ] Ensure copy-paste ready example
+- [x] Task 1: Document Claude Desktop configuration (AC: 1, 5-6, 8)
+  - [x] Document config file location
+  - [x] Provide JSON configuration template
+  - [x] Document verification steps
+  - [x] Ensure copy-paste ready example
 
-- [ ] Task 2: Document Cursor configuration (AC: 2, 5-6, 8)
-  - [ ] Document config file location
-  - [ ] Provide JSON configuration template
-  - [ ] Document verification steps
-  - [ ] Ensure copy-paste ready example
+- [x] Task 2: Document Cursor configuration (AC: 2, 5-6, 8)
+  - [x] Document config file location
+  - [x] Provide JSON configuration template
+  - [x] Document verification steps
+  - [x] Ensure copy-paste ready example
 
-- [ ] Task 3: Document OpenCode configuration (AC: 3, 5-6, 8)
-  - [ ] Document config file location
-  - [ ] Provide JSON configuration template
-  - [ ] Document verification steps
-  - [ ] Ensure copy-paste ready example
+- [x] Task 3: Document OpenCode configuration (AC: 3, 5-6, 8)
+  - [x] Document config file location
+  - [x] Provide JSON configuration template
+  - [x] Document verification steps
+  - [x] Ensure copy-paste ready example
 
-- [ ] Task 4: Document Windsurf configuration (AC: 4, 5-6, 8)
-  - [ ] Document config file location
-  - [ ] Provide JSON configuration template
-  - [ ] Document verification steps
-  - [ ] Ensure copy-paste ready example
+- [x] Task 4: Document Windsurf configuration (AC: 4, 5-6, 8)
+  - [x] Document config file location
+  - [x] Provide JSON configuration template
+  - [x] Document verification steps
+  - [x] Ensure copy-paste ready example
 
-- [ ] Task 5: Add CLI help text with documentation references (AC: 7)
-  - [ ] Update root command help to reference README
-  - [ ] Update migrate command help with usage
-  - [ ] Ensure man pages or equivalent if applicable
+- [x] Task 5: Add CLI help text with documentation references (AC: 7)
+  - [x] Update root command help to reference README
+  - [x] Update migrate command help with usage
+  - [x] Ensure man pages or equivalent if applicable
 
-- [ ] Task 6: Review and verify all examples (AC: 8)
-  - [ ] Test each configuration example
-  - [ ] Verify syntax is correct JSON
-  - [ ] Ensure placeholders are clearly marked
+- [x] Task 6: Review and verify all examples (AC: 8)
+  - [x] Test each configuration example
+  - [x] Verify syntax is correct JSON
+  - [x] Ensure placeholders are clearly marked
 
 ## Dev Notes
 
@@ -218,9 +218,13 @@ N/A
 
 ### Completion Notes List
 
-N/A
+- Added comprehensive IDE configuration documentation section to README.md covering Claude Desktop, Cursor, OpenCode, and Windsurf
+- Each IDE section includes config file location, JSON template, reload/restart steps, and verification instructions
+- Migration section documents `leanproxy migrate` command for users switching from other MCP tools
+- Updated root command help text to reference full README documentation
+- All JSON examples use `/path/to/leanproxy` as clearly marked placeholder
 
-### File List
+## File List
 
-- `README.md` (UPDATE)
-- `cmd/root.go` (UPDATE - help text)
+- `README.md` (UPDATE - Added IDE Configuration section)
+- `cmd/root.go` (UPDATE - Added documentation reference in help text)
