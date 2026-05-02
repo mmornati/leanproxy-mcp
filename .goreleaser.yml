@@ -19,8 +19,7 @@ builds:
 archives:
   - id: default
     format: tar.gz
-    files:
-      - none:\n
+    files: []
 checksum:
   name_template: "checksums.txt"
 release:
