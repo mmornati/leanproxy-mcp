@@ -142,19 +142,61 @@ After configuring your IDE, verify the connection by checking that the leanproxy
 
 - Go 1.21 or later
 - Git
+- (Optional) `golangci-lint` for linting
 
-### Build
+### Quick Build
 
 ```bash
 git clone https://github.com/mmornati/leanproxy-mcp.git
 cd leanproxy-mcp
-go build -o leanproxy-mcp ./main.go
+make build
 ```
 
-### Run Tests
+The binary will be placed in the `dist/` directory.
+
+### Using Makefile
+
+| Command | Description |
+|---------|-------------|
+| `make build` | Build all platform binaries to `dist/` |
+| `make build-local` | Build for current platform only |
+| `make test` | Run all tests |
+| `make lint` | Run linter (requires golangci-lint) |
+| `make clean` | Remove build artifacts |
+| `make install` | Build and install to `$GOPATH/bin` |
+
+### Build with Custom Version
+
+```bash
+make build VERSION=1.0.0
+```
+
+### Cross-Platform Builds
+
+The Makefile builds for these platforms:
+- macOS (amd64, arm64)
+- Linux (amd64, arm64)
+- Windows (amd64)
+
+Binaries are output to `dist/` with naming scheme:
+- `leanproxy-mcp-darwin-amd64`
+- `leanproxy-mcp-darwin-arm64`
+- `leanproxy-mcp-linux-amd64`
+- `leanproxy-mcp-linux-arm64`
+- `leanproxy-mcp-windows-amd64.exe`
+
+## Development
+
+### Running Tests
 
 ```bash
 go test ./...
+```
+
+### Running the Application
+
+```bash
+go run main.go serve
 ```
 
 ## Project Structure
