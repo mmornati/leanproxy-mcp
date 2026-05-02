@@ -14,8 +14,6 @@ builds:
     goarch:
       - amd64
       - arm64
-    flags:
-      - -s -w
     ldflags:
       - -s -w
       - -X github.com/mmornati/leanproxy-mcp/cmd.versionString={{.Version}}
