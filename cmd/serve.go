@@ -11,7 +11,10 @@ import (
 	"path/filepath"
 	"syscall"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+	"github.com/mmornati/leanproxy-mcp/pkg/router"
 	"github.com/spf13/cobra"
 )
 
@@ -27,6 +30,12 @@ var serveFlags struct {
 	upstreamURL string
 }
 
+var (
+	serverReg   registry.Registry
+	toolReg     router.ToolRegistry
+	gatewayTools gateway.GatewayTools
+)
+
 func init() {
 	serveCmd.Flags().StringVar(&serveFlags.listenAddr, "listen", "127.0.0.1:8080", "Address to listen on")
 	serveCmd.Flags().StringVar(&serveFlags.upstreamURL, "upstream", "http://localhost:8081", "Upstream JSON-RPC server URL")
@@ -35,6 +44,11 @@ func init() {
 
 func runServe(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
+
+	serverReg = registry.NewRegistry(slog.Default(), "")
+	toolReg = router.NewToolRegistry()
+	r := router.NewRouter(toolReg, serverReg, slog.Default())
+	gatewayTools = gateway.NewGatewayTools(serverReg, toolReg, r, slog.Default())
 
 	configPath := GlobalConfigPath
 	if configPath == "" {

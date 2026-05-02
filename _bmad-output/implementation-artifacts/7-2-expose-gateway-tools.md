@@ -1,6 +1,6 @@
 # Story 7.2: Expose Gateway Tools to IDE
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -169,12 +169,12 @@ pkg/gateway/
 
 ### Implementation Checklist
 
-- [ ] Create `pkg/gateway/tools.go` with tool definitions
-- [ ] Implement ListTools() returning gateway tool list
-- [ ] Implement InvokeTool() with routing to target server
-- [ ] Implement SearchTools() with cross-server search
-- [ ] Integrate with router from Story 7.1
-- [ ] Add unit tests
+- [x] Create `pkg/gateway/tools.go` with tool definitions
+- [x] Implement ListTools() returning gateway tool list
+- [x] Implement InvokeTool() with routing to target server
+- [x] Implement SearchTools() with cross-server search
+- [x] Integrate with router from Story 7.1
+- [x] Add unit tests
 
 ### Edge Cases
 
@@ -212,3 +212,32 @@ Current project has:
 - `pkg/gateway/gateway_test.go` (NEW)
 - `pkg/gateway/doc.go` (NEW)
 - `cmd/serve.go` (MODIFY - integrate gateway tools)
+
+## Dev Agent Record
+
+### Implementation Plan
+
+Created `pkg/gateway/` package with three gateway tools exposed to IDE:
+- `list_servers`: Returns list of all configured MCP servers with status, transport, and tool count
+- `invoke_tool`: Routes tool calls to appropriate server after validation
+- `search_tools`: Searches tool names across all servers
+
+### Completion Notes
+
+Implemented all acceptance criteria:
+- Gateway tools (list_servers, invoke_tool, search_tools) return minimal discovery signatures
+- list_servers returns name, status, transport, and tool_count for each server
+- invoke_tool validates server_name and tool_name, routes to target server
+- search_tools returns matching tools with server attribution
+- Invalid server returns JSON-RPC error -32602
+- All edge cases handled: stopped servers, missing tools, empty query
+
+### Technical Decisions
+
+1. Used direct tool registry lookup instead of router for InvokeTool to properly validate server ownership
+2. Tool matching considers both exact names and server-qualified names (e.g., "github.create_issue")
+3. All logging via log/slog as per architecture requirements
+
+## Change Log
+
+- 2026-05-02: Initial implementation of gateway tools package (story 7-2)
