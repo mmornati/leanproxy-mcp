@@ -10,9 +10,10 @@ import (
 )
 
 var (
-	migrateYes    bool
-	migrateDryRun bool
-	migrateTarget string
+	migrateYes        bool
+	migrateDryRun     bool
+	migrateTarget     string
+	migrateValidateOnly bool
 )
 
 var migrateCmd = &cobra.Command{
@@ -27,6 +28,7 @@ func init() {
 	migrateCmd.Flags().BoolVar(&migrateYes, "yes", false, "Skip confirmation prompt")
 	migrateCmd.Flags().BoolVar(&migrateDryRun, "dry-run", false, "Preview scan results without importing")
 	migrateCmd.Flags().StringVar(&migrateTarget, "target", "", "Target config file path (default: ~/.config/leanproxy_servers.yaml)")
+	migrateCmd.Flags().BoolVar(&migrateValidateOnly, "validate-only", false, "Only validate servers without importing")
 	RootCmd.AddCommand(migrateCmd)
 }
 
@@ -68,6 +70,34 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	if migrateValidateOnly {
+		fmt.Println("\n--- Validation Mode ---")
+		validationResult := migrator.Validate(result.Servers)
+
+		if validationResult.HasErrors() {
+			fmt.Printf("❌ Validation failed with %d error(s):\n\n", validationResult.ErrorCount())
+			for _, err := range validationResult.Errors {
+				fmt.Printf("  ✗ Server '%s': %s\n", err.ServerName, err.Message)
+			}
+			fmt.Println()
+		} else {
+			fmt.Println("✅ All servers passed validation!")
+		}
+
+		if validationResult.HasWarnings() {
+			fmt.Printf("⚠️  %d warning(s):\n\n", validationResult.WarningCount())
+			for _, warn := range validationResult.Warnings {
+				fmt.Printf("  ⚠ Server '%s': %s\n", warn.ServerName, warn.Message)
+			}
+			fmt.Println()
+		}
+
+		if validationResult.HasErrors() {
+			return fmt.Errorf("validation failed")
+		}
+		return nil
+	}
+
 	target := migrateTarget
 	if target == "" {
 		target = os.Getenv("LEANPROXY_CONFIG")
@@ -98,6 +128,20 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\nImport complete!\n")
 	fmt.Printf("  Imported: %d server(s)\n", importResult.Imported)
 	fmt.Printf("  Target:   %s\n", target)
+
+	if importResult.Validation != nil {
+		if importResult.Validation.HasErrors() {
+			fmt.Printf("\n⚠️  Validation warnings:\n")
+			for _, err := range importResult.Validation.Errors {
+				fmt.Printf("  ✗ Server '%s': %s\n", err.ServerName, err.Message)
+			}
+		}
+		if importResult.Validation.HasWarnings() {
+			for _, warn := range importResult.Validation.Warnings {
+				fmt.Printf("  ⚠ Server '%s': %s\n", warn.ServerName, warn.Message)
+			}
+		}
+	}
 
 	return nil
 }
