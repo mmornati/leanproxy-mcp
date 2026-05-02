@@ -3,6 +3,11 @@ stepsCompleted: [step-01-validate-prerequisites, step-02-design-epics, step-03-c
 inputDocuments:
   - _bmad-output/planning-artifacts/prd.md
   - _bmad-output/planning-artifacts/architecture.md
+  - code-analysis-2026-05-02.md
+notes: |
+  2026-05-02: Added Epic 7: Multi-Server Gateway Mode based on code analysis finding
+  that FR5 (multi-server routing) was not implemented. Current proxy only supports
+  single upstream server. New epic enables LeanProxy-MCP to act as gateway for 100+ MCP servers.
 ---
 
 # LeanProxy-MCP - Epic Breakdown
@@ -43,6 +48,10 @@ FR25: Users can add, remove, and list MCP servers via CLI commands (`leanproxy s
 FR26: The system can auto-detect existing MCP configurations from OpenCode, Claude Code, VS Code, Cursor, and generic `mcp.json` locations.
 FR27: Users can run `leanproxy migrate` to auto-detect and import all found MCP configurations into `leanproxy_servers.yaml`, presenting a summary of imported servers.
 FR28: The system validates imported server configurations and reports any errors (missing commands, invalid transport types) during migration.
+FR29: The system can expose gateway tools (`list_servers`, `invoke_tool`, `search_tools`) to enable AI-driven server discovery.
+FR30: The system can route tool calls to the correct MCP server based on method name lookup in the merged registry.
+FR31: The system can handle concurrent requests across 100+ MCP servers without request mixing.
+FR32: The system can pool and reuse stdio connections to multiple MCP servers efficiently.
 
 ### NonFunctional Requirements
 
@@ -79,7 +88,7 @@ FR1: Epic 1 - Intercept and route JSON-RPC traffic between IDE and MCP servers
 FR2: Epic 1 - Manage lifecycle (start/stop/restart) of MCP sub-processes
 FR3: Epic 1 - Merge global and project-specific MCP manifests
 FR4: Epic 1 - Dynamically add/remove MCP servers via CLI
-FR5: Epic 1 - Route tool calls to correct MCP server based on merged registry
+FR5: Epic 7 - Route tool calls to correct MCP server based on merged registry (explicitly scoped)
 FR6: Epic 3 - Register tools using Discovery Signatures (minimal name/description)
 FR7: Epic 3 - JIT Discovery: inject full schemas only for requested tools
 FR8: Epic 3 - Compact raw manifests into token-dense signatures
@@ -103,6 +112,10 @@ FR25: Epic 6 - Add, remove, list servers via CLI commands
 FR26: Epic 6 - Auto-detect MCP configs from OpenCode, Claude Code, VS Code, Cursor, generic mcp.json
 FR27: Epic 6 - Migrate all found MCP configs with summary
 FR28: Epic 6 - Validate imported server configs and report errors
+FR29: Epic 7 - Expose gateway tools (list_servers, invoke_tool, search_tools)
+FR30: Epic 7 - Route tool calls to correct MCP server based on registry
+FR31: Epic 7 - Handle concurrent requests across 100+ servers
+FR32: Epic 7 - Pool and reuse stdio connections
 
 ## Epic List
 
@@ -129,6 +142,10 @@ Users can see real-time metrics on token savings and security events.
 ### Epic 6: Server Configuration & Migration
 Users can define server entries with rich configuration and migrate from existing MCP tools.
 **FRs covered:** FR24, FR25, FR26, FR27, FR28
+
+### Epic 7: Multi-Server Gateway Mode
+LeanProxy-MCP acts as a unified gateway that proxies requests to 100+ MCP servers, routing tool calls to the correct server based on tool name registry.
+**FRs covered:** FR5 (explicitly scoped)
 
 ## Epic 1: Core Proxy Infrastructure
 
@@ -847,3 +864,177 @@ Server Configuration & Migration goal: Users can define server entries with rich
 **When** they use the leanproxy migrate command
 **Then** the resulting config is immediately usable by their IDE
 **And** no manual editing of IDE config files is required
+
+## Epic 7: Multi-Server Gateway Mode
+
+Multi-Server Gateway Mode goal: LeanProxy-MCP acts as a unified gateway that proxies JSON-RPC requests to multiple configured MCP servers, routing each tool call to the correct server based on the merged tool registry, supporting 100+ concurrent MCP servers.
+
+### Story 7.1: Implement Tool-to-Server Routing Engine
+
+**As a** developer,
+**I want to** parse JSON-RPC requests and route them to the correct MCP server based on tool name,
+**So that** a single LeanProxy-MCP instance can proxy traffic to hundreds of MCP servers.
+
+**Acceptance Criteria:**
+
+**Given** an IDE sends a JSON-RPC request with method `github.create_issue`
+**When** the proxy receives the request
+**Then** it looks up `github.create_issue` in the tool registry
+**And** routes the request to the `github` MCP server's stdin
+**And** returns the response to the IDE
+
+**Given** an IDE sends a batch of JSON-RPC requests for tools from different servers
+**When** the proxy receives the batch
+**Then** it parses each method name
+**And** routes each request to the appropriate server in parallel
+**And** collects responses and returns them in correct order
+
+**Given** a request for an unknown tool
+**When** the proxy receives it
+**Then** it returns a JSON-RPC error with code -32601 (Method not found)
+**And** logs a debug message noting the unmatched method
+
+**Given** a server goes offline during active requests
+**When** requests are pending for that server
+**Then** the proxy returns an error indicating server unavailable
+**And** does not block requests for other servers
+
+### Story 7.2: Expose Gateway Tools to IDE
+
+**As a** developer,
+**I want to** expose internal gateway tools (list_servers, invoke_tool, search_tools) to the IDE,
+**So that** the AI can discover and invoke tools across all configured MCP servers through a unified interface.
+
+**Acceptance Criteria:**
+
+**Given** LeanProxy-MCP is running as a gateway
+**When** the IDE requests the tool list via `tools/list`
+**Then** the response includes gateway tools: `list_servers`, `invoke_tool`, `search_tools`
+**And** each gateway tool has a minimal discovery signature
+
+**Given** the AI calls `list_servers()`
+**When** the gateway receives the request
+**Then** it returns a list of all configured MCP servers with their names and enabled status
+
+**Given** the AI calls `invoke_tool(server_name, tool_name, params)`
+**When** the gateway receives the request
+**Then** it routes the request to the specified server
+**And** returns the tool response
+
+**Given** the AI calls `search_tools(query)`
+**When** the gateway receives the request
+**Then** it searches tool names and descriptions across all servers
+**And** returns matching tools with server attribution
+
+### Story 7.3: Implement Stdio Pool Manager
+
+**As a** developer,
+**I want to** manage a pool of stdio MCP server subprocesses,
+**So that** multiple concurrent requests can be handled efficiently across 100+ servers.
+
+**Acceptance Criteria:**
+
+**Given** 100 MCP servers are configured in stdio mode
+**When** the gateway starts
+**Then** it spawns subprocesses for all enabled servers
+**And** each subprocess runs in its own process group (NFR6)
+**And** process health is monitored continuously
+
+**Given** multiple concurrent requests for the same server
+**When** requests arrive
+**Then** they are queued and processed sequentially per server
+**And** no request mixing occurs between different tool calls
+
+**Given** a server's subprocess exits unexpectedly
+**When** the lifecycle manager detects the exit
+**Then** it restarts the subprocess with exponential backoff
+**And** pending requests for that server return an error
+
+**Given** server idle timeout is configured
+**When** a server has no requests for the idle period
+**Then** the subprocess is stopped to conserve resources
+**And** the subprocess is restarted on the next request
+
+### Story 7.4: Integrate Registry with Proxy for Dynamic Routing
+
+**As a** developer,
+**I want to** integrate the server registry with the proxy for dynamic server selection,
+**So that** servers can be added, removed, and updated without restarting the gateway.
+
+**Acceptance Criteria:**
+
+**Given** a running gateway
+**When** a new server is added via `leanproxy server add`
+**Then** the server appears in the registry within 1 second
+**And** the server's tools become available for routing
+**And** the `list_servers` tool reflects the change
+
+**Given** a running gateway
+**When** a server is removed via `leanproxy server remove`
+**Then** the server's subprocess is stopped
+**And** pending requests return an error
+**And** subsequent requests to that server's tools return method-not-found
+
+**Given** the registry is updated externally
+**When** the proxy checks the registry
+**Then** it picks up changes without requiring restart
+**And** routes requests based on the current registry state
+
+### Story 7.5: Rewrite handleConnection for Multi-Server Routing
+
+**As a** developer,
+**I want to** rewrite the handleConnection function to support multi-server routing,
+**So that** each incoming IDE connection is handled by routing requests to the appropriate MCP server.
+
+**Acceptance Criteria:**
+
+**Given** an IDE connects to LeanProxy-MCP's stdio endpoint
+**When** the IDE sends a JSON-RPC request
+**Then** handleConnection parses the method name
+**And** looks up the target server in the registry
+**And** forwards the request to that server's stdin
+**And** streams the response back to IDE
+
+**Given** handleConnection receives a notification (no ID)
+**When** the notification is parsed
+**Then** it is forwarded to the appropriate server
+**And** no response is returned
+
+**Given** handleConnection receives a batch request
+**When** the batch is parsed
+**Then** each request is routed to its target server
+**And** responses are collected and returned as a batch
+
+**Given** the connection is closed mid-stream
+**When** handleConnection detects the close
+**Then** it cleanly terminates server communication
+**And** no zombie processes are left behind
+
+### Story 7.6: Implement Concurrent Multi-Server Request Handling
+
+**As a** developer,
+**I want to** handle concurrent requests across multiple MCP servers efficiently,
+**So that** the gateway can handle high-throughput scenarios with 100+ servers.
+
+**Acceptance Criteria:**
+
+**Given** 50 concurrent requests arrive for different servers
+**When** the gateway processes them
+**Then** each request is routed to its target server in parallel
+**And** responses are returned as they complete
+**And** no request ordering guarantees are broken for the same tool
+
+**Given** a request with a very large payload (>10MB)
+**When** the gateway receives it
+**Then** it streams the payload without buffering entirely in memory
+**And** processing overhead remains under 200ms (NFR2)
+
+**Given** rate limiting is configured per server
+**When** requests exceed the rate limit
+**Then** excess requests are queued
+**And** returned with a retry-after response when appropriate
+
+**Given** concurrent requests for the same server
+**When** they arrive simultaneously
+**Then** they are serialized to prevent race conditions
+**And** responses are matched to correct requests by ID
