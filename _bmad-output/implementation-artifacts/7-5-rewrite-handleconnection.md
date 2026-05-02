@@ -1,6 +1,6 @@
 # Story 7.5: Rewrite handleConnection for Multi-Server Routing
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -177,14 +177,14 @@ pkg/gateway/          # Story 7.2
 
 ### Implementation Checklist
 
-- [ ] Replace handleConnection in cmd/serve.go
-- [ ] Implement request parsing from line
-- [ ] Implement gateway tool detection
-- [ ] Implement server routing via router
-- [ ] Implement request forwarding via pool
-- [ ] Implement response writing
-- [ ] Implement batch request handling
-- [ ] Add integration tests
+- [x] Replace handleConnection in cmd/serve.go
+- [x] Implement request parsing from line
+- [x] Implement gateway tool detection
+- [x] Implement server routing via router
+- [x] Implement request forwarding via pool
+- [x] Implement response writing
+- [x] Implement batch request handling
+- [x] Add integration tests
 
 ### Edge Cases
 
@@ -212,6 +212,46 @@ Current project has:
 - `pkg/proxy/proxy.go` - JSON-RPC types and parsing
 - `pkg/registry/registry.go` - registry interface
 
+### Implementation Plan
+
+1. Replaced `handleConnection` with full multi-server routing implementation
+2. Added `Router` and `Pool` interfaces for dependency injection and testability
+3. Implemented `handleSingleRequest` for processing individual JSON-RPC requests
+4. Implemented `handleBatchRequest` for batch request processing
+5. Added gateway tool handling (`list_servers`, `invoke_tool`, `search_tools`)
+6. Added `SendRequest` method to `StdioPool`
+7. Created comprehensive unit tests (26 tests)
+
+### Completion Notes
+
+Implemented story 7.5 - Multi-Server handleConnection:
+
+**Changes Made:**
+- `cmd/serve.go`: Complete rewrite of `handleConnection` function
+  - Added `Router` and `Pool` interfaces for testability
+  - Line-based JSON-RPC message parsing
+  - Gateway tool detection and internal routing
+  - Server routing via `router.Route()`
+  - Request forwarding via `pool.SendRequest()`
+  - Batch request handling with order preservation
+  - Proper error handling (parse errors, method not found, internal errors)
+
+- `pkg/pool/pool.go`: Added `SendRequest` method to `StdioPool`
+  - Simplified request forwarding interface
+  - Handles timeout and context cancellation
+
+- `cmd/serve_test.go`: 26 unit tests covering:
+  - `isGatewayTool` - gateway tool detection
+  - `trimNewline` - newline trimming
+  - `isBatchRequest` - batch detection
+  - `writeResponse` / `writeError` - response writing
+  - `handleConnection` - full connection handling
+  - `handleSingleRequest` - single request routing
+  - `handleBatchRequest` - batch request handling
+  - `handleGatewayToolSync` - gateway tool processing
+
+**Tests:** All 219 tests pass (26 new tests in cmd package)
+
 ### References
 
 - [Source: _bmad-output/planning-artifacts/epics.md#Epic-7-Story-7.5]
@@ -221,7 +261,10 @@ Current project has:
 
 ## File List
 
-- `cmd/serve.go` (MODIFY - replace handleConnection and runServe logic)
-- `pkg/router/router.go` (Story 7.1 - already created)
-- `pkg/pool/pool.go` (Story 7.3 - already created)
-- `pkg/gateway/tools.go` (Story 7.2 - already created)
+- `cmd/serve.go` (MODIFY - replaced handleConnection and runServe logic)
+- `cmd/serve_test.go` (NEW - 26 unit tests)
+- `pkg/pool/pool.go` (MODIFY - added SendRequest method)
+
+## Change Log
+
+- 2026-05-02: Initial implementation complete - all tasks completed, tests passing
