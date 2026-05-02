@@ -44,7 +44,7 @@ FR21: The system can calculate and report real-time token savings per session.
 FR22: The system can generate Markdown-formatted reports summarizing "Total Tokens Saved" and "Security Risks Intercepted."
 FR23: The system can provide real-time status of all active proxied servers and their health.
 FR24: Users can define MCP server entries in `leanproxy_servers.yaml` with transport type (stdio/http/sse), command/args, environment variables, and timeouts.
-FR25: Users can add, remove, and list MCP servers via CLI commands (`leanproxy server add`, `leanproxy server remove`, `leanproxy server list`).
+FR25: Users can add, remove, list, enable, and disable MCP servers via CLI commands (`leanproxy server add`, `leanproxy server remove`, `leanproxy server list`, `leanproxy server enable`, `leanproxy server disable`).
 FR26: The system can auto-detect existing MCP configurations from OpenCode, Claude Code, VS Code, Cursor, and generic `mcp.json` locations.
 FR27: Users can run `leanproxy migrate` to auto-detect and import all found MCP configurations into `leanproxy_servers.yaml`, presenting a summary of imported servers.
 FR28: The system validates imported server configurations and reports any errors (missing commands, invalid transport types) during migration.
@@ -108,7 +108,7 @@ FR21: Epic 5 - Calculate and report real-time token savings per session
 FR22: Epic 5 - Generate Markdown reports on tokens saved and risks intercepted
 FR23: Epic 5 - Provide real-time status of all active proxied servers
 FR24: Epic 6 - Define server entries with transport type (stdio/http/sse), command/args, env, timeouts
-FR25: Epic 6 - Add, remove, list servers via CLI commands
+FR25: Epic 6 - Add, remove, list, enable, and disable servers via CLI commands
 FR26: Epic 6 - Auto-detect MCP configs from OpenCode, Claude Code, VS Code, Cursor, generic mcp.json
 FR27: Epic 6 - Migrate all found MCP configs with summary
 FR28: Epic 6 - Validate imported server configs and report errors
@@ -258,7 +258,7 @@ Core Proxy Infrastructure goal: Users can intercept, route, and manage JSON-RPC 
 ### Story 1.5: Implement Dynamic Server Registry
 
 **As a** developer,
-**I want to** dynamically add, remove, and list MCP servers via CLI commands,
+**I want to** dynamically add, remove, list, enable, and disable MCP servers via CLI commands,
 **So that** users can manage their server registry without editing config files.
 
 **Acceptance Criteria:**
@@ -278,8 +278,18 @@ Core Proxy Infrastructure goal: Users can intercept, route, and manage JSON-RPC 
 **Given** a running leanproxy instance
 **When** the user runs `leanproxy server list`
 **Then** a table of all configured servers is displayed
-**And** each row shows: name, status (running/stopped), command
+**And** each row shows: name, status (enabled/disabled), command
 **And** the output is formatted as markdown for IDE display
+
+**Given** a running leanproxy instance
+**When** the user runs `leanproxy server enable <name>`
+**Then** the server is marked as enabled in the config
+**And** the server becomes available for routing requests
+
+**Given** a running leanproxy instance
+**When** the user runs `leanproxy server disable <name>`
+**Then** the server is marked as disabled in the config
+**And** the server is excluded from routing until re-enabled
 
 **Given** an invalid server name or command
 **When** the user attempts to add it
@@ -785,7 +795,7 @@ Server Configuration & Migration goal: Users can define server entries with rich
 **Given** existing MCP configurations on the system
 **When** the user runs `leanproxy migrate`
 **Then** the system scans known locations:
-- `~/.config/opencode/mcp.json`
+- `~/.config/opencode/opencode.json`
 - `~/.claude.json` and `~/.config/claude/mcp_config.json`
 - VS Code settings.json (MCP extensions section)
 - `~/.cursor/mcp.json`
@@ -803,11 +813,11 @@ Server Configuration & Migration goal: Users can define server entries with rich
 **Then** servers are merged into `leanproxy_servers.yaml`
 **And** duplicate server names are handled with suffix (_opencode, _claude, etc.)
 **And** a success message shows imported servers
+**And** the `enabled` state from the source configuration is preserved during import
 
 **Given** no MCP configs are found
 **When** the migrate command runs
 **Then** a message explains no configs were found
-**And** suggests manual server addition
 
 ### Story 6.3: Validate Imported Server Configurations
 

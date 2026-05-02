@@ -8,13 +8,13 @@ import (
 )
 
 type opencodeConfig struct {
-	MCPServers map[string]opencodeServer `json:"mcp_servers"`
+	MCP map[string]opencodeServer `json:"mcp"`
 }
 
 type opencodeServer struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Env     []string `json:"env,omitempty"`
+	Type    string   `json:"type"`
+	Command []string `json:"command"`
+	Enabled bool     `json:"enabled"`
 }
 
 type OpenCodeScanner struct{}
@@ -24,7 +24,7 @@ func (s *OpenCodeScanner) Name() string {
 }
 
 func (s *OpenCodeScanner) Scan(ctx context.Context) ([]DiscoveredServer, error) {
-	path := expandPath("~/.config/opencode/mcp.json")
+	path := expandPath("~/.config/opencode/opencode.json")
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -40,16 +40,29 @@ func (s *OpenCodeScanner) Scan(ctx context.Context) ([]DiscoveredServer, error) 
 	}
 
 	var servers []DiscoveredServer
-	for name, srv := range cfg.MCPServers {
+	for name, srv := range cfg.MCP {
+		if len(srv.Command) == 0 {
+			continue
+		}
+
+		enabled := srv.Enabled
+		command := srv.Command[0]
+		args := srv.Command[1:]
+
+		cwd := ""
+		if len(srv.Command) > 0 {
+			cwd = filepath.Dir(srv.Command[0])
+		}
+
 		servers = append(servers, DiscoveredServer{
 			Name:      name,
 			Source:    "opencode",
 			Transport: "stdio",
+			Enabled:   &enabled,
 			Stdio: &StdioConfig{
-				Command: srv.Command,
-				Args:    srv.Args,
-				Env:     srv.Env,
-				CWD:     filepath.Dir(srv.Command),
+				Command: command,
+				Args:    args,
+				CWD:     cwd,
 			},
 		})
 	}

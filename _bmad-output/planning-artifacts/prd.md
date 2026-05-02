@@ -271,7 +271,7 @@ Resource Risks**: Open-source maintenance; mitigation via clear documentation an
 
 ### 6. Server Configuration & Migration
 - **FR24**: Users can define MCP server entries in `leanproxy_servers.yaml` with transport type (stdio/http/sse), command/args, environment variables, and timeouts.
-- **FR25**: Users can add, remove, and list MCP servers via CLI commands (`leanproxy server add`, `leanproxy server remove`, `leanproxy server list`).
+- **FR25**: Users can add, remove, list, enable, and disable MCP servers via CLI commands (`leanproxy server add`, `leanproxy server remove`, `leanproxy server list`, `leanproxy server enable`, `leanproxy server disable`).
 - **FR26**: The system can auto-detect existing MCP configurations from OpenCode, Claude Code, VS Code, Cursor, and generic `mcp.json` locations.
 - **FR27**: Users can run `leanproxy migrate` to auto-detect and import all found MCP configurations into `leanproxy_servers.yaml`, presenting a summary of imported servers.
 - **FR28**: The system validates imported server configurations and reports any errors (missing commands, invalid transport types) during migration.
