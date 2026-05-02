@@ -24,7 +24,7 @@ development_status:
   2-3-custom-redaction-patterns: review
   2-4-in-memory-only: review
   2-5-redaction-alerts: review
-  3-1-discovery-signatures: ready-for-dev
+  3-1-discovery-signatures: review
   3-2-jit-schema-injection: ready-for-dev
   3-3-manifest-compactor: ready-for-dev
   3-4-manual-re-distillation: ready-for-dev

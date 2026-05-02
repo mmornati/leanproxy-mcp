@@ -8,7 +8,7 @@
 | Key | discovery-signatures |
 | Epic | Epic 3: Context Optimization (JIT Discovery & Compactor) |
 | Title | Implement Discovery Signatures |
-| Status | backlog |
+| Status | review |
 | Estimated Points | 3 |
 
 ## User Story
@@ -125,3 +125,39 @@ func (r *Registry) GetDiscoverySignatures() []DiscoverySignature
 func (r *Registry) GetFullSchema(toolName string) (json.RawMessage, error)
 func (r *Registry) RegisterTool(tool Tool) error
 ```
+
+## Tasks/Subtasks
+
+- [x] Create DiscoverySignature struct in pkg/registry/signatures.go
+- [x] Create Tool struct with dual storage (signature + full schema)
+- [x] Implement GetDiscoverySignatures method
+- [x] Implement GetFullSchema method for JIT schema retrieval
+- [x] Add RegistryConfig with compact-by-default and max-signature-bytes options
+- [x] Write unit tests for all signature functionality
+- [x] Verify payload size constraints
+
+## Dev Agent Record
+
+### Debug Log
+
+### Completion Notes
+
+Implemented Discovery Signatures feature per story 3-1. Created:
+- `pkg/registry/signatures.go` - Core discovery signature types and ToolSchemaRegistry interface
+- `pkg/registry/signatures_test.go` - Comprehensive unit tests including 50-tool payload size verification
+- `pkg/registry/config.go` - Registry configuration with compact-by-default and max-signature-bytes options
+
+All acceptance criteria satisfied:
+- AC1: Minimal discovery payload (<500 bytes per tool)
+- AC2: 50-tool discovery response verified under 25KB
+- AC3: RefreshManifest method available for signature updates
+
+## File List
+
+- pkg/registry/signatures.go (new)
+- pkg/registry/signatures_test.go (new)
+- pkg/registry/config.go (new)
+
+## Change Log
+
+- 2026-05-02: Implemented discovery signatures feature - Initial implementation with DiscoverySignature struct, Tool dual storage, GetDiscoverySignatures(), GetFullSchema(), and configuration options
