@@ -18,7 +18,9 @@ Features:
   - JSON-RPC streaming proxy
   - Token validation and authentication
   - MCP server registry management
-  - Configurable redaction patterns`,
+  - Configurable redaction patterns
+
+For full documentation, see: https://github.com/mmornati/leanproxy-mcp#readme`,
 	SilenceUsage: true,
 }
 

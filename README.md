@@ -38,6 +38,104 @@ leanproxy-mcp server --dry-run --stdio "npx @modelcontextprotocol/server-filesys
 leanproxy-mcp compactor --manifest ./mcp.json
 ```
 
+## IDE Configuration
+
+LeanProxy-MCP can be configured as an MCP server in your IDE to enable Claude Desktop, Cursor, OpenCode, or Windsurf to use LeanProxy-MCP's token firewall and redaction capabilities.
+
+### Claude Desktop
+
+1. Open `~/Library/Application Support/Claude/claude_desktop_config.json` in your editor
+2. Add LeanProxy-MCP to the `mcpServers` section:
+
+```json
+{
+  "mcpServers": {
+    "leanproxy": {
+      "command": "/path/to/leanproxy",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+3. Restart Claude Desktop
+
+**Verification:** After restarting, run `leanproxy server list` to confirm the connection is working.
+
+### Cursor
+
+1. Open `~/.cursor/mcp.json` in your editor
+2. Add LeanProxy-MCP to the `mcpServers` section:
+
+```json
+{
+  "mcpServers": {
+    "leanproxy": {
+      "command": "/path/to/leanproxy",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+3. Reload Cursor window (Cmd+Shift+P → "Reload Window")
+
+**Verification:** After reloading, run `leanproxy server list` to confirm the connection is working.
+
+### OpenCode
+
+1. Open `~/.config/opencode/mcp.json` in your editor
+2. Add LeanProxy-MCP to the `mcpServers` section:
+
+```json
+{
+  "mcpServers": {
+    "leanproxy": {
+      "command": "/path/to/leanproxy",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+3. Restart OpenCode
+
+**Verification:** After restarting, run `leanproxy server list` to confirm the connection is working.
+
+### Windsurf
+
+1. Open `~/.windsurf/mcp.json` in your editor
+2. Add LeanProxy-MCP to the `mcpServers` section:
+
+```json
+{
+  "mcpServers": {
+    "leanproxy": {
+      "command": "/path/to/leanproxy",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+3. Restart Windsurf
+
+**Verification:** After restarting, run `leanproxy server list` to confirm the connection is working.
+
+### Migrating from Another MCP Tool
+
+If you're migrating from another MCP tool (OpenCode, Claude Code, VS Code, or Cursor), use the built-in migration command:
+
+```bash
+leanproxy migrate
+```
+
+This will automatically detect your existing MCP configurations and import them into leanproxy's format. The resulting configuration is immediately usable by your IDE — no manual editing required.
+
+### Verification
+
+After configuring your IDE, verify the connection by checking that the leanproxy serve command is running without errors. Each IDE will show a connection indicator when the MCP server is active.
+
 ## Build from Source
 
 ### Prerequisites
