@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-02T07:52:42.404407Z",
+  "last_sync": "2026-05-02T08:34:45.554188Z",
   "epics": {
     "1": {
       "issue_id": 4366778556,
@@ -30,6 +30,11 @@
       "issue_id": 4366778698,
       "issue_number": 40,
       "title": "Server Configuration & Migration"
+    },
+    "7": {
+      "issue_id": 4368456769,
+      "issue_number": 53,
+      "title": "Multi-Server Gateway Mode"
     }
   },
   "stories": {
