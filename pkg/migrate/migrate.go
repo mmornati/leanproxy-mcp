@@ -158,8 +158,12 @@ func (m *Migrator) Import(ctx context.Context, servers []DiscoveredServer, targe
 		if sc.ConnectTimeout == "" {
 			sc.ConnectTimeout = "10s"
 		}
-		enabled := true
-		sc.Enabled = &enabled
+		if srv.Enabled != nil {
+			sc.Enabled = srv.Enabled
+		} else {
+			enabled := true
+			sc.Enabled = &enabled
+		}
 
 		newServers = append(newServers, sc)
 		result.Imported++

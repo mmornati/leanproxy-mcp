@@ -94,6 +94,10 @@ func GetPatternByName(name string) *SecretPattern {
 	return nil
 }
 
+func GetBuiltInPatterns() []SecretPattern {
+	return BuiltInPatterns
+}
+
 func CompileCustomPatterns(configs []PatternConfig) ([]*regexp.Regexp, error) {
 	var patterns []*regexp.Regexp
 	for _, c := range configs {

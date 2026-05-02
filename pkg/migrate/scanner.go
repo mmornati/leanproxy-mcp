@@ -16,6 +16,7 @@ type DiscoveredServer struct {
 	Transport registry.TransportType
 	Stdio     *StdioConfig
 	HTTP      *HTTPConfig
+	Enabled   *bool
 }
 
 type Scanner interface {

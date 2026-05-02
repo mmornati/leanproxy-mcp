@@ -15,20 +15,31 @@ func TestOpenCodeScanner_Name(t *testing.T) {
 }
 
 func TestOpenCodeScanner_Scan_NotFound(t *testing.T) {
+	tmpDir := os.TempDir()
+	emptyDir := filepath.Join(tmpDir, "empty_home")
+	if err := os.MkdirAll(emptyDir, 0755); err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(emptyDir)
+
+	originalHome := os.Getenv("HOME")
+	os.Setenv("HOME", emptyDir)
+	defer os.Setenv("HOME", originalHome)
+
 	s := &OpenCodeScanner{}
 	servers, err := s.Scan(context.Background())
 	if err != nil {
 		t.Errorf("Scan() error = %v", err)
 	}
-	if servers != nil {
-		t.Errorf("Scan() = %v, want nil for non-existent file", servers)
+	if servers != nil && len(servers) > 0 {
+		t.Errorf("Scan() = %v, want nil/empty for non-existent file", servers)
 	}
 }
 
 func TestOpenCodeScanner_Scan_Found(t *testing.T) {
 	tmpDir := os.TempDir()
 	cfgDir := filepath.Join(tmpDir, ".config", "opencode")
-	cfgPath := filepath.Join(cfgDir, "mcp.json")
+	cfgPath := filepath.Join(cfgDir, "opencode.json")
 
 	if err := os.MkdirAll(cfgDir, 0755); err != nil {
 		t.Fatalf("Failed to create config dir: %v", err)
@@ -36,11 +47,11 @@ func TestOpenCodeScanner_Scan_Found(t *testing.T) {
 	defer os.RemoveAll(filepath.Join(tmpDir, ".config"))
 
 	cfg := `{
-		"mcp_servers": {
+		"mcp": {
 			"test-server": {
-				"command": "/usr/bin/test-server",
-				"args": ["--flag"],
-				"env": ["VAR=value"]
+				"type": "local",
+				"command": ["/usr/bin/test-server", "--flag"],
+				"enabled": true
 			}
 		}
 	}`
@@ -69,6 +80,12 @@ func TestOpenCodeScanner_Scan_Found(t *testing.T) {
 	}
 	if servers[0].Stdio.Command != "/usr/bin/test-server" {
 		t.Errorf("Scan() got command %q, want /usr/bin/test-server", servers[0].Stdio.Command)
+	}
+	if len(servers[0].Stdio.Args) != 1 || servers[0].Stdio.Args[0] != "--flag" {
+		t.Errorf("Scan() got args %v, want [--flag]", servers[0].Stdio.Args)
+	}
+	if servers[0].Enabled == nil || !*servers[0].Enabled {
+		t.Errorf("Scan() got enabled %v, want true", servers[0].Enabled)
 	}
 }
 

@@ -145,3 +145,7 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 }
 
 func ptr(b bool) *bool { return &b }
+
+func MarshalConfig(cfg *Config) ([]byte, error) {
+	return yaml.Marshal(cfg)
+}
