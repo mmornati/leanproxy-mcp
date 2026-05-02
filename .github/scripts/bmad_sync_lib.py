@@ -287,10 +287,28 @@ def is_story_implemented(content: str) -> bool:
     if re.search(r"story\s+\d+[.-]\d+\s+implemented", lower):
         return True
     all_checklist_complete = "implementation checklist" in lower and _all_implementation_items_checked(content)
-    has_completion_notes = "### completion notes" in lower or "## completion notes" in lower
+    has_completion_notes = "### completion notes" in lower or "## completion notes" in lower or "completion notes list" in lower
     if all_checklist_complete and has_completion_notes:
         return True
+    if has_completion_notes and _has_meaningful_completion_notes(content):
+        return True
     return False
+
+
+def _has_meaningful_completion_notes(content: str) -> bool:
+    completion_pattern = re.compile(r"(?:###|##)\s+Completion Notes List\s*\n(.*?)(?=\n(?:##|###)|\Z)", re.DOTALL | re.IGNORECASE)
+    match = completion_pattern.search(content)
+    if not match:
+        completion_pattern2 = re.compile(r"Completion Notes List\s*\n(.*)", re.DOTALL | re.IGNORECASE)
+        match2 = completion_pattern2.search(content)
+        if match2:
+            notes_text = match2.group(1)
+        else:
+            return False
+    else:
+        notes_text = match.group(1)
+    bullet_points = re.findall(r"^\s*[-*]\s+\w", notes_text, re.MULTILINE)
+    return len(bullet_points) >= 1
 
 
 def _all_implementation_items_checked(content: str) -> bool:
