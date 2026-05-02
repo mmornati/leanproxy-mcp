@@ -22,6 +22,8 @@ Features:
 	SilenceUsage: true,
 }
 
+var GlobalConfigPath string
+
 func Execute() error {
 	return RootCmd.Execute()
 }
@@ -29,6 +31,7 @@ func Execute() error {
 func init() {
 	RootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose logging")
 	RootCmd.PersistentFlags().String("log-level", "info", "Log level (debug, info, warn, error)")
+	RootCmd.PersistentFlags().StringVar(&GlobalConfigPath, "config", "", "Path to leanproxy_servers.yaml config file")
 }
 
 func verboseEnabled(cmd *cobra.Command) bool {
