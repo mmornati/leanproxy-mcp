@@ -286,8 +286,9 @@ def is_story_implemented(content: str) -> bool:
         return True
     if re.search(r"story\s+\d+[.-]\d+\s+implemented", lower):
         return True
-    all_checklist_complete = "implementation checklist" in lower and _all_implementation_items_checked(content)
-    has_completion_notes = "### completion notes" in lower or "## completion notes" in lower or "completion notes list" in lower
+    has_checklist_section = "implementation checklist" in lower or "tasks/subtasks" in lower
+    all_checklist_complete = has_checklist_section and _all_implementation_items_checked(content)
+    has_completion_notes = "### completion notes" in lower or "## completion notes" in lower
     if all_checklist_complete and has_completion_notes:
         return True
     if has_completion_notes and _has_meaningful_completion_notes(content):
@@ -296,10 +297,14 @@ def is_story_implemented(content: str) -> bool:
 
 
 def _has_meaningful_completion_notes(content: str) -> bool:
-    completion_pattern = re.compile(r"(?:###|##)\s+Completion Notes List\s*\n(.*?)(?=\n(?:##|###)|\Z)", re.DOTALL | re.IGNORECASE)
+    completion_pattern = re.compile(
+        r"(?:###|##)\s+Completion Notes(?: List)?\s*\n(.*?)(?=\n(?:##|###)|\Z)",
+        re.DOTALL | re.IGNORECASE)
     match = completion_pattern.search(content)
     if not match:
-        completion_pattern2 = re.compile(r"Completion Notes List\s*\n(.*)", re.DOTALL | re.IGNORECASE)
+        completion_pattern2 = re.compile(
+            r"Completion Notes(?: List)?\s*\n(.*)",
+            re.DOTALL | re.IGNORECASE)
         match2 = completion_pattern2.search(content)
         if match2:
             notes_text = match2.group(1)
@@ -312,9 +317,9 @@ def _has_meaningful_completion_notes(content: str) -> bool:
 
 
 def _all_implementation_items_checked(content: str) -> bool:
-    checklist_section = re.search(r"##\s+implementation checklist\s*\n([\s\S]*?)(?=\n##|\Z)", content, re.IGNORECASE)
-    if not checklist_section:
-        checklist_section = re.search(r"###\s+implementation checklist\s*\n([\s\S]*?)(?=\n###|\n##|\Z)", content, re.IGNORECASE)
+    checklist_section = re.search(
+        r"(?:##|###)\s+(?:Implementation Checklist|Tasks/?Subtasks)\s*\n([\s\S]*?)(?=\n(?:##|###)|\Z)",
+        content, re.IGNORECASE)
     if not checklist_section:
         return False
     checklist_text = checklist_section.group(1)

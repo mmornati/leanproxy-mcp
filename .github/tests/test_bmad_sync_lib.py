@@ -300,6 +300,36 @@ All done!"""
 - [x] Task 2"""
         assert is_story_implemented(content) is False
 
+    def test_detects_tasks_subtasks_format(self):
+        content = """## Tasks/Subtasks
+- [x] Task 1
+- [x] Task 2
+## Completion Notes
+- Tasks completed"""
+        assert is_story_implemented(content) is True
+
+    def test_detects_completion_notes_without_list(self):
+        content = """## Implementation Checklist
+- [x] Task 1
+- [x] Task 2
+## Completion Notes
+- Implemented feature X"""
+        assert is_story_implemented(content) is True
+
+    def test_detects_completion_notes_list_still_works(self):
+        content = """## Tasks/Subtasks
+- [x] Task 1
+## Completion Notes List
+- Done with implementation"""
+        assert is_story_implemented(content) is True
+
+    def test_detects_h3_tasks_subtasks_format(self):
+        content = """### Tasks/Subtasks
+- [x] Task 1
+## Completion Notes
+- Done"""
+        assert is_story_implemented(content) is True
+
 
 class TestGetCommitAuthor:
     @patch("subprocess.run")
