@@ -246,7 +246,7 @@ def slugify(text: str) -> str:
 
 
 def find_issue_by_title(repo: str, token: str, title: str) -> dict | None:
-    url = f"https://api.github.com/repos/{repo}/issues?state=open&per_page=100"
+    url = f"https://api.github.com/repos/{repo}/issues?state=all&per_page=100"
     headers = {
         "Authorization": f"token {token}",
         "Accept": "application/vnd.github.v3+json",
