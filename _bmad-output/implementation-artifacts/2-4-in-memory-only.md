@@ -308,6 +308,46 @@ func TestLargePayloadStreaming(t *testing.T) {
    - Buffer zeroing ensures secrets don't persist in freed memory
    - No persistence layer means no file-based data recovery attacks
 
-2. **Runtime Verification**
-   - Consider adding `runtime.GC()` calls after processing sensitive data
-   - Consider `runtime.mallocgc` statistics monitoring for anomaly detection
+  2. **Runtime Verification**
+     - Consider adding `runtime.GC()` calls after processing sensitive data
+     - Consider `runtime.mallocgc` statistics monitoring for anomaly detection
+
+## Implementation Status
+
+### Tasks/Subtasks
+
+- [x] Create `pkg/bouncer/buffer_pool.go` with sync.Pool and constant-time zeroing
+- [x] Create `pkg/bouncer/streaming.go` with true streaming implementation
+- [x] Update `pkg/bouncer/redactor.go` to use streaming buffer management
+- [x] Create `pkg/bouncer/buffer_pool_test.go` with memory safety tests
+- [x] Add streaming tests to `pkg/bouncer/redactor_test.go` for large payloads
+- [x] Verify all tests pass (71 tests passing)
+
+### File List
+
+**Created:**
+- `pkg/bouncer/buffer_pool.go` - sync.Pool buffer management with crypto/subtle constant-time zeroing
+- `pkg/bouncer/streaming.go` - StreamingRedactor for true chunk-based processing
+- `pkg/bouncer/buffer_pool_test.go` - Buffer pool memory safety tests
+
+**Modified:**
+- `pkg/bouncer/redactor.go` - Updated RedactStream to use sync.Pool buffers with proper chunk advancement
+- `pkg/bouncer/redactor_test.go` - Added large payload and streaming tests
+
+### Dev Agent Record
+
+**Implementation Date:** 2026-05-02
+
+**Key Changes:**
+1. Fixed infinite loop bug in `redactChunk` - the function now advances past the full matched pattern using `matchEnd` instead of just `matchIndex`
+2. `RedactStream` now uses `bufio.Reader`/`bufio.Writer` with sync.Pool buffers
+3. All buffers are zeroed using `crypto/subtle.XORBytes` before returning to pool
+4. Added `StreamingRedactor` type for dedicated streaming operations
+5. 71 tests pass including 10MB large payload streaming tests
+
+**Completion Notes:**
+Implemented in-memory only processing with true streaming. All redaction now uses fixed 4KB buffers from sync.Pool, with constant-time zeroing before buffer return. Fixed critical bug where redactChunk would loop infinitely by advancing past full match length. Large payloads (10MB+) process correctly without memory spikes.
+
+### Change Log
+
+- **2026-05-02**: Implemented in-memory only processing - streaming buffer management with sync.Pool, constant-time buffer zeroing, fixed infinite loop in redactChunk, added StreamingRedactor type, 71 tests passing

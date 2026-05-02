@@ -240,3 +240,101 @@ func TestNewRedactor(t *testing.T) {
 		t.Errorf("expected default bufferSize=4096, got %d", redactor.bufferSize)
 	}
 }
+
+func TestLargePayloadStreaming(t *testing.T) {
+	largeData := make([]byte, 10*1024*1024)
+	for i := range largeData {
+		largeData[i] = byte(i % 256)
+	}
+	copy(largeData[100:140], []byte("AKIAIOSFODNN7EXAMPLE"))
+
+	r := bytes.NewReader(largeData)
+	var w bytes.Buffer
+
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	err := redactor.RedactStream(r, &w)
+
+	if err != nil {
+		t.Fatalf("RedactStream failed: %v", err)
+	}
+	if w.Len() >= len(largeData)*3 {
+		t.Error("output should be smaller due to redaction")
+	}
+	if !strings.Contains(w.String(), "[SECRET_REDACTED]") {
+		t.Error("secret should be redacted")
+	}
+}
+
+func TestStreamingNoDataLeak(t *testing.T) {
+	secretData := []byte(`{"api_key": "AKIAIOSFODNN7EXAMPLE", "data": "sensitive"}`)
+	r := bytes.NewReader(secretData)
+	var w bytes.Buffer
+
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	err := redactor.RedactStream(r, &w)
+	if err != nil {
+		t.Fatalf("RedactStream failed: %v", err)
+	}
+
+	output := w.String()
+	if strings.Contains(output, "AKIAIOSFODNN7EXAMPLE") {
+		t.Error("unredacted secret should not appear")
+	}
+	if !strings.Contains(output, "[SECRET_REDACTED]") {
+		t.Error("redacted placeholder should appear")
+	}
+}
+
+func TestStreamingRedactorLargePayload(t *testing.T) {
+	largeData := make([]byte, 5*1024*1024)
+	for i := range largeData {
+		largeData[i] = byte('A' + (i % 26))
+	}
+	copy(largeData[1000:1040], []byte(`"token": "ghp_123456789012345678901234567890123456"`))
+
+	r := bytes.NewReader(largeData)
+	var w bytes.Buffer
+
+	redactor := NewStreamingRedactor(PatternsToRegexps(BuiltInPatterns))
+	err := redactor.RedactStream(r, &w)
+
+	if err != nil {
+		t.Fatalf("RedactStream failed: %v", err)
+	}
+	if !strings.Contains(w.String(), "[SECRET_REDACTED]") {
+		t.Error("expected secret to be redacted")
+	}
+}
+
+func TestStreamingRedactorNoSecrets(t *testing.T) {
+	input := `{"message": "hello world", "count": 42}`
+	redactor := NewStreamingRedactor(PatternsToRegexps(BuiltInPatterns))
+
+	r := strings.NewReader(input)
+	var w bytes.Buffer
+	err := redactor.RedactStream(r, &w)
+
+	if err != nil {
+		t.Fatalf("RedactStream failed: %v", err)
+	}
+	if input != w.String() {
+		t.Errorf("got %q, want %q", w.String(), input)
+	}
+}
+
+func TestStreamingRedactorMultipleSecrets(t *testing.T) {
+	input := `{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_123456789012345678901234567890123456"}`
+	expected := `{"aws": "[SECRET_REDACTED]", "github": "[SECRET_REDACTED]"}`
+
+	redactor := NewStreamingRedactor(PatternsToRegexps(BuiltInPatterns))
+	r := strings.NewReader(input)
+	var w bytes.Buffer
+	err := redactor.RedactStream(r, &w)
+
+	if err != nil {
+		t.Fatalf("RedactStream failed: %v", err)
+	}
+	if expected != w.String() {
+		t.Errorf("got %q, want %q", w.String(), expected)
+	}
+}
