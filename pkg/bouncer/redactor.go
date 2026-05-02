@@ -70,8 +70,8 @@ func (r *Redactor) RedactJSON(data []byte) ([]byte, error) {
 
 func (r *Redactor) redactString(data string) string {
 	result := data
-	for _, pattern := range r.patterns {
-		result = pattern.ReplaceAllString(result, SecretRedacted)
+	for _, pattern := range BuiltInPatterns {
+		result = pattern.Pattern.ReplaceAllString(result, SecretRedacted)
 	}
 	return result
 }
