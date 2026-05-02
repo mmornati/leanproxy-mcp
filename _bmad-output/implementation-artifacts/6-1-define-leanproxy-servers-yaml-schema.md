@@ -1,6 +1,6 @@
 # Story 6-1: Define LeanProxy Servers YAML Schema
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -62,23 +62,23 @@ Feature: LeanProxy Server Configuration Schema
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Design and implement leanproxy_servers.yaml schema (AC: 1-5)
-  - [ ] Define Go struct for server configuration with proper tags
-  - [ ] Implement YAML unmarshaling with validation
-  - [ ] Create default values for optional fields
-  - [ ] Add documentation comments to schema
+- [x] Task 1: Design and implement leanproxy_servers.yaml schema (AC: 1-5)
+  - [x] Define Go struct for server configuration with proper tags
+  - [x] Implement YAML unmarshaling with validation
+  - [x] Create default values for optional fields
+  - [x] Add documentation comments to schema
 
-- [ ] Task 2: Implement config file discovery and loading (AC: 1-6)
-  - [ ] Define config search paths (~/.config/leanproxy_servers.yaml)
-  - [ ] Load and parse YAML configuration
-  - [ ] Handle missing config file gracefully (start in passthrough mode)
-  - [ ] Validate all server entries on load
+- [x] Task 2: Implement config file discovery and loading (AC: 1-6)
+  - [x] Define config search paths (~/.config/leanproxy_servers.yaml)
+  - [x] Load and parse YAML configuration
+  - [x] Handle missing config file gracefully (start in passthrough mode)
+  - [x] Validate all server entries on load
 
-- [ ] Task 3: Add integration tests (AC: #6)
-  - [ ] Test valid minimal configuration
-  - [ ] Test valid full configuration with all fields
-  - [ ] Test invalid configuration error handling
-  - [ ] Test default value application
+- [x] Task 3: Add integration tests (AC: #6)
+  - [x] Test valid minimal configuration
+  - [x] Test valid full configuration with all fields
+  - [x] Test invalid configuration error handling
+  - [x] Test default value application
 
 ## Dev Notes
 
@@ -145,7 +145,7 @@ cmd/serve.go         # UPDATE - Load config on startup
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+openrouter/minimax/minimax-m2.7
 
 ### Debug Log References
 
@@ -153,12 +153,20 @@ N/A - First story in Epic 6
 
 ### Completion Notes List
 
-N/A
+- Implemented ServerConfig struct with YAML tags for all schema fields
+- Implemented LoadConfig function with validation and default value handling
+- Added --config flag to root command for custom config path
+- Integrated config loading in serve command with graceful handling
+- Created comprehensive tests covering all acceptance criteria
+- All 17 tests pass
 
 ### File List
 
 - `pkg/migrate/config.go` (NEW)
-- `pkg/registry/registry.go` (UPDATE)
+- `pkg/migrate/config_test.go` (NEW)
 - `cmd/root.go` (UPDATE)
 - `cmd/serve.go` (UPDATE)
-- `pkg/migrate/config_test.go` (NEW - tests)
+
+## Change Log
+
+- 2026-05-02: Initial implementation of leanproxy_servers.yaml schema (Story 6-1)
