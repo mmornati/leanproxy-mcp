@@ -22,7 +22,7 @@ development_status:
   2-1-core-redaction-engine: review
   2-2-allow-list-redaction: review
   2-3-custom-redaction-patterns: review
-  2-4-in-memory-only: ready-for-dev
+  2-4-in-memory-only: review
   2-5-redaction-alerts: ready-for-dev
   3-1-discovery-signatures: ready-for-dev
   3-2-jit-schema-injection: ready-for-dev

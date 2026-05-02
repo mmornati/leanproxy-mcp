@@ -1,6 +1,7 @@
 package bouncer
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,15 +25,31 @@ func NewRedactor(patterns []*regexp.Regexp) *Redactor {
 }
 
 func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer) error {
-	buf := make([]byte, r.bufferSize)
-	var input strings.Builder
+	readerBuf := bufio.NewReaderSize(reader, r.bufferSize)
+	writerBuf := bufio.NewWriterSize(writer, r.bufferSize)
+	defer writerBuf.Flush()
+
+	var totalRead, totalWritten int64
 
 	for {
-		n, err := reader.Read(buf)
+		buf := GetBuffer()
+		defer ReturnBuffer(buf)
+
+		n, err := readerBuf.Read(buf)
 		if n > 0 {
-			input.Write(buf[:n])
+			chunk := buf[:n]
+			redacted := r.redactChunk(chunk)
+
+			_, writeErr := writerBuf.Write(redacted)
+			if writeErr != nil {
+				return fmt.Errorf("bouncer redact: %w", writeErr)
+			}
+			totalRead += int64(n)
+			totalWritten += int64(len(redacted))
+			slog.Debug("processing chunk", "size", n)
 		}
 		if err == io.EOF {
+			slog.Info("streaming redaction complete", "bytes_read", totalRead, "bytes_written", totalWritten)
 			break
 		}
 		if err != nil {
@@ -40,16 +57,36 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer) error {
 		}
 	}
 
-	data := input.String()
-	slog.Debug("redacting message", "size", len(data))
+	return nil
+}
 
-	redacted := r.redactString(data)
+func (r *Redactor) redactChunk(chunk []byte) []byte {
+	result := make([]byte, 0, len(chunk))
+	remaining := chunk
 
-	if _, err := writer.Write([]byte(redacted)); err != nil {
-		return fmt.Errorf("bouncer redact: %w", err)
+	for len(remaining) > 0 {
+		matchIndex := -1
+		matchEnd := -1
+
+		for _, pattern := range r.patterns {
+			loc := pattern.FindIndex(remaining)
+			if loc != nil && (matchIndex == -1 || loc[0] < matchIndex) {
+				matchIndex = loc[0]
+				matchEnd = loc[1]
+			}
+		}
+
+		if matchIndex == -1 {
+			result = append(result, remaining...)
+			break
+		}
+
+		result = append(result, remaining[:matchIndex]...)
+		result = append(result, SecretRedacted...)
+		remaining = remaining[matchEnd:]
 	}
 
-	return nil
+	return result
 }
 
 func (r *Redactor) RedactJSON(data []byte) ([]byte, error) {
