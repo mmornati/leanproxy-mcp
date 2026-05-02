@@ -29,7 +29,12 @@ def process_story(repo: str, token: str, mapping: dict, file_path: str, content:
     story_title = parse_story_title(content) or file_stem
     epic_key = extract_epic_key(content, file_stem)
 
-    existing_issue = find_issue_by_title(repo, token, story_title)
+    existing_issue = None
+    if file_stem in mapping.get("stories", {}):
+        mapped = mapping["stories"][file_stem]
+        existing_issue = {"number": mapped["issue_number"], "id": mapped["issue_id"]}
+    else:
+        existing_issue = find_issue_by_title(repo, token, story_title)
 
     if existing_issue:
         issue_number = existing_issue["number"]

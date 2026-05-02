@@ -28,7 +28,7 @@ def parse_frontmatter(content: str) -> dict[str, Any]:
 
 
 def parse_story_title(content: str) -> str | None:
-    story_title_pattern = re.compile(r"^#\s+Story\s+\d+-\d+[\s:–-]*(.+)", re.IGNORECASE)
+    story_title_pattern = re.compile(r"^#\s+Story\s+\d+[.-]\d+[\s:–-]*(.+)", re.IGNORECASE)
     for line in content.split("\n"):
         match = story_title_pattern.match(line.strip())
         if match:
