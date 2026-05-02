@@ -11,6 +11,11 @@ on:
     paths:
       - '_bmad-output/implementation-artifacts/*.md'
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number for story delivery'
+        required: false
+        type: number
 
 jobs:
   deliver-story:
@@ -34,9 +39,34 @@ jobs:
       - name: Install dependencies
         run: pip install -r .github/scripts/requirements.txt
 
+      - name: Determine PR number
+        id: pr-number
+        shell: python
+        run: |
+            import os
+            pr_num = os.environ.get("INPUT_PR_NUMBER")
+            if pr_num:
+                print(f"Using workflow_dispatch PR number: {pr_num}")
+            else:
+                import subprocess
+                branch = os.environ.get("GITHUB_REF_NAME", "")
+                result = subprocess.run(
+                    ["gh", "api", "-q", ".[].number", f'repos/mmornati/leanproxy-mcp/pulls?head={branch}&state=open'],
+                    capture_output=True, text=True
+                )
+                pr_num = result.stdout.strip().split('\n')[0] if result.stdout.strip() else ""
+                print(f"Found PR number for branch {branch}: {pr_num or 'none'}")
+            with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+                f.write(f"pr_number={pr_num}\n")
+
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_OUTPUT: ${{ env.GITHUB_OUTPUT }}
+
       - name: Run BMad Story Delivery
         run: python .github/scripts/bmad_story_delivery.py
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PULL_REQUEST_NUMBER: ${{ github.event.pull_request.number }}
+          PULL_REQUEST_NUMBER: ${{ steps.pr-number.outputs.pr_number }}
