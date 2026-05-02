@@ -18,7 +18,7 @@ builds:
       - -X github.com/mmornati/leanproxy-mcp/cmd.versionString={{.Version}}
 archives:
   - id: default
-    format: tar.gz
+    formats: ["tar.gz"]
     files: []
 checksum:
   name_template: "checksums.txt"
