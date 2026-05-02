@@ -1,6 +1,6 @@
 # Story 6-2: Implement Auto-Detection and Migration
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -86,28 +86,28 @@ Feature: MCP Configuration Auto-Detection and Migration
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Implement config file scanner (AC: 1, 4-7)
-  - [ ] Create scanner interface for different IDE configs
-  - [ ] Implement OpenCode config reader (~/.config/opencode/mcp.json)
-  - [ ] Implement Claude Code config reader (~/.claude.json, ~/.config/claude/mcp_config.json)
-  - [ ] Implement VS Code settings reader (settings.json MCP section)
-  - [ ] Implement Cursor config reader (~/.cursor/mcp.json)
-  - [ ] Implement generic mcp.json reader (~/.config/mcp.json)
+- [x] Task 1: Implement config file scanner (AC: 1, 4-7)
+  - [x] Create scanner interface for different IDE configs
+  - [x] Implement OpenCode config reader (~/.config/opencode/mcp.json)
+  - [x] Implement Claude Code config reader (~/.claude.json, ~/.config/claude/mcp_config.json)
+  - [x] Implement VS Code settings reader (settings.json MCP section)
+  - [x] Implement Cursor config reader (~/.cursor/mcp.json)
+  - [x] Implement generic mcp.json reader (~/.config/mcp.json)
 
-- [ ] Task 2: Implement migration summary and confirmation (AC: 2-3)
-  - [ ] Create summary display with found servers
-  - [ ] Implement interactive confirmation flow
-  - [ ] Implement non-interactive mode with --yes flag
+- [x] Task 2: Implement migration summary and confirmation (AC: 2-3)
+  - [x] Create summary display with found servers
+  - [x] Implement interactive confirmation flow
+  - [x] Implement non-interactive mode with --yes flag
 
-- [ ] Task 3: Implement server import with conflict resolution (AC: 3)
-  - [ ] Merge discovered servers into leanproxy_servers.yaml
-  - [ ] Handle duplicate names with suffix (_opencode, _claude, etc.)
-  - [ ] Save merged configuration
+- [x] Task 3: Implement server import with conflict resolution (AC: 3)
+  - [x] Merge discovered servers into leanproxy_servers.yaml
+  - [x] Handle duplicate names with suffix (_opencode, _claude, etc.)
+  - [x] Save merged configuration
 
-- [ ] Task 4: Add CLI command (AC: 1-3)
-  - [ ] Create `leanproxy migrate` command
-  - [ ] Add --yes flag for non-interactive mode
-  - [ ] Add --dry-run flag to preview without importing
+- [x] Task 4: Add CLI command (AC: 1-3)
+  - [x] Create `leanproxy migrate` command
+  - [x] Add --yes flag for non-interactive mode
+  - [x] Add --dry-run flag to preview without importing
 
 ## Dev Notes
 
@@ -176,7 +176,7 @@ cmd/
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+openrouter/minimax/minimax-m2.7
 
 ### Debug Log References
 
@@ -184,17 +184,28 @@ N/A
 
 ### Completion Notes List
 
-N/A
+- Implemented Scanner interface with 5 IDE-specific scanners (OpenCode, Claude, VSCode, Cursor, Generic)
+- Implemented Migrator struct with Scan, Summarize, and Import methods
+- Created CLI command with --yes, --dry-run, and --target flags
+- Added 38 unit tests for all scanner types and migration logic
+- All 105 project tests pass
+- Conflict resolution: duplicate names get suffix based on source tool (_opencode, _claude, etc.)
+- Migration flow: Scan -> Summarize -> Confirm -> Import
 
 ### File List
 
 - `pkg/migrate/scanner.go` (NEW)
+- `pkg/migrate/scanner_test.go` (NEW)
 - `pkg/migrate/opencode.go` (NEW)
 - `pkg/migrate/claude.go` (NEW)
 - `pkg/migrate/vscode.go` (NEW)
 - `pkg/migrate/cursor.go` (NEW)
 - `pkg/migrate/generic.go` (NEW)
 - `pkg/migrate/migrate.go` (NEW)
-- `pkg/migrate/config.go` (UPDATE)
+- `pkg/migrate/migrate_test.go` (NEW)
+- `pkg/migrate/config.go` (UPDATE - already existed, used by import)
 - `cmd/migrate.go` (NEW)
-- `pkg/migrate/*_test.go` (NEW - tests)
+
+## Change Log
+
+- 2026-05-02: Initial implementation of auto-detect and migration (Story 6-2)
