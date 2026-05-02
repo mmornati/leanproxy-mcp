@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
+	"os/user"
+	"path/filepath"
 	"syscall"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/spf13/cobra"
 )
 
@@ -30,6 +34,34 @@ func init() {
 }
 
 func runServe(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+
+	configPath := GlobalConfigPath
+	if configPath == "" {
+		usr, err := user.Current()
+		if err == nil {
+			configPath = filepath.Join(usr.HomeDir, ".config", "leanproxy_servers.yaml")
+		}
+	}
+
+	if configPath != "" {
+		cfg, err := migrate.LoadConfig(ctx, configPath)
+		if err != nil {
+			slog.Warn("failed to load config", "path", configPath, "error", err)
+		} else if cfg != nil {
+			slog.Info("loaded server config", "path", configPath, "server_count", len(cfg.Servers))
+			for _, srv := range cfg.Servers {
+				slog.Info("server configured",
+					"name", srv.Name,
+					"transport", srv.Transport,
+					"enabled", srv.Enabled != nil && *srv.Enabled,
+				)
+			}
+		}
+	} else {
+		slog.Info("no config file specified, starting in passthrough mode")
+	}
+
 	slog.Info("starting server", "listen", serveFlags.listenAddr, "upstream", serveFlags.upstreamURL)
 
 	ln, err := net.Listen("tcp", serveFlags.listenAddr)
