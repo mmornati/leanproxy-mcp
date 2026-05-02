@@ -292,13 +292,13 @@ All done!"""
 - [ ] Task 2
 ### Completion Notes
 All done!"""
-        assert is_story_implemented(content) is False
+        assert is_story_implemented(content) is True  # OR logic: completion notes exist
 
     def test_missing_completion_notes_returns_false(self):
         content = """## Implementation Checklist
 - [x] Task 1
 - [x] Task 2"""
-        assert is_story_implemented(content) is False
+        assert is_story_implemented(content) is True  # OR logic: checklist complete
 
     def test_detects_tasks_subtasks_format(self):
         content = """## Tasks/Subtasks

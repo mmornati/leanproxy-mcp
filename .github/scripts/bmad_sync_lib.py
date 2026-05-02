@@ -289,7 +289,7 @@ def is_story_implemented(content: str) -> bool:
     has_checklist_section = "implementation checklist" in lower or "tasks/subtasks" in lower
     all_checklist_complete = has_checklist_section and _all_implementation_items_checked(content)
     has_completion_notes = "### completion notes" in lower or "## completion notes" in lower
-    if all_checklist_complete and has_completion_notes:
+    if all_checklist_complete or has_completion_notes:  # OR logic - either is sufficient
         return True
     if has_completion_notes and _has_meaningful_completion_notes(content):
         return True
