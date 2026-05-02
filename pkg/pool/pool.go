@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/concurrent"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
@@ -57,15 +58,19 @@ const (
 )
 
 type StdioPool struct {
-	servers       map[string]*StdioServerV2
-	mu            sync.RWMutex
-	maxPerServer  int
-	idleTimeout   time.Duration
-	logger        *slog.Logger
-	ctx           context.Context
-	cancel        context.CancelFunc
+	servers        map[string]*StdioServerV2
+	mu             sync.RWMutex
+	maxPerServer   int
+	idleTimeout    time.Duration
+	logger         *slog.Logger
+	ctx            context.Context
+	cancel         context.CancelFunc
 	requestWaiters map[string][]chan Request
-	waiterMu      sync.Mutex
+	waiterMu       sync.Mutex
+	rateLimiters   map[string]*concurrent.RateLimiter
+	circuitBreakers map[string]*concurrent.CircuitBreaker
+	maxQueueSize   int
+	workerPool     *concurrent.WorkerPool
 }
 
 func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logger) *StdioPool {
@@ -75,15 +80,22 @@ func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logg
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &StdioPool{
-		servers:        make(map[string]*StdioServerV2),
-		maxPerServer:   maxPerServer,
-		idleTimeout:    idleTimeout,
-		logger:         logger,
-		ctx:            ctx,
-		cancel:         cancel,
-		requestWaiters: make(map[string][]chan Request),
+	pool := &StdioPool{
+		servers:         make(map[string]*StdioServerV2),
+		maxPerServer:    maxPerServer,
+		idleTimeout:     idleTimeout,
+		logger:          logger,
+		ctx:             ctx,
+		cancel:          cancel,
+		requestWaiters:  make(map[string][]chan Request),
+		rateLimiters:    make(map[string]*concurrent.RateLimiter),
+		circuitBreakers: make(map[string]*concurrent.CircuitBreaker),
+		maxQueueSize:    1000,
 	}
+
+	pool.workerPool = concurrent.NewWorkerPool(maxPerServer*2, pool.maxQueueSize, logger)
+
+	return pool
 }
 
 func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfig) error {
@@ -117,6 +129,9 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 	}
 
 	p.servers[config.Name] = server
+
+	p.rateLimiters[config.Name] = concurrent.NewRateLimiter(10, time.Second)
+	p.circuitBreakers[config.Name] = concurrent.NewCircuitBreaker(5, 50*time.Second, 10*time.Second)
 
 	go server.runRequestLoop(p.ctx, p)
 
@@ -161,6 +176,18 @@ func (p *StdioPool) PutRequest(name string, req Request) error {
 		return err
 	}
 
+	if cb, exists := p.circuitBreakers[name]; exists {
+		if cb.State() == concurrent.StateOpen {
+			return fmt.Errorf("pool: circuit breaker open for %s", name)
+		}
+	}
+
+	if rl, exists := p.rateLimiters[name]; exists {
+		if !rl.Allow() {
+			return fmt.Errorf("pool: rate limit exceeded for %s", name)
+		}
+	}
+
 	if !server.canAcceptRequest() {
 		return fmt.Errorf("pool: server %s at max capacity", name)
 	}
@@ -182,6 +209,10 @@ func (p *StdioPool) PutRequest(name string, req Request) error {
 
 func (p *StdioPool) Close() error {
 	p.cancel()
+
+	if p.workerPool != nil {
+		p.workerPool.Shutdown()
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
