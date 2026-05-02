@@ -1,6 +1,6 @@
 # Story 7.3: Stdio Pool Manager
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -154,14 +154,14 @@ pkg/pool/
 
 ### Implementation Checklist
 
-- [ ] Create `pkg/pool/pool.go` with StdioPool
-- [ ] Implement server spawn with stdin/stdout pipes
-- [ ] Implement request serialization per server
-- [ ] Implement connection reuse
-- [ ] Implement health monitoring goroutine
-- [ ] Implement idle timeout and server stop
-- [ ] Implement restart with exponential backoff
-- [ ] Add unit tests
+- [x] Create `pkg/pool/pool.go` with StdioPool
+- [x] Implement server spawn with stdin/stdout pipes
+- [x] Implement request serialization per server
+- [x] Implement connection reuse
+- [x] Implement health monitoring goroutine
+- [x] Implement idle timeout and server stop
+- [x] Implement restart with exponential backoff
+- [x] Add unit tests
 
 ### Edge Cases
 
