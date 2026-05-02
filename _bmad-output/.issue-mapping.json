@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-02T09:09:54.728834Z",
+  "last_sync": "2026-05-02T09:36:31.061441Z",
   "epics": {
     "1": {
       "issue_id": 4366778556,
@@ -228,7 +228,7 @@
       "issue_id": 4368469138,
       "issue_number": 58,
       "parent_epic": "7",
-      "commit_sha": "8764e5e"
+      "commit_sha": "2165cba"
     },
     "7-1-tool-to-server-routing": {
       "issue_id": 4368484733,
