@@ -1,5 +1,5 @@
 {
-  "last_sync": "2026-05-01T21:54:07.493107Z",
+  "last_sync": "2026-05-02T06:57:53.023734Z",
   "epics": {
     "1": {
       "issue_id": 4366778556,
@@ -187,7 +187,7 @@
       "issue_id": 4366835402,
       "issue_number": 43,
       "parent_epic": "6",
-      "commit_sha": "a60be4d"
+      "commit_sha": "d3e2a8b"
     },
     "6-4-ide-configuration-documentation": {
       "issue_id": 4366835466,
