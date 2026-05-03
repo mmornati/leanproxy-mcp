@@ -26,7 +26,7 @@ In a 20-prompt coding session where GitHub is called only twice, Native MCP wast
 
 LeanProxy uses a gateway pattern with Just-In-Time schema loading:
 
-- **Single router schema**: Only 3 tools (`list_servers`, `invoke_tool`, `search_tools`) = **~160 tokens** vs 3,000+ for Native MCP
+- **Single router schema**: Only 2 tools (`invoke_tool`, `search_tools`) = **~110 tokens** vs 3,000+ for Native MCP
 - **On-demand tool registration**: Backend server schemas load only when actually invoked
 - **Session-aware caching**: Tool schemas persist across the session without per-request overhead
 
