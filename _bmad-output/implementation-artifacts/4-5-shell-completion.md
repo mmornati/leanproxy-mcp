@@ -9,7 +9,39 @@
 | **Epic** | Epic 4 - CLI Installation and Interaction |
 | **Title** | Implement Shell Completion |
 | **Priority** | Medium |
-| **Status** | ready-for-dev |
+| **Status** | review |
+
+## Tasks/Subtasks
+
+- [x] Implement `leanproxy completion bash` command with cobra GenBashCompletion
+- [x] Implement `leanproxy completion zsh` command with cobra GenZshCompletion
+- [x] Implement `leanproxy completion fish` command with cobra GenFishCompletion
+- [x] Implement `leanproxy completion powershell` command with cobra GenPowerShellCompletion
+- [x] Add `--no-desc` flag to suppress command descriptions
+- [x] Add `--description` flag for custom completion description
+- [x] Implement custom completers: completeConfigPath, completeLogLevel, completeTokenURI, completeSocketPath, completeRegistryURL
+- [x] Register custom completers with RegisterFlagCompletionFunc
+- [x] Add unit tests for completion generation
+- [x] Add unit tests for custom completer functions
+
+## Dev Agent Record
+
+### Debug Log
+- Initial implementation had GenBashCompletionFile which doesn't exist - corrected to GenBashCompletion
+- Fixed Fish completion test to pass includeDesc bool parameter
+- Socket path completer needed initialization to empty slice instead of nil
+
+### Completion Notes
+Implemented shell completion support for bash, zsh, fish, and PowerShell shells using cobra's built-in completion generation. The completion command outputs scripts to stdout for shell installation. Custom completers were implemented for config paths, log levels, token URIs, socket paths, and registry URLs.
+
+## File List
+
+- `cmd/completion.go` - Completion command implementation (modified)
+- `cmd/completion_test.go` - Unit tests for completion (created)
+
+## Change Log
+
+- 2026-05-03: Implemented shell completion for bash, zsh, fish, and PowerShell with custom completers
 
 ## Story Requirements
 
