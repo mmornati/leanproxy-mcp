@@ -5,7 +5,7 @@ Complete reference for all LeanProxy-MCP CLI commands.
 ## Main Command
 
 ```bash
-leanproxy [command] [flags]
+leanproxy-mcp [command] [flags]
 ```
 
 ### Global Flags
@@ -40,7 +40,7 @@ Start the LeanProxy-MCP proxy server that listens for connections and forwards J
 ### Usage
 
 ```bash
-leanproxy serve [flags]
+leanproxy-mcp serve [flags]
 ```
 
 ### Flags
@@ -54,16 +54,16 @@ leanproxy serve [flags]
 
 ```bash
 # Start proxy server
-leanproxy serve
+leanproxy-mcp serve
 
 # Listen on custom address
-leanproxy serve --listen 0.0.0.0:9090
+leanproxy-mcp serve --listen 0.0.0.0:9090
 
 # Custom upstream server
-leanproxy serve --upstream http://localhost:9000
+leanproxy-mcp serve --upstream http://localhost:9000
 
 # With verbose logging
-leanproxy serve --verbose
+leanproxy-mcp serve --verbose
 ```
 
 ## `server` - Manage MCP Servers
@@ -73,7 +73,7 @@ Add, remove, list, enable, or disable MCP servers.
 ### Usage
 
 ```bash
-leanproxy server [command]
+leanproxy-mcp server [command]
 ```
 
 ### Subcommands
@@ -95,7 +95,7 @@ Add a new MCP server configuration.
 #### Usage
 
 ```bash
-leanproxy server add <name> <command> [args...] [flags]
+leanproxy-mcp server add <name> <command> [args...] [flags]
 ```
 
 #### Flags
@@ -110,16 +110,16 @@ leanproxy server add <name> <command> [args...] [flags]
 
 ```bash
 # Add filesystem server (stdio)
-leanproxy server add filesystem "npx -y @modelcontextprotocol/server-filesystem" "./"
+leanproxy-mcp server add filesystem "npx -y @modelcontextprotocol/server-filesystem" "./"
 
 # Add GitHub server
-leanproxy server add github "npx -y @modelcontextprotocol/server-github"
+leanproxy-mcp server add github "npx -y @modelcontextprotocol/server-github"
 
 # Add with environment variables
-leanproxy server add myserver "npx -y my-server" --env API_KEY=xxx --env SECRET=yyy
+leanproxy-mcp server add myserver "npx -y my-server" --env API_KEY=xxx --env SECRET=yyy
 
 # Add HTTP transport server
-leanproxy server add http-server "http://localhost:8081" --transport http
+leanproxy-mcp server add http-server "http://localhost:8081" --transport http
 ```
 
 #### Output
@@ -137,13 +137,13 @@ Remove an MCP server configuration.
 #### Usage
 
 ```bash
-leanproxy server remove <name> [flags]
+leanproxy-mcp server remove <name> [flags]
 ```
 
 #### Examples
 
 ```bash
-leanproxy server remove filesystem
+leanproxy-mcp server remove filesystem
 ```
 
 #### Output
@@ -161,7 +161,7 @@ List all configured MCP servers.
 #### Usage
 
 ```bash
-leanproxy server list [flags]
+leanproxy-mcp server list [flags]
 ```
 
 #### Flags
@@ -174,10 +174,10 @@ leanproxy server list [flags]
 
 ```bash
 # List all servers
-leanproxy server list
+leanproxy-mcp server list
 
 # Filter by source
-leanproxy server list --source opencode
+leanproxy-mcp server list --source opencode
 ```
 
 #### Output
@@ -202,13 +202,13 @@ Enable a disabled MCP server.
 #### Usage
 
 ```bash
-leanproxy server enable <name>
+leanproxy-mcp server enable <name>
 ```
 
 #### Examples
 
 ```bash
-leanproxy server enable github
+leanproxy-mcp server enable github
 ```
 
 #### Output
@@ -226,13 +226,13 @@ Disable an enabled MCP server.
 #### Usage
 
 ```bash
-leanproxy server disable <name>
+leanproxy-mcp server disable <name>
 ```
 
 #### Examples
 
 ```bash
-leanproxy server disable github
+leanproxy-mcp server disable github
 ```
 
 #### Output
@@ -250,7 +250,7 @@ Manage Bouncer redaction (token firewall) settings.
 ### Usage
 
 ```bash
-leanproxy bouncer [command]
+leanproxy-mcp bouncer [command]
 ```
 
 ### Subcommands
@@ -269,13 +269,13 @@ List all active redaction patterns.
 #### Usage
 
 ```bash
-leanproxy bouncer list-patterns
+leanproxy-mcp bouncer list-patterns
 ```
 
 #### Examples
 
 ```bash
-leanproxy bouncer list-patterns
+leanproxy-mcp bouncer list-patterns
 ```
 
 #### Output
@@ -301,13 +301,13 @@ Validate custom redaction patterns from config.
 #### Usage
 
 ```bash
-leanproxy bouncer validate-patterns
+leanproxy-mcp bouncer validate-patterns
 ```
 
 #### Examples
 
 ```bash
-leanproxy bouncer validate-patterns --config custom.yaml
+leanproxy-mcp bouncer validate-patterns --config custom.yaml
 ```
 
 #### Output (success)
@@ -331,7 +331,7 @@ Manage distilled manifest caching and re-distillation.
 ### Usage
 
 ```bash
-leanproxy compactor [command]
+leanproxy-mcp compactor [command]
 ```
 
 ### Subcommands
@@ -349,17 +349,17 @@ Force re-distillation of all server manifests.
 #### Usage
 
 ```bash
-leanproxy compactor rebuild [flags]
+leanproxy-mcp compactor rebuild [flags]
 ```
 
 #### Examples
 
 ```bash
 # Rebuild all manifests
-leanproxy compactor rebuild
+leanproxy-mcp compactor rebuild
 
 # Dry run
-leanproxy compactor rebuild --dry-run
+leanproxy-mcp compactor rebuild --dry-run
 ```
 
 #### Output
@@ -377,7 +377,7 @@ Display real-time status of all active proxied servers.
 ### Usage
 
 ```bash
-leanproxy status [flags]
+leanproxy-mcp status [flags]
 ```
 
 ### Flags
@@ -394,22 +394,22 @@ leanproxy status [flags]
 
 ```bash
 # Basic status
-leanproxy status
+leanproxy-mcp status
 
 # Watch mode
-leanproxy status --watch
+leanproxy-mcp status --watch
 
 # JSON output
-leanproxy status --json
+leanproxy-mcp status --json
 
 # Verbose with more details
-leanproxy status --verbose
+leanproxy-mcp status --verbose
 
 # Filter by server
-leanproxy status --server filesystem
+leanproxy-mcp status --server filesystem
 
 # Custom refresh interval
-leanproxy status --watch --interval 500ms
+leanproxy-mcp status --watch --interval 500ms
 ```
 
 #### Output (basic)
@@ -453,7 +453,7 @@ Display cumulative token savings statistics.
 ### Usage
 
 ```bash
-leanproxy savings [flags]
+leanproxy-mcp savings [flags]
 ```
 
 ### Flags
@@ -468,16 +468,16 @@ leanproxy savings [flags]
 
 ```bash
 # Show all savings
-leanproxy savings
+leanproxy-mcp savings
 
 # JSON output
-leanproxy savings --json
+leanproxy-mcp savings --json
 
 # Filter by server
-leanproxy savings --server filesystem
+leanproxy-mcp savings --server filesystem
 
 # Reset counters
-leanproxy savings --reset
+leanproxy-mcp savings --reset
 ```
 
 #### Output
@@ -511,7 +511,7 @@ Generate a Markdown-formatted report on token savings and security risks.
 ### Usage
 
 ```bash
-leanproxy report [flags]
+leanproxy-mcp report [flags]
 ```
 
 ### Flags
@@ -527,16 +527,16 @@ leanproxy report [flags]
 
 ```bash
 # Generate report
-leanproxy report
+leanproxy-mcp report
 
 # Output to file
-leanproxy report --output savings.md
+leanproxy-mcp report --output savings.md
 
 # JSON output
-leanproxy report --json
+leanproxy-mcp report --json
 
 # Exclude security
-leanproxy report --no-security
+leanproxy-mcp report --no-security
 ```
 
 #### Output (Markdown)
@@ -571,37 +571,47 @@ Auto-detect and import MCP server configurations from other tools.
 ### Usage
 
 ```bash
-leanproxy migrate [flags]
+leanproxy-mcp migrate [flags]
 ```
 
 ### Flags
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `--force` | bool | Overwrite existing servers |
-| `--source` | string | Source tool (claude, cursor, vscode, opencode, generic) |
+| `--dry-run` | bool | Preview scan results without importing |
+| `--target` | string | Target config file path |
+| `--validate-only` | bool | Only validate servers without importing |
+| `--yes` | bool | Skip confirmation prompt |
 
 #### Examples
 
 ```bash
 # Auto-detect all sources
-leanproxy migrate
+leanproxy-mcp migrate
 
-# From specific source
-leanproxy migrate --source claude
+# Dry run (preview what would be imported)
+leanproxy-mcp migrate --dry-run
 
-# Force overwrite
-leanproxy migrate --force
+# Skip confirmation
+leanproxy-mcp migrate --yes
+
+# Validate without importing
+leanproxy-mcp migrate --validate-only
 ```
 
 #### Output
 
 ```
-Detected MCP servers:
-  - claude-desktop: 2 servers
-  - cursor: 1 server
+Found 4 MCP server(s) from 1 source(s):
 
-Import? [y/N]
+  OpenCode: 4 server(s)
+
+  [1] nexus-dev (opencode) - /usr/bin/env
+  [2] nexus-dev-test (opencode) - /usr/bin/env
+  [3] garmin (opencode) - uvx
+  [4] Intervals.icu (opencode) - /usr/bin/env
+
+Import to ~/.config/leanproxy_servers.yaml? [y/N]:
 ```
 
 ---

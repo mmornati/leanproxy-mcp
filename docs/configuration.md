@@ -106,7 +106,7 @@ LeanProxy-MCP includes these built-in patterns:
 ### List Active Patterns
 
 ```bash
-leanproxy bouncer list-patterns
+leanproxy-mcp bouncer list-patterns
 ```
 
 Output:
@@ -148,10 +148,10 @@ bouncer:
 
 ```bash
 # Disable redaction
-leanproxy bouncer disable
+leanproxy-mcp bouncer disable
 
 # Enable redaction
-leanproxy bouncer enable
+leanproxy-mcp bouncer enable
 ```
 
 ## Environment Variables
@@ -166,13 +166,13 @@ leanproxy bouncer enable
 ## Validate Configuration
 
 ```bash
-leanproxy bouncer validate-patterns
+leanproxy-mcp bouncer validate-patterns
 ```
 
 ## Show Current Config
 
 ```bash
-leanproxy config show
+leanproxy-mcp config show
 ```
 
 ## Next Steps

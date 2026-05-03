@@ -52,7 +52,7 @@ Yes, Go 1.21+ is required to build from source:
 ```bash
 git clone https://github.com/mmornati/leanproxy-mcp.git
 cd leanproxy-mcp
-go build -o leanproxy .
+go build -o leanproxy-mcp .
 ```
 
 ### How do I install on Windows?
@@ -81,10 +81,10 @@ LeanProxy-MCP searches for config in this order:
 
 ```bash
 # Disable
-leanproxy bouncer disable
+leanproxy-mcp bouncer disable
 
 # Enable
-leanproxy bouncer enable
+leanproxy-mcp bouncer enable
 ```
 
 Or via config:
@@ -127,29 +127,29 @@ bouncer:
 ### How do I add an MCP server?
 
 ```bash
-leanproxy server add myserver "npx -y @modelcontextprotocol/server-filesystem" "./"
+leanproxy-mcp server add myserver "npx -y @modelcontextprotocol/server-filesystem" "./"
 ```
 
 ### How do I start the proxy?
 
 ```bash
 # Start the proxy server
-leanproxy serve
+leanproxy-mcp serve
 
-# Or use the server command
-leanproxy server add ...
+# Or add a server
+leanproxy-mcp server add ...
 ```
 
 ### How do I see token savings?
 
 ```bash
-leanproxy savings
+leanproxy-mcp savings
 ```
 
 ### How do I generate a report?
 
 ```bash
-leanproxy report --output report.md
+leanproxy-mcp report --output report.md
 ```
 
 ### Can I run in dry-run mode?
@@ -157,7 +157,7 @@ leanproxy report --output report.md
 Yes! Preview without making changes:
 
 ```bash
-leanproxy server add myserver "..." --dry-run
+leanproxy-mcp server add myserver "..." --dry-run
 ```
 
 ---
@@ -187,14 +187,14 @@ lsof -i :8080
 
 2. Check logs:
 ```bash
-leanproxy serve --verbose
+leanproxy-mcp serve --verbose
 ```
 
 ### IDE cannot connect
 
 1. Verify server is running:
 ```bash
-leanproxy status
+leanproxy-mcp status
 ```
 
 2. Check IDE configuration matches the server format
@@ -203,7 +203,7 @@ leanproxy status
 
 1. Verify bouncer is enabled:
 ```bash
-leanproxy bouncer list-patterns
+leanproxy-mcp bouncer list-patterns
 ```
 
 2. Check config file is being loaded
