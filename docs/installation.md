@@ -126,17 +126,58 @@ Import to ~/.config/leanproxy_servers.yaml? [y/N]:
 
 Confirm to import the servers.
 
-### Step 2: Start LeanProxy
+### Step 2: Configure LeanProxy in Your IDE
 
-Start the LeanProxy server in a terminal:
+Configure LeanProxy as an MCP server in your IDE. LeanProxy runs as a daemon and proxies all your existing MCP servers through a single connection.
 
-```bash
-leanproxy-mcp serve
+#### OpenCode
+
+Add to your `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "leanproxy": {
+      "type": "local",
+      "command": ["leanproxy-mcp", "serve"],
+      "enabled": true
+    }
+  }
+}
 ```
 
-### Step 3: Configure Your IDE
+#### Cursor
 
-Connect your IDE to LeanProxy instead of individual MCP servers.
+Add to your `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "leanproxy": {
+      "command": "leanproxy-mcp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+#### VS Code
+
+Add to your `~/.vscode/mcp.json` (create if it doesn't exist):
+
+```json
+{
+  "mcpServers": {
+    "leanproxy": {
+      "command": "leanproxy-mcp",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+> **Note:** When configured as an MCP server, LeanProxy automatically starts when your IDE connects. No need to run `leanproxy-mcp serve` manually.
 
 ## Shell Completions
 
