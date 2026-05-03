@@ -32,7 +32,7 @@ development_status:
   4-1-dry-run-mode: review
   4-2-posix-compliant-cli: review
   4-3-ide-extension-socket: review
-  4-4-universal-installer: ready-for-dev
+  4-4-universal-installer: review
   4-5-shell-completion: ready-for-dev
   5-1-token-savings-calculator: ready-for-dev
   5-2-markdown-report-generation: ready-for-dev

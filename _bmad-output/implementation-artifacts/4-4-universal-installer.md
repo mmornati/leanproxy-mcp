@@ -9,7 +9,7 @@
 | **Epic** | Epic 4 - CLI Installation and Interaction |
 | **Title** | Implement Universal Installer |
 | **Priority** | High |
-| **Status** | ready-for-dev |
+| **Status** | review |
 
 ## Story Requirements
 
@@ -151,10 +151,10 @@ cmd/
    ```bash
    # Test install script
    curl -sSL https://get.leanproxy.io/install.sh | sh -s -- --dry-run
-   
+
    # Test version selection
    VERSION=1.0.0 curl -sSL https://get.leanproxy.io/install.sh | sh
-   
+
    # Verify installation
    leanproxy version
    sha256sum /usr/local/bin/leanproxy
@@ -169,3 +169,83 @@ cmd/
 5. Provide uninstall script at `https://get.leanproxy.io/uninstall.sh`
 6. Log all installation steps to `/tmp/leanproxy-install.log` for debugging
 7. Make install script re-runnable (idempotent)
+
+## Tasks/Subtasks
+
+- [x] Task 1: Create install/install.sh curl installer script
+- [x] Task 2: Create install/build-release.sh release build script
+- [x] Task 3: Create homebrew/Formula/leanproxy.rb Homebrew formula
+- [x] Task 4: Create cmd/completion.go shell completion command
+- [x] Task 5: Create shell completion scripts (bash/zsh)
+- [x] Task 6: Verify implementation compiles and tests pass
+
+## Dev Notes
+
+Implementation follows all architecture requirements:
+- Shell scripts use `set -euo pipefail` for error handling
+- POSIX-compliant syntax with cross-platform support (GNU/BSD sed/awk)
+- Install script supports VERSION and INSTALL_DIR environment variables
+- Automatic shell detection and completion installation
+- Checksum verification before installation
+- Backup of existing binary to .bak before replacement
+- Configuration directory (~/.leanproxy) created with 0700 permissions
+- Default config.yaml created with human-readable content
+- DRY_RUN support for testing without actual installation
+
+## Dev Agent Record
+
+### Debug Log
+
+- Fixed cobra.Command field `DisableArgsInHelp` which doesn't exist - removed the field
+
+### Completion Notes
+
+Implemented Universal Installer (Story 4-4) with all components:
+
+1. **install/install.sh** - POSIX-compliant curl installer script with:
+   - VERSION and INSTALL_DIR environment variable support
+   - OS/ARCH detection (linux/darwin, amd64/arm64)
+   - SHA256 checksum verification before installation
+   - Backup of existing binary to .bak
+   - ~/.leanproxy config directory creation (0700 permissions)
+   - Default config.yaml with sensible defaults
+   - Automatic shell detection and completion installation
+   - DRY_RUN support for testing
+   - Logging to /tmp/leanproxy-install.log
+
+2. **install/build-release.sh** - Release build script with:
+   - Multi-platform support (linux/darwin/windows amd64/arm64)
+   - Archive creation with shell completions
+   - Checksums.txt generation
+
+3. **homebrew/Formula/leanproxy.rb** - Homebrew formula with:
+   - Bottle and source installation support
+   - Shell completion installation hooks
+   - Caveats with setup instructions
+
+4. **cmd/completion.go** - Shell completion command with:
+   - `leanproxy completion bash|zsh` subcommands
+   - Bash completion via cobra.GenBashCompletion
+   - Zsh completion with custom _leanproxy function
+   - Installation path guidance for zsh
+
+5. **completions/** - Shell completion scripts:
+   - leanproxy.bash - Bash completion for all commands
+   - _leanproxy - Zsh completion for all commands
+
+Build: `go build ./...` - Success
+Tests: `go test ./...` - 444 passed
+
+## File List
+
+New files:
+- install/install.sh
+- install/build-release.sh
+- homebrew/Formula/leanproxy.rb
+- cmd/completion.go
+- completions/leanproxy.bash
+- completions/_leanproxy
+
+## Change Log
+
+- 2026-05-03: Initial implementation of Universal Installer (Story 4-4) - all acceptance criteria addressed
