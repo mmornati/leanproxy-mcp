@@ -68,6 +68,8 @@ func TestWorkerPoolQueueFull(t *testing.T) {
 		}
 	}
 
+	time.Sleep(200 * time.Millisecond)
+
 	req3 := Request{
 		Method:     "test_method",
 		ServerName: "test_server",

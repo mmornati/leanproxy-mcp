@@ -120,7 +120,7 @@ func (p *WorkerPool) Submit(req Request, resultCh chan *Response, errorCh chan e
 
 func (p *WorkerPool) updateWaitTime(waitTime time.Duration) {
 	p.metricsMu.Lock()
-	completed := p.metrics.CompletedTasks
+	completed := atomic.LoadInt64(&p.metrics.CompletedTasks)
 	if completed > 0 {
 		totalWait := p.metrics.AverageWaitTime * time.Duration(completed-1)
 		p.metrics.AverageWaitTime = (totalWait + waitTime) / time.Duration(completed)
@@ -136,7 +136,13 @@ func (p *WorkerPool) QueueSize() int {
 
 func (p *WorkerPool) Metrics() WorkerPoolMetrics {
 	p.metricsMu.RLock()
-	metrics := p.metrics
+	metrics := WorkerPoolMetrics{
+		SubmittedTasks:  atomic.LoadInt64(&p.metrics.SubmittedTasks),
+		CompletedTasks:  atomic.LoadInt64(&p.metrics.CompletedTasks),
+		FailedTasks:     atomic.LoadInt64(&p.metrics.FailedTasks),
+		RejectedTasks:   atomic.LoadInt64(&p.metrics.RejectedTasks),
+		AverageWaitTime: p.metrics.AverageWaitTime,
+	}
 	p.metricsMu.RUnlock()
 	metrics.QueuedTasks = int64(len(p.workCh))
 	return metrics

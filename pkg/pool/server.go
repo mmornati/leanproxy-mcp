@@ -167,6 +167,7 @@ func (s *StdioServerV2) waitForExit(ctx context.Context) {
 
 	s.mu.Lock()
 	if s.state == StateStopping {
+		s.state = StateStopped
 		s.mu.Unlock()
 		return
 	}
@@ -275,17 +276,8 @@ func (s *StdioServerV2) stop() error {
 
 	if s.process != nil && s.process.Process != nil {
 		s.process.Process.Signal(syscall.SIGTERM)
-		waitErr := s.process.Wait()
-		if waitErr != nil {
-			s.logger.Warn("process exited with error after SIGTERM", "name", s.name, "error", waitErr)
-		}
 	}
 
-	s.mu.Lock()
-	s.state = StateStopped
-	s.mu.Unlock()
-
-	s.logger.Info("server stop completed", "name", s.name)
 	return nil
 }
 

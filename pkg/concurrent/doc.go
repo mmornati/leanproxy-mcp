@@ -278,8 +278,9 @@ func (p *StdioPool) recordSuccess(serverName string, latency time.Duration) {
 	server := p.servers[serverName]
 	p.mu.RUnlock()
 
+	newCount := atomic.AddInt64(&p.stats.SuccessRequests, 1)
+
 	if server != nil {
-		atomic.AddInt64(&p.stats.SuccessRequests, 1)
 		server.LastRequestAt = time.Now()
 
 		count := atomic.LoadInt64(&server.RequestCount)
@@ -291,10 +292,9 @@ func (p *StdioPool) recordSuccess(serverName string, latency time.Duration) {
 	}
 
 	p.statsMu.Lock()
-	successCount := p.stats.SuccessRequests
-	if successCount > 0 {
-		totalLatency := p.stats.AverageLatency * time.Duration(successCount-1)
-		p.stats.AverageLatency = (totalLatency + latency) / time.Duration(successCount)
+	if newCount > 1 {
+		totalLatency := p.stats.AverageLatency * time.Duration(newCount-1)
+		p.stats.AverageLatency = (totalLatency + latency) / time.Duration(newCount)
 	} else {
 		p.stats.AverageLatency = latency
 	}

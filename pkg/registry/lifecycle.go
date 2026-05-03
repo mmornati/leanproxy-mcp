@@ -128,21 +128,21 @@ func (m *lifecycleManager) Start(ctx context.Context, config ServerConfig) (Serv
 func (m *lifecycleManager) waitForExit(entry *serverEntry) {
 	proc := entry.proc
 	err := proc.Wait()
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
 
+	m.mu.Lock()
+	entry.mu.Lock()
+	entry.status.State = StateStopped
+	entry.status.Error = ""
 	if err != nil {
 		entry.status.State = StateError
 		entry.status.Error = err.Error()
-		m.logger.Error("server process error", "id", entry.config.ID, "error", err)
+		m.logger.Warn("server process exited", "id", entry.config.ID, "error", err)
 	} else {
-		entry.status.State = StateStopped
 		m.logger.Info("server process exited", "id", entry.config.ID)
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	delete(m.servers, entry.config.ID)
+	entry.mu.Unlock()
+	m.mu.Unlock()
 }
 
 func (m *lifecycleManager) Stop(ctx context.Context, id string) error {
@@ -160,21 +160,7 @@ func (m *lifecycleManager) Stop(ctx context.Context, id string) error {
 		}
 	}
 
-	done := make(chan error, 1)
-	go func() {
-		werr := entry.proc.Wait()
-		done <- werr
-	}()
-
-	select {
-	case <-ctx.Done():
-		return fmt.Errorf("lifecycle: stop timeout: %w", ctx.Err())
-	case err := <-done:
-		if err != nil {
-			m.logger.Debug("server stop error", "id", id, "error", err)
-		}
-		return nil
-	}
+	return nil
 }
 
 func (m *lifecycleManager) Kill(ctx context.Context, id string) error {
