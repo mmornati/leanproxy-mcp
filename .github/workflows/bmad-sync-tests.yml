@@ -6,6 +6,8 @@ on:
       - '.github/tests/**'
       - '.github/scripts/**'
       - '.github/workflows/**'
+    tags-ignore:
+      - '**'
   pull_request:
     paths:
       - '.github/tests/**'

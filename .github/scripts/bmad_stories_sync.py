@@ -11,21 +11,39 @@ from bmad_sync_lib import (
     ensure_label_exists,
     extract_epic_key,
     find_issue_by_title,
+    find_source_changed_comment,
     format_timestamp,
+    get_comments,
     get_file_commit_sha,
     get_file_commit_url,
     link_sub_issue,
     load_mapping,
     parse_story_title,
     save_mapping,
+    update_comment,
     update_issue,
 )
 
 LABEL_NAME = "bmad"
 
+BOT_NAMES = ("bmad bot", "github-actions[bot]", "github actions", "bmad-bot", "bot")
+
+
+def is_bot_author(file_path: str) -> bool:
+    from bmad_sync_lib import get_commit_author
+    author = get_commit_author(file_path)
+    if not author:
+        return True
+    return author.lower() in BOT_NAMES
+
 
 def process_story(repo: str, token: str, mapping: dict, file_path: str, content: str) -> dict:
     file_stem = Path(file_path).stem
+
+    if is_bot_author(file_path):
+        print(f"Skipping {file_stem}: commit author is a bot, skipping sync")
+        return mapping
+
     story_title = parse_story_title(content) or file_stem
     epic_key = extract_epic_key(content, file_stem)
 
@@ -48,8 +66,16 @@ Story [{story_title}](https://github.com/{repo_env}/blob/main/{file_path}) was u
 
 Commit: [{commit_sha}](https://github.com/{repo_env}/commit/{commit_sha})
 """
-        add_comment(repo, token, issue_number, comment)
-        print(f"Updated story issue #{issue_number}: {story_title} (added modification comment)")
+
+        existing_comments = get_comments(repo, token, issue_number)
+        existing_source_changed = find_source_changed_comment(existing_comments)
+
+        if existing_source_changed:
+            update_comment(repo, token, existing_source_changed["id"], comment)
+            print(f"Updated story issue #{issue_number}: {story_title} (updated modification comment)")
+        else:
+            add_comment(repo, token, issue_number, comment)
+            print(f"Updated story issue #{issue_number}: {story_title} (added modification comment)")
 
         mapping["stories"][file_stem] = {
             "issue_id": existing_issue["id"],

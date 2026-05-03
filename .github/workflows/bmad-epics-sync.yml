@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - '_bmad-output/planning-artifacts/epics.md'
+    tags-ignore:
+      - '**'
   workflow_dispatch:
     inputs:
       sync_all:

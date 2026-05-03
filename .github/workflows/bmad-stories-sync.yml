@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - '_bmad-output/implementation-artifacts/*.md'
+    tags-ignore:
+      - '**'
   workflow_dispatch:
     inputs:
       sync_all:

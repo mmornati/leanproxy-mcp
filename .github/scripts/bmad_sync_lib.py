@@ -400,6 +400,13 @@ def find_delivery_comment(comments: list[dict]) -> dict | None:
     return None
 
 
+def find_source_changed_comment(comments: list[dict]) -> dict | None:
+    for comment in comments:
+        if "BMad Source Changed" in comment.get("body", ""):
+            return comment
+    return None
+
+
 def update_pr_body(repo: str, token: str, pr_number: int, body_addition: str) -> None:
     existing_pr = None
     url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"

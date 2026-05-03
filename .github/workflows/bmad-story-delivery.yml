@@ -20,6 +20,7 @@ on:
 jobs:
   deliver-story:
     runs-on: ubuntu-latest
+    if: github.actor != 'bmad-bot[bot]' && github.actor != 'github-actions[bot]'
     permissions:
       issues: write
       pull-requests: write

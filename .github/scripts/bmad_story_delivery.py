@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import sys
+import json
 from pathlib import Path
 
 from bmad_sync_lib import (
@@ -21,8 +22,11 @@ from bmad_sync_lib import (
     parse_story_title,
     update_comment,
     update_pr_body,
+    get_changed_files,
 )
 
+
+DEBUG = os.environ.get("DEBUG_BMAD_DELIVERY", "false").lower() == "true"
 
 BOT_NAMES = ("bmad bot", "github-actions[bot]", "github actions", "bot")
 
@@ -52,12 +56,22 @@ def get_assignee_for_delivery(repo: str, token: str, file_path: str, pr_number: 
 def process_delivery(repo: str, token: str, mapping: dict, file_path: str, content: str, pr_number: int | None = None) -> dict:
     file_stem = Path(file_path).stem
 
-    if not is_story_implemented(content):
+    if DEBUG:
+        print(f"[DEBUG] Processing delivery for: {file_stem}")
+
+    story_implemented = is_story_implemented(content)
+    if DEBUG:
+        print(f"[DEBUG] is_story_implemented result: {story_implemented}")
+
+    if not story_implemented:
         print(f"Skipping {file_stem}: story not yet implemented")
         return mapping
 
     story_title = parse_story_title(content) or file_stem
     issue_number = get_issue_from_mapping(mapping, file_stem)
+
+    if DEBUG:
+        print(f"[DEBUG] story_title: {story_title}, issue_number: {issue_number}")
 
     if not issue_number:
         print(f"WARNING: No issue found in mapping for {file_stem}. Cannot deliver story.")
@@ -67,8 +81,12 @@ def process_delivery(repo: str, token: str, mapping: dict, file_path: str, conte
     repo_env = os.environ.get("GITHUB_REPOSITORY", "")
 
     is_direct = is_direct_push_to_main()
+    if DEBUG:
+        print(f"[DEBUG] is_direct_push_to_main: {is_direct}, GITHUB_REF: {os.environ.get('GITHUB_REF_NAME', 'unknown')}")
 
     issue_state, issue_assignees = get_issue_state_and_assignees(repo, token, issue_number)
+    if DEBUG:
+        print(f"[DEBUG] issue_state: {issue_state}, issue_assignees: {issue_assignees}")
 
     if is_direct:
         print(f"Direct push to main for {story_title} - assigning and closing issue #{issue_number}")
@@ -125,6 +143,13 @@ def main():
     token = os.environ.get("GITHUB_TOKEN")
     pr_number = os.environ.get("PULL_REQUEST_NUMBER")
 
+    if DEBUG:
+        print(f"[DEBUG] GITHUB_REPOSITORY: {repo}")
+        print(f"[DEBUG] PULL_REQUEST_NUMBER: {pr_number}")
+        print(f"[DEBUG] GITHUB_REF_NAME: {os.environ.get('GITHUB_REF_NAME', 'unknown')}")
+        print(f"[DEBUG] GITHUB_HEAD_REF: {os.environ.get('GITHUB_HEAD_REF', 'unknown')}")
+        print(f"[DEBUG] GITHUB_ACTOR: {os.environ.get('GITHUB_ACTOR', 'unknown')}")
+
     if not repo or not token:
         print("ERROR: GITHUB_REPOSITORY and GITHUB_TOKEN must be set")
         sys.exit(1)
@@ -137,10 +162,13 @@ def main():
 
     mapping = load_mapping()
 
-    from bmad_sync_lib import get_changed_files
     all_new, all_mod = get_changed_files()
     all_files = list(set(all_new + all_mod))
     story_files = [f for f in all_files if "implementation-artifacts/" in f and f.endswith(".md")]
+
+    if DEBUG:
+        print(f"[DEBUG] Changed files: {all_files}")
+        print(f"[DEBUG] Story files found: {story_files}")
 
     for file_path in story_files:
         content = Path(file_path).read_text()
