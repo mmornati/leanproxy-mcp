@@ -139,26 +139,33 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	s.logger.Debug("client connected", "remote", conn.RemoteAddr())
 
+	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	reader := bufio.NewReader(conn)
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
-			if err != io.EOF {
-				s.logger.Debug("read error", "error", err)
+			if err == io.EOF {
+				return
 			}
+			netErr, ok := err.(net.Error)
+			if ok && netErr.Timeout() {
+				return
+			}
+			s.logger.Debug("read error", "error", err)
 			return
 		}
 
 		if len(line) > int(s.config.MaxMsgSize) {
 			s.sendError(conn, nil, ErrCodeInvalidRequest, "message too large")
+			conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 			continue
 		}
 
-		go s.handleRequest(conn, line)
+		go s.handleRequest(conn, line, reader)
 	}
 }
 
-func (s *Server) handleRequest(conn net.Conn, data []byte) {
+func (s *Server) handleRequest(conn net.Conn, data []byte, reader *bufio.Reader) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -214,11 +221,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.cancel()
 	}
 
-	s.wg.Wait()
-
 	if s.listener != nil {
 		s.listener.Close()
 	}
+
+	s.wg.Wait()
 
 	if s.config.Path[:1] == "~" {
 		home, _ := os.UserHomeDir()

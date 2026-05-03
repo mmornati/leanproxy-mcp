@@ -15,7 +15,7 @@
 
 ### User Story
 
-As a new user, I want to install tokengate with a single command so that I can get started quickly on any supported platform.
+As a new user, I want to install leanproxy with a single command so that I can get started quickly on any supported platform.
 
 ### Acceptance Criteria (BDD Format)
 
@@ -25,24 +25,24 @@ Feature: Universal Installer
     Given the user has curl installed
     And the user is on macOS
     When the user runs the install script
-    Then tokengate is installed to /usr/local/bin/tokengate
+    Then leanproxy is installed to /usr/local/bin/leanproxy
     And the binary has correct permissions (755)
     And shell completion is installed
-    And the user can run "tokengate version"
+    And the user can run "leanproxy version"
 
   Scenario: curl installer works on Linux
     Given the user has curl installed
     And the user is on Linux
     When the user runs the install script
-    Then tokengate is installed to /usr/local/bin/tokengate
+    Then leanproxy is installed to /usr/local/bin/leanproxy
     And the binary has correct permissions (755)
-    And the user can run "tokengate version"
+    And the user can run "leanproxy version"
 
   Scenario: Homebrew installation works on macOS
     Given Homebrew is installed
-    When the user runs "brew install tokengate-mcp/tap/tokengate"
-    Then tokengate is installed via Homebrew
-    And the user can run "tokengate version"
+    When the user runs "brew install leanproxy-mcp/tap/leanproxy"
+    Then leanproxy is installed via Homebrew
+    And the user can run "leanproxy version"
 
   Scenario: curl installer verifies checksums
     Given the user runs the install script
@@ -54,15 +54,15 @@ Feature: Universal Installer
     Given the user wants a specific version
     When the user runs with VERSION environment variable
     Then the specified version is installed
-    And the user can run "tokengate version" to confirm
+    And the user can run "leanproxy version" to confirm
 
   Scenario: Installer creates config directory
     Given the installer runs successfully
-    Then ~/.tokengate directory is created
-    And default config file is placed at ~/.tokengate/config.yaml
+    Then ~/.leanproxy directory is created
+    And default config file is placed at ~/.leanproxy/config.yaml
 
   Scenario: Installer updates existing installation
-    Given tokengate is already installed
+    Given leanproxy is already installed
     When the user runs the install script
     Then the existing binary is replaced
     And configuration is preserved
@@ -73,8 +73,8 @@ Feature: Universal Installer
 ### Technical Requirements
 
 1. **curl Installer Script**
-   - URL: `https://get.tokengate.io/install.sh`
-   - Alternative: `curl -sSL https://get.tokengate.io/install.sh | sh`
+   - URL: `https://get.leanproxy.io/install.sh`
+   - Alternative: `curl -sSL https://get.leanproxy.io/install.sh | sh`
    - Support `VERSION=x.y.z` for specific version
    - Support `INSTALL_DIR=/path` for custom installation directory
    - Detect OS/ARCH and download appropriate binary
@@ -84,28 +84,28 @@ Feature: Universal Installer
    - Backup existing installation to `.bak`
 
 2. **Binary Distribution**
-   - GitHub Releases at `github.com/tokengate/tokengate-mcp/releases`
-   - Naming: `tokengate-{VERSION}-{OS}-{ARCH}.tar.gz`
+   - GitHub Releases at `github.com/leanproxy/leanproxy-mcp/releases`
+   - Naming: `leanproxy-{VERSION}-{OS}-{ARCH}.tar.gz`
    - Include binary and LICENSE/README
    - Include shell completion files in archive
    - Provide latest version detection
 
 3. **Homebrew Tap**
-   - Repository: `tokengate-mcp/homebrew-tap`
-   - Formula in `Formula/tokengate.rb`
+   - Repository: `leanproxy-mcp/homebrew-tap`
+   - Formula in `Formula/leanproxy.rb`
    - Head, bottle, and source options
    - Post-install hook for shell completion
    - Auto-update support via Homebrew
 
 4. **Shell Completion Installation**
-   - Install bash completion to `/etc/bash_completion.d/tokengate`
-   - Install zsh completions to `$(brew --prefix)/share/zsh/site-functions/_tokengate`
+   - Install bash completion to `/etc/bash_completion.d/leanproxy`
+   - Install zsh completions to `$(brew --prefix)/share/zsh/site-functions/_leanproxy`
    - Detect current shell automatically
-   - Provide completion generation command: `tokengate completion [bash|zsh]`
+   - Provide completion generation command: `leanproxy completion [bash|zsh]`
 
 5. **Configuration Creation**
-   - Create `~/.tokengate` directory with `0700` permissions
-   - Create `~/.tokengate/config.yaml` with sensible defaults
+   - Create `~/.leanproxy` directory with `0700` permissions
+   - Create `~/.leanproxy/config.yaml` with sensible defaults
    - Config should be human-readable with comments
 
 ### Architecture Compliance
@@ -126,10 +126,10 @@ install/
 
 homebrew/
   Formula/
-    tokengate.rb                # Homebrew formula
+    leanproxy.rb                # Homebrew formula
 
 cmd/
-  tokengate/
+  leanproxy/
     main.go                    # Entry point
     completion.go              # Completion command
 ```
@@ -150,14 +150,14 @@ cmd/
 3. **Test Patterns**
    ```bash
    # Test install script
-   curl -sSL https://get.tokengate.io/install.sh | sh -s -- --dry-run
+   curl -sSL https://get.leanproxy.io/install.sh | sh -s -- --dry-run
    
    # Test version selection
-   VERSION=1.0.0 curl -sSL https://get.tokengate.io/install.sh | sh
+   VERSION=1.0.0 curl -sSL https://get.leanproxy.io/install.sh | sh
    
    # Verify installation
-   tokengate version
-   sha256sum /usr/local/bin/tokengate
+   leanproxy version
+   sha256sum /usr/local/bin/leanproxy
    ```
 
 ### Implementation Notes
@@ -166,6 +166,6 @@ cmd/
 2. Support both GNU and BSD sed/awk for cross-platform scripts
 3. Use `mktemp` for safe temporary file handling
 4. Check for root/admin privileges and warn if installing to system directories
-5. Provide uninstall script at `https://get.tokengate.io/uninstall.sh`
-6. Log all installation steps to `/tmp/tokengate-install.log` for debugging
+5. Provide uninstall script at `https://get.leanproxy.io/uninstall.sh`
+6. Log all installation steps to `/tmp/leanproxy-install.log` for debugging
 7. Make install script re-runnable (idempotent)

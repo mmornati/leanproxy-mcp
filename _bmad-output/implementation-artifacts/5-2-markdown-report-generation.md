@@ -219,7 +219,7 @@ Scenario: Report with no session data
 ### File Structure
 
 ```
-tokengate-mcp/
+leanproxy-mcp/
 ├── cmd/
 │   └── leanproxy/
 │       ├── main.go

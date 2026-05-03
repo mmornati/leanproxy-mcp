@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | **ID** | 1-3 |
-| **Key** | tokengate-mcp-1-3 |
-| **Epic** | tokengate-mcp-epic-1 |
+| **Key** | leanproxy-mcp-1-3 |
+| **Epic** | leanproxy-mcp-epic-1 |
 | **Title** | Implement MCP Server Lifecycle Management |
 
 ## Story Requirements

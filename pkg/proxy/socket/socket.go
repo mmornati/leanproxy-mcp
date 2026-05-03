@@ -20,7 +20,7 @@ type ServerConfig struct {
 
 func DefaultConfig() ServerConfig {
 	return ServerConfig{
-		Path:       "~/.tokengate/tokengate.sock",
+		Path:       "~/.leanproxy/leanproxy.sock",
 		Perm:       0700,
 		MaxMsgSize: 1024 * 1024,
 		RateLimit:  100,

@@ -63,8 +63,8 @@ We have selected a minimal, standard Go project structure leveraging the standar
 **Initialization Command:**
 
 ```bash
-mkdir tokengate-mcp && cd tokengate-mcp
-go mod init github.com/mmornati/tokengate-mcp
+mkdir leanproxy-mcp && cd leanproxy-mcp
+go mod init github.com/mmornati/leanproxy-mcp
 go get github.com/spf13/cobra@latest
 ```
 

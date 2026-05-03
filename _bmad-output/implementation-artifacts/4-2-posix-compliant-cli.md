@@ -22,27 +22,27 @@ As a CLI user, I want a POSIX-compliant command-line interface so that I can use
 ```gherkin
 Feature: POSIX-Compliant CLI Interface
   Scenario: Short flags can be combined
-    Given the tokengate CLI is installed
-    When the user runs "tokengate -hvr proxy start"
+    Given the leanproxy CLI is installed
+    When the user runs "leanproxy -hvr proxy start"
     Then the system displays help output
     And version information
     And verbose logging is enabled
     And no error occurs
 
   Scenario: Long flags accept equals syntax
-    Given the tokengate CLI is installed
-    When the user runs "tokengate --config=/etc/tokengate.yaml validate"
-    Then the system uses /etc/tokengate.yaml as config file
+    Given the leanproxy CLI is installed
+    When the user runs "leanproxy --config=/etc/leanproxy.yaml validate"
+    Then the system uses /etc/leanproxy.yaml as config file
     And validation runs successfully
 
   Scenario: Flags can appear before and after positional arguments
-    Given the tokengate CLI is installed
-    When the user runs "tokengate --verbose proxy start --port=8080"
+    Given the leanproxy CLI is installed
+    When the user runs "leanproxy --verbose proxy start --port=8080"
     Then verbose mode is enabled
     And the proxy starts on port 8080
 
   Scenario: Standard exit codes are used
-    Given the tokengate CLI is installed
+    Given the leanproxy CLI is installed
     When the user runs various commands
     Then exit code 0 indicates success
     And exit code 1 indicates general error
@@ -51,16 +51,16 @@ Feature: POSIX-Compliant CLI Interface
     And exit code 4 indicates token resolution failure
 
   Scenario: Help output follows POSIX conventions
-    Given the tokengate CLI is installed
-    When the user runs "tokengate --help"
+    Given the leanproxy CLI is installed
+    When the user runs "leanproxy --help"
     Then the output uses standard POSIX format
     And OPTIONS section lists all flags
     And USAGE line shows command syntax
     And EXIT STATUS section documents codes
 
   Scenario: Commands accept stdin input where appropriate
-    Given the tokengate CLI is installed
-    When the user runs "cat config.yaml | tokengate config validate -"
+    Given the leanproxy CLI is installed
+    When the user runs "cat config.yaml | leanproxy config validate -"
     Then the system reads config from stdin
     And validates successfully
 ```
@@ -87,7 +87,7 @@ Feature: POSIX-Compliant CLI Interface
 
 3. **Help Text Format**
    ```
-   Usage: tokengate [OPTIONS] COMMAND [ARGUMENTS]
+   Usage: leanproxy [OPTIONS] COMMAND [ARGUMENTS]
 
    Options:
      -h, --help        Show help
@@ -114,7 +114,7 @@ Feature: POSIX-Compliant CLI Interface
 5. **Error Output**
    - All errors go to stderr via `log/slog`
    - Error messages do not need localization (English only)
-   - Error format: `tokengate: error: descriptive message` for user errors
+   - Error format: `leanproxy: error: descriptive message` for user errors
 
 ### Architecture Compliance
 
@@ -128,7 +128,7 @@ Feature: POSIX-Compliant CLI Interface
 
 ```
 cmd/
-  tokengate/
+  leanproxy/
     main.go                    # Entry point, exit code handling
     root.go                    # Root command with flag definitions
     error.go                    # Exit code constants and error types
@@ -152,7 +152,7 @@ pkg/
    - Test flag parsing behavior in each command
 
 2. **Integration Tests**
-   - Test flag grouping: `tokengate -hvr` equivalent to `-h -v -r`
+   - Test flag grouping: `leanproxy -hvr` equivalent to `-h -v -r`
    - Test equals syntax: `--config=value` works
    - Test flag position: flags before/after args work
    - Test stdin with `-`: `cmd -` reads stdin
@@ -161,13 +161,13 @@ pkg/
 3. **Test Patterns**
    ```bash
    # Test flag grouping
-   tokengate -hvr 2>&1 | grep -q "verbose" && echo "PASS"
+   leanproxy -hvr 2>&1 | grep -q "verbose" && echo "PASS"
 
    # Test exit codes
-   tokengate --invalid-flag 2>/dev/null; [ $? -eq 2 ] && echo "PASS"
+   leanproxy --invalid-flag 2>/dev/null; [ $? -eq 2 ] && echo "PASS"
 
    # Test stdin
-   echo "test" | tokengate config validate - && echo "PASS"
+   echo "test" | leanproxy config validate - && echo "PASS"
    ```
 
 ### Implementation Notes
@@ -183,7 +183,7 @@ pkg/
 - [x] Task 1: Create pkg/utils/exit package with exit code constants
   - [x] Subtask 1.1: Create exit.go with POSIX exit codes (0, 1, 2, 3, 4, 125)
   - [x] Subtask 1.2: Create exit_test.go with unit tests
-- [x] Task 2: Create cmd/tokengate package structure
+- [x] Task 2: Create cmd/leanproxy package structure
   - [x] Subtask 2.1: Create error.go with PosixError type and exit helpers
   - [x] Subtask 2.2: Create root.go with RootCmd and flag definitions
   - [x] Subtask 2.3: Create main.go entry point
@@ -216,20 +216,20 @@ Implemented POSIX-compliant CLI with:
 - Stdin support with `-` argument for config validate
 - Help output follows POSIX format with Usage, Options, Commands, Exit Status sections
 
-All 447 tests pass (10 new tests for tokengate package, 437 existing).
+All 447 tests pass (10 new tests for leanproxy package, 437 existing).
 
 ## File List
 
 New files:
-- cmd/tokengate/main.go
-- cmd/tokengate/root.go
-- cmd/tokengate/error.go
-- cmd/tokengate/error_test.go
-- cmd/tokengate/proxy.go
-- cmd/tokengate/registry.go
-- cmd/tokengate/token.go
-- cmd/tokengate/config.go
-- cmd/tokengate/help.go
+- cmd/leanproxy/main.go
+- cmd/leanproxy/root.go
+- cmd/leanproxy/error.go
+- cmd/leanproxy/error_test.go
+- cmd/leanproxy/proxy.go
+- cmd/leanproxy/registry.go
+- cmd/leanproxy/token.go
+- cmd/leanproxy/config.go
+- cmd/leanproxy/help.go
 - pkg/utils/exit/exit.go
 - pkg/utils/exit/exit_test.go
 
@@ -239,7 +239,7 @@ Modified files:
 ## Change Log
 
 - 2026-05-03: Initial implementation of POSIX-compliant CLI
-  - Created cmd/tokengate package with all subcommands
+  - Created cmd/leanproxy package with all subcommands
   - Created pkg/utils/exit package with POSIX exit code constants
   - Implemented flag parsing with pflag
   - Added stdin support for config validate command

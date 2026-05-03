@@ -64,34 +64,34 @@ As a CLI user, I want to preview command effects before execution so that I can 
 
 ```gherkin
 Feature: Dry-Run Mode for CLI Commands
-  Scenario: User runs tokengate with --dry-run flag
-    Given the tokengate CLI is installed
-    And a valid configuration file exists at ~/.tokengate/config.yaml
-    When the user runs "tokengate --dry-run [command]"
+  Scenario: User runs leanproxy with --dry-run flag
+    Given the leanproxy CLI is installed
+    And a valid configuration file exists at ~/.leanproxy/config.yaml
+    When the user runs "leanproxy --dry-run [command]"
     Then the system displays the actions that would be taken
     And no actual changes are made to the system
     And the command exits with status code 0
 
   Scenario: Dry-run shows configuration validation errors
-    Given the tokengate CLI is installed
-    And an invalid configuration file exists at ~/.tokengate/config.yaml
-    When the user runs "tokengate --dry-run [command]"
+    Given the leanproxy CLI is installed
+    And an invalid configuration file exists at ~/.leanproxy/config.yaml
+    When the user runs "leanproxy --dry-run [command]"
     Then the system displays configuration validation errors
     And no actual changes are made to the system
     And the command exits with status code 1
 
   Scenario: Dry-run validates but does not connect to registry
-    Given the tokengate CLI is installed
-    And a valid configuration file exists at ~/.tokengate/config.yaml
-    When the user runs "tokengate --dry-run proxy start"
+    Given the leanproxy CLI is installed
+    And a valid configuration file exists at ~/.leanproxy/config.yaml
+    When the user runs "leanproxy --dry-run proxy start"
     Then the system displays the proxy configuration that would be used
     And no connection to the registry is attempted
     And no proxy server is started
 
   Scenario: Dry-run shows token resolution preview
-    Given the tokengate CLI is installed
-    And a valid configuration file exists at ~/.tokengate/config.yaml
-    When the user runs "tokengate --dry-run token resolve api://example"
+    Given the leanproxy CLI is installed
+    And a valid configuration file exists at ~/.leanproxy/config.yaml
+    When the user runs "leanproxy --dry-run token resolve api://example"
     Then the system displays the tokens that would be requested
     And no actual token resolution occurs
 ```
@@ -118,17 +118,17 @@ Feature: Dry-Run Mode for CLI Commands
    - Message format: `{"level":"INFO","msg":"[DRY-RUN] Would execute action","action":"proxy_start","config":{...}}`
 
 4. **Commands Supporting Dry-Run**
-   - `tokengate proxy start`
-   - `tokengate proxy stop`
-   - `tokengate registry register`
-   - `tokengate registry unregister`
-   - `tokengate token resolve`
-   - `tokengate config validate`
+   - `leanproxy proxy start`
+   - `leanproxy proxy stop`
+   - `leanproxy registry register`
+   - `leanproxy registry unregister`
+   - `leanproxy token resolve`
+   - `leanproxy config validate`
 
 5. **Commands Excluded from Dry-Run**
-   - `tokengate version`
-   - `tokengate help`
-   - `tokengate completion`
+   - `leanproxy version`
+   - `leanproxy help`
+   - `leanproxy completion`
 
 ### Architecture Compliance
 
@@ -142,7 +142,7 @@ Feature: Dry-Run Mode for CLI Commands
 
 ```
 cmd/
-  tokengate/
+  leanproxy/
     main.go                    # Entry point, register dry-run flag
     proxy.go                   # Add dry-run support to proxy commands
     registry.go                # Add dry-run support to registry commands
@@ -163,8 +163,8 @@ pkg/
    - Test flag parsing in each command
 
 2. **Integration Tests**
-   - Test `tokengate --dry-run proxy start` exits 0 with no side effects
-   - Test `tokengate --dry-run` with invalid config exits 1
+   - Test `leanproxy --dry-run proxy start` exits 0 with no side effects
+   - Test `leanproxy --dry-run` with invalid config exits 1
    - Test dry-run output contains expected JSON structure
 
 3. **Test Patterns**

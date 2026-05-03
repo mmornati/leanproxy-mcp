@@ -15,47 +15,47 @@
 
 ### User Story
 
-As an IDE extension, I want to communicate with tokengate via a Unix domain socket so that I can provide token gating features directly in the developer's editor.
+As an IDE extension, I want to communicate with leanproxy via a Unix domain socket so that I can provide token gating features directly in the developer's editor.
 
 ### Acceptance Criteria (BDD Format)
 
 ```gherkin
 Feature: IDE Extension Socket Communication
   Scenario: Socket server starts on configured path
-    Given tokengate is running with socket enabled
-    And socket path is set to "/tmp/tokengate.sock"
+    Given leanproxy is running with socket enabled
+    And socket path is set to "/tmp/leanproxy.sock"
     When an IDE extension connects to the socket
     Then a connection is established
     And the server accepts the connection
 
   Scenario: Socket handles JSON-RPC requests
-    Given tokengate is running with socket enabled
+    Given leanproxy is running with socket enabled
     And a client connects to the socket
     When the client sends '{"jsonrpc":"2.0","method":"token.resolve","params":{"uri":"api://example"},"id":1}'
     Then the server responds with '{"jsonrpc":"2.0","result":{...},"id":1}'
     And the token is resolved from registry
 
   Scenario: Socket supports multiple concurrent connections
-    Given tokengate is running with socket enabled
+    Given leanproxy is running with socket enabled
     When multiple IDE extensions connect simultaneously
     Then all connections are handled concurrently
     And requests are processed in parallel
 
   Scenario: Socket cleans up on graceful shutdown
-    Given tokengate is running with socket enabled
+    Given leanproxy is running with socket enabled
     When the user sends SIGTERM
     Then the socket file is removed
     And all connections are closed gracefully
 
   Scenario: Socket rejects invalid requests
-    Given tokengate is running with socket enabled
+    Given leanproxy is running with socket enabled
     And a client connects to the socket
     When the client sends malformed JSON
     Then the server responds with JSON-RPC error
     And the server continues to accept new requests
 
   Scenario: Windows named pipe fallback
-    Given tokengate is running on Windows
+    Given leanproxy is running on Windows
     And socket is enabled
     Then a named pipe is created instead of Unix socket
     And the same JSON-RPC protocol is used
@@ -67,8 +67,8 @@ Feature: IDE Extension Socket Communication
 
 1. **Socket Implementation**
    - Use `net.Listen()` with `unix` or `tcp` network types
-   - Unix socket path: `~/.tokengate/tokengate.sock` (configurable)
-   - Windows: Use `\\.\pipe\tokengate` named pipe
+   - Unix socket path: `~/.leanproxy/leanproxy.sock` (configurable)
+   - Windows: Use `\\.\pipe\leanproxy` named pipe
    - Socket permissions: `0700` (owner only) for Unix sockets
    - Auto-create parent directory if missing
 
@@ -111,7 +111,7 @@ Feature: IDE Extension Socket Communication
 
 ```
 cmd/
-  tokengate/
+  leanproxy/
     main.go                    # Entry point, register socket commands
     serve.go                   # Background serve command for socket
 
@@ -181,7 +181,7 @@ pkg/
 2. Implement socket abstract namespace option for Linux (optional)
 3. Use `sync.WaitGroup` for graceful connection draining
 4. Socket should be configurable as startup flag or via config file
-5. Implement `tokengate serve` command for background mode
+5. Implement `leanproxy serve` command for background mode
 6. Support socket over TCP for containerized environments (configurable)
 
 ## Dev Agent Record
@@ -209,8 +209,8 @@ Implemented IDE Extension Socket feature with the following components:
    - `transport_unix.go`: Unix socket transport with permission validation
    - `transport_windows.go`: Windows named pipe transport with build tags
 
-5. **CLI Command** (`cmd/tokengate/serve.go`)
-   - `tokengate serve` command for background socket server
+5. **CLI Command** (`cmd/leanproxy/serve.go`)
+   - `leanproxy serve` command for background socket server
    - Flags: `--socket-path`, `--socket-perm`, `--enable`
 
 6. **Tests**
@@ -245,7 +245,7 @@ All acceptance criteria implemented:
 - pkg/proxy/socket/testing.go (new)
 - pkg/proxy/socket/server_test.go (new)
 - pkg/proxy/socket/handler_test.go (new)
-- cmd/tokengate/serve.go (new)
+- cmd/leanproxy/serve.go (new)
 
 ## Change Log
 

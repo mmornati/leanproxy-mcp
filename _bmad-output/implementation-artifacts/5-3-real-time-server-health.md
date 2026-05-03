@@ -211,7 +211,7 @@ Scenario: Health check on unresponsive server
 ### File Structure
 
 ```
-tokengate-mcp/
+leanproxy-mcp/
 ├── cmd/
 │   └── leanproxy/
 │       ├── main.go

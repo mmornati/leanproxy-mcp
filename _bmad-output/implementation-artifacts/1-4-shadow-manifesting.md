@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | **ID** | 1-4 |
-| **Key** | tokengate-mcp-1-4 |
-| **Epic** | tokengate-mcp-epic-1 |
+| **Key** | leanproxy-mcp-1-4 |
+| **Epic** | leanproxy-mcp-epic-1 |
 | **Title** | Implement Shadow Manifesting (Config Merging) |
 
 ## Story Requirements
