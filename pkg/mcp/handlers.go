@@ -367,6 +367,23 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 
 	h.logger.Info("invoke_tool called", "server", serverName, "tool", toolName)
 
+	state, stateErr := h.pool.GetServerState(serverName)
+	h.logger.Debug("server current state", "name", serverName, "state", state, "error", stateErr)
+
+	if state != "idle" && state != "running" && state != "busy" {
+		h.logger.Warn("server not running, attempting to restart", "name", serverName, "state", state)
+		if err := h.pool.RestartServer(ctx, serverName); err != nil {
+			h.logger.Error("failed to restart server", "name", serverName, "error", err)
+			return &Response{
+				JSONRPC: JSONRPCVersion,
+				Error:   NewError(ErrCodeServerError, fmt.Sprintf("server %s is not running (state: %s) and failed to restart: %v", serverName, state, err)),
+				ID:      req.ID,
+			}, nil
+		}
+		h.logger.Info("server restarted successfully", "name", serverName)
+		time.Sleep(500 * time.Millisecond)
+	}
+
 	newParams := ToolsCallParams{
 		Name:      toolName,
 		Arguments: arguments,
@@ -375,6 +392,7 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 
 	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeout)
 	if err != nil {
+		h.logger.Error("invoke_tool failed", "server", serverName, "tool", toolName, "error", err)
 		return &Response{
 			JSONRPC: JSONRPCVersion,
 			Error:   NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %v", err)),
