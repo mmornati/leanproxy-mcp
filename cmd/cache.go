@@ -51,6 +51,11 @@ func runCache(cmd *cobra.Command, args []string) {
 		return
 	}
 
+	if cacheFlags.search != "" {
+		searchAllServers(cacheFlags.search)
+		return
+	}
+
 	if cacheFlags.server != "" {
 		showServerCache(cacheFlags.server, cacheFlags.search)
 		return
@@ -146,6 +151,72 @@ func showServerCache(serverName string, searchQuery string) {
 				}
 			}
 		}
+	}
+}
+
+func searchAllServers(query string) {
+	fc, err := toolstore.NewFileCache(nil)
+	if err != nil {
+		fmt.Printf("Error accessing cache: %v\n", err)
+		return
+	}
+
+	servers, err := fc.ListCachedServers()
+	if err != nil {
+		fmt.Printf("Error listing cache: %v\n", err)
+		return
+	}
+
+	if len(servers) == 0 {
+		fmt.Println("No cached tool data found")
+		return
+	}
+
+	queryLower := strings.ToLower(query)
+	totalMatches := 0
+
+	for _, serverName := range servers {
+		tools, err := fc.GetTools(serverName)
+		if err != nil {
+			continue
+		}
+
+		serverMatches := 0
+		for _, tool := range tools {
+			combined := strings.ToLower(tool.Name + " " + tool.Description)
+			if strings.Contains(combined, queryLower) {
+				serverMatches++
+				totalMatches++
+			}
+		}
+
+		if serverMatches > 0 {
+			fmt.Printf("\n%s (%d matches):\n", serverName, serverMatches)
+			for _, tool := range tools {
+				combined := strings.ToLower(tool.Name + " " + tool.Description)
+				if strings.Contains(combined, queryLower) {
+					if cacheFlags.jsonOut {
+						data, _ := json.MarshalIndent(tool, "", "  ")
+						fmt.Println(string(data))
+					} else {
+						fmt.Printf("  %s\n", tool.Name)
+						if tool.Description != "" {
+							desc := tool.Description
+							if len(desc) > 200 {
+								desc = desc[:200] + "..."
+							}
+							fmt.Printf("    %s\n", desc)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if totalMatches == 0 {
+		fmt.Printf("No tools found matching: %s\n", query)
+	} else {
+		fmt.Printf("\nTotal: %d matches across %d servers\n", totalMatches, len(servers))
 	}
 }
 
