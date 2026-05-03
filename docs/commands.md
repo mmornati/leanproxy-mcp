@@ -613,7 +613,7 @@ Generate shell completion scripts.
 ### Usage
 
 ```bash
-leanproxy completion [shell]
+leanproxy-mcp completion [shell]
 ```
 
 ### Arguments
@@ -629,13 +629,13 @@ leanproxy completion [shell]
 
 ```bash
 # Bash
-leanproxy completion bash > /etc/bash_completion.d/leanproxy
+leanproxy-mcp completion bash > /etc/bash_completion.d/leanproxy-mcp
 
 # Zsh
-leanproxy completion zsh > ~/.zsh/completions/_leanproxy
+leanproxy-mcp completion zsh > ~/.zsh/completions/_leanproxy-mcp
 
 # Fish
-leanproxy completion fish > ~/.config/fish/completions/leanproxy.fish
+leanproxy-mcp completion fish > ~/.config/fish/completions/leanproxy-mcp.fish
 ```
 
 ---
@@ -647,14 +647,16 @@ Print version information.
 ### Usage
 
 ```bash
-leanproxy version
+leanproxy-mcp version
 ```
 
 #### Output
 
 ```
- leanproxy-mcp version 0.2.0
+ leanproxy-mcp version v0.2.0
  build date: 2026-05-01
+ platform: darwin/arm64
+ go: go1.26.2
 ```
 
 ---

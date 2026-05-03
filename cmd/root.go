@@ -9,7 +9,7 @@ import (
 )
 
 var RootCmd = &cobra.Command{
-	Use:   "leanproxy",
+	Use:   "leanproxy-mcp",
 	Short: "LeanProxy MCP - A JSON-RPC streaming proxy with token validation",
 	Long: `LeanProxy MCP provides secure JSON-RPC streaming proxy capabilities
 with token validation, MCP server registry, and configurable redaction.

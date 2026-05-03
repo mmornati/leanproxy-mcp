@@ -170,12 +170,12 @@ Make sure LeanProxy is in your PATH:
 
 ```bash
 # Verify installation
-leanproxy version
+leanproxy-mcp version
 
 # If not found, check installation
-which leanproxy
+which leanproxy-mcp
 # or
-where leanproxy
+where leanproxy-mcp
 ```
 
 ### Server won't start
