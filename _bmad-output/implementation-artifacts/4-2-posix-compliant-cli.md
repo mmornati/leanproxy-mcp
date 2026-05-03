@@ -9,7 +9,7 @@
 | **Epic** | Epic 4 - CLI Installation and Interaction |
 | **Title** | Implement POSIX-Compliant CLI |
 | **Priority** | High |
-| **Status** | ready-for-dev |
+| **Status** | review |
 
 ## Story Requirements
 
@@ -88,17 +88,17 @@ Feature: POSIX-Compliant CLI Interface
 3. **Help Text Format**
    ```
    Usage: tokengate [OPTIONS] COMMAND [ARGUMENTS]
-   
+
    Options:
      -h, --help        Show help
      -v, --verbose     Enable verbose output
      -c, --config=FILE Configuration file path
-   
+
    Commands:
      proxy    Manage proxy server
      registry Manage token registry
      token    Token operations
-   
+
    Exit Status:
      0      Success
      1      General error
@@ -162,10 +162,10 @@ pkg/
    ```bash
    # Test flag grouping
    tokengate -hvr 2>&1 | grep -q "verbose" && echo "PASS"
-   
+
    # Test exit codes
    tokengate --invalid-flag 2>/dev/null; [ $? -eq 2 ] && echo "PASS"
-   
+
    # Test stdin
    echo "test" | tokengate config validate - && echo "PASS"
    ```
@@ -177,3 +177,83 @@ pkg/
 3. Use `pflag` instead of standard `flag` for POSIX compliance
 4. Set `pflag.CommandLine.SortFlags = true` for consistent help output
 5. Implement `--` delimiter support for separating args from flags
+
+## Tasks/Subtasks
+
+- [x] Task 1: Create pkg/utils/exit package with exit code constants
+  - [x] Subtask 1.1: Create exit.go with POSIX exit codes (0, 1, 2, 3, 4, 125)
+  - [x] Subtask 1.2: Create exit_test.go with unit tests
+- [x] Task 2: Create cmd/tokengate package structure
+  - [x] Subtask 2.1: Create error.go with PosixError type and exit helpers
+  - [x] Subtask 2.2: Create root.go with RootCmd and flag definitions
+  - [x] Subtask 2.3: Create main.go entry point
+- [x] Task 3: Create subcommands (proxy, registry, token, config, help)
+  - [x] Subtask 3.1: Create proxy.go with start subcommand
+  - [x] Subtask 3.2: Create registry.go with list subcommand
+  - [x] Subtask 3.3: Create token.go with validate and resolve subcommands
+  - [x] Subtask 3.4: Create config.go with validate subcommand and stdin support
+  - [x] Subtask 3.5: Create help.go
+- [x] Task 4: Implement --version flag
+- [x] Task 5: Write unit tests for error/exit handling
+- [x] Task 6: Run all tests and verify pass
+
+## Dev Agent Record
+
+### Debug Log
+
+1. Initial implementation encountered pflag API issues (SetAutoConvert, BreakOnEmpty not available)
+2. Fixed by removing unsupported pflag options
+3. cobra.EnableQuoteDetection() also unavailable - removed
+4. Fixed duplicate ExitUpstreamError declaration by using ExitUpstream constant
+5. Version command needed to be added via init() since versionString is package-level
+
+### Completion Notes
+
+Implemented POSIX-compliant CLI with:
+- Exit codes: 0 (success), 1 (general), 2 (misuse), 3 (config error), 4 (token resolution), 125 (upstream)
+- Commands: version, proxy (start), registry (list), token (validate, resolve), config (validate), help
+- Flags: --help, --version, --verbose, --config, --dry-run, --log-level
+- Stdin support with `-` argument for config validate
+- Help output follows POSIX format with Usage, Options, Commands, Exit Status sections
+
+All 447 tests pass (10 new tests for tokengate package, 437 existing).
+
+## File List
+
+New files:
+- cmd/tokengate/main.go
+- cmd/tokengate/root.go
+- cmd/tokengate/error.go
+- cmd/tokengate/error_test.go
+- cmd/tokengate/proxy.go
+- cmd/tokengate/registry.go
+- cmd/tokengate/token.go
+- cmd/tokengate/config.go
+- cmd/tokengate/help.go
+- pkg/utils/exit/exit.go
+- pkg/utils/exit/exit_test.go
+
+Modified files:
+- _bmad-output/implementation-artifacts/4-2-posix-compliant-cli.md (Status updated to review)
+
+## Change Log
+
+- 2026-05-03: Initial implementation of POSIX-compliant CLI
+  - Created cmd/tokengate package with all subcommands
+  - Created pkg/utils/exit package with POSIX exit code constants
+  - Implemented flag parsing with pflag
+  - Added stdin support for config validate command
+  - Added comprehensive unit tests for exit codes
+  - All 447 tests pass
+
+## Status
+
+**Status:** review
+
+All acceptance criteria satisfied:
+- [x] Short flags combined (-hv version shows help with verbose)
+- [x] Long flags accept equals syntax (--config=value works)
+- [x] Flags can appear before/after positional arguments
+- [x] Standard exit codes (0, 1, 2, 3, 4) used correctly
+- [x] Help output follows POSIX conventions with EXIT STATUS section
+- [x] Stdin input accepted with `-` argument
