@@ -8,7 +8,7 @@
 | Key | boilerplate-blindness |
 | Epic | Epic 3: Context Optimization (JIT Discovery & Compactor) |
 | Title | Implement Boilerplate Blindness |
-| Status | backlog |
+| Status | review |
 | Estimated Points | 3 |
 
 ## User Story
@@ -185,3 +185,65 @@ boilerplate:
     - name: "my-copyright"
       regex: "My Company Inc\\..*?\\n"
 ```
+
+## Tasks/Subtasks
+
+- [x] Implement BoilerplateProcessor interface and BoilerplatePruner struct
+- [x] Add Go, Python, JavaScript import detection patterns
+- [x] Add copyright and license header detection patterns
+- [x] Implement Process() method with configurable redaction
+- [x] Implement ProcessStream() for streaming processing
+- [x] Add DetectLanguage() function for file extension detection
+- [x] Write comprehensive unit tests for all patterns
+- [x] Test import pruning for Go, Python, JavaScript
+- [x] Test copyright/license pruning
+- [x] Test no-op for clean files
+- [x] Test configurable disable behavior
+- [x] Test custom patterns support
+- [x] Verify all existing tests still pass
+
+## Dev Agent Record
+
+### Implementation Plan
+
+1. Created `pkg/bouncer/boilerplate.go` implementing the BoilerplateProcessor interface
+2. Added language-specific import patterns (Go, Python, JavaScript/TypeScript)
+3. Added copyright/license detection patterns
+4. Implemented Process() method that:
+   - Skips processing if boilerplate is disabled
+   - Processes licenses first (if enabled)
+   - Processes imports by language (if enabled)
+   - Removes shebangs
+   - Applies custom patterns
+5. Implemented ProcessStream() for chunked processing
+6. Created comprehensive tests in `pkg/bouncer/boilerplate_test.go`
+
+### Key Technical Decisions
+
+- Used `bytes.Count` to count newlines for accurate line counts in markers
+- Used explicit space/tab in Python pattern to avoid multi-line matching issues
+- Language detection falls back to Go patterns for unknown file types
+- Custom patterns stored in `patterns["custom"]` map for easy iteration
+
+### Debug Notes
+
+- Python import pattern required explicit space/tab characters without `\s` (which includes newlines)
+- Import count increment uses `bytes.Equal()` comparison to only count actual matches
+- Copyright pattern uses non-greedy matching to handle varying header sizes
+
+### Completion Notes
+
+All acceptance criteria satisfied:
+- AC1: Import Statement Pruning - ✅ Implemented for Go, Python, JS
+- AC2: Copyright Header Pruning - ✅ Replaces with [LICENSE_REDACTED]
+- AC3: No-Op for Clean Files - ✅ Clean files pass through unchanged
+- AC4: Configurable Disable - ✅ enabled=false skips all processing
+
+### File List
+
+- pkg/bouncer/boilerplate.go (NEW)
+- pkg/bouncer/boilerplate_test.go (NEW)
+
+## Change Log
+
+- 2026-05-03: Initial implementation of boilerplate blindness feature (story 3-5)
