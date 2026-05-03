@@ -76,6 +76,34 @@ serverName_toolName
 
 For example, if you have a `github` server with a tool called `list_repos`, the full tool name would be `github_list_repos`.
 
+### Tool Cache
+
+LeanProxy-MCP automatically caches tool signatures from your MCP servers. This allows:
+- **Fast tool search**: Use `search_tools` to find tools across all servers instantly
+- **Offline access**: Tool information is persisted to disk at `~/.config/leanproxy/toolcache/`
+- **No server startup**: Search cached tools without starting backend servers
+
+```bash
+# View cached tools
+leanproxy-mcp cache --list
+
+# Search tools by name or description
+leanproxy-mcp cache --search activity
+
+# Search within a specific server
+leanproxy-mcp cache --server garmin --search sleep
+```
+
+### Running Status
+
+Check if LeanProxy-MCP is currently running:
+
+```bash
+leanproxy-mcp status --running
+```
+
+This reads from the status file written by running instances (`~/.config/leanproxy/status/current.json`).
+
 ### Enable/Disable Servers
 
 ```bash
