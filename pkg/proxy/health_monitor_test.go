@@ -195,7 +195,12 @@ func TestHealthMonitor_WatchStatus(t *testing.T) {
 }
 
 func TestHealthMonitor_checkServer_Running(t *testing.T) {
-	monitor := NewHealthMonitor(nil, nil)
+	monitor := NewHealthMonitor(&HealthConfig{
+		CheckInterval:     1 * time.Second,
+		ResponseTimeout:   30 * time.Second,
+		MaxRestartAttempts: 3,
+		RestartBackoff:  5 * time.Second,
+	}, nil)
 
 	server := &mockServer{
 		nameVal:    "server-1",
@@ -237,8 +242,8 @@ func TestHealthMonitor_checkServer_Stopped(t *testing.T) {
 
 func TestHealthMonitor_checkServer_Unresponsive(t *testing.T) {
 	config := &HealthConfig{
-		CheckInterval:   1 * time.Second,
-		ResponseTimeout: 1 * time.Second,
+		CheckInterval:     1 * time.Second,
+		ResponseTimeout:   1 * time.Second,
 		MaxRestartAttempts: 3,
 		RestartBackoff:  5 * time.Second,
 	}
