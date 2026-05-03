@@ -121,29 +121,30 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 }
 
 func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response, error) {
-	var params ToolsListParams
-	if req.Params != nil {
-		json.Unmarshal(req.Params, &params)
+	h.logger.Debug("tools/list request received, returning leanproxy tools only")
+
+	leanproxyTools := []Tool{
+		{
+			Name:        "leanproxy_savings",
+			Description: "Display token savings statistics",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+		},
+		{
+			Name:        "leanproxy_report",
+			Description: "Generate a token savings report",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"format":{"type":"string","enum":["markdown","json"]}}}}`),
+		},
+		{
+			Name:        "leanproxy_status",
+			Description: "Show status of proxied MCP servers",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"server":{"type":"string"}}}`),
+		},
 	}
 
-	h.logger.Debug("tools/list request received, collecting tools...")
-
-	manifest, err := h.collectTools(ctx)
-	if err != nil {
-		h.logger.Error("failed to collect tools", "error", err)
-		return &Response{
-			JSONRPC: JSONRPCVersion,
-			Error:   NewError(ErrCodeInternalError, fmt.Sprintf("failed to collect tools: %v", err)),
-			ID:      req.ID,
-		}, nil
-	}
-
-	h.manifest = manifest
-	result := ToolsListResult{Tools: manifest.Tools}
+	result := ToolsListResult{Tools: leanproxyTools}
 	resultBytes, _ := json.Marshal(result)
 
-	h.logger.Info("tools list aggregated", "count", len(manifest.Tools))
-	h.logger.Debug("tools list response", "tools", string(resultBytes))
+	h.logger.Info("tools list sent to client", "count", len(leanproxyTools))
 
 	return &Response{
 		JSONRPC: JSONRPCVersion,
@@ -300,6 +301,10 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		}, nil
 	}
 
+	if strings.HasPrefix(params.Name, "leanproxy_") {
+		return h.handleLeanproxyTool(ctx, req, params)
+	}
+
 	serverName, toolName, err := h.parseToolName(params.Name)
 	if err != nil {
 		return &Response{
@@ -327,6 +332,25 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 	return &Response{
 		JSONRPC: JSONRPCVersion,
 		Result:  resp.Result,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
+	tool := strings.TrimPrefix(params.Name, "leanproxy_")
+
+	result := map[string]interface{}{
+		"content": []map[string]string{
+			{"type": "text", "text": fmt.Sprintf("LeanProxy tool '%s' called. Tool execution requires routing to backend MCP servers which is not yet fully implemented in this mode.", tool)},
+		},
+	}
+
+	resultBytes, _ := json.Marshal(result)
+	h.logger.Info("leanproxy tool called", "tool", tool)
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
 		ID:      req.ID,
 	}, nil
 }
