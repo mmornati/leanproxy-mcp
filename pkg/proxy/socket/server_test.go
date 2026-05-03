@@ -75,6 +75,7 @@ func TestServerLifecycle(t *testing.T) {
 		t.Errorf("Expected id 1, got %v", rpcResp["id"])
 	}
 
+	conn.Close()
 	cancel()
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -153,10 +154,13 @@ func TestJSONRPCRequestParsing(t *testing.T) {
 		_ = result
 	}
 
+	conn.Close()
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
-	server.Shutdown(shutdownCtx)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
 }
 
 func TestMalformedRequest(t *testing.T) {
@@ -175,6 +179,10 @@ func TestMalformedRequest(t *testing.T) {
 		t.Fatalf("NewServer failed: %v", err)
 	}
 
+	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		return nil, fmt.Errorf("echo error")
+	})
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -188,7 +196,6 @@ func TestMalformedRequest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Dial failed: %v", err)
 	}
-	defer conn.Close()
 
 	req := `{invalid jsonrpc request}`
 	_, err = fmt.Fprintf(conn, "%s\n", req)
@@ -212,10 +219,11 @@ func TestMalformedRequest(t *testing.T) {
 		t.Error("Expected error response for malformed request")
 	}
 
+	conn.Close()
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
 	server.Shutdown(shutdownCtx)
-	shutdownCancel()
 }
 
 func TestConcurrentConnections(t *testing.T) {
@@ -292,10 +300,14 @@ func TestConcurrentConnections(t *testing.T) {
 		t.Error("Both connections should receive valid responses")
 	}
 
+	conn1.Close()
+	conn2.Close()
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	server.Shutdown(shutdownCtx)
-	shutdownCancel()
+	defer shutdownCancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown failed: %v", err)
+	}
 }
 
 func TestMessageTooLarge(t *testing.T) {
@@ -313,6 +325,10 @@ func TestMessageTooLarge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewServer failed: %v", err)
 	}
+
+	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		return nil, nil
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -335,8 +351,10 @@ func TestMessageTooLarge(t *testing.T) {
 		t.Fatalf("Write failed: %v", err)
 	}
 
+	time.Sleep(100 * time.Millisecond)
+	conn.Close()
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
 	server.Shutdown(shutdownCtx)
-	shutdownCancel()
 }
