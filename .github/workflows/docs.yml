@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - feature/user-documentation
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
@@ -17,15 +16,12 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: docs-pages
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
