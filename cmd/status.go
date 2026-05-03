@@ -38,6 +38,7 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) {
+	initLogger(cmd)
 	if statusFlags.watch {
 		runStatusWatch()
 	} else {

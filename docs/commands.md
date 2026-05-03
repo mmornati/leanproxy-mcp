@@ -85,6 +85,61 @@ leanproxy-mcp server [command]
 | `list` | List all configured servers |
 | `enable` | Enable a disabled server |
 | `disable` | Disable an enabled server |
+| `run` | Run leanproxy as an MCP stdio server |
+
+---
+
+### `server run` - Run Stdio Server
+
+Run leanproxy-mcp as an MCP server in stdio mode. This command reads JSON-RPC requests from stdin and writes responses to stdout, proxying requests to configured MCP servers.
+
+#### Usage
+
+```bash
+leanproxy-mcp server run --stdio [flags]
+```
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--stdio` | bool | false | Run in stdio mode (required) |
+| `--config` | string | `~/.config/leanproxy_servers.yaml` | Path to config file |
+| `--log-file` | string | "" | Path to log file |
+| `--log-level` | string | `info` | Log level (debug, info, warn, error) |
+| `-v, --verbose` | bool | false | Enable verbose logging |
+
+#### Examples
+
+```bash
+# Run in stdio mode with default config
+leanproxy-mcp server run --stdio
+
+# Run with logging
+leanproxy-mcp server run --stdio --log-file /tmp/leanproxy.log --log-level debug
+
+# Run with custom config
+leanproxy-mcp server run --stdio --config /path/to/config.yaml
+
+# Dry-run mode
+leanproxy-mcp server run --dry-run --stdio
+```
+
+#### OpenCode Configuration
+
+To use with OpenCode, add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "leanproxy": {
+      "type": "local",
+      "command": ["leanproxy-mcp", "server", "run", "--stdio"],
+      "enabled": true
+    }
+  }
+}
+```
 
 ---
 

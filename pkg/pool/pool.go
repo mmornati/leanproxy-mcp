@@ -343,3 +343,34 @@ func (p *StdioPool) SendRequest(ctx context.Context, serverName string, req *pro
 		return nil, ctx.Err()
 	}
 }
+
+func (p *StdioPool) SendRequestToServer(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration) (*Response, error) {
+	id := 1
+
+	resultCh := make(chan *Response, 1)
+	errorCh := make(chan error, 1)
+
+	poolReq := Request{
+		Method:   method,
+		Params:   params,
+		ID:       id,
+		Timeout:  timeout,
+		ResultCh: resultCh,
+		ErrorCh:  errorCh,
+	}
+
+	if err := p.PutRequest(name, poolReq); err != nil {
+		return nil, fmt.Errorf("pool: send request: %w", err)
+	}
+
+	select {
+	case resp := <-resultCh:
+		return resp, nil
+	case err := <-errorCh:
+		return nil, err
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("request timeout after %v", timeout)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}

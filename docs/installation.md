@@ -140,7 +140,7 @@ Add to your `~/.config/opencode/opencode.json`:
   "mcp": {
     "leanproxy": {
       "type": "local",
-      "command": ["leanproxy-mcp", "serve"],
+      "command": ["leanproxy-mcp", "server", "run", "--stdio"],
       "enabled": true
     }
   }

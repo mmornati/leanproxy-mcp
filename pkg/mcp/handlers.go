@@ -1,0 +1,280 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/pool"
+)
+
+type Handler struct {
+	pool       *pool.StdioPool
+	manifest   *AggregatedManifest
+	logger     *slog.Logger
+	timeout    time.Duration
+}
+
+type AggregatedManifest struct {
+	Tools     []Tool
+	Resources []Resource
+	Prompts   []Prompt
+}
+
+func NewHandler(p *pool.StdioPool, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Handler{
+		pool:     p,
+		logger:   logger,
+		timeout:  30 * time.Second,
+	}
+}
+
+func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, error) {
+	h.logger.Debug("handling mcp request", "method", req.Method, "id", req.ID)
+
+	switch req.Method {
+	case MethodInitialize:
+		return h.handleInitialize(ctx, req)
+	case MethodToolsList:
+		return h.handleToolsList(ctx, req)
+	case MethodToolsCall:
+		return h.handleToolsCall(ctx, req)
+	case MethodResourcesList:
+		return h.handleResourcesList(ctx, req)
+	case MethodPing:
+		return h.handlePing(ctx, req)
+	case MethodShutdown:
+		return h.handleShutdown(ctx, req)
+	default:
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method)),
+			ID:      req.ID,
+		}, nil
+	}
+}
+
+func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response, error) {
+	var params InitializeParams
+	if req.Params != nil {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return &Response{
+				JSONRPC: JSONRPCVersion,
+				Error:   NewError(ErrCodeInvalidParams, fmt.Sprintf("invalid params: %v", err)),
+				ID:      req.ID,
+			}, nil
+		}
+	}
+
+	result := InitializeResult{
+		ProtocolVersion: "2024-11-05",
+		Capabilities: ServerCapabilities{
+			Tools:     &ToolsCapability{ListChanged: false},
+			Resources: &ResourcesCapability{ListChanged: false},
+			Prompts:   &PromptsCapability{ListChanged: false},
+		},
+		ServerInfo: ServerInfo{
+			Name:    "leanproxy-mcp",
+			Version: "1.0.0",
+		},
+	}
+
+	resultBytes, err := json.Marshal(result)
+	if err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInternalError, fmt.Sprintf("marshal result: %v", err)),
+			ID:      req.ID,
+		}, nil
+	}
+
+	h.logger.Info("initialized leanproxy-mcp", "client", params.ClientInfo.Name, "version", params.ClientInfo.Version)
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response, error) {
+	if h.manifest != nil {
+		result := ToolsListResult{Tools: h.manifest.Tools}
+		resultBytes, _ := json.Marshal(result)
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Result:  resultBytes,
+			ID:      req.ID,
+		}, nil
+	}
+
+	var params ToolsListParams
+	if req.Params != nil {
+		json.Unmarshal(req.Params, &params)
+	}
+
+	manifest, err := h.collectTools(ctx)
+	if err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInternalError, fmt.Sprintf("failed to collect tools: %v", err)),
+			ID:      req.ID,
+		}, nil
+	}
+
+	h.manifest = manifest
+	result := ToolsListResult{Tools: manifest.Tools}
+	resultBytes, _ := json.Marshal(result)
+
+	h.logger.Info("tools list aggregated", "count", len(manifest.Tools))
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error) {
+	servers := h.pool.ListServers()
+	manifest := &AggregatedManifest{
+		Tools:     make([]Tool, 0),
+		Resources: make([]Resource, 0),
+		Prompts:   make([]Prompt, 0),
+	}
+
+	for _, serverName := range servers {
+		state, _ := h.pool.GetServerState(serverName)
+		h.logger.Debug("checking server for tools", "name", serverName, "state", state)
+
+		if state != "idle" && state != "running" && state != "busy" {
+			h.logger.Debug("server not in running state, skipping", "name", serverName, "state", state)
+			continue
+		}
+
+		resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
+		if err != nil {
+			h.logger.Warn("failed to get tools from server", "name", serverName, "error", err)
+			continue
+		}
+
+		if resp.Result != nil {
+			var toolsResult ToolsListResult
+			if err := json.Unmarshal(resp.Result, &toolsResult); err == nil {
+				for _, tool := range toolsResult.Tools {
+					tool.Name = fmt.Sprintf("%s_%s", serverName, tool.Name)
+					manifest.Tools = append(manifest.Tools, tool)
+				}
+				h.logger.Debug("collected tools from server", "name", serverName, "count", len(toolsResult.Tools))
+			}
+		}
+	}
+
+	return manifest, nil
+}
+
+func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response, error) {
+	var params ToolsCallParams
+	if req.Params != nil {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return &Response{
+				JSONRPC: JSONRPCVersion,
+				Error:   NewError(ErrCodeInvalidParams, fmt.Sprintf("invalid params: %v", err)),
+				ID:      req.ID,
+			}, nil
+		}
+	}
+
+	if params.Name == "" {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInvalidParams, "tool name is required"),
+			ID:      req.ID,
+		}, nil
+	}
+
+	serverName, toolName, err := h.parseToolName(params.Name)
+	if err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInvalidParams, err.Error()),
+			ID:      req.ID,
+		}, nil
+	}
+
+	newParams := ToolsCallParams{
+		Name:      toolName,
+		Arguments: params.Arguments,
+	}
+	paramsBytes, _ := json.Marshal(newParams)
+
+	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeout)
+	if err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeServerError, fmt.Sprintf("tool call failed: %v", err)),
+			ID:      req.ID,
+		}, nil
+	}
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resp.Result,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) parseToolName(fullName string) (serverName, toolName string, err error) {
+	parts := strings.SplitN(fullName, "_", 2)
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("invalid tool name '%s': expected format is 'serverName_toolName'", fullName)
+	}
+	return parts[0], parts[1], nil
+}
+
+func (h *Handler) handleResourcesList(ctx context.Context, req *Request) (*Response, error) {
+	result := ResourcesListResult{
+		Resources: make([]Resource, 0),
+	}
+	resultBytes, _ := json.Marshal(result)
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) handlePing(ctx context.Context, req *Request) (*Response, error) {
+	result := map[string]string{"status": "ok"}
+	resultBytes, _ := json.Marshal(result)
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) handleShutdown(ctx context.Context, req *Request) (*Response, error) {
+	result := map[string]string{"status": "shutdown"}
+	resultBytes, _ := json.Marshal(result)
+
+	h.pool.Close()
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) ResetManifest() {
+	h.manifest = nil
+}

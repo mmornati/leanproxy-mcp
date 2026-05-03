@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -36,6 +37,52 @@ func init() {
 	RootCmd.PersistentFlags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	RootCmd.PersistentFlags().StringVar(&GlobalConfigPath, "config", "", "Path to leanproxy_servers.yaml config file")
 	RootCmd.PersistentFlags().BoolP("dry-run", "n", false, "Preview actions without making changes")
+	RootCmd.PersistentFlags().String("log-file", "", "Path to log file (logs to stderr if not specified)")
+}
+
+func initLogger(cmd *cobra.Command) {
+	logFile, _ := cmd.Flags().GetString("log-file")
+	logLevelStr, _ := cmd.Flags().GetString("log-level")
+	verbose, _ := cmd.Flags().GetBool("verbose")
+
+	var level slog.Level
+	switch logLevelStr {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	if verbose {
+		level = slog.LevelDebug
+	}
+
+	var handler slog.Handler
+
+	if logFile != "" {
+		dir := filepath.Dir(logFile)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			slog.Warn("failed to create log directory", "path", dir, "error", err)
+		}
+		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			slog.Warn("failed to open log file", "path", logFile, "error", err)
+			handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+		} else {
+			handler = slog.NewTextHandler(f, &slog.HandlerOptions{Level: level})
+		}
+	} else {
+		handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+	}
+
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
 }
 
 func verboseEnabled(cmd *cobra.Command) bool {
