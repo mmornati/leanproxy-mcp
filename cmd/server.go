@@ -9,13 +9,17 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+	"github.com/mmornati/leanproxy-mcp/pkg/statusfile"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/spf13/cobra"
 )
 
@@ -366,9 +370,120 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		slog.Warn("no servers started")
 	}
 
-	handler := mcp.NewHandler(stdioPool, slog.Default())
+	var cache toolstore.Cache
+	fileCache, err := toolstore.NewFileCache(slog.Default())
+	if err != nil {
+		slog.Warn("failed to create tool cache, using no-op cache", "error", err)
+		cache = toolstore.NewNoOpCache()
+	} else {
+		cache = fileCache
+	}
 
-	return handleStdio(ctx, handler, stdioPool)
+	statusStore, err := statusfile.NewFileStatusStore("stdio", slog.Default())
+	if err != nil {
+		slog.Warn("failed to create status store", "error", err)
+	} else {
+		slog.Info("status file enabled", "path", statusStore.GetFilePath())
+		updateStdioServerStatusOnce(statusStore, stdioPool)
+	}
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		slog.Info("shutting down server")
+		if statusStore != nil {
+			statusStore.RemoveFile()
+		}
+		stdioPool.Close()
+		os.Exit(0)
+	}()
+
+	if statusStore != nil {
+		go updateStdioServerStatus(statusStore, stdioPool)
+	}
+
+	handler := mcp.NewHandlerWithToolStore(stdioPool, slog.Default(), cache)
+
+	return handleStdio(ctx, handler, stdioPool, statusStore)
+}
+
+func updateStdioServerStatusOnce(statusStore *statusfile.FileStatusStore, stdioPool *pool.StdioPool) {
+	if statusStore == nil || stdioPool == nil {
+		return
+	}
+
+	servers := stdioPool.ListServers()
+	statuses := make([]statusfile.ServerStatus, 0, len(servers))
+
+	for _, name := range servers {
+		state, _ := stdioPool.GetServerState(name)
+		stats, _ := stdioPool.GetServerStats(name)
+
+		status := statusfile.ServerStatus{
+			Name:         name,
+			RequestCount: stats.RequestCount,
+			ErrorCount:   stats.ErrorCount,
+			RestartCount: stats.RestartCount,
+		}
+
+		switch state {
+		case pool.StateIdle, pool.StateRunning, pool.StateBusy:
+			status.Status = "running"
+		case pool.StateError:
+			status.Status = "error"
+		case pool.StateStopped, pool.StateStopping:
+			status.Status = "stopped"
+		default:
+			status.Status = "unknown"
+		}
+
+		statuses = append(statuses, status)
+	}
+
+	statusStore.UpdateServers(statuses)
+}
+
+func updateStdioServerStatus(statusStore *statusfile.FileStatusStore, stdioPool *pool.StdioPool) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if statusStore == nil || stdioPool == nil {
+			continue
+		}
+
+		servers := stdioPool.ListServers()
+		statuses := make([]statusfile.ServerStatus, 0, len(servers))
+
+		for _, name := range servers {
+			state, _ := stdioPool.GetServerState(name)
+			stats, _ := stdioPool.GetServerStats(name)
+
+			status := statusfile.ServerStatus{
+				Name:         name,
+				RequestCount: stats.RequestCount,
+				ErrorCount:   stats.ErrorCount,
+				RestartCount: stats.RestartCount,
+			}
+
+			switch state {
+			case pool.StateIdle, pool.StateRunning, pool.StateBusy:
+				status.Status = "running"
+			case pool.StateError:
+				status.Status = "error"
+			case pool.StateStopped, pool.StateStopping:
+				status.Status = "stopped"
+			default:
+				status.Status = "unknown"
+			}
+
+			statuses = append(statuses, status)
+		}
+
+		statusStore.UpdateServers(statuses)
+	}
 }
 
 func runServerDisable(cmd *cobra.Command, args []string) error {
@@ -426,11 +541,17 @@ func joinStrings(strs []string) string {
 	return result
 }
 
-func handleStdio(ctx context.Context, handler *mcp.Handler, stdioPool *pool.StdioPool) error {
+func handleStdio(ctx context.Context, handler *mcp.Handler, stdioPool *pool.StdioPool, statusStore *statusfile.FileStatusStore) error {
 	reader := bufio.NewReader(os.Stdin)
 	writer := bufio.NewWriter(os.Stdout)
 
 	slog.Info("leanproxy-mcp stdio mode started")
+
+	defer func() {
+		if statusStore != nil {
+			statusStore.RemoveFile()
+		}
+	}()
 
 	for {
 		line, err := reader.ReadBytes('\n')

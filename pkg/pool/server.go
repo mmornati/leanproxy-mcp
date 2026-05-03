@@ -228,6 +228,21 @@ func (s *StdioServerV2) readResponses() {
 		default:
 			if scanner.Scan() {
 				line := scanner.Bytes()
+				s.logger.Debug("read from server stdout", "name", s.name, "line", string(line))
+
+				var msg map[string]json.RawMessage
+				if err := json.Unmarshal(line, &msg); err != nil {
+					s.logger.Warn("failed to parse response", "name", s.name, "error", err)
+					continue
+				}
+
+				if _, hasResult := msg["result"]; !hasResult {
+					if _, hasError := msg["error"]; !hasError {
+						s.logger.Debug("received notification, ignoring", "name", s.name, "line", string(line))
+						continue
+					}
+				}
+
 				var resp Response
 				if err := json.Unmarshal(line, &resp); err != nil {
 					s.logger.Warn("failed to parse response", "name", s.name, "error", err)
@@ -394,6 +409,8 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 		return nil, fmt.Errorf("pool: marshal request: %w", err)
 	}
 
+	s.logger.Debug("sending request to server", "name", s.name, "method", req.Method, "id", req.ID, "encoded", string(encoded))
+
 	s.mu.Lock()
 	if s.stdin == nil {
 		s.mu.Unlock()
@@ -402,6 +419,7 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 	stdin := s.stdin
 	s.mu.Unlock()
 
+	s.logger.Debug("writing to stdin", "name", s.name, "data", string(encoded))
 	if _, err := fmt.Fprintln(stdin, string(encoded)); err != nil {
 		return nil, fmt.Errorf("pool: write stdin: %w", err)
 	}
@@ -413,6 +431,7 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 
 	select {
 	case resp := <-s.responseCh:
+		s.logger.Debug("received raw response from server", "name", s.name, "response", fmt.Sprintf("%+v", resp))
 		if resp.Error != nil {
 			return nil, resp.Error
 		}

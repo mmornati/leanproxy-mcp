@@ -9,8 +9,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 )
+
+type ParamInfo struct {
+	Name        string
+	Type        string
+	IsRequired  bool
+	Description string
+}
 
 type ToolCache struct {
 	mu    sync.RWMutex
@@ -23,6 +31,7 @@ type Handler struct {
 	logger     *slog.Logger
 	timeout    time.Duration
 	toolCache  *ToolCache
+	toolStore  toolstore.Cache
 }
 
 type AggregatedManifest struct {
@@ -36,12 +45,27 @@ func NewHandler(p *pool.StdioPool, logger *slog.Logger) *Handler {
 		logger = slog.Default()
 	}
 	return &Handler{
-		pool:     p,
-		logger:   logger,
+		pool:    p,
+		logger:  logger,
+		timeout: 30 * time.Second,
+		toolCache: &ToolCache{
+			tools: make(map[string][]Tool),
+		},
+	}
+}
+
+func NewHandlerWithToolStore(p *pool.StdioPool, logger *slog.Logger, store toolstore.Cache) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Handler{
+		pool:      p,
+		logger:    logger,
 		timeout:  30 * time.Second,
 		toolCache: &ToolCache{
 			tools: make(map[string][]Tool),
 		},
+		toolStore: store,
 	}
 }
 
@@ -54,12 +78,16 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, e
 	case MethodInitialized:
 		h.logger.Info("received initialized notification from client")
 		return nil, nil
+	case MethodResourcesList:
+		return h.handleResourcesList(ctx, req)
+	case MethodPromptsList:
+		return h.handlePromptsList(ctx, req)
 	case MethodToolsList:
 		return h.handleToolsList(ctx, req)
 	case MethodToolsCall:
 		return h.handleToolsCall(ctx, req)
-	case MethodResourcesList:
-		return h.handleResourcesList(ctx, req)
+	case MethodSearchTools:
+		return h.handleSearchTools(ctx, req, ToolsCallParams{})
 	case MethodPing:
 		return h.handlePing(ctx, req)
 	case MethodShutdown:
@@ -122,18 +150,13 @@ func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response,
 	gatewayTools := []Tool{
 		{
 			Name:        "search_tools",
-			Description: "Search for available MCP tools across all proxied servers. Returns tool names with summarized descriptions. Use this to discover what tools are available before invoking them.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query to find tools"}}}`),
+			Description: "Search for tools across all configured MCP servers. Returns tool names, descriptions, and parameters. Always call this first to discover available tools before invoking.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query (e.g., 'activity', 'sleep', 'garmin')"}},"required":["query"]}`),
 		},
 		{
 			Name:        "invoke_tool",
-			Description: "Invoke a tool on a specific MCP server. First use search_tools to find the right tool, then invoke it with the server name and parameters.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"server":{"type":"string","description":"Server name"},"tool":{"type":"string","description":"Tool name to invoke"},"arguments":{"type":"object","description":"Tool arguments"}}}`),
-		},
-		{
-			Name:        "list_servers",
-			Description: "List all configured MCP servers and their current status.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+			Description: "Invoke a tool on a configured MCP server. First use search_tools to find the server_name and tool_name, then pass the tool arguments.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"server":{"type":"string","description":"Server name from search_tools (e.g., 'garmin', 'Intervals.icu')"},"tool":{"type":"string","description":"Tool name from search_tools (e.g., 'garmin_get_activities')"},"arguments":{"type":"object","description":"Tool arguments as key-value pairs"}},"required":["server","tool"]}`),
 		},
 	}
 
@@ -162,7 +185,7 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 
 	initParams := InitializeParams{
 		ProtocolVersion: "2024-11-05",
-		Capabilities: ClientCapabilities{},
+		Capabilities:    ClientCapabilities{},
 		ClientInfo: ClientInfo{
 			Name:    "leanproxy-mcp",
 			Version: "1.0.0",
@@ -181,7 +204,7 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 
 	h.logger.Debug("server initialized, sending initialized notification", "name", serverName)
 
-	h.pool.SendServerNotification(ctx, serverName, "initialized", map[string]interface{}{
+	h.pool.SendServerNotification(ctx, serverName, "notifications/initialized", map[string]interface{}{
 		"capabilities": ServerCapabilities{},
 	})
 
@@ -214,7 +237,7 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		}, nil
 	}
 
-	if params.Name == "search_tools" || params.Name == "invoke_tool" || params.Name == "list_servers" {
+	if params.Name == "search_tools" || params.Name == "invoke_tool" {
 		return h.handleLeanproxyTool(ctx, req, params)
 	}
 
@@ -255,8 +278,6 @@ func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params 
 		return h.handleSearchTools(ctx, req, params)
 	case "invoke_tool":
 		return h.handleInvokeTool(ctx, req, params)
-	case "list_servers":
-		return h.handleListServers(ctx, req)
 	default:
 		return &Response{
 			JSONRPC: JSONRPCVersion,
@@ -268,16 +289,20 @@ func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params 
 
 func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
 	var query string
+	var maxDescChars int
 	if params.Arguments != nil {
 		var args map[string]interface{}
 		if err := json.Unmarshal(params.Arguments, &args); err == nil {
 			if q, ok := args["query"].(string); ok {
 				query = q
 			}
+			if m, ok := args["max_description_chars"].(float64); ok {
+				maxDescChars = int(m)
+			}
 		}
 	}
 
-	h.logger.Info("search_tools called", "query", query)
+	h.logger.Info("search_tools called", "query", query, "max_desc_chars", maxDescChars)
 
 	h.toolCache.mu.RLock()
 	cachePopulated := len(h.toolCache.tools) > 0
@@ -287,7 +312,7 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 		h.populateToolCache(ctx)
 	}
 
-	results := h.searchToolCache(query)
+	results := h.searchToolCache(query, maxDescChars)
 
 	h.logger.Info("search_tools completed", "results", len(results))
 
@@ -322,11 +347,50 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 func (h *Handler) populateToolCache(ctx context.Context) {
 	h.logger.Info("populating tool cache from backend servers")
 
+	if h.toolStore != nil {
+		h.loadFromPersistentCache(ctx)
+	}
+
+	h.refreshToolCacheFromServers(ctx)
+
+	h.logger.Info("tool cache population complete")
+}
+
+func (h *Handler) loadFromPersistentCache(ctx context.Context) {
+	servers := h.pool.ListServers()
+	for _, serverName := range servers {
+		cachedTools, err := h.toolStore.GetTools(serverName)
+		if err != nil {
+			h.logger.Warn("failed to load tools from persistent cache", "server", serverName, "error", err)
+			continue
+		}
+		if cachedTools == nil {
+			continue
+		}
+
+		tools := make([]Tool, len(cachedTools))
+		for i, ct := range cachedTools {
+			tools[i] = Tool{
+				Name:        ct.Name,
+				Description: ct.Description,
+				InputSchema: ct.InputSchema,
+			}
+		}
+
+		h.toolCache.mu.Lock()
+		h.toolCache.tools[serverName] = tools
+		h.toolCache.mu.Unlock()
+
+		h.logger.Debug("loaded tools from persistent cache", "server", serverName, "count", len(tools))
+	}
+}
+
+func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
 	servers := h.pool.ListServers()
 
 	for _, serverName := range servers {
 		state, _ := h.pool.GetServerState(serverName)
-		h.logger.Debug("checking server for cache population", "name", serverName, "state", state)
+		h.logger.Debug("checking server for cache refresh", "name", serverName, "state", state)
 
 		if state != "idle" && state != "running" && state != "busy" {
 			h.logger.Debug("server not running, attempting restart", "name", serverName, "state", state)
@@ -355,13 +419,18 @@ func (h *Handler) populateToolCache(ctx context.Context) {
 		}
 
 		if resp == nil || resp.Result == nil {
-			h.logger.Warn("server returned no result for cache", "name", serverName)
+			h.logger.Warn("server returned no result for cache", "name", serverName, "resp", fmt.Sprintf("%+v", resp))
+			continue
+		}
+
+		if len(resp.Result) == 0 || string(resp.Result) == "null" {
+			h.logger.Warn("server returned null/empty result for cache", "name", serverName, "resp", fmt.Sprintf("%+v", resp))
 			continue
 		}
 
 		var toolsResult ToolsListResult
 		if err := json.Unmarshal(resp.Result, &toolsResult); err != nil {
-			h.logger.Warn("failed to parse tools for cache", "name", serverName, "error", err)
+			h.logger.Warn("failed to parse tools for cache", "name", serverName, "error", err, "result", string(resp.Result))
 			continue
 		}
 
@@ -370,40 +439,50 @@ func (h *Handler) populateToolCache(ctx context.Context) {
 		h.toolCache.mu.Lock()
 		h.toolCache.tools[serverName] = toolsResult.Tools
 		h.toolCache.mu.Unlock()
-	}
 
-	h.logger.Info("tool cache population complete")
+		if h.toolStore != nil {
+			if err := h.toolStore.SetTools(serverName, toolsToCachedTools(toolsResult.Tools)); err != nil {
+				h.logger.Warn("failed to persist tools to cache", "name", serverName, "error", err)
+			}
+		}
+	}
 }
 
-func (h *Handler) searchToolCache(query string) []string {
+func (h *Handler) searchToolCache(query string, maxDescChars int) []string {
 	h.toolCache.mu.RLock()
 	defer h.toolCache.mu.RUnlock()
 
 	var results []string
 	queryLower := strings.ToLower(query)
+	queryWords := strings.Fields(queryLower)
 
 	for serverName, tools := range h.toolCache.tools {
 		for _, tool := range tools {
-			combined := fmt.Sprintf("%s_%s: %s", serverName, tool.Name, compactDescription(tool.Description))
-			if query == "" || strings.Contains(strings.ToLower(combined), queryLower) {
-				results = append(results, combined)
+			matchedLine := fmt.Sprintf("%s_%s: %s", serverName, tool.Name, strings.ToLower(truncateDescription(tool.Description, maxDescChars)))
+			if query == "" || matchesQuery(matchedLine, queryWords) {
+				required, optional := parseInputSchema(tool.InputSchema)
+				formatted := formatToolSearchResult(serverName, tool.Name, tool.Description, required, optional, maxDescChars)
+				results = append(results, formatted)
 			}
 		}
 	}
 
-return results
+	return results
 }
 
-func compactDescription(description string) string {
-	if len(description) <= 50 {
-		return description
+func matchesQuery(text string, queryWords []string) bool {
+	for _, word := range queryWords {
+		if !strings.Contains(text, word) {
+			return false
+		}
 	}
-	return description[:47] + "..."
+	return true
 }
 
 func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
 	var serverName, toolName string
 	var arguments json.RawMessage
+	var err error
 
 	if params.Arguments != nil {
 		var args map[string]interface{}
@@ -415,7 +494,10 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 				toolName = t
 			}
 			if a, ok := args["arguments"].(map[string]interface{}); ok {
-				arguments, _ = json.Marshal(a)
+				arguments, err = json.Marshal(a)
+				if err != nil {
+					h.logger.Warn("failed to marshal arguments", "error", err)
+				}
 			}
 		}
 	}
@@ -426,6 +508,10 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 			Error:   NewError(ErrCodeInvalidParams, "server and tool are required"),
 			ID:      req.ID,
 		}, nil
+	}
+
+	if strings.HasPrefix(toolName, serverName+"_") {
+		toolName = strings.TrimPrefix(toolName, serverName+"_")
 	}
 
 	h.logger.Info("invoke_tool called", "server", serverName, "tool", toolName)
@@ -456,9 +542,36 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeout)
 	if err != nil {
 		h.logger.Error("invoke_tool failed", "server", serverName, "tool", toolName, "error", err)
+		schema := h.lookupToolSchema(serverName, toolName)
+		errResp := NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %v", err))
+		if schema != nil {
+			dataBytes, _ := json.Marshal(map[string]interface{}{
+				"tool":   toolName,
+				"schema": json.RawMessage(schema),
+			})
+			errResp.Data = dataBytes
+		}
 		return &Response{
 			JSONRPC: JSONRPCVersion,
-			Error:   NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %v", err)),
+			Error:   errResp,
+			ID:      req.ID,
+		}, nil
+	}
+
+	if resp.Error != nil {
+		h.logger.Error("invoke_tool received error from server", "server", serverName, "tool", toolName, "error", resp.Error.Message)
+		schema := h.lookupToolSchema(serverName, toolName)
+		errResp := NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %s", resp.Error.Message))
+		if schema != nil {
+			dataBytes, _ := json.Marshal(map[string]interface{}{
+				"tool":   toolName,
+				"schema": json.RawMessage(schema),
+			})
+			errResp.Data = dataBytes
+		}
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   errResp,
 			ID:      req.ID,
 		}, nil
 	}
@@ -468,42 +581,6 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		Result:  resp.Result,
 		ID:      req.ID,
 	}, nil
-}
-
-func (h *Handler) handleListServers(ctx context.Context, req *Request) (*Response, error) {
-	h.logger.Info("list_servers called")
-
-	servers := h.pool.ListServers()
-	serverList := make([]map[string]interface{}, 0)
-
-	for _, serverName := range servers {
-		state, _ := h.pool.GetServerState(serverName)
-		serverList = append(serverList, map[string]interface{}{
-			"name":  serverName,
-			"state": string(state),
-		})
-	}
-
-	result := map[string]interface{}{
-		"content": []map[string]string{
-			{"type": "text", "text": fmt.Sprintf("Configured servers:\n%s", formatServerList(serverList))},
-		},
-	}
-	resultBytes, _ := json.Marshal(result)
-
-	return &Response{
-		JSONRPC: JSONRPCVersion,
-		Result:  resultBytes,
-		ID:      req.ID,
-	}, nil
-}
-
-func formatServerList(servers []map[string]interface{}) string {
-	var lines []string
-	for _, s := range servers {
-		lines = append(lines, fmt.Sprintf("- %s (%s)", s["name"], s["state"]))
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (h *Handler) parseToolName(fullName string) (serverName, toolName string, err error) {
@@ -517,6 +594,19 @@ func (h *Handler) parseToolName(fullName string) (serverName, toolName string, e
 func (h *Handler) handleResourcesList(ctx context.Context, req *Request) (*Response, error) {
 	result := ResourcesListResult{
 		Resources: make([]Resource, 0),
+	}
+	resultBytes, _ := json.Marshal(result)
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) handlePromptsList(ctx context.Context, req *Request) (*Response, error) {
+	result := PromptsListResult{
+		Prompts: make([]Prompt, 0),
 	}
 	resultBytes, _ := json.Marshal(result)
 
@@ -553,4 +643,129 @@ func (h *Handler) handleShutdown(ctx context.Context, req *Request) (*Response, 
 
 func (h *Handler) ResetManifest() {
 	h.manifest = nil
+}
+
+func parseInputSchema(schema json.RawMessage) (required, optional []ParamInfo) {
+	var schemaMap map[string]interface{}
+	if err := json.Unmarshal(schema, &schemaMap); err != nil {
+		return nil, nil
+	}
+
+	properties, ok := schemaMap["properties"].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	var requiredNames []string
+	if req, ok := schemaMap["required"].([]interface{}); ok {
+		for _, r := range req {
+			if s, ok := r.(string); ok {
+				requiredNames = append(requiredNames, s)
+			}
+		}
+	}
+
+	isRequired := make(map[string]bool)
+	for _, name := range requiredNames {
+		isRequired[name] = true
+	}
+
+	for name, prop := range properties {
+		propMap, ok := prop.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		typeVal, _ := propMap["type"].(string)
+		descVal, _ := propMap["description"].(string)
+
+		param := ParamInfo{
+			Name:        name,
+			Type:        typeVal,
+			IsRequired:  isRequired[name],
+			Description: descVal,
+		}
+
+		if isRequired[name] {
+			required = append(required, param)
+		} else {
+			optional = append(optional, param)
+		}
+	}
+	return required, optional
+}
+
+func formatToolSearchResult(serverName, toolName, description string, required, optional []ParamInfo, maxDescChars int) string {
+	var sb strings.Builder
+	sb.WriteString(serverName)
+	sb.WriteString("_")
+	sb.WriteString(toolName)
+	sb.WriteString(": ")
+	sb.WriteString(truncateDescription(description, maxDescChars))
+
+	if len(required) > 0 {
+		sb.WriteString(" [")
+		for i, p := range required {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(p.Name)
+			sb.WriteString(": ")
+			sb.WriteString(p.Type)
+		}
+		sb.WriteString("]")
+	}
+
+	if len(optional) > 0 {
+		sb.WriteString(" {")
+		for i, p := range optional {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(p.Name)
+			sb.WriteString(": ")
+			sb.WriteString(p.Type)
+		}
+		sb.WriteString("}")
+	}
+
+	return sb.String()
+}
+
+func truncateDescription(description string, maxChars int) string {
+	if maxChars <= 0 || len(description) <= maxChars {
+		return description
+	}
+	if maxChars < 3 {
+		return description[:maxChars]
+	}
+	return description[:maxChars-3] + "..."
+}
+
+func (h *Handler) lookupToolSchema(serverName, toolName string) json.RawMessage {
+	h.toolCache.mu.RLock()
+	defer h.toolCache.mu.RUnlock()
+
+	tools, ok := h.toolCache.tools[serverName]
+	if !ok {
+		return nil
+	}
+
+	for _, tool := range tools {
+		if tool.Name == toolName {
+			return tool.InputSchema
+		}
+	}
+	return nil
+}
+
+func toolsToCachedTools(tools []Tool) []toolstore.CachedTool {
+	result := make([]toolstore.CachedTool, len(tools))
+	for i, t := range tools {
+		result[i] = toolstore.CachedTool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		}
+	}
+	return result
 }

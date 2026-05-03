@@ -14,6 +14,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+	"github.com/mmornati/leanproxy-mcp/pkg/statusfile"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 	"github.com/spf13/cobra"
 )
@@ -26,12 +27,13 @@ var statusCmd = &cobra.Command{
 }
 
 var statusFlags struct {
-	watch    bool
-	verbose  bool
-	server   string
-	jsonOut  bool
-	interval time.Duration
-	config   string
+	watch       bool
+	verbose     bool
+	server      string
+	jsonOut     bool
+	interval    time.Duration
+	config      string
+	runningOnly bool
 }
 
 func init() {
@@ -41,6 +43,7 @@ func init() {
 	statusCmd.Flags().BoolVar(&statusFlags.jsonOut, "json", false, "Output in JSON format")
 	statusCmd.Flags().DurationVar(&statusFlags.interval, "interval", 1*time.Second, "Watch mode refresh interval")
 	statusCmd.Flags().StringVar(&statusFlags.config, "config", "", "Path to leanproxy_servers.yaml config file")
+	statusCmd.Flags().BoolVar(&statusFlags.runningOnly, "running", false, "Only show running instances from status file (not from config)")
 	RootCmd.AddCommand(statusCmd)
 }
 
@@ -65,6 +68,56 @@ func statusConfigPath() string {
 		home = os.Getenv("USERPROFILE")
 	}
 	return filepath.Join(home, ".config", "leanproxy_servers.yaml")
+}
+
+func getRunningStatusList() proxy.ServerStatusList {
+	info, err := statusfile.ReadCurrentStatus()
+	if err != nil {
+		fmt.Printf("Error reading running status: %v\n", err)
+		return proxy.ServerStatusList{}
+	}
+	if info == nil {
+		fmt.Println("No running leanproxy instance found")
+		return proxy.ServerStatusList{}
+	}
+
+	fmt.Printf("Running leanproxy instance (PID: %d, started: %s, listen: %s)\n\n",
+		info.PID, info.StartedAt.Format("2006-01-02 15:04:05"), info.ListenAddr)
+
+	statusList := make([]proxy.ServerStatus, 0, len(info.Servers))
+	for _, s := range info.Servers {
+		var healthStatus proxy.ServerHealthStatus
+		switch s.Status {
+		case "running":
+			healthStatus = proxy.StatusRunning
+		case "error":
+			healthStatus = proxy.StatusError
+		case "stopped":
+			healthStatus = proxy.StatusStopped
+		default:
+			healthStatus = proxy.StatusUnresponsive
+		}
+
+		var uptime time.Duration
+		if s.Uptime != "" {
+			uptime, _ = time.ParseDuration(s.Uptime)
+		}
+
+		status := proxy.ServerStatus{
+			Name:            s.Name,
+			Status:          healthStatus,
+			RequestCount:    s.RequestCount,
+			ErrorRate:       float64(s.ErrorCount),
+			RestartCount:    s.RestartCount,
+			Uptime:          uptime,
+		}
+		statusList = append(statusList, status)
+	}
+
+	return proxy.ServerStatusList{
+		Timestamp: time.Now(),
+		Servers:   statusList,
+	}
 }
 
 func getRealStatusList() proxy.ServerStatusList {
@@ -165,7 +218,13 @@ func getLastError(state pool.ServerState, stats pool.ServerStats) string {
 }
 
 func runStatusSingle() {
-	statusList := getRealStatusList()
+	var statusList proxy.ServerStatusList
+
+	if statusFlags.runningOnly {
+		statusList = getRunningStatusList()
+	} else {
+		statusList = getRealStatusList()
+	}
 
 	if statusFlags.server != "" {
 		statusList = filterByServer(statusList, statusFlags.server)
@@ -219,7 +278,12 @@ func runStatusWatch() {
 			fmt.Println("\nStopped watching status")
 			return
 		case <-ticker.C:
-			statusList := getRealStatusList()
+			var statusList proxy.ServerStatusList
+			if statusFlags.runningOnly {
+				statusList = getRunningStatusList()
+			} else {
+				statusList = getRealStatusList()
+			}
 
 			if statusFlags.server != "" {
 				statusList = filterByServer(statusList, statusFlags.server)

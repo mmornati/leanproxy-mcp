@@ -18,9 +18,22 @@ type Request struct {
 	Method     string          `json:"method"`
 	Params     json.RawMessage `json:"params,omitempty"`
 	ID         interface{}     `json:"id"`
-	Timeout    time.Duration
-	ResultCh   chan *Response
-	ErrorCh    chan error
+	Timeout    time.Duration   `json:"-"`
+	ResultCh   chan *Response   `json:"-"`
+	ErrorCh    chan error        `json:"-"`
+}
+
+func (r Request) MarshalJSON() ([]byte, error) {
+	type Alias Request
+	return json.Marshal(&struct {
+		Alias
+		JSONRPC  string          `json:"jsonrpc"`
+		Timeout time.Duration   `json:"timeout,omitempty"`
+	}{
+		Alias:   Alias(r),
+		JSONRPC:  "2.0",
+		Timeout: r.Timeout,
+	})
 }
 
 type Response struct {
