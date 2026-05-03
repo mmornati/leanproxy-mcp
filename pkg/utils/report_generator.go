@@ -1,0 +1,222 @@
+package utils
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+)
+
+type SessionMetrics struct {
+	SessionID      string
+	SessionStart   time.Time
+	SessionEnd     time.Time
+	TotalRequests  int
+	TokenSavings   TokenSavingsSummary
+	SecurityEvents []SecurityEvent
+	ServerMetrics  map[string]ServerMetrics
+}
+
+type TokenSavingsSummary struct {
+	OriginalTokens    int64
+	OptimizedTokens   int64
+	SavedTokens       int64
+	SavingsPercentage float64
+	ByServer          map[string]ServerTokenSavings
+}
+
+type SecurityEvent struct {
+	Timestamp     time.Time
+	EventType     string
+	PatternMatched string
+	ServerName    string
+	Redacted      bool
+}
+
+type ServerMetrics struct {
+	ServerName    string
+	RequestsHandled int
+	Uptime        time.Duration
+	Errors        int
+	TokenSavings  ServerTokenSavings
+}
+
+type ServerTokenSavings struct {
+	ServerName      string
+	OriginalTokens  int64
+	OptimizedTokens int64
+	SavedTokens     int64
+}
+
+type ReportGenerator struct{}
+
+func NewReportGenerator() *ReportGenerator {
+	return &ReportGenerator{}
+}
+
+func (rg *ReportGenerator) GenerateMarkdownReport(sessionData SessionMetrics) string {
+	var sb strings.Builder
+
+	sb.WriteString("# LeanProxy Session Report\n\n")
+
+	sb.WriteString("## Summary\n\n")
+	sb.WriteString("| Metric | Value |\n")
+	sb.WriteString("|--------|-------|\n")
+
+	sessionID := sessionData.SessionID
+	if sessionID == "" {
+		sessionID = "N/A"
+	}
+	sb.WriteString(fmt.Sprintf("| Session ID | `%s` |\n", escapeMarkdown(sessionID)))
+
+	duration := time.Since(sessionData.SessionStart)
+	if !sessionData.SessionEnd.IsZero() {
+		duration = sessionData.SessionEnd.Sub(sessionData.SessionStart)
+	}
+	sb.WriteString(fmt.Sprintf("| Duration | `%s` |\n", duration.Round(time.Second)))
+	sb.WriteString(fmt.Sprintf("| Total Requests | `%d` |\n", sessionData.TotalRequests))
+
+	savingsPct := 0.0
+	if sessionData.TokenSavings.OriginalTokens > 0 {
+		savingsPct = float64(sessionData.TokenSavings.SavedTokens) / float64(sessionData.TokenSavings.OriginalTokens) * 100
+	}
+	sb.WriteString(fmt.Sprintf("| **Total Tokens Saved** | **%d (%.2f%%)** |\n", sessionData.TokenSavings.SavedTokens, savingsPct))
+	sb.WriteString(fmt.Sprintf("| Security Risks Intercepted | `%d` |\n\n", len(sessionData.SecurityEvents)))
+
+	sb.WriteString("## Token Savings\n\n")
+
+	sb.WriteString("### By Server\n\n")
+	sb.WriteString("| Server | Original | Optimized | Saved | Savings % |\n")
+	sb.WriteString("|--------|----------|-----------|-------|-----------|\n")
+
+	if len(sessionData.TokenSavings.ByServer) == 0 {
+		sb.WriteString("| No servers processed | - | - | - | - |\n")
+	} else {
+		for name, ss := range sessionData.TokenSavings.ByServer {
+			ssPct := 0.0
+			if ss.OriginalTokens > 0 {
+				ssPct = float64(ss.SavedTokens) / float64(ss.OriginalTokens) * 100
+			}
+			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %.2f%% |\n",
+				escapeMarkdown(name), ss.OriginalTokens, ss.OptimizedTokens, ss.SavedTokens, ssPct))
+		}
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("### Optimization Breakdown\n\n")
+	sb.WriteString("| Technique | Tokens Saved |\n")
+	sb.WriteString("|-----------|---------------|\n")
+	sb.WriteString(fmt.Sprintf("| Discovery Signatures | `%d` |\n", sessionData.TokenSavings.ByServer["discovery_signatures"].SavedTokens))
+	sb.WriteString(fmt.Sprintf("| JIT Schema Injection | `%d` |\n", sessionData.TokenSavings.ByServer["jit_schema_injection"].SavedTokens))
+	sb.WriteString(fmt.Sprintf("| Boilerplate Pruning | `%d` |\n", sessionData.TokenSavings.ByServer["boilerplate_pruning"].SavedTokens))
+	sb.WriteString(fmt.Sprintf("| Manifest Compaction | `%d` |\n", sessionData.TokenSavings.ByServer["manifest_compaction"].SavedTokens))
+	sb.WriteString("\n")
+
+	sb.WriteString("## Security Events\n\n")
+	sb.WriteString("| Timestamp | Type | Server | Pattern |\n")
+	sb.WriteString("|-----------|------|--------|---------|\n")
+
+	if len(sessionData.SecurityEvents) == 0 {
+		sb.WriteString("| No security events | - | - | - |\n")
+	} else {
+		for _, event := range sessionData.SecurityEvents {
+			sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s |\n",
+				event.Timestamp.Format(time.RFC3339),
+				escapeMarkdown(event.EventType),
+				escapeMarkdown(event.ServerName),
+				escapeMarkdown(event.PatternMatched)))
+		}
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("### Risk Summary\n\n")
+	apiKeys := 0
+	secrets := 0
+	pii := 0
+	custom := 0
+	for _, event := range sessionData.SecurityEvents {
+		switch event.EventType {
+		case "api_key":
+			apiKeys++
+		case "secret":
+			secrets++
+		case "pii":
+			pii++
+		case "custom_pattern":
+			custom++
+		}
+	}
+	sb.WriteString(fmt.Sprintf("- API Keys Redacted: `%d`\n", apiKeys))
+	sb.WriteString(fmt.Sprintf("- Secrets Redacted: `%d`\n", secrets))
+	sb.WriteString(fmt.Sprintf("- PII Detected: `%d`\n", pii))
+	sb.WriteString(fmt.Sprintf("- Custom Patterns: `%d`\n", custom))
+	sb.WriteString("\n")
+
+	sb.WriteString(fmt.Sprintf("---\n*Report generated by LeanProxy at %s*\n", time.Now().Format(time.RFC3339)))
+
+	return sb.String()
+}
+
+func (rg *ReportGenerator) GenerateJSONReport(sessionData SessionMetrics) string {
+	reportData := map[string]interface{}{
+		"session_id": sessionData.SessionID,
+		"summary": map[string]interface{}{
+			"duration":          time.Since(sessionData.SessionStart).String(),
+			"total_requests":    sessionData.TotalRequests,
+			"total_tokens_saved": sessionData.TokenSavings.SavedTokens,
+			"savings_percentage": func() float64 {
+				if sessionData.TokenSavings.OriginalTokens > 0 {
+					return float64(sessionData.TokenSavings.SavedTokens) / float64(sessionData.TokenSavings.OriginalTokens) * 100
+				}
+				return 0.0
+			}(),
+			"security_risks_intercepted": len(sessionData.SecurityEvents),
+		},
+		"token_savings": sessionData.TokenSavings,
+		"security_events": sessionData.SecurityEvents,
+		"server_metrics": sessionData.ServerMetrics,
+		"generated_at": time.Now().Format(time.RFC3339),
+	}
+
+	output, err := json.MarshalIndent(reportData, "", "  ")
+	if err != nil {
+		return fmt.Sprintf(`{"error": "failed to generate JSON report: %v"}`, err)
+	}
+	return string(output)
+}
+
+func escapeMarkdown(s string) string {
+	s = strings.ReplaceAll(s, "|", "\\|")
+	s = strings.ReplaceAll(s, "`", "\\`")
+	return s
+}
+
+func (rg *ReportGenerator) NewSessionMetrics() SessionMetrics {
+	return SessionMetrics{
+		SessionID:      "",
+		SessionStart:   time.Now(),
+		SessionEnd:     time.Time{},
+		TotalRequests:  0,
+		TokenSavings:   TokenSavingsSummary{},
+		SecurityEvents: []SecurityEvent{},
+		ServerMetrics:  make(map[string]ServerMetrics),
+	}
+}
+
+func (rg *ReportGenerator) NewEmptySessionMetrics() SessionMetrics {
+	return SessionMetrics{
+		SessionID:      "no-session",
+		SessionStart:   time.Now(),
+		SessionEnd:     time.Now(),
+		TotalRequests:  0,
+		TokenSavings: TokenSavingsSummary{
+			OriginalTokens:    0,
+			OptimizedTokens:   0,
+			SavedTokens:       0,
+			SavingsPercentage: 0,
+			ByServer:          make(map[string]ServerTokenSavings),
+		},
+		SecurityEvents: []SecurityEvent{},
+		ServerMetrics:  make(map[string]ServerMetrics),
+	}
+}
