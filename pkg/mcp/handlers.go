@@ -149,13 +149,13 @@ func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response,
 
 	gatewayTools := []Tool{
 		{
-			Name:        "search_tools",
+			Name:        "leanproxy_search_tools",
 			Description: "Search for tools across all configured MCP servers. Returns tool names, descriptions, and parameters. Always call this first to discover available tools before invoking.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query (e.g., 'activity', 'sleep', 'garmin')"}},"required":["query"]}`),
 		},
 		{
-			Name:        "invoke_tool",
-			Description: "Invoke a tool on a configured MCP server. First use search_tools to find the server_name and tool_name, then pass the tool arguments.",
+			Name:        "leanproxy_invoke_tool",
+			Description: "Invoke a tool on a configured MCP server. First use leanproxy_search_tools to find the server_name and tool_name, then pass the tool arguments.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{"server":{"type":"string","description":"Server name from search_tools (e.g., 'garmin', 'Intervals.icu')"},"tool":{"type":"string","description":"Tool name from search_tools (e.g., 'garmin_get_activities')"},"arguments":{"type":"object","description":"Tool arguments as key-value pairs"}},"required":["server","tool"]}`),
 		},
 	}
@@ -237,7 +237,7 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		}, nil
 	}
 
-	if params.Name == "search_tools" || params.Name == "invoke_tool" || params.Name == "list_servers" {
+	if params.Name == "leanproxy_search_tools" || params.Name == "leanproxy_invoke_tool" {
 		return h.handleLeanproxyTool(ctx, req, params)
 	}
 
@@ -274,9 +274,9 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 
 func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
 	switch params.Name {
-	case "search_tools":
+	case "leanproxy_search_tools":
 		return h.handleSearchTools(ctx, req, params)
-	case "invoke_tool":
+	case "leanproxy_invoke_tool":
 		return h.handleInvokeTool(ctx, req, params)
 	default:
 		return &Response{

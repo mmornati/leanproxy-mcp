@@ -74,9 +74,8 @@ func TestIsGatewayTool(t *testing.T) {
 		method string
 		isGW   bool
 	}{
-		{"list_servers", true},
-		{"invoke_tool", true},
-		{"search_tools", true},
+		{"leanproxy_invoke_tool", true},
+		{"leanproxy_search_tools", true},
 		{"namespace.tool", false},
 		{"some_tool", false},
 		{"", false},

@@ -341,7 +341,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 var ctx = context.Background()
 
 func isGatewayTool(method string) bool {
-	return method == "list_servers" || method == "invoke_tool" || method == "search_tools"
+	return method == "leanproxy_invoke_tool" || method == "leanproxy_search_tools"
 }
 
 func handleGatewayTool(ctx context.Context, req *proxy.JSONRPCRequest, writer *bufio.Writer, gt gateway.GatewayTools) {
@@ -365,7 +365,7 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 			}
 		}
 		result, _ = json.Marshal(servers)
-	case "search_tools":
+	case "leanproxy_search_tools":
 		var params struct {
 			Query string `json:"query"`
 		}

@@ -40,7 +40,7 @@ func (m *MCPServerInstance) SetStdioPool(p *pool.StdioPool) {
 
 func (m *MCPServerInstance) SetupGatewayTools() {
 	searchToolsTool := mcp.NewTool(
-		"search_tools",
+		"leanproxy_search_tools",
 		mcp.WithDescription("Search for tools across all configured MCP servers. Returns tool names, descriptions, and parameters. Always call this first to discover available tools before invoking."),
 		mcp.WithString("query",
 			mcp.Required(),
@@ -52,8 +52,8 @@ func (m *MCPServerInstance) SetupGatewayTools() {
 	)
 
 	invokeTool := mcp.NewTool(
-		"invoke_tool",
-		mcp.WithDescription("Invoke a tool on a configured MCP server. First use search_tools to find the server_name and tool_name, then pass the tool arguments."),
+		"leanproxy_invoke_tool",
+		mcp.WithDescription("Invoke a tool on a configured MCP server. First use leanproxy_search_tools to find the server_name and tool_name, then pass the tool arguments."),
 		mcp.WithString("server",
 			mcp.Required(),
 			mcp.Description("Server name from search_tools (e.g., 'garmin', 'Intervals.icu')"),
