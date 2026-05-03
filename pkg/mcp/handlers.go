@@ -41,6 +41,9 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, e
 	switch req.Method {
 	case MethodInitialize:
 		return h.handleInitialize(ctx, req)
+	case MethodInitialized:
+		h.logger.Info("received initialized notification from client")
+		return nil, nil
 	case MethodToolsList:
 		return h.handleToolsList(ctx, req)
 	case MethodToolsCall:
@@ -158,6 +161,11 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 			continue
 		}
 
+		if err := h.initializeServer(ctx, serverName); err != nil {
+			h.logger.Warn("failed to initialize server", "name", serverName, "error", err)
+			continue
+		}
+
 		resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
 		if err != nil {
 			h.logger.Warn("failed to get tools from server", "name", serverName, "error", err)
@@ -172,11 +180,51 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 					manifest.Tools = append(manifest.Tools, tool)
 				}
 				h.logger.Debug("collected tools from server", "name", serverName, "count", len(toolsResult.Tools))
+			} else {
+				h.logger.Warn("failed to parse tools list from server", "name", serverName, "error", err)
 			}
 		}
 	}
 
 	return manifest, nil
+}
+
+func (h *Handler) initializeServer(ctx context.Context, serverName string) error {
+	h.logger.Debug("initializing server", "name", serverName)
+
+	initParams := InitializeParams{
+		ProtocolVersion: "2024-11-05",
+		Capabilities: ClientCapabilities{},
+		ClientInfo: ClientInfo{
+			Name:    "leanproxy-mcp",
+			Version: "1.0.0",
+		},
+	}
+	paramsBytes, _ := json.Marshal(initParams)
+
+	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodInitialize, paramsBytes, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("initialize request failed: %w", err)
+	}
+
+	if resp.Error != nil {
+		return fmt.Errorf("server returned error: %s", resp.Error.Message)
+	}
+
+	h.logger.Debug("server initialized, sending initialized notification", "name", serverName)
+
+	initializedNotification := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  "initialized",
+		"params": map[string]interface{}{
+			"capabilities": ServerCapabilities{},
+		},
+	}
+	notifBytes, _ := json.Marshal(initializedNotification)
+	h.pool.SendRequestToServer(ctx, serverName, "initialized", notifBytes, 5*time.Second)
+
+	h.logger.Debug("server ready", "name", serverName)
+	return nil
 }
 
 func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response, error) {
