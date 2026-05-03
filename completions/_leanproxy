@@ -1,0 +1,50 @@
+#compdef leanproxy
+
+_leanproxy() {
+    local -a commands
+    commands=(
+        'serve:Start the JSON-RPC streaming proxy server'
+        'version:Print version information'
+        'completion:Generate shell completion scripts'
+        'config:Configuration management'
+        'init:Initialize new configuration'
+        'migrate:Migrate configuration from other tools'
+    )
+
+    if (( CURRENT == 2 )); then
+        _describe 'command' commands
+    else
+        case "${words[2]}" in
+            serve)
+                _arguments \
+                    '--listen[Address to listen on]:address:' \
+                    '--upstream[Upstream JSON-RPC server URL]:url:' \
+                    '--config[Path to config file]:file:_files' \
+                    '--dry-run[Preview actions without making changes]' \
+                    '-v[Enable verbose logging]' \
+                    '--log-level[Log level]:level:(debug info warn error)' \
+                    '-h[Show help]'
+                ;;
+            version)
+                _arguments '-h[Show help]'
+                ;;
+            completion)
+                _arguments 'bash:Generate bash completion' 'zsh:Generate zsh completion'
+                ;;
+            config)
+                _arguments 'init:Initialize configuration' 'validate:Validate configuration'
+                ;;
+            init)
+                _arguments '--template[Config template]:template:' '--force[Overwrite existing]'
+                ;;
+            migrate)
+                _arguments \
+                    '--format[Migration format]:format:(opencode cursor claude vscode)' \
+                    '--dry-run[Preview migration]' \
+                    '--source[Source config path]:file:_files'
+                ;;
+        esac
+    fi
+}
+
+_leanproxy "$@"
