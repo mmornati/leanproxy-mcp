@@ -63,21 +63,12 @@ func (m *MCPServerInstance) SetupGatewayTools() {
 		),
 	)
 
-	listServersTool := mcp.NewTool(
-		"list_servers",
-		mcp.WithDescription("List all configured MCP servers and their current status"),
-	)
-
 	m.server.AddTool(searchToolsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return m.handleSearchTools(ctx, request)
 	})
 
 	m.server.AddTool(invokeTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return m.handleInvokeTool(ctx, request)
-	})
-
-	m.server.AddTool(listServersTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return m.handleListServers(ctx, request)
 	})
 
 	m.logger.Info("gateway tools registered for SSE/HTTP")
