@@ -345,8 +345,10 @@ func (p *StdioPool) SendRequest(ctx context.Context, serverName string, req *pro
 }
 
 func (p *StdioPool) SendRequestToServer(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration) (*Response, error) {
-	id := 1
+	return p.SendRequestToServerWithID(ctx, name, method, params, timeout, 1)
+}
 
+func (p *StdioPool) SendRequestToServerWithID(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration, id int) (*Response, error) {
 	resultCh := make(chan *Response, 1)
 	errorCh := make(chan error, 1)
 
@@ -372,5 +374,36 @@ func (p *StdioPool) SendRequestToServer(ctx context.Context, name string, method
 		return nil, fmt.Errorf("request timeout after %v", timeout)
 	case <-ctx.Done():
 		return nil, ctx.Err()
+	}
+}
+
+func (p *StdioPool) SendNotificationToServer(ctx context.Context, name string, method string, params json.RawMessage) error {
+	id := 1
+
+	resultCh := make(chan *Response, 1)
+	errorCh := make(chan error, 1)
+
+	poolReq := Request{
+		Method:   method,
+		Params:   params,
+		ID:       id,
+		Timeout:  5 * time.Second,
+		ResultCh: resultCh,
+		ErrorCh:  errorCh,
+	}
+
+	if err := p.PutRequest(name, poolReq); err != nil {
+		return fmt.Errorf("pool: send notification: %w", err)
+	}
+
+	select {
+	case <-resultCh:
+		return nil
+	case err := <-errorCh:
+		return err
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("notification timeout after 5s")
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }

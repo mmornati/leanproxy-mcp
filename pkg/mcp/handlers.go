@@ -6,16 +6,23 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 )
+
+type ToolCache struct {
+	mu    sync.RWMutex
+	tools map[string][]Tool
+}
 
 type Handler struct {
 	pool       *pool.StdioPool
 	manifest   *AggregatedManifest
 	logger     *slog.Logger
 	timeout    time.Duration
+	toolCache  *ToolCache
 }
 
 type AggregatedManifest struct {
@@ -32,6 +39,9 @@ func NewHandler(p *pool.StdioPool, logger *slog.Logger) *Handler {
 		pool:     p,
 		logger:   logger,
 		timeout:  30 * time.Second,
+		toolCache: &ToolCache{
+			tools: make(map[string][]Tool),
+		},
 	}
 }
 
@@ -160,12 +170,12 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 	}
 	paramsBytes, _ := json.Marshal(initParams)
 
-	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodInitialize, paramsBytes, 10*time.Second)
+	resp, err := h.pool.SendRequestToServerWithID(ctx, serverName, MethodInitialize, paramsBytes, 10*time.Second, 1)
 	if err != nil {
 		return fmt.Errorf("initialize request failed: %w", err)
 	}
 
-	if resp.Error != nil {
+	if resp != nil && resp.Error != nil {
 		return fmt.Errorf("server returned error: %s", resp.Error.Message)
 	}
 
@@ -179,7 +189,7 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 		},
 	}
 	notifBytes, _ := json.Marshal(initializedNotification)
-	h.pool.SendRequestToServer(ctx, serverName, "initialized", notifBytes, 5*time.Second)
+	h.pool.SendNotificationToServer(ctx, serverName, "initialized", notifBytes)
 
 	h.logger.Debug("server ready", "name", serverName)
 	return nil
@@ -262,13 +272,6 @@ func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params 
 	}
 }
 
-func compactDescription(description string) string {
-	if len(description) <= 50 {
-		return description
-	}
-	return description[:47] + "..."
-}
-
 func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
 	var query string
 	if params.Arguments != nil {
@@ -282,51 +285,35 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 
 	h.logger.Info("search_tools called", "query", query)
 
-	servers := h.pool.ListServers()
-	toolDescriptions := make([]string, 0)
+	h.toolCache.mu.RLock()
+	cachePopulated := len(h.toolCache.tools) > 0
+	h.toolCache.mu.RUnlock()
 
-	for _, serverName := range servers {
-		state, _ := h.pool.GetServerState(serverName)
-		if state != "idle" && state != "running" && state != "busy" {
-			continue
-		}
-
-		if err := h.initializeServer(ctx, serverName); err != nil {
-			h.logger.Warn("failed to initialize server for search", "name", serverName, "error", err)
-			continue
-		}
-
-		resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
-		if err != nil {
-			h.logger.Warn("failed to get tools from server", "name", serverName, "error", err)
-			continue
-		}
-
-		if resp.Result != nil {
-			var toolsResult ToolsListResult
-			if err := json.Unmarshal(resp.Result, &toolsResult); err == nil {
-				for _, tool := range toolsResult.Tools {
-					desc := compactDescription(tool.Description)
-					toolDescriptions = append(toolDescriptions, fmt.Sprintf("%s_%s: %s", serverName, tool.Name, desc))
-				}
-			}
-		}
+	if !cachePopulated {
+		h.populateToolCache(ctx)
 	}
 
-	var filtered []string
-	if query != "" {
-		for _, t := range toolDescriptions {
-			if strings.Contains(strings.ToLower(t), strings.ToLower(query)) {
-				filtered = append(filtered, t)
-			}
+	results := h.searchToolCache(query)
+
+	h.logger.Info("search_tools completed", "results", len(results))
+
+	if len(results) == 0 {
+		result := map[string]interface{}{
+			"content": []map[string]string{
+				{"type": "text", "text": "No tools found matching your query. Try a different search term or invoke a tool directly using invoke_tool."},
+			},
 		}
-	} else {
-		filtered = toolDescriptions
+		resultBytes, _ := json.Marshal(result)
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Result:  resultBytes,
+			ID:      req.ID,
+		}, nil
 	}
 
 	result := map[string]interface{}{
 		"content": []map[string]string{
-			{"type": "text", "text": fmt.Sprintf("Available tools:\n%s", strings.Join(filtered, "\n"))},
+			{"type": "text", "text": fmt.Sprintf("Available tools:\n%s", strings.Join(results, "\n"))},
 		},
 	}
 	resultBytes, _ := json.Marshal(result)
@@ -336,6 +323,88 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 		Result:  resultBytes,
 		ID:      req.ID,
 	}, nil
+}
+
+func (h *Handler) populateToolCache(ctx context.Context) {
+	h.logger.Info("populating tool cache from backend servers")
+
+	servers := h.pool.ListServers()
+
+	for _, serverName := range servers {
+		state, _ := h.pool.GetServerState(serverName)
+		h.logger.Debug("checking server for cache population", "name", serverName, "state", state)
+
+		if state != "idle" && state != "running" && state != "busy" {
+			h.logger.Debug("server not running, attempting restart", "name", serverName, "state", state)
+			if err := h.pool.RestartServer(ctx, serverName); err != nil {
+				h.logger.Warn("failed to restart server for cache", "name", serverName, "error", err)
+				continue
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+
+		if err := h.initializeServer(ctx, serverName); err != nil {
+			h.logger.Warn("failed to initialize server for cache", "name", serverName, "error", err)
+			continue
+		}
+
+		h.logger.Debug("requesting tools/list for cache", "name", serverName)
+		resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
+		if err != nil {
+			h.logger.Warn("failed to get tools for cache", "name", serverName, "error", err)
+			continue
+		}
+
+		if resp != nil && resp.Error != nil {
+			h.logger.Warn("server error during cache population", "name", serverName, "error", resp.Error.Message)
+			continue
+		}
+
+		if resp == nil || resp.Result == nil {
+			h.logger.Warn("server returned no result for cache", "name", serverName)
+			continue
+		}
+
+		var toolsResult ToolsListResult
+		if err := json.Unmarshal(resp.Result, &toolsResult); err != nil {
+			h.logger.Warn("failed to parse tools for cache", "name", serverName, "error", err)
+			continue
+		}
+
+		h.logger.Debug("caching tools from server", "name", serverName, "count", len(toolsResult.Tools))
+
+		h.toolCache.mu.Lock()
+		h.toolCache.tools[serverName] = toolsResult.Tools
+		h.toolCache.mu.Unlock()
+	}
+
+	h.logger.Info("tool cache population complete")
+}
+
+func (h *Handler) searchToolCache(query string) []string {
+	h.toolCache.mu.RLock()
+	defer h.toolCache.mu.RUnlock()
+
+	var results []string
+	queryLower := strings.ToLower(query)
+
+	for serverName, tools := range h.toolCache.tools {
+		for _, tool := range tools {
+			combined := fmt.Sprintf("%s_%s: %s", serverName, tool.Name, compactDescription(tool.Description))
+			if query == "" || strings.Contains(strings.ToLower(combined), queryLower) {
+				results = append(results, combined)
+			}
+		}
+	}
+
+return results
+}
+
+func compactDescription(description string) string {
+	if len(description) <= 50 {
+		return description
+	}
+	return description[:47] + "..."
 }
 
 func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
