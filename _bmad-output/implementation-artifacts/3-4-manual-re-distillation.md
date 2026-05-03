@@ -8,7 +8,7 @@
 | Key | manual-re-distillation |
 | Epic | Epic 3: Context Optimization (JIT Discovery & Compactor) |
 | Title | Implement Manual Re-Distillation Command |
-| Status | backlog |
+| Status | review |
 | Estimated Points | 2 |
 
 ## User Story
