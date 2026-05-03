@@ -1,0 +1,69 @@
+# MkDocs configuration for LeanProxy-MCP documentation
+
+site_name: LeanProxy-MCP
+site_description: "LeanProxy-MCP - Lightweight Token Firewall for MCP"
+site_author: "Massimo Mornati"
+site_url: https://mmornati.github.io/leanproxy-mcp
+
+# Repository settings
+repo_name: mmornati/leanproxy-mcp
+repo_url: https://github.com/mmornati/leanproxy-mcp
+edit_uri: https://github.com/mmornati/leanproxy-mcp/edit/main/docs/
+
+# Copyright
+copyright: "Copyright &copy; 2026 Massimo Mornati"
+
+# Theme
+theme:
+  name: material
+  palette:
+    primary: indigo
+    accent: indigo
+  font:
+    static: true
+  icon:
+    repo: fontawesome/brands/github
+
+# Navigation
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Quick Start: quickstart.md
+  - Commands Reference: commands.md
+  - Configuration: configuration.md
+  - Architecture: architecture.md
+  - Troubleshooting: troubleshooting.md
+  - FAQ: faq.md
+
+# Extensions
+markdown_extensions:
+  - attr_list
+  - codehilite
+  - toc:
+      permalink: true
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+# Plugins
+plugins:
+  - search:
+      separator: '[\s\-\.]+'
+  - mermaid2
+
+# Extra
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/mmornati/leanproxy-mcp
+
+extra_css:
+  - stylesheets/extra.css
