@@ -424,6 +424,32 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 	}
 }
 
+func (s *StdioServerV2) sendNotification(ctx context.Context, method string, params map[string]interface{}) error {
+	notification := map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  method,
+		"params":  params,
+	}
+	encoded, err := json.Marshal(notification)
+	if err != nil {
+		return fmt.Errorf("pool: marshal notification: %w", err)
+	}
+
+	s.mu.Lock()
+	if s.stdin == nil {
+		s.mu.Unlock()
+		return fmt.Errorf("pool: stdin not available")
+	}
+	stdin := s.stdin
+	s.mu.Unlock()
+
+	if _, err := fmt.Fprintln(stdin, string(encoded)); err != nil {
+		return fmt.Errorf("pool: write stdin: %w", err)
+	}
+
+	return nil
+}
+
 func (s *StdioServerV2) checkIdleTimeout(ctx context.Context) {
 	s.mu.Lock()
 	idleDuration := time.Since(s.lastRequestAt)

@@ -3,12 +3,17 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
+	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +31,7 @@ var statusFlags struct {
 	server   string
 	jsonOut  bool
 	interval time.Duration
+	config   string
 }
 
 func init() {
@@ -34,10 +40,12 @@ func init() {
 	statusCmd.Flags().StringVar(&statusFlags.server, "server", "", "Filter by specific server name")
 	statusCmd.Flags().BoolVar(&statusFlags.jsonOut, "json", false, "Output in JSON format")
 	statusCmd.Flags().DurationVar(&statusFlags.interval, "interval", 1*time.Second, "Watch mode refresh interval")
+	statusCmd.Flags().StringVar(&statusFlags.config, "config", "", "Path to leanproxy_servers.yaml config file")
 	RootCmd.AddCommand(statusCmd)
 }
 
 func runStatus(cmd *cobra.Command, args []string) {
+	initLogger(cmd)
 	if statusFlags.watch {
 		runStatusWatch()
 	} else {
@@ -45,8 +53,119 @@ func runStatus(cmd *cobra.Command, args []string) {
 	}
 }
 
+func statusConfigPath() string {
+	if path := statusFlags.config; path != "" {
+		return path
+	}
+	if path := os.Getenv("LEANPROXY_CONFIG"); path != "" {
+		return path
+	}
+	home := os.Getenv("HOME")
+	if home == "" {
+		home = os.Getenv("USERPROFILE")
+	}
+	return filepath.Join(home, ".config", "leanproxy_servers.yaml")
+}
+
+func getRealStatusList() proxy.ServerStatusList {
+	ctx := context.Background()
+
+	configPath := statusConfigPath()
+	cfg, err := migrate.LoadConfig(ctx, configPath)
+	if err != nil {
+		fmt.Printf("Error loading config: %v\n", err)
+		return proxy.ServerStatusList{}
+	}
+	if cfg == nil || len(cfg.Servers) == 0 {
+		return proxy.ServerStatusList{}
+	}
+
+	stdioPool := pool.NewStdioPool(5, 5*time.Minute, slog.Default())
+
+	for _, srv := range cfg.Servers {
+		if srv.Enabled != nil && !*srv.Enabled {
+			continue
+		}
+		if srv.Transport != registry.TransportStdio {
+			continue
+		}
+		if err := stdioPool.StartServer(ctx, srv); err != nil {
+			slog.Warn("failed to start server for status check", "name", srv.Name, "error", err)
+		}
+	}
+
+	servers := stdioPool.ListServers()
+	statusList := make([]proxy.ServerStatus, 0, len(servers))
+
+	for _, serverName := range servers {
+		state, _ := stdioPool.GetServerState(serverName)
+		stats, _ := stdioPool.GetServerStats(serverName)
+
+		status := proxy.ServerStatus{
+			Name:            serverName,
+			RequestCount:    stats.RequestCount,
+			ErrorRate:       calculateErrorRate(stats.ErrorCount, stats.RequestCount),
+			RestartCount:    stats.RestartCount,
+			LastError:       getLastError(state, stats),
+		}
+
+		switch state {
+		case pool.StateIdle, pool.StateRunning, pool.StateBusy:
+			status.Status = proxy.StatusRunning
+		case pool.StateError:
+			status.Status = proxy.StatusError
+		case pool.StateStopped, pool.StateStopping:
+			status.Status = proxy.StatusStopped
+		default:
+			status.Status = proxy.StatusUnresponsive
+		}
+
+		if stats.LastRequestAt.IsZero() {
+			status.LastResponseTime = time.Time{}
+		} else {
+			status.LastResponseTime = stats.LastRequestAt
+			status.Uptime = time.Since(stats.LastRequestAt)
+		}
+
+		if stats.AvgLatencyMs > 0 {
+			status.LastResponseTime = time.Now().Add(-time.Duration(stats.AvgLatencyMs) * time.Millisecond)
+		}
+
+		statusList = append(statusList, status)
+	}
+
+	stdioPool.Close()
+
+	return proxy.ServerStatusList{
+		Timestamp: time.Now(),
+		Servers:   statusList,
+	}
+}
+
+func calculateErrorRate(errors, total int64) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(errors) / float64(total) * 100
+}
+
+func getLastError(state pool.ServerState, stats pool.ServerStats) string {
+	switch state {
+	case pool.StateError:
+		return "server in error state"
+	case pool.StateStopped:
+		return "server stopped"
+	case pool.StateStopping:
+		return "server stopping"
+	}
+	if stats.RestartCount > 0 && stats.CurrentBackoff > 0 {
+		return fmt.Sprintf("restart count: %d, backoff: %v", stats.RestartCount, stats.CurrentBackoff)
+	}
+	return ""
+}
+
 func runStatusSingle() {
-	statusList := getMockStatusList()
+	statusList := getRealStatusList()
 
 	if statusFlags.server != "" {
 		statusList = filterByServer(statusList, statusFlags.server)
@@ -88,7 +207,8 @@ func runStatusWatch() {
 		cancel()
 	}()
 
-	statusChan := getMockStatusChannel(ctx, statusFlags.interval)
+	ticker := time.NewTicker(statusFlags.interval)
+	defer ticker.Stop()
 
 	fmt.Println("Watching server status (Ctrl+C to exit)...")
 	fmt.Println()
@@ -98,10 +218,8 @@ func runStatusWatch() {
 		case <-ctx.Done():
 			fmt.Println("\nStopped watching status")
 			return
-		case statusList, ok := <-statusChan:
-			if !ok {
-				return
-			}
+		case <-ticker.C:
+			statusList := getRealStatusList()
 
 			if statusFlags.server != "" {
 				statusList = filterByServer(statusList, statusFlags.server)
@@ -133,121 +251,3 @@ func filterByServer(statusList proxy.ServerStatusList, serverName string) proxy.
 		Servers:   filtered,
 	}
 }
-
-func getMockStatusList() proxy.ServerStatusList {
-	return proxy.ServerStatusList{
-		Timestamp: time.Now(),
-		Servers: []proxy.ServerStatus{
-			{
-				Name:            "server-1",
-				Status:          proxy.StatusRunning,
-				Uptime:          2*time.Minute + 34*time.Second,
-				LastResponseTime: time.Now().Add(-120 * time.Millisecond),
-				RequestCount:    1234,
-				ErrorRate:       0.1,
-				MemoryMB:        45,
-			},
-			{
-				Name:            "server-2",
-				Status:          proxy.StatusError,
-				Uptime:          5*time.Minute + 12*time.Second,
-				LastResponseTime: time.Now().Add(-30 * time.Second),
-				RequestCount:    567,
-				ErrorRate:       5.2,
-				RestartCount:    2,
-				LastError:       "process exited with code 1",
-			},
-			{
-				Name:            "server-3",
-				Status:          proxy.StatusStopped,
-				Uptime:          0,
-				LastResponseTime: time.Time{},
-				RequestCount:    0,
-				RestartCount:    3,
-				LastError:       "max restarts reached",
-			},
-		},
-	}
-}
-
-func getMockStatusChannel(ctx context.Context, interval time.Duration) <-chan proxy.ServerStatusList {
-	outputChan := make(chan proxy.ServerStatusList)
-
-	go func() {
-		defer close(outputChan)
-
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-
-		requestCount := int64(1234)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				requestCount += 10
-				statusList := proxy.ServerStatusList{
-					Timestamp: time.Now(),
-					Servers: []proxy.ServerStatus{
-						{
-							Name:            "server-1",
-							Status:          proxy.StatusRunning,
-							Uptime:          154 * time.Second,
-							LastResponseTime: time.Now().Add(-120 * time.Millisecond),
-							RequestCount:    requestCount,
-							ErrorRate:       0.1,
-							MemoryMB:        45,
-						},
-						{
-							Name:            "server-2",
-							Status:          proxy.StatusError,
-							Uptime:          312 * time.Second,
-							LastResponseTime: time.Now().Add(-30 * time.Second),
-							RequestCount:    567,
-							ErrorRate:       5.2,
-							RestartCount:    2,
-							LastError:       "process exited with code 1",
-						},
-						{
-							Name:            "server-3",
-							Status:          proxy.StatusStopped,
-							Uptime:          0,
-							LastResponseTime: time.Time{},
-							RequestCount:    0,
-							RestartCount:    3,
-							LastError:       "max restarts reached",
-						},
-					},
-				}
-				select {
-				case outputChan <- statusList:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-	}()
-
-	return outputChan
-}
-
-type mockManagedServer struct {
-	name         string
-	pid          int
-	running      bool
-	startTime    time.Time
-	requestCount int64
-	errorCount   int64
-}
-
-func (m *mockManagedServer) Name() string            { return m.name }
-func (m *mockManagedServer) PID() int                { return m.pid }
-func (m *mockManagedServer) IsRunning() bool         { return m.running }
-func (m *mockManagedServer) StartTime() time.Time   { return m.startTime }
-func (m *mockManagedServer) LastResponseTime() time.Time { return time.Now().Add(-120 * time.Millisecond) }
-func (m *mockManagedServer) RequestCount() int64     { return m.requestCount }
-func (m *mockManagedServer) ErrorCount() int64      { return m.errorCount }
-func (m *mockManagedServer) OnCrash(callback func()) {}
-func (m *mockManagedServer) OnRestart(callback func()) {}
-
-var _ proxy.ManagedServer = (*mockManagedServer)(nil)

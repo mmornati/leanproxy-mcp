@@ -131,7 +131,7 @@ leanproxy-mcp server --config /path/to/config.yaml --stdio "..."
 Enable debug logging for troubleshooting:
 
 ```bash
-leanproxy-mcp server --debug --stdio "npx @modelcontextprotocol/server-filesystem ./"
+leanproxy-mcp server run --stdio --log-level debug --log-file /tmp/leanproxy.log
 ```
 
 ## Doctor Command

@@ -1,13 +1,20 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/spf13/cobra"
 )
@@ -279,6 +286,91 @@ func init() {
 	serverCmd.AddCommand(disableCmd)
 }
 
+var runCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Run leanproxy-mcp as an MCP server in stdio mode",
+	Long: `Run leanproxy-mcp as a Model Context Protocol server that proxies
+requests to configured MCP servers. Reads JSON-RPC requests from stdin
+and writes responses to stdout.
+
+Use --stdio flag to enable stdio mode. Without --stdio, the command
+will show help for the run command.
+
+Example:
+  leanproxy server run --stdio
+  leanproxy server run --stdio --config /path/to/config.yaml
+  leanproxy server run --stdio --log-file /tmp/leanproxy.log`,
+	RunE: runServerRun,
+}
+
+var runFlags struct {
+	stdio     bool
+	config    string
+	logFile   string
+	logLevel  string
+	verbose   bool
+}
+
+func init() {
+	runCmd.Flags().BoolVar(&runFlags.stdio, "stdio", false, "Run in stdio mode (read JSON-RPC from stdin)")
+	runCmd.Flags().StringVar(&runFlags.config, "config", "", "Path to leanproxy_servers.yaml config file")
+	runCmd.Flags().StringVar(&runFlags.logFile, "log-file", "", "Path to log file")
+	runCmd.Flags().StringVar(&runFlags.logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+	runCmd.Flags().BoolVarP(&runFlags.verbose, "verbose", "v", false, "Enable verbose logging")
+	serverCmd.AddCommand(runCmd)
+}
+
+func runServerRun(cmd *cobra.Command, args []string) error {
+	initLogger(cmd)
+
+	if !runFlags.stdio {
+		return fmt.Errorf("--stdio flag is required to run in stdio mode")
+	}
+
+	configPath := runFlags.config
+	if configPath == "" {
+		configPath = userConfigPath()
+	}
+
+	ctx := context.Background()
+
+	cfg, err := migrate.LoadConfig(ctx, configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if cfg == nil || len(cfg.Servers) == 0 {
+		return fmt.Errorf("no servers configured in %s", configPath)
+	}
+
+	stdioPool := pool.NewStdioPool(5, 5*time.Minute, slog.Default())
+
+	startedCount := 0
+	for _, srv := range cfg.Servers {
+		if srv.Enabled != nil && !*srv.Enabled {
+			slog.Debug("server disabled, skipping", "name", srv.Name)
+			continue
+		}
+		if srv.Transport != registry.TransportStdio {
+			slog.Debug("server not stdio transport, skipping", "name", srv.Name, "transport", srv.Transport)
+			continue
+		}
+		if err := stdioPool.StartServer(ctx, srv); err != nil {
+			slog.Warn("failed to start server", "name", srv.Name, "error", err)
+		} else {
+			startedCount++
+			slog.Info("server started", "name", srv.Name)
+		}
+	}
+
+	if startedCount == 0 {
+		slog.Warn("no servers started")
+	}
+
+	handler := mcp.NewHandler(stdioPool, slog.Default())
+
+	return handleStdio(ctx, handler, stdioPool)
+}
+
 func runServerDisable(cmd *cobra.Command, args []string) error {
 	name := args[0]
 
@@ -332,4 +424,76 @@ func joinStrings(strs []string) string {
 		result += s + " "
 	}
 	return result
+}
+
+func handleStdio(ctx context.Context, handler *mcp.Handler, stdioPool *pool.StdioPool) error {
+	reader := bufio.NewReader(os.Stdin)
+	writer := bufio.NewWriter(os.Stdout)
+
+	slog.Info("leanproxy-mcp stdio mode started")
+
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				slog.Info("stdin closed, shutting down")
+				return nil
+			}
+			slog.Error("failed to read stdin", "error", err)
+			return err
+		}
+
+		if len(line) == 0 {
+			continue
+		}
+
+		line = trimStdioNewline(line)
+
+		var req mcp.Request
+		if err := json.Unmarshal(line, &req); err != nil {
+			slog.Warn("failed to parse JSON-RPC request", "error", err, "line", string(line))
+			resp := mcp.Response{
+				JSONRPC: mcp.JSONRPCVersion,
+				Error:   mcp.NewError(mcp.ErrCodeParseError, "invalid JSON-RPC request"),
+				ID:      nil,
+			}
+			writeStdioResponse(writer, &resp)
+			continue
+		}
+
+		resp, err := handler.HandleRequest(ctx, &req)
+		if err != nil {
+			slog.Error("handler error", "error", err, "method", req.Method)
+		}
+
+		if resp != nil {
+			writeStdioResponse(writer, resp)
+		}
+
+		if req.Method == mcp.MethodShutdown {
+			slog.Info("shutdown request received")
+			stdioPool.Close()
+			return nil
+		}
+	}
+}
+
+func writeStdioResponse(writer *bufio.Writer, resp *mcp.Response) {
+	data, err := json.Marshal(resp)
+	if err != nil {
+		slog.Error("failed to marshal response", "error", err)
+		return
+	}
+	fmt.Fprintln(writer, string(data))
+	writer.Flush()
+}
+
+func trimStdioNewline(data []byte) []byte {
+	if len(data) > 0 && data[len(data)-1] == '\n' {
+		data = data[:len(data)-1]
+	}
+	if len(data) > 0 && data[len(data)-1] == '\r' {
+		data = data[:len(data)-1]
+	}
+	return data
 }

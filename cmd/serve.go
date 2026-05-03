@@ -61,6 +61,7 @@ func init() {
 }
 
 func runServe(cmd *cobra.Command, args []string) {
+	initLogger(cmd)
 	ctx := context.Background()
 
 	dr := dryrun.NewDryRunner(DryRunEnabled)
