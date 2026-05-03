@@ -100,5 +100,5 @@ var searchToolsTool = Tool{
 }
 
 func (g *gatewayTools) ListTools() []Tool {
-	return []Tool{invokeToolTool, searchToolsTool}
+	return []Tool{listServersTool, invokeToolTool, searchToolsTool}
 }
