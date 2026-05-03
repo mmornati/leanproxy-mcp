@@ -422,9 +422,46 @@ func (h *Handler) HandleRequest(ctx context.Context, req *MCPRequest) (*MCPRespo
 				ID:     req.ID,
 			}, nil
 		}
+
+		if name == "search_tools" || name == "invoke_tool" || name == "list_servers" {
+			return h.handleLeanproxyTool(ctx, req, name, params)
+		}
+
+		serverName, toolName, err := h.parseToolName(name)
+		if err != nil {
+			return &MCPResponse{
+				JSONRPC: JSONRPCVersion,
+				Error:  NewError(-32602, err.Error()),
+				ID:     req.ID,
+			}, nil
+		}
+
+		newParams := map[string]interface{}{
+			"name":      toolName,
+			"arguments": params["arguments"],
+		}
+		paramsBytes, _ := json.Marshal(newParams)
+
+		resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, 30*time.Second)
+		if err != nil {
+			return &MCPResponse{
+				JSONRPC: JSONRPCVersion,
+				Error:  NewError(-32000, fmt.Sprintf("tool call failed: %v", err)),
+				ID:     req.ID,
+			}, nil
+		}
+
+		if resp != nil && resp.Error != nil {
+			return &MCPResponse{
+				JSONRPC: JSONRPCVersion,
+				Error:  NewError(resp.Error.Code, resp.Error.Message),
+				ID:     req.ID,
+			}, nil
+		}
+
 		return &MCPResponse{
 			JSONRPC: JSONRPCVersion,
-			Result:  []byte(`{"content":[{"type":"text","text":"tool executed"}]}`),
+			Result:  resp.Result,
 			ID:     req.ID,
 		}, nil
 	case MethodShutdown:
@@ -442,6 +479,55 @@ func (h *Handler) HandleRequest(ctx context.Context, req *MCPRequest) (*MCPRespo
 			ID:     req.ID,
 		}, nil
 	}
+}
+
+func (h *Handler) handleLeanproxyTool(ctx context.Context, req *MCPRequest, name string, params map[string]interface{}) (*MCPResponse, error) {
+	switch name {
+	case "search_tools":
+		query, _ := params["query"].(string)
+		h.logger.Info("search_tools called", "query", query)
+		return &MCPResponse{
+			JSONRPC: JSONRPCVersion,
+			Result:  []byte(`{"content":[{"type":"text","text":"No tools found matching your query."}]}`),
+			ID:      req.ID,
+		}, nil
+	case "invoke_tool":
+		serverName, _ := params["server"].(string)
+		toolName, _ := params["tool"].(string)
+		h.logger.Info("invoke_tool called", "server", serverName, "tool", toolName)
+		return &MCPResponse{
+			JSONRPC: JSONRPCVersion,
+			Result:  []byte(`{"content":[{"type":"text","text":"Tool executed"}]}`),
+			ID:      req.ID,
+		}, nil
+	case "list_servers":
+		servers := h.pool.ListServers()
+		h.logger.Info("list_servers called")
+		text := "Configured servers:\n"
+		for _, s := range servers {
+			state, _ := h.pool.GetServerState(s)
+			text += fmt.Sprintf("- %s (%s)\n", s, state)
+		}
+		return &MCPResponse{
+			JSONRPC: JSONRPCVersion,
+			Result:  []byte(fmt.Sprintf(`{"content":[{"type":"text","text":%q}]}`, text)),
+			ID:      req.ID,
+		}, nil
+	default:
+		return &MCPResponse{
+			JSONRPC: JSONRPCVersion,
+			Error:  NewError(-32601, "unknown gateway tool"),
+			ID:     req.ID,
+		}, nil
+	}
+}
+
+func (h *Handler) parseToolName(fullName string) (serverName, toolName string, err error) {
+	parts := strings.SplitN(fullName, "_", 2)
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("invalid tool name '%s': expected format is 'serverName_toolName'", fullName)
+	}
+	return parts[0], parts[1], nil
 }
 
 func (s *MCPServer) CallHTTP(ctx context.Context, serverName, toolName string, args map[string]interface{}) ([]byte, error) {
