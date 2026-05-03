@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -151,17 +152,23 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 		}
 	}()
 
+	connCtx, connCancel := context.WithCancel(context.Background())
+	defer connCancel()
+
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
+	writerMu := &sync.Mutex{}
+
+	var wg sync.WaitGroup
 
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			if err == io.EOF {
-				return
+				break
 			}
 			slog.Warn("read error", "error", err)
-			return
+			break
 		}
 
 		if len(line) == 0 {
@@ -170,14 +177,21 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 
 		line = trimNewline(line)
 
+		wg.Add(1)
 		if isBatchRequest(line) {
-			handleBatchRequest(ctx, line, writer, r, gt, p)
+			go func(l []byte) {
+				defer wg.Done()
+				handleBatchRequestAsync(connCtx, l, writer, writerMu, r, gt, p)
+			}(line)
 		} else {
-			handleSingleRequest(ctx, line, writer, r, gt, p)
+			go func(l []byte) {
+				defer wg.Done()
+				handleSingleRequestAsync(connCtx, l, writer, writerMu, r, gt, p)
+			}(line)
 		}
-
-		writer.Flush()
 	}
+
+	wg.Wait()
 }
 
 func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer, r Router, gt gateway.GatewayTools, p Pool) {
@@ -198,13 +212,53 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
-	resp, err := p.SendRequest(ctx, server.ID, req, 30*time.Second)
+	timeout := GetConfig().RequestTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+
+	resp, err := p.SendRequest(ctx, server.ID, req, timeout)
 	if err != nil {
 		writeError(writer, proxy.ErrCodeInternalError, err.Error())
 		return
 	}
 
 	writeResponse(writer, resp)
+}
+
+func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Writer, writerMu *sync.Mutex, r Router, gt gateway.GatewayTools, p Pool) {
+	req, err := proxy.ParseJSONRPCRequest(line)
+	if err != nil {
+		writeErrorAsync(writer, writerMu, proxy.ErrCodeParseError, "Parse error")
+		return
+	}
+
+	if isGatewayTool(req.Method) {
+		handleGatewayTool(ctx, req, writer, gt)
+		writerMu.Lock()
+		writer.Flush()
+		writerMu.Unlock()
+		return
+	}
+
+	server, err := r.Route(ctx, req.Method)
+	if err != nil {
+		writeErrorAsync(writer, writerMu, proxy.ErrCodeMethodNotFound, "Method not found")
+		return
+	}
+
+	timeout := GetConfig().RequestTimeout
+	if timeout == 0 {
+		timeout = 30 * time.Second
+	}
+
+	resp, err := p.SendRequest(ctx, server.ID, req, timeout)
+	if err != nil {
+		writeErrorAsync(writer, writerMu, proxy.ErrCodeInternalError, err.Error())
+		return
+	}
+
+	writeResponseAsync(writer, writerMu, resp)
 }
 
 func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, r Router, gt gateway.GatewayTools, p Pool) {
@@ -244,7 +298,11 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 			continue
 		}
 
-		resp, err := p.SendRequest(ctx, server.ID, req, 30*time.Second)
+		timeout := GetConfig().RequestTimeout
+		if timeout == 0 {
+			timeout = 30 * time.Second
+		}
+		resp, err := p.SendRequest(ctx, server.ID, req, timeout)
 		if err != nil {
 			responses = append(responses, &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
@@ -364,6 +422,119 @@ func writeError(writer *bufio.Writer, code int, message string) {
 		return
 	}
 	fmt.Fprintln(writer, string(data))
+}
+
+type ServeConfig struct {
+	RequestTimeout time.Duration
+}
+
+var serveConfig = &ServeConfig{
+	RequestTimeout: 30 * time.Second,
+}
+
+func GetConfig() *ServeConfig {
+	return serveConfig
+}
+
+func SetConfig(cfg *ServeConfig) {
+	if cfg != nil && cfg.RequestTimeout > 0 {
+		serveConfig.RequestTimeout = cfg.RequestTimeout
+	}
+}
+
+func writeResponseAsync(writer *bufio.Writer, mu *sync.Mutex, resp *proxy.JSONRPCResponse) {
+	mu.Lock()
+	defer mu.Unlock()
+	data, err := json.Marshal(resp)
+	if err != nil {
+		slog.Warn("failed to marshal response", "error", err)
+		return
+	}
+	fmt.Fprintln(writer, string(data))
+	writer.Flush()
+}
+
+func writeErrorAsync(writer *bufio.Writer, mu *sync.Mutex, code int, message string) {
+	resp := &proxy.JSONRPCResponse{
+		JSONRPC: "2.0",
+		Error:   proxy.NewJSONRPCError(code, message),
+		ID:      nil,
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	data, err := json.Marshal(resp)
+	if err != nil {
+		slog.Warn("failed to marshal error response", "error", err)
+		return
+	}
+	fmt.Fprintln(writer, string(data))
+	writer.Flush()
+}
+
+func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Writer, writerMu *sync.Mutex, r Router, gt gateway.GatewayTools, p Pool) {
+	reqs, err := proxy.ParseJSONRPCBatchRequest(line)
+	if err != nil {
+		writeErrorAsync(writer, writerMu, proxy.ErrCodeParseError, "Parse error")
+		return
+	}
+
+	if len(reqs) == 0 {
+		writeErrorAsync(writer, writerMu, proxy.ErrCodeInvalidRequest, "Empty batch")
+		return
+	}
+
+	responses := make([]*proxy.JSONRPCResponse, 0, len(reqs))
+	for i := range reqs {
+		req := &reqs[i]
+		if req.ID == nil {
+			continue
+		}
+
+		if isGatewayTool(req.Method) {
+			resp := handleGatewayToolSync(ctx, req, gt)
+			if resp != nil {
+				responses = append(responses, resp)
+			}
+			continue
+		}
+
+		server, err := r.Route(ctx, req.Method)
+		if err != nil {
+			responses = append(responses, &proxy.JSONRPCResponse{
+				JSONRPC: "2.0",
+				Error:   proxy.NewJSONRPCError(proxy.ErrCodeMethodNotFound, "Method not found"),
+				ID:      req.ID,
+			})
+			continue
+		}
+
+		timeout := GetConfig().RequestTimeout
+		if timeout == 0 {
+			timeout = 30 * time.Second
+		}
+		resp, err := p.SendRequest(ctx, server.ID, req, timeout)
+		if err != nil {
+			responses = append(responses, &proxy.JSONRPCResponse{
+				JSONRPC: "2.0",
+				Error:   proxy.NewJSONRPCError(proxy.ErrCodeInternalError, err.Error()),
+				ID:      req.ID,
+			})
+			continue
+		}
+
+		responses = append(responses, resp)
+	}
+
+	data, err := json.Marshal(responses)
+	if err != nil {
+		writeErrorAsync(writer, writerMu, proxy.ErrCodeInternalError, "Failed to marshal batch response")
+		return
+	}
+
+	writerMu.Lock()
+	defer writerMu.Unlock()
+	fmt.Fprintln(writer, string(data))
+	writer.Flush()
 }
 
 func trimNewline(data []byte) []byte {

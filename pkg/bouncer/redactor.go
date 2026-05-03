@@ -46,26 +46,54 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 
 	var totalRead, totalWritten int64
 	matchCount := 0
+	
+	const maxOverlap = 128
+	var overlap []byte
 
 	for {
 		buf := GetBuffer()
-		defer ReturnBuffer(buf)
 
 		n, err := readerBuf.Read(buf)
 		if n > 0 {
-			chunk := buf[:n]
-			redacted, count := r.redactChunkWithCount(chunk)
+			chunk := append(overlap, buf[:n]...)
+			
+			var toRedact []byte
+			if err == io.EOF || len(chunk) <= maxOverlap {
+				toRedact = chunk
+				overlap = nil
+			} else {
+				splitIdx := len(chunk) - maxOverlap
+				toRedact = chunk[:splitIdx]
+				overlap = make([]byte, maxOverlap)
+				copy(overlap, chunk[splitIdx:])
+			}
+
+			redacted, count := r.redactChunkWithCount(toRedact)
 
 			_, writeErr := writerBuf.Write(redacted)
 			if writeErr != nil {
+				ReturnBuffer(buf)
 				return fmt.Errorf("bouncer redact: %w", writeErr)
 			}
 			totalRead += int64(n)
 			totalWritten += int64(len(redacted))
 			matchCount += count
-			slog.Debug("processing chunk", "size", n)
+			slog.Debug("processing chunk", "size", len(toRedact))
 		}
+		
+		ReturnBuffer(buf)
+
 		if err == io.EOF {
+			if len(overlap) > 0 {
+				redacted, count := r.redactChunkWithCount(overlap)
+				_, writeErr := writerBuf.Write(redacted)
+				if writeErr != nil {
+					return fmt.Errorf("bouncer redact: %w", writeErr)
+				}
+				totalWritten += int64(len(redacted))
+				matchCount += count
+				overlap = nil
+			}
 			slog.Info("streaming redaction complete", "bytes_read", totalRead, "bytes_written", totalWritten)
 			break
 		}
@@ -151,17 +179,40 @@ func (r *Redactor) redactChunk(chunk []byte) []byte {
 func (r *Redactor) RedactJSON(data []byte) ([]byte, error) {
 	slog.Debug("redacting message", "size", len(data))
 
-	var raw json.RawMessage
+	var raw interface{}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		slog.Warn("invalid JSON input, passing through unchanged")
 		return data, nil
 	}
 
-	redacted := r.redactString(string(data))
+	redactedRaw := r.redactInterface(raw)
+	redacted, err := json.Marshal(redactedRaw)
+	if err != nil {
+		return data, err
+	}
 
-	slog.Info("redaction complete", "secrets_found", strings.Count(string(data), SecretRedacted)-strings.Count(redacted, SecretRedacted))
+	slog.Info("redaction complete", "secrets_found", strings.Count(string(redacted), SecretRedacted)-strings.Count(string(data), SecretRedacted))
 
-	return []byte(redacted), nil
+	return redacted, nil
+}
+
+func (r *Redactor) redactInterface(val interface{}) interface{} {
+	switch v := val.(type) {
+	case string:
+		return r.redactString(v)
+	case map[string]interface{}:
+		for k, val := range v {
+			v[k] = r.redactInterface(val)
+		}
+		return v
+	case []interface{}:
+		for i, val := range v {
+			v[i] = r.redactInterface(val)
+		}
+		return v
+	default:
+		return v
+	}
 }
 
 func (r *Redactor) redactString(data string) string {

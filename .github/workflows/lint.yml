@@ -1,0 +1,26 @@
+name: Lint
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Download golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0
+
+      - name: Run golangci-lint
+        run: $(go env GOPATH)/bin/golangci-lint run ./...
