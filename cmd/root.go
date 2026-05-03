@@ -25,6 +25,7 @@ For full documentation, see: https://github.com/mmornati/leanproxy-mcp#readme`,
 }
 
 var GlobalConfigPath string
+var DryRunEnabled bool
 
 func Execute() error {
 	return RootCmd.Execute()
@@ -34,6 +35,7 @@ func init() {
 	RootCmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose logging")
 	RootCmd.PersistentFlags().String("log-level", "info", "Log level (debug, info, warn, error)")
 	RootCmd.PersistentFlags().StringVar(&GlobalConfigPath, "config", "", "Path to leanproxy_servers.yaml config file")
+	RootCmd.PersistentFlags().BoolP("dry-run", "n", false, "Preview actions without making changes")
 }
 
 func verboseEnabled(cmd *cobra.Command) bool {

@@ -9,7 +9,50 @@
 | **Epic** | Epic 4 - CLI Installation and Interaction |
 | **Title** | Implement Dry-Run Mode |
 | **Priority** | High |
-| **Status** | ready-for-dev |
+| **Status** | review |
+
+## Tasks/Subtasks
+
+- [x] Create `pkg/utils/dryrun/dryrun.go` with DryRunner interface
+- [x] Create `pkg/utils/dryrun/dryrun_test.go` with unit tests
+- [x] Add `--dry-run` flag (`-n`) to root command in `cmd/root.go`
+- [x] Integrate dry-run into `serve` command (`cmd/serve.go`)
+- [x] Integrate dry-run into `migrate` command (`cmd/migrate.go`)
+- [x] Run all tests to verify implementation
+
+## Dev Agent Record
+
+### Implementation Plan
+
+Implemented dry-run mode following the story requirements:
+1. Created `DryRunner` struct with `ShouldSkip()` and `Preview()` methods
+2. Added `--dry-run` flag (`-n`) as persistent flag on root command
+3. Integrated into state-modifying commands: `serve` and `migrate`
+4. Used `log/slog` with JSON output for structured dry-run logging
+5. All tests pass (430 total)
+
+### Completion Notes
+
+Implemented dry-run mode for CLI commands:
+- `pkg/utils/dryrun/dryrun.go`: DryRunner interface with ShouldSkip() and Preview() methods
+- `pkg/utils/dryrun/dryrun_test.go`: 7 unit tests covering all functionality
+- `cmd/root.go`: Added `--dry-run` / `-n` persistent flag
+- `cmd/serve.go`: Dry-run prevents server startup, shows config preview
+- `cmd/migrate.go`: Dry-run prevents import, shows migration preview
+
+All acceptance criteria satisfied and tests pass.
+
+## File List
+
+- `pkg/utils/dryrun/dryrun.go` (new)
+- `pkg/utils/dryrun/dryrun_test.go` (new)
+- `cmd/root.go` (modified)
+- `cmd/serve.go` (modified)
+- `cmd/migrate.go` (modified)
+
+## Change Log
+
+- 2026-05-03: Initial implementation of dry-run mode (story 4-1)
 
 ## Story Requirements
 

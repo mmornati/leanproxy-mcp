@@ -21,6 +21,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/router"
+	"github.com/mmornati/leanproxy-mcp/pkg/utils/dryrun"
 	"github.com/spf13/cobra"
 )
 
@@ -60,6 +61,18 @@ func init() {
 
 func runServe(cmd *cobra.Command, args []string) {
 	ctx := context.Background()
+
+	dr := dryrun.NewDryRunner(DryRunEnabled)
+	if dr.ShouldSkip() {
+		dr.Preview("serve_start", map[string]interface{}{
+			"listen":    serveFlags.listenAddr,
+			"upstream":  serveFlags.upstreamURL,
+			"config":    GlobalConfigPath,
+			"message":   "Would start leanproxy server",
+		})
+		fmt.Println("Dry-run mode: server start skipped")
+		return
+	}
 
 	serverReg = registry.NewRegistry(slog.Default(), "")
 	toolReg = router.NewToolRegistry()
