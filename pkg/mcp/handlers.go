@@ -9,8 +9,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 )
+
+type ParamInfo struct {
+	Name        string
+	Type        string
+	IsRequired  bool
+	Description string
+}
 
 type ToolCache struct {
 	mu    sync.RWMutex
@@ -23,6 +31,7 @@ type Handler struct {
 	logger     *slog.Logger
 	timeout    time.Duration
 	toolCache  *ToolCache
+	toolStore  toolstore.Cache
 }
 
 type AggregatedManifest struct {
@@ -36,12 +45,27 @@ func NewHandler(p *pool.StdioPool, logger *slog.Logger) *Handler {
 		logger = slog.Default()
 	}
 	return &Handler{
-		pool:     p,
-		logger:   logger,
+		pool:    p,
+		logger:  logger,
+		timeout: 30 * time.Second,
+		toolCache: &ToolCache{
+			tools: make(map[string][]Tool),
+		},
+	}
+}
+
+func NewHandlerWithToolStore(p *pool.StdioPool, logger *slog.Logger, store toolstore.Cache) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Handler{
+		pool:      p,
+		logger:    logger,
 		timeout:  30 * time.Second,
 		toolCache: &ToolCache{
 			tools: make(map[string][]Tool),
 		},
+		toolStore: store,
 	}
 }
 
@@ -164,7 +188,7 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 
 	initParams := InitializeParams{
 		ProtocolVersion: "2024-11-05",
-		Capabilities: ClientCapabilities{},
+		Capabilities:    ClientCapabilities{},
 		ClientInfo: ClientInfo{
 			Name:    "leanproxy-mcp",
 			Version: "1.0.0",
@@ -270,16 +294,20 @@ func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params 
 
 func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
 	var query string
+	var maxDescChars int
 	if params.Arguments != nil {
 		var args map[string]interface{}
 		if err := json.Unmarshal(params.Arguments, &args); err == nil {
 			if q, ok := args["query"].(string); ok {
 				query = q
 			}
+			if m, ok := args["max_description_chars"].(float64); ok {
+				maxDescChars = int(m)
+			}
 		}
 	}
 
-	h.logger.Info("search_tools called", "query", query)
+	h.logger.Info("search_tools called", "query", query, "max_desc_chars", maxDescChars)
 
 	h.toolCache.mu.RLock()
 	cachePopulated := len(h.toolCache.tools) > 0
@@ -289,7 +317,7 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 		h.populateToolCache(ctx)
 	}
 
-	results := h.searchToolCache(query)
+	results := h.searchToolCache(query, maxDescChars)
 
 	h.logger.Info("search_tools completed", "results", len(results))
 
@@ -324,11 +352,50 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 func (h *Handler) populateToolCache(ctx context.Context) {
 	h.logger.Info("populating tool cache from backend servers")
 
+	if h.toolStore != nil {
+		h.loadFromPersistentCache(ctx)
+	}
+
+	h.refreshToolCacheFromServers(ctx)
+
+	h.logger.Info("tool cache population complete")
+}
+
+func (h *Handler) loadFromPersistentCache(ctx context.Context) {
+	servers := h.pool.ListServers()
+	for _, serverName := range servers {
+		cachedTools, err := h.toolStore.GetTools(serverName)
+		if err != nil {
+			h.logger.Warn("failed to load tools from persistent cache", "server", serverName, "error", err)
+			continue
+		}
+		if cachedTools == nil {
+			continue
+		}
+
+		tools := make([]Tool, len(cachedTools))
+		for i, ct := range cachedTools {
+			tools[i] = Tool{
+				Name:        ct.Name,
+				Description: ct.Description,
+				InputSchema: ct.InputSchema,
+			}
+		}
+
+		h.toolCache.mu.Lock()
+		h.toolCache.tools[serverName] = tools
+		h.toolCache.mu.Unlock()
+
+		h.logger.Debug("loaded tools from persistent cache", "server", serverName, "count", len(tools))
+	}
+}
+
+func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
 	servers := h.pool.ListServers()
 
 	for _, serverName := range servers {
 		state, _ := h.pool.GetServerState(serverName)
-		h.logger.Debug("checking server for cache population", "name", serverName, "state", state)
+		h.logger.Debug("checking server for cache refresh", "name", serverName, "state", state)
 
 		if state != "idle" && state != "running" && state != "busy" {
 			h.logger.Debug("server not running, attempting restart", "name", serverName, "state", state)
@@ -377,35 +444,44 @@ func (h *Handler) populateToolCache(ctx context.Context) {
 		h.toolCache.mu.Lock()
 		h.toolCache.tools[serverName] = toolsResult.Tools
 		h.toolCache.mu.Unlock()
-	}
 
-	h.logger.Info("tool cache population complete")
+		if h.toolStore != nil {
+			if err := h.toolStore.SetTools(serverName, toolsToCachedTools(toolsResult.Tools)); err != nil {
+				h.logger.Warn("failed to persist tools to cache", "name", serverName, "error", err)
+			}
+		}
+	}
 }
 
-func (h *Handler) searchToolCache(query string) []string {
+func (h *Handler) searchToolCache(query string, maxDescChars int) []string {
 	h.toolCache.mu.RLock()
 	defer h.toolCache.mu.RUnlock()
 
 	var results []string
 	queryLower := strings.ToLower(query)
+	queryWords := strings.Fields(queryLower)
 
 	for serverName, tools := range h.toolCache.tools {
 		for _, tool := range tools {
-			combined := fmt.Sprintf("%s_%s: %s", serverName, tool.Name, compactDescription(tool.Description))
-			if query == "" || strings.Contains(strings.ToLower(combined), queryLower) {
-				results = append(results, combined)
+			matchedLine := fmt.Sprintf("%s_%s: %s", serverName, tool.Name, strings.ToLower(truncateDescription(tool.Description, maxDescChars)))
+			if query == "" || matchesQuery(matchedLine, queryWords) {
+				required, optional := parseInputSchema(tool.InputSchema)
+				formatted := formatToolSearchResult(serverName, tool.Name, tool.Description, required, optional, maxDescChars)
+				results = append(results, formatted)
 			}
 		}
 	}
 
-return results
+	return results
 }
 
-func compactDescription(description string) string {
-	if len(description) <= 50 {
-		return description
+func matchesQuery(text string, queryWords []string) bool {
+	for _, word := range queryWords {
+		if !strings.Contains(text, word) {
+			return false
+		}
 	}
-	return description[:47] + "..."
+	return true
 }
 
 func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
@@ -471,9 +547,36 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeout)
 	if err != nil {
 		h.logger.Error("invoke_tool failed", "server", serverName, "tool", toolName, "error", err)
+		schema := h.lookupToolSchema(serverName, toolName)
+		errResp := NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %v", err))
+		if schema != nil {
+			dataBytes, _ := json.Marshal(map[string]interface{}{
+				"tool":   toolName,
+				"schema": json.RawMessage(schema),
+			})
+			errResp.Data = dataBytes
+		}
 		return &Response{
 			JSONRPC: JSONRPCVersion,
-			Error:   NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %v", err)),
+			Error:   errResp,
+			ID:      req.ID,
+		}, nil
+	}
+
+	if resp.Error != nil {
+		h.logger.Error("invoke_tool received error from server", "server", serverName, "tool", toolName, "error", resp.Error.Message)
+		schema := h.lookupToolSchema(serverName, toolName)
+		errResp := NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %s", resp.Error.Message))
+		if schema != nil {
+			dataBytes, _ := json.Marshal(map[string]interface{}{
+				"tool":   toolName,
+				"schema": json.RawMessage(schema),
+			})
+			errResp.Data = dataBytes
+		}
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   errResp,
 			ID:      req.ID,
 		}, nil
 	}
@@ -581,4 +684,129 @@ func (h *Handler) handleShutdown(ctx context.Context, req *Request) (*Response, 
 
 func (h *Handler) ResetManifest() {
 	h.manifest = nil
+}
+
+func parseInputSchema(schema json.RawMessage) (required, optional []ParamInfo) {
+	var schemaMap map[string]interface{}
+	if err := json.Unmarshal(schema, &schemaMap); err != nil {
+		return nil, nil
+	}
+
+	properties, ok := schemaMap["properties"].(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	var requiredNames []string
+	if req, ok := schemaMap["required"].([]interface{}); ok {
+		for _, r := range req {
+			if s, ok := r.(string); ok {
+				requiredNames = append(requiredNames, s)
+			}
+		}
+	}
+
+	isRequired := make(map[string]bool)
+	for _, name := range requiredNames {
+		isRequired[name] = true
+	}
+
+	for name, prop := range properties {
+		propMap, ok := prop.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		typeVal, _ := propMap["type"].(string)
+		descVal, _ := propMap["description"].(string)
+
+		param := ParamInfo{
+			Name:        name,
+			Type:        typeVal,
+			IsRequired:  isRequired[name],
+			Description: descVal,
+		}
+
+		if isRequired[name] {
+			required = append(required, param)
+		} else {
+			optional = append(optional, param)
+		}
+	}
+	return required, optional
+}
+
+func formatToolSearchResult(serverName, toolName, description string, required, optional []ParamInfo, maxDescChars int) string {
+	var sb strings.Builder
+	sb.WriteString(serverName)
+	sb.WriteString("_")
+	sb.WriteString(toolName)
+	sb.WriteString(": ")
+	sb.WriteString(truncateDescription(description, maxDescChars))
+
+	if len(required) > 0 {
+		sb.WriteString(" [")
+		for i, p := range required {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(p.Name)
+			sb.WriteString(": ")
+			sb.WriteString(p.Type)
+		}
+		sb.WriteString("]")
+	}
+
+	if len(optional) > 0 {
+		sb.WriteString(" {")
+		for i, p := range optional {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(p.Name)
+			sb.WriteString(": ")
+			sb.WriteString(p.Type)
+		}
+		sb.WriteString("}")
+	}
+
+	return sb.String()
+}
+
+func truncateDescription(description string, maxChars int) string {
+	if maxChars <= 0 || len(description) <= maxChars {
+		return description
+	}
+	if maxChars < 3 {
+		return description[:maxChars]
+	}
+	return description[:maxChars-3] + "..."
+}
+
+func (h *Handler) lookupToolSchema(serverName, toolName string) json.RawMessage {
+	h.toolCache.mu.RLock()
+	defer h.toolCache.mu.RUnlock()
+
+	tools, ok := h.toolCache.tools[serverName]
+	if !ok {
+		return nil
+	}
+
+	for _, tool := range tools {
+		if tool.Name == toolName {
+			return tool.InputSchema
+		}
+	}
+	return nil
+}
+
+func toolsToCachedTools(tools []Tool) []toolstore.CachedTool {
+	result := make([]toolstore.CachedTool, len(tools))
+	for i, t := range tools {
+		result[i] = toolstore.CachedTool{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
+		}
+	}
+	return result
 }

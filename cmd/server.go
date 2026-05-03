@@ -16,6 +16,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/spf13/cobra"
 )
 
@@ -366,7 +367,16 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		slog.Warn("no servers started")
 	}
 
-	handler := mcp.NewHandler(stdioPool, slog.Default())
+	var cache toolstore.Cache
+	fileCache, err := toolstore.NewFileCache(slog.Default())
+	if err != nil {
+		slog.Warn("failed to create tool cache, using no-op cache", "error", err)
+		cache = toolstore.NewNoOpCache()
+	} else {
+		cache = fileCache
+	}
+
+	handler := mcp.NewHandlerWithToolStore(stdioPool, slog.Default(), cache)
 
 	return handleStdio(ctx, handler, stdioPool)
 }

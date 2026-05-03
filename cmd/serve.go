@@ -22,6 +22,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/router"
+	"github.com/mmornati/leanproxy-mcp/pkg/statusfile"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils/dryrun"
 	"github.com/spf13/cobra"
 )
@@ -43,6 +44,7 @@ var (
 	toolReg      router.ToolRegistry
 	gatewayTools gateway.GatewayTools
 	stdioPool    *pool.StdioPool
+	statusStore  *statusfile.FileStatusStore
 )
 
 type Router interface {
@@ -120,12 +122,23 @@ func runServe(cmd *cobra.Command, args []string) {
 		logError("failed to listen: %v", err)
 	}
 
+	statusStore, err = statusfile.NewFileStatusStore(serveFlags.listenAddr, slog.Default())
+	if err != nil {
+		slog.Warn("failed to create status store", "error", err)
+	} else {
+		slog.Info("status file enabled", "path", statusStore.GetFilePath())
+		go updateServerStatusPeriodically()
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-sigChan
 		slog.Info("shutting down server")
+		if statusStore != nil {
+			statusStore.RemoveFile()
+		}
 		ln.Close()
 		if stdioPool != nil {
 			stdioPool.Close()
@@ -546,4 +559,57 @@ func trimNewline(data []byte) []byte {
 		data = data[:len(data)-1]
 	}
 	return data
+}
+
+func updateServerStatusPeriodically() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if statusStore == nil || stdioPool == nil {
+			continue
+		}
+
+		servers := stdioPool.ListServers()
+		statuses := make([]statusfile.ServerStatus, 0, len(servers))
+
+		for _, name := range servers {
+			state, _ := stdioPool.GetServerState(name)
+			stats, _ := stdioPool.GetServerStats(name)
+
+			status := statusfile.ServerStatus{
+				Name:         name,
+				RequestCount: stats.RequestCount,
+				ErrorCount:   stats.ErrorCount,
+				RestartCount:  stats.RestartCount,
+				Uptime:       formatUptime(stats),
+			}
+
+			switch state {
+			case pool.StateIdle, pool.StateRunning, pool.StateBusy:
+				status.Status = "running"
+			case pool.StateError:
+				status.Status = "error"
+			case pool.StateStopped, pool.StateStopping:
+				status.Status = "stopped"
+			default:
+				status.Status = "unknown"
+			}
+
+			statuses = append(statuses, status)
+		}
+
+		statusStore.UpdateServers(statuses)
+	}
+}
+
+func formatUptime(stats pool.ServerStats) string {
+	if stats.LastRequestAt.IsZero() {
+		return "0s"
+	}
+	duration := time.Since(stats.LastRequestAt)
+	if duration < time.Minute {
+		return duration.Round(time.Second).String()
+	}
+	return duration.Round(time.Minute).String()
 }

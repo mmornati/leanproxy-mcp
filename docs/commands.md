@@ -26,6 +26,7 @@ leanproxy-mcp [command] [flags]
 | `server` | Manage MCP server configurations |
 | `bouncer` | Manage redaction settings |
 | `compactor` | Manage manifest caching |
+| `cache` | Inspect persisted tool cache |
 | `status` | Display real-time server status |
 | `savings` | Display token savings statistics |
 | `report` | Generate token savings report |
@@ -425,6 +426,89 @@ Distillates rebuilt for 3 servers.
 
 ---
 
+## `cache` - Tool Cache Inspector
+
+Inspect the persisted tool cache to see what tools have been indexed from MCP servers. The cache persists tool information from servers even when servers are stopped, allowing LLMs to search for tools without starting servers.
+
+### Usage
+
+```bash
+leanproxy-mcp cache [flags]
+```
+
+### Flags
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--list` | bool | List all servers with cached tools |
+| `--location` | bool | Show the cache directory location |
+| `--server` | string | Show cached tools for a specific server |
+| `--search` | string | Search cached tools by name or description |
+| `--clear` | bool | Clear cache for specified server (use with --server) |
+| `--json` | bool | Output in JSON format |
+
+### Examples
+
+```bash
+# Show cache location
+leanproxy-mcp cache --location
+
+# List servers with cached tools
+leanproxy-mcp cache --list
+
+# Show cached tools for a server
+leanproxy-mcp cache --server garmin
+
+# Search in cache
+leanproxy-mcp cache --server garmin --search activity
+
+# Clear cache for a server
+leanproxy-mcp cache --clear --server garmin
+```
+
+#### Output (--location)
+
+```
+Tool cache location: ~/.config/leanproxy/toolcache
+```
+
+#### Output (--list)
+
+```
+Servers with cached tools (2):
+
+  - garmin
+  - Intervals.icu
+
+Use --server <name> to see tools for a specific server
+```
+
+#### Output (--server garmin)
+
+```
+Cached tools for garmin (12 total):
+
+  garmin_get_activities
+    List activities for the authenticated user
+    Parameters:
+      - limit (number)
+      - start_date (string)
+
+  garmin_get_activity
+    Downloads activity details with weather and gear
+    Parameters:
+      - activity_id (string)
+      - max_chart_size (number)
+
+  garmin_download_activity
+    Downloads the original activity file
+    Parameters:
+      - activity_id (string)
+      - download_format (string)
+```
+
+---
+
 ## `status` - Server Status
 
 Display real-time status of all active proxied servers.
@@ -441,6 +525,7 @@ leanproxy-mcp status [flags]
 |------|------|---------|-------------|
 | `--interval` | duration | `1s` | Watch mode refresh interval |
 | `--json` | bool | false | Output in JSON format |
+| `--running` | bool | false | Only show running instances from status file |
 | `--server` | string | "" | Filter by server name |
 | `--verbose` | bool | false | Show additional details |
 | `--watch` | bool | false | Continuously update |
@@ -448,8 +533,11 @@ leanproxy-mcp status [flags]
 #### Examples
 
 ```bash
-# Basic status
+# Basic status (from config)
 leanproxy-mcp status
+
+# Status from running instance only
+leanproxy-mcp status --running
 
 # Watch mode
 leanproxy-mcp status --watch
@@ -465,6 +553,16 @@ leanproxy-mcp status --server filesystem
 
 # Custom refresh interval
 leanproxy-mcp status --watch --interval 500ms
+```
+
+#### Output (--running)
+
+```
+Running leanproxy instance (PID: 12345, started: 2026-05-03 19:30:00, listen: 127.0.0.1:8080)
+
+SERVER      STATUS    HEALTH    UPTIME    REQUESTS
+garmin      Up        healthy  5m32s    1,234
+Intervals  Up        healthy  5m32s    567
 ```
 
 #### Output (basic)
