@@ -19,11 +19,11 @@ jobs:
           go-version: '1.21'
           cache: true
 
-      - name: Get golangci-lint
+      - name: Download golangci-lint
         run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0
 
       - name: Run golangci-lint
-        run: golangci-lint run ./...
+        run: $(go env GOPATH)/bin/golangci-lint run ./...
 
   test:
     runs-on: ubuntu-latest
