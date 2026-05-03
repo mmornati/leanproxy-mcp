@@ -1,12 +1,93 @@
 run:
-  skip-dirs:
-    - pkg/pool
-    - pkg/compactor
-    - pkg/concurrent
-    - pkg/bouncer
-    - pkg/migrate
-    - pkg/proxy
-    - pkg/registry
-    - pkg/router
-    - pkg/utils
-    - cmd
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - staticcheck
+    - unused
+
+issues:
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - gosimple
+        - staticcheck
+        - ineffassign
+    - path: cmd/completion\.go
+      linters:
+        - errcheck
+    - path: cmd/migrate\.go
+      linters:
+        - errcheck
+    - path: cmd/server\.go
+      linters:
+        - errcheck
+    - path: cmd/root\.go
+      linters:
+        - unused
+    - path: cmd/compactor_test\.go
+      linters:
+        - unused
+    - path: cmd/report\.go
+      linters:
+        - gosimple
+    - path: pkg/proxy/socket/server\.go
+      linters:
+        - errcheck
+    - path: pkg/migrate/vscode\.go
+      linters:
+        - errcheck
+        - unused
+    - path: pkg/pool/pool\.go
+      linters:
+        - errcheck
+    - path: pkg/pool/server\.go
+      linters:
+        - errcheck
+        - unused
+        - staticcheck
+    - path: pkg/bouncer/redactor\.go
+      linters:
+        - unused
+        - ineffassign
+    - path: pkg/bouncer/streaming\.go
+      linters:
+        - unused
+    - path: pkg/compactor/cache\.go
+      linters:
+        - unused
+    - path: pkg/migrate/scanner\.go
+      linters:
+        - unused
+    - path: pkg/pool/health\.go
+      linters:
+        - unused
+    - path: pkg/pool/pool\.go
+      linters:
+        - unused
+    - path: pkg/pool/queue\.go
+      linters:
+        - unused
+    - path: pkg/concurrent/batch\.go
+      linters:
+        - unused
+    - path: pkg/concurrent/circuit\.go
+      linters:
+        - unused
+    - path: pkg/concurrent/ratelimit\.go
+      linters:
+        - unused
+    - path: pkg/proxy/health_monitor\.go
+      linters:
+        - unused
+    - path: pkg/registry/cache\.go
+      linters:
+        - errcheck
+    - path: cmd/serve\.go
+      linters:
+        - errcheck
