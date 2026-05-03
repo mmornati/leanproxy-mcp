@@ -17,7 +17,7 @@ builds:
       - -s -w
       - -X github.com/mmornati/leanproxy-mcp/internal/version.Version={{.Version}}
       - -X github.com/mmornati/leanproxy-mcp/internal/version.Commit={{.Commit}}
-      - -X github.com/mmornati/leanproxy-mcp/internal/version.BuildTime={{.Date "2006-01-02T15:04:05Z07:00"}}
+      - -X github.com/mmornati/leanproxy-mcp/internal/version.BuildTime={{.Date}}
 archives:
   - id: default
     formats: ["tar.gz"]
