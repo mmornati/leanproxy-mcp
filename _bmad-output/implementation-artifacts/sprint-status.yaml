@@ -29,7 +29,7 @@ development_status:
   3-3-manifest-compactor: review
   3-4-manual-re-distillation: review
   3-5-boilerplate-blindness: review
-  4-1-dry-run-mode: ready-for-dev
+  4-1-dry-run-mode: review
   4-2-posix-compliant-cli: ready-for-dev
   4-3-ide-extension-socket: ready-for-dev
   4-4-universal-installer: ready-for-dev
@@ -47,5 +47,5 @@ development_status:
   leanproxy-7-4: review
   leanproxy-7-6: review
 
-last_updated: 2026-05-02
+last_updated: 2026-05-03
 sprint_goal: Implement all 27 stories across 6 epics

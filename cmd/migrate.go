@@ -7,6 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+	"github.com/mmornati/leanproxy-mcp/pkg/utils/dryrun"
 )
 
 var (
@@ -65,7 +66,13 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  [%d] %s (%s) - %s\n", i+1, srv.Name, srv.Source, cmdStr)
 	}
 
-	if migrateDryRun {
+	if migrateDryRun || DryRunEnabled {
+		dr := dryrun.NewDryRunner(true)
+		dr.Preview("migrate_import", map[string]interface{}{
+			"server_count": summary.TotalServers,
+			"target":       migrateTarget,
+			"sources":      len(result.Scanners),
+		})
 		fmt.Println("\nDry-run mode: no changes were made.")
 		return nil
 	}
