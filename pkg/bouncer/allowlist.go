@@ -1,10 +1,12 @@
 package bouncer
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type SecretPattern struct {
@@ -113,6 +115,57 @@ func CompileCustomPatterns(configs []PatternConfig) ([]*regexp.Regexp, error) {
 	return patterns, nil
 }
 
+func CompileCustomPatternsWithTimeout(configs []PatternConfig, timeout time.Duration) ([]*regexp.Regexp, error) {
+	var patterns []*regexp.Regexp
+	for _, c := range configs {
+		if c.Name == "" || c.Pattern == "" {
+			continue
+		}
+		if err := ValidateReDoS(c.Pattern, timeout); err != nil {
+			slog.Warn("pattern skipped due to ReDoS risk", "name", c.Name, "error", err)
+			continue
+		}
+		re, err := regexp.Compile(c.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("allowlist: invalid pattern %q: %w", c.Name, err)
+		}
+		patterns = append(patterns, re)
+	}
+	return patterns, nil
+}
+
+func ValidateReDoS(pattern string, timeout time.Duration) error {
+	if timeout == 0 {
+		timeout = 100 * time.Millisecond
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return err
+	}
+
+	toxic := make([]byte, 1000)
+	for i := range toxic {
+		toxic[i] = '!'
+	}
+
+	done := make(chan bool, 1)
+	go func() {
+		re.Match(toxic)
+		done <- true
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("pattern appears vulnerable to ReDoS (timeout)")
+	}
+}
+
 type PatternConfig struct {
 	Name    string `yaml:"name"`
 	Pattern string `yaml:"pattern"`
@@ -124,6 +177,9 @@ func (pc PatternConfig) Validate() error {
 	}
 	if pc.Pattern == "" {
 		return fmt.Errorf("allowlist: pattern config %q has empty pattern", pc.Name)
+	}
+	if len(pc.Pattern) > 500 {
+		return fmt.Errorf("allowlist: pattern config %q exceeds maximum length of 500", pc.Name)
 	}
 	if _, err := regexp.Compile(pc.Pattern); err != nil {
 		return fmt.Errorf("allowlist: pattern config %q has invalid regexp: %w", pc.Name, err)

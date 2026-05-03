@@ -10,7 +10,7 @@ import (
 
 func TestRedactAWSKey(t *testing.T) {
 	input := `{"api_key": "AKIAIOSFODNN7EXAMPLE"}`
-	expected := `{"api_key": "[SECRET_REDACTED]"}`
+	expected := `{"api_key":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
@@ -25,7 +25,7 @@ func TestRedactAWSKey(t *testing.T) {
 
 func TestRedactGitHubToken(t *testing.T) {
 	input := `{"token": "ghp_123456789012345678901234567890123456"}`
-	expected := `{"token": "[SECRET_REDACTED]"}`
+	expected := `{"token":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
@@ -40,7 +40,7 @@ func TestRedactGitHubToken(t *testing.T) {
 
 func TestRedactGitHubFineGrainedPAT(t *testing.T) {
 	input := `{"token": "github_pat_11AAAAAAAAAAAAAAA_BBBBBBBBBBBBBBBBBBB"}`
-	expected := `{"token": "[SECRET_REDACTED]"}`
+	expected := `{"token":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
@@ -59,7 +59,7 @@ func TestRedactStripeKey(t *testing.T) {
 
 func TestRedactMultipleSecrets(t *testing.T) {
 	input := `{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_123456789012345678901234567890123456"}`
-	expected := `{"aws": "[SECRET_REDACTED]", "github": "[SECRET_REDACTED]"}`
+	expected := `{"aws":"[SECRET_REDACTED]","github":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
@@ -74,6 +74,7 @@ func TestRedactMultipleSecrets(t *testing.T) {
 
 func TestRedactNoSecrets(t *testing.T) {
 	input := `{"message": "hello world"}`
+	expected := `{"message":"hello world"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
@@ -81,8 +82,8 @@ func TestRedactNoSecrets(t *testing.T) {
 		t.Fatalf("RedactJSON failed: %v", err)
 	}
 
-	if string(result) != input {
-		t.Errorf("got %q, want %q", string(result), input)
+	if string(result) != expected {
+		t.Errorf("got %q, want %q", string(result), expected)
 	}
 }
 
@@ -183,7 +184,7 @@ func TestRedactInvalidJSON(t *testing.T) {
 
 func TestRedactBearerToken(t *testing.T) {
 	input := `{"auth": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"}`
-	expected := `{"auth": "[SECRET_REDACTED]"}`
+	expected := `{"auth":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	result, err := redactor.RedactJSON([]byte(input))
