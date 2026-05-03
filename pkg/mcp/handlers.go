@@ -86,6 +86,8 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, e
 		return h.handleToolsList(ctx, req)
 	case MethodToolsCall:
 		return h.handleToolsCall(ctx, req)
+	case MethodSearchTools:
+		return h.handleSearchTools(ctx, req, ToolsCallParams{})
 	case MethodPing:
 		return h.handlePing(ctx, req)
 	case MethodShutdown:

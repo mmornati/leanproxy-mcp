@@ -7,6 +7,7 @@ const (
 	MethodInitialized    = "notifications/initialized"
 	MethodToolsList      = "tools/list"
 	MethodToolsCall     = "tools/call"
+	MethodSearchTools   = "search_tools"
 	MethodResourcesList  = "resources/list"
 	MethodResourcesRead = "resources/read"
 	MethodPromptsList    = "prompts/list"
