@@ -27,9 +27,11 @@ func (r Request) MarshalJSON() ([]byte, error) {
 	type Alias Request
 	return json.Marshal(&struct {
 		Alias
-		Timeout time.Duration `json:"timeout,omitempty"`
+		JSONRPC  string          `json:"jsonrpc"`
+		Timeout time.Duration   `json:"timeout,omitempty"`
 	}{
 		Alias:   Alias(r),
+		JSONRPC:  "2.0",
 		Timeout: r.Timeout,
 	})
 }

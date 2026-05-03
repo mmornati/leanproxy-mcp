@@ -183,7 +183,7 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 
 	h.logger.Debug("server initialized, sending initialized notification", "name", serverName)
 
-	h.pool.SendServerNotification(ctx, serverName, "initialized", map[string]interface{}{
+	h.pool.SendServerNotification(ctx, serverName, "notifications/initialized", map[string]interface{}{
 		"capabilities": ServerCapabilities{},
 	})
 
@@ -357,13 +357,18 @@ func (h *Handler) populateToolCache(ctx context.Context) {
 		}
 
 		if resp == nil || resp.Result == nil {
-			h.logger.Warn("server returned no result for cache", "name", serverName)
+			h.logger.Warn("server returned no result for cache", "name", serverName, "resp", fmt.Sprintf("%+v", resp))
+			continue
+		}
+
+		if len(resp.Result) == 0 || string(resp.Result) == "null" {
+			h.logger.Warn("server returned null/empty result for cache", "name", serverName, "resp", fmt.Sprintf("%+v", resp))
 			continue
 		}
 
 		var toolsResult ToolsListResult
 		if err := json.Unmarshal(resp.Result, &toolsResult); err != nil {
-			h.logger.Warn("failed to parse tools for cache", "name", serverName, "error", err)
+			h.logger.Warn("failed to parse tools for cache", "name", serverName, "error", err, "result", string(resp.Result))
 			continue
 		}
 
