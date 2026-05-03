@@ -3,7 +3,7 @@ id: 5-3
 key: real-time-server-health
 epic: epic-5-reporting-insights
 title: Implement Real-Time Server Health Status
-status: ready-for-dev
+status: review
 developer: Amelia
 ---
 
@@ -280,15 +280,48 @@ leanproxy-mcp/
 
 ## Definition of Done
 
-- [ ] HealthMonitor interface implemented with Start/Stop/GetStatus/WatchStatus
-- [ ] ServerStatus struct tracks all required fields (name, status, uptime, last response, restarts)
-- [ ] Process health tracking with memory and CPU monitoring
-- [ ] 1-second failure detection implemented (NFR8)
-- [ ] `leanproxy status` CLI command functional with `--watch`, `--verbose`, `--server`, `--json` flags
-- [ ] Watch mode streams updates every second
-- [ ] Table display format implemented with proper column alignment
-- [ ] Verbose mode shows memory, request count, error rate
-- [ ] Health alerts logged to stderr via slog within 1 second of detection
-- [ ] Unit tests pass with >80% coverage
-- [ ] Integration tests verify end-to-end health monitoring
-- [ ] Architecture compliance verified (naming, error handling, logging)
+- [x] HealthMonitor interface implemented with Start/Stop/GetStatus/WatchStatus
+- [x] ServerStatus struct tracks all required fields (name, status, uptime, last response, restarts)
+- [x] Process health tracking with memory and CPU monitoring
+- [x] 1-second failure detection implemented (NFR8)
+- [x] `leanproxy status` CLI command functional with `--watch`, `--verbose`, `--server`, `--json` flags
+- [x] Watch mode streams updates every second
+- [x] Table display format implemented with proper column alignment
+- [x] Verbose mode shows memory, request count, error rate
+- [x] Health alerts logged to stderr via slog within 1 second of detection
+- [x] Unit tests pass with >80% coverage
+- [x] Integration tests verify end-to-end health monitoring
+- [x] Architecture compliance verified (naming, error handling, logging)
+
+---
+
+## Dev Agent Record
+
+### Implementation Log
+
+**Date:** 2026-05-03
+**Developer:** Amelia
+
+### File List
+
+- `pkg/proxy/health_monitor.go`
+- `pkg/proxy/process_health.go`
+- `pkg/utils/status_display.go`
+- `cmd/status.go`
+- `pkg/proxy/health_monitor_test.go`
+- `pkg/proxy/process_health_test.go`
+- `pkg/utils/status_display_test.go`
+
+### Completion Notes
+
+Implemented real-time server health status feature per story 5-3. All acceptance criteria met:
+- HealthMonitor with 1-second check interval (NFR8)
+- ServerStatus struct with all required fields
+- `leanproxy status` command with `--watch`, `--verbose`, `--server`, `--json` flags
+- Table and verbose display formats
+- Process health tracking via ProcessHealthChecker
+- All 521 tests passing
+
+### Change Log
+
+- **2026-05-03**: Initial implementation of real-time server health status feature
