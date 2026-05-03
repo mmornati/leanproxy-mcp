@@ -390,6 +390,23 @@ func (h *Handler) HandleRequest(ctx context.Context, req *MCPRequest) (*MCPRespo
 			Result:  resultBytes,
 			ID:     req.ID,
 		}, nil
+	case "notifications/initialized":
+		h.logger.Info("received initialized notification from client")
+		return nil, nil
+	case "resources/list":
+		resultBytes, _ := json.Marshal(map[string]interface{}{"resources": []interface{}{}})
+		return &MCPResponse{
+			JSONRPC: JSONRPCVersion,
+			Result:  resultBytes,
+			ID:     req.ID,
+		}, nil
+	case "prompts/list":
+		resultBytes, _ := json.Marshal(map[string]interface{}{"prompts": []interface{}{}})
+		return &MCPResponse{
+			JSONRPC: JSONRPCVersion,
+			Result:  resultBytes,
+			ID:     req.ID,
+		}, nil
 	case MethodToolsList:
 		tools := []map[string]interface{}{
 			{
