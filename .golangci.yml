@@ -1,0 +1,12 @@
+run:
+  skip-dirs:
+    - pkg/pool
+    - pkg/compactor
+    - pkg/concurrent
+    - pkg/bouncer
+    - pkg/migrate
+    - pkg/proxy
+    - pkg/registry
+    - pkg/router
+    - pkg/utils
+    - cmd
