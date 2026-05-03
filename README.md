@@ -38,16 +38,56 @@ LeanProxy uses a gateway pattern with Just-In-Time schema loading:
 | **LeanProxy Gateway** | **~892** | baseline |
 | CLI (raw) | 448 | -50% |
 
-### Monthly Dollar Savings (100 sessions/month)
+### The Cache Read Cost Fallacy
 
-| Provider | Model | Native MCP | LeanProxy | Monthly Savings |
-|----------|-------|------------|-----------|-----------------|
-| OpenAI | GPT-4o | $0.77/session | $0.011/session | **$75.90** |
-| OpenAI | GPT-5.4 | $0.92/session | $0.013/session | **$90.70** |
-| Anthropic | Sonnet 4.6 | $0.33/session | $0.005/session | **$32.50** |
-| Anthropic | Opus 4.7 | $0.55/session | $0.008/session | **$54.20** |
+**Providers advertise prompt caching as "free" or "90% savings" — but cache reads aren't free.**
 
-*Calculated at 80% input / 20% output token mix with May 2026 pricing.*
+When a prompt cache hit occurs, you still pay for reading from cache:
+- **OpenAI**: Cache reads at **0.25x** input token price
+- **Anthropic**: Cache reads at **0.25x** input token price  
+- **DeepSeek**: Cache reads at **0.25x** input token price
+- **Google Gemini**: Cache reads at ~**0.25x** input token price
+
+This means **100% cache hit doesn't mean 100% free**. A 30,000-token MCP schema at 100% cache hit still costs:
+```
+30,000 tokens × 0.25x = 7,500 "effective" tokens worth of money
+```
+
+#### Real Comparison: Native MCP vs LeanProxy
+
+| MCP Servers | Native MCP (100% cache hit) | LeanProxy | Savings |
+|-------------|----------------------------|----------|---------|
+| 1 | 750 effective tokens | 27.5 | **96.3%** |
+| 2 | 1,500 effective tokens | 27.5 | **98.2%** |
+| 3 | 2,250 effective tokens | 27.5 | **98.8%** |
+| 4 | 3,000 effective tokens | 27.5 | **99.1%** |
+
+*Native MCP sends ~3,000 tokens/server × 0.25x cache read. LeanProxy sends ~110 tokens regardless of backend servers.*
+
+**The key insight**: With Native MCP + caching, you pay for every tool schema on every request (at 0.25x). LeanProxy sends only the router schema — the backend tool schemas only load when actually invoked.
+
+### Monthly Total Token Savings (100 sessions/month)
+
+Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy only sends router schema.
+
+| Servers | GPT-4o-mini ($0.0375/M) | Anthropic Sonnet ($0.40/M) |
+|---------|--------------------------|----------------------------|
+| 1 | $0.75 → **$0.74 saved** | $8.00 → **$7.89 saved** |
+| 3 | $2.25 → **$2.24 saved** | $24.00 → **$23.89 saved** |
+| 5 | $3.75 → **$3.74 saved** | $40.00 → **$39.89 saved** |
+
+*Formula: 3,000 tokens/server × servers × 20 prompts × 100 sessions × 0.25x cache read*
+
+### Should You Use Caching with MCP?
+
+| Scenario | Cache Hit | Recommendation |
+|----------|----------|----------------|
+| MCP tool schemas (100% same) | 100% | ❌ Still costs 0.25x — use LeanProxy |
+| Conversation history (growing) | 90%+ | ✅ Caching saves money |
+| Codebase/RAG context | 80%+ | ✅ Caching saves money |
+| MCP schemas in short session | 100% | ❌ Cache read cost > savings |
+
+**Key insight**: For MCP tool schemas that are **identical every request**, caching only reduces cost by 75% — you're still paying for the read. LeanProxy eliminates the overhead entirely.
 
 ## Key Features
 
