@@ -6,35 +6,35 @@ sprint:
 
 stories:
   - id: "1-1"
-    key: "tokengate-mcp-1-1"
+    key: "leanproxy-mcp-1-1"
     title: "Initialize Go Project with CLI Structure"
     status: "ready-for-dev"
     epic: "epic-1"
     points: 2
 
   - id: "1-2"
-    key: "tokengate-mcp-1-2"
+    key: "leanproxy-mcp-1-2"
     title: "Implement JSON-RPC Streaming Proxy Core"
     status: "ready-for-dev"
     epic: "epic-1"
     points: 5
 
   - id: "1-3"
-    key: "tokengate-mcp-1-3"
+    key: "leanproxy-mcp-1-3"
     title: "Implement MCP Server Lifecycle Management"
     status: "ready-for-dev"
     epic: "epic-1"
     points: 5
 
   - id: "1-4"
-    key: "tokengate-mcp-1-4"
+    key: "leanproxy-mcp-1-4"
     title: "Implement Shadow Manifesting (Config Merging)"
     status: "ready-for-dev"
     epic: "epic-1"
     points: 3
 
   - id: "1-5"
-    key: "tokengate-mcp-1-5"
+    key: "leanproxy-mcp-1-5"
     title: "Implement Dynamic Server Registry"
     status: "ready-for-dev"
     epic: "epic-1"
@@ -42,7 +42,7 @@ stories:
 
 epics:
   - id: "epic-1"
-    key: "tokengate-mcp-epic-1"
+    key: "leanproxy-mcp-epic-1"
     title: "JSON-RPC Traffic Interception and Routing"
     description: "Users can intercept, route, and manage JSON-RPC traffic between IDE and MCP servers"
     status: "in-progress"

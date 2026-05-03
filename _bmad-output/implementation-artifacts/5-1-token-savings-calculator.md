@@ -156,7 +156,7 @@ Scenario: Savings calculated from multiple optimization techniques
 ### File Structure
 
 ```
-tokengate-mcp/
+leanproxy-mcp/
 ├── cmd/
 │   └── leanproxy/
 │       ├── main.go
