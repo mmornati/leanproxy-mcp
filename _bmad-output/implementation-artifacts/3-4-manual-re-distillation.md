@@ -178,3 +178,37 @@ Distilling: write_file... done
 ...
 Done. Reduced from 2,450 to 490 tokens (80% reduction)
 ```
+
+## Dev Agent Record
+
+### Implementation Plan
+
+1. Created `cmd/compactor.go` with `compactor` and `rebuild` subcommands
+2. Implemented `rebuildServer()` for single server re-distillation
+3. Implemented `rebuildAllServers()` for full registry rebuild
+4. Added `buildRawManifest()` helper for testing
+5. Created `cmd/compactor_test.go` with comprehensive unit tests
+
+### Debug Log
+
+- Initial implementation used `userConfigPath` function directly in tests - required switching to `t.Setenv()` for environment variable mocking
+- Build and all 402 tests pass
+
+### Completion Notes
+
+Implemented `leanproxy compactor rebuild` command with:
+- Single server rebuild: `leanproxy compactor rebuild <server-name>`
+- Full rebuild: `leanproxy compactor rebuild --all`
+- Cache invalidation before re-distillation
+- Structured logging via slog to stderr
+- Token reduction reporting
+- Error handling for unknown/disabled servers
+
+## File List
+
+- `cmd/compactor.go` - New compactor CLI command implementation
+- `cmd/compactor_test.go` - Unit tests for rebuild command
+
+## Change Log
+
+- **2026-05-03**: Initial implementation complete. Created `cmd/compactor.go` with `compactor` subcommand and `rebuild` subcommand. All 402 tests pass. Status updated to "review".
