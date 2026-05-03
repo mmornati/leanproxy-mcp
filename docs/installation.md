@@ -97,38 +97,46 @@ Expected output:
 
 ## IDE Configuration
 
-After installation, configure your IDE to use LeanProxy-MCP as an MCP server.
+After installation, configure your IDE to use LeanProxy-MCP as an MCP server proxy. LeanProxy proxies existing MCP server configurations from your IDE.
 
-### Claude Desktop
+### Step 1: Migrate Existing MCP Servers
 
-1. Open `~/Library/Application Support/Claude/claude_desktop_config.json`
-2. Add to `mcpServers`:
+First, import your existing MCP server configurations from your IDE:
 
-```json
-{
-  "mcpServers": {
-    "leanproxy": {
-      "command": "leanproxy",
-      "args": ["server", "add", "my-server", "npx", "-y", "@modelcontextprotocol/server-filesystem", "./"]
-    }
-  }
-}
+```bash
+# Scan all IDEs at once (finds OpenCode, Claude Desktop, Cursor, VS Code)
+leanproxy-mcp migrate
 ```
 
-### Cursor / Windsurf
+This scans all supported IDEs and imports any found MCP server configurations into `~/.config/leanproxy_servers.yaml`.
 
-1. Open Settings → MCP Servers
-2. Add new server with:
-
+Example output:
 ```
-Name: leanproxy
-Command: leanproxy server add my-server npx -y @modelcontextprotocol/server-filesystem ./
+Found 4 MCP server(s) from 1 source(s):
+
+  OpenCode: 4 server(s)
+
+  [1] nexus-dev (opencode) - /usr/bin/env
+  [2] nexus-dev-test (opencode) - /usr/bin/env
+  [3] garmin (opencode) - uvx
+  [4] Intervals.icu (opencode) - /usr/bin/env
+
+Import to ~/.config/leanproxy_servers.yaml? [y/N]:
 ```
 
-### OpenCode
+Confirm to import the servers.
 
-1. Open Settings → MCP Servers
-2. Add the LeanProxy server configuration
+### Step 2: Start LeanProxy
+
+Start the LeanProxy server in a terminal:
+
+```bash
+leanproxy-mcp serve
+```
+
+### Step 3: Configure Your IDE
+
+Connect your IDE to LeanProxy instead of individual MCP servers.
 
 ## Shell Completions
 
