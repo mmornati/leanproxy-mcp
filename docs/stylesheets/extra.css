@@ -1,0 +1,13 @@
+/* Extra styles for MkDocs */
+
+.md-header {
+    display: none;
+}
+
+[data-md-color-primary="indigo"] {
+    --md-primary-color: #3f51b5;
+}
+
+[data-md-color-accent="indigo"] {
+    --md-accent-color: #3f51b5;
+}
