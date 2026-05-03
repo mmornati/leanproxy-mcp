@@ -121,23 +121,16 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 }
 
 func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response, error) {
-	if h.manifest != nil {
-		result := ToolsListResult{Tools: h.manifest.Tools}
-		resultBytes, _ := json.Marshal(result)
-		return &Response{
-			JSONRPC: JSONRPCVersion,
-			Result:  resultBytes,
-			ID:      req.ID,
-		}, nil
-	}
-
 	var params ToolsListParams
 	if req.Params != nil {
 		json.Unmarshal(req.Params, &params)
 	}
 
+	h.logger.Debug("tools/list request received, collecting tools...")
+
 	manifest, err := h.collectTools(ctx)
 	if err != nil {
+		h.logger.Error("failed to collect tools", "error", err)
 		return &Response{
 			JSONRPC: JSONRPCVersion,
 			Error:   NewError(ErrCodeInternalError, fmt.Sprintf("failed to collect tools: %v", err)),
@@ -150,6 +143,7 @@ func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response,
 	resultBytes, _ := json.Marshal(result)
 
 	h.logger.Info("tools list aggregated", "count", len(manifest.Tools))
+	h.logger.Debug("tools list response", "tools", string(resultBytes))
 
 	return &Response{
 		JSONRPC: JSONRPCVersion,
@@ -168,6 +162,8 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 
 	processor := compactor.NewManifestProcessor(h.logger)
 
+	time.Sleep(2 * time.Second)
+
 	for _, serverName := range servers {
 		state, _ := h.pool.GetServerState(serverName)
 		h.logger.Debug("checking server for tools", "name", serverName, "state", state)
@@ -177,11 +173,13 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 			continue
 		}
 
+		h.logger.Debug("initializing backend server", "name", serverName)
 		if err := h.initializeServer(ctx, serverName); err != nil {
 			h.logger.Warn("failed to initialize server", "name", serverName, "error", err)
 			continue
 		}
 
+		h.logger.Debug("requesting tools/list from server", "name", serverName)
 		resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
 		if err != nil {
 			h.logger.Warn("failed to get tools from server", "name", serverName, "error", err)
@@ -191,6 +189,8 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 		if resp.Result != nil {
 			var toolsResult ToolsListResult
 			if err := json.Unmarshal(resp.Result, &toolsResult); err == nil {
+				h.logger.Debug("received tools from server", "name", serverName, "count", len(toolsResult.Tools))
+
 				rawTools := make([]compactor.RawTool, 0, len(toolsResult.Tools))
 				for _, tool := range toolsResult.Tools {
 					paramsBytes, _ := json.Marshal(tool.InputSchema)
@@ -227,6 +227,10 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 			} else {
 				h.logger.Warn("failed to parse tools list from server", "name", serverName, "error", err)
 			}
+		} else if resp.Error != nil {
+			h.logger.Warn("server returned error", "name", serverName, "error", resp.Error.Message)
+		} else {
+			h.logger.Warn("server returned no result and no error", "name", serverName)
 		}
 	}
 
@@ -272,9 +276,12 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 }
 
 func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response, error) {
+	h.logger.Debug("handleToolsCall called", "params", string(req.Params))
+
 	var params ToolsCallParams
 	if req.Params != nil {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
+			h.logger.Warn("failed to unmarshal tools/call params", "error", err)
 			return &Response{
 				JSONRPC: JSONRPCVersion,
 				Error:   NewError(ErrCodeInvalidParams, fmt.Sprintf("invalid params: %v", err)),
@@ -282,6 +289,8 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 			}, nil
 		}
 	}
+
+	h.logger.Debug("tools/call request", "name", params.Name)
 
 	if params.Name == "" {
 		return &Response{
