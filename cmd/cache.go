@@ -112,7 +112,7 @@ func showServerCache(serverName string, searchQuery string) {
 		return
 	}
 
-	if tools == nil || len(tools) == 0 {
+	if len(tools) == 0 {
 		fmt.Printf("No cached tools found for server: %s\n", serverName)
 		return
 	}
@@ -137,9 +137,11 @@ func showServerCache(serverName string, searchQuery string) {
 			if tool.Description != "" {
 				fmt.Printf("    %s\n", tool.Description)
 			}
-			if tool.InputSchema != nil && len(tool.InputSchema) > 0 {
+			if len(tool.InputSchema) > 0 {
 				var schema map[string]interface{}
-				json.Unmarshal(tool.InputSchema, &schema)
+				if err := json.Unmarshal(tool.InputSchema, &schema); err != nil {
+					continue
+				}
 				if props, ok := schema["properties"].(map[string]interface{}); ok {
 					fmt.Printf("    Parameters:\n")
 					for paramName, prop := range props {
