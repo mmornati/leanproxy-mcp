@@ -278,8 +278,6 @@ func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params 
 		return h.handleSearchTools(ctx, req, params)
 	case "invoke_tool":
 		return h.handleInvokeTool(ctx, req, params)
-	case "list_servers":
-		return h.handleListServers(ctx, req)
 	default:
 		return &Response{
 			JSONRPC: JSONRPCVersion,
@@ -583,42 +581,6 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		Result:  resp.Result,
 		ID:      req.ID,
 	}, nil
-}
-
-func (h *Handler) handleListServers(ctx context.Context, req *Request) (*Response, error) {
-	h.logger.Info("list_servers called")
-
-	servers := h.pool.ListServers()
-	serverList := make([]map[string]interface{}, 0)
-
-	for _, serverName := range servers {
-		state, _ := h.pool.GetServerState(serverName)
-		serverList = append(serverList, map[string]interface{}{
-			"name":  serverName,
-			"state": string(state),
-		})
-	}
-
-	result := map[string]interface{}{
-		"content": []map[string]string{
-			{"type": "text", "text": fmt.Sprintf("Configured servers:\n%s", formatServerList(serverList))},
-		},
-	}
-	resultBytes, _ := json.Marshal(result)
-
-	return &Response{
-		JSONRPC: JSONRPCVersion,
-		Result:  resultBytes,
-		ID:      req.ID,
-	}, nil
-}
-
-func formatServerList(servers []map[string]interface{}) string {
-	var lines []string
-	for _, s := range servers {
-		lines = append(lines, fmt.Sprintf("- %s (%s)", s["name"], s["state"]))
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (h *Handler) parseToolName(fullName string) (serverName, toolName string, err error) {

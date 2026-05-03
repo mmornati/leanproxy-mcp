@@ -93,16 +93,6 @@ func (m *MCPServerInstance) handleInvokeTool(ctx context.Context, request mcp.Ca
 	return mcp.NewToolResultText("Tool execution via stdio mode"), nil
 }
 
-func (m *MCPServerInstance) handleListServers(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	servers := m.mcpPool.ListServers()
-	text := "Configured servers:\n"
-	for _, s := range servers {
-		state, _ := m.mcpPool.GetServerState(s)
-		text += "- " + s + " (" + string(state) + ")\n"
-	}
-	return mcp.NewToolResultText(text), nil
-}
-
 func (m *MCPServerInstance) GetServer() *server.MCPServer {
 	return m.server
 }
