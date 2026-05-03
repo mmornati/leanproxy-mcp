@@ -8,11 +8,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/compactor"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 )
 
 type Handler struct {
 	pool       *pool.StdioPool
+	compactor  *compactor.Compactor
 	manifest   *AggregatedManifest
 	logger     *slog.Logger
 	timeout    time.Duration
@@ -32,6 +34,18 @@ func NewHandler(p *pool.StdioPool, logger *slog.Logger) *Handler {
 		pool:     p,
 		logger:   logger,
 		timeout:  30 * time.Second,
+	}
+}
+
+func NewHandlerWithCompactor(p *pool.StdioPool, c *compactor.Compactor, logger *slog.Logger) *Handler {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Handler{
+		pool:      p,
+		compactor: c,
+		logger:    logger,
+		timeout:   30 * time.Second,
 	}
 }
 
@@ -152,6 +166,8 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 		Prompts:   make([]Prompt, 0),
 	}
 
+	processor := compactor.NewManifestProcessor(h.logger)
+
 	for _, serverName := range servers {
 		state, _ := h.pool.GetServerState(serverName)
 		h.logger.Debug("checking server for tools", "name", serverName, "state", state)
@@ -175,11 +191,39 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 		if resp.Result != nil {
 			var toolsResult ToolsListResult
 			if err := json.Unmarshal(resp.Result, &toolsResult); err == nil {
+				rawTools := make([]compactor.RawTool, 0, len(toolsResult.Tools))
 				for _, tool := range toolsResult.Tools {
-					tool.Name = fmt.Sprintf("%s_%s", serverName, tool.Name)
-					manifest.Tools = append(manifest.Tools, tool)
+					paramsBytes, _ := json.Marshal(tool.InputSchema)
+					rawTools = append(rawTools, compactor.RawTool{
+						Name:        tool.Name,
+						Description: tool.Description,
+						Parameters:  paramsBytes,
+					})
 				}
-				h.logger.Debug("collected tools from server", "name", serverName, "count", len(toolsResult.Tools))
+
+				rawManifest := compactor.RawManifest{
+					Name:  serverName,
+					Tools: rawTools,
+				}
+
+				distilled, err := processor.Process(ctx, rawManifest)
+				if err != nil {
+					h.logger.Warn("failed to compact manifest, using raw tools", "name", serverName, "error", err)
+					for _, tool := range toolsResult.Tools {
+						tool.Name = fmt.Sprintf("%s_%s", serverName, tool.Name)
+						manifest.Tools = append(manifest.Tools, tool)
+					}
+				} else {
+					for _, tool := range distilled.Tools {
+						paramsBytes, _ := json.Marshal(tool.Parameters)
+						manifest.Tools = append(manifest.Tools, Tool{
+							Name:        fmt.Sprintf("%s_%s", serverName, tool.Name),
+							Description: tool.Description,
+							InputSchema: paramsBytes,
+						})
+					}
+					h.logger.Info("collected and distilled tools from server", "name", serverName, "original_count", len(toolsResult.Tools), "distilled_count", len(distilled.Tools))
+				}
 			} else {
 				h.logger.Warn("failed to parse tools list from server", "name", serverName, "error", err)
 			}
