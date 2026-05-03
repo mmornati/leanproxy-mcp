@@ -411,6 +411,7 @@ func compactDescription(description string) string {
 func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
 	var serverName, toolName string
 	var arguments json.RawMessage
+	var err error
 
 	if params.Arguments != nil {
 		var args map[string]interface{}
@@ -422,7 +423,10 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 				toolName = t
 			}
 			if a, ok := args["arguments"].(map[string]interface{}); ok {
-				arguments, _ = json.Marshal(a)
+				arguments, err = json.Marshal(a)
+				if err != nil {
+					h.logger.Warn("failed to marshal arguments", "error", err)
+				}
 			}
 		}
 	}

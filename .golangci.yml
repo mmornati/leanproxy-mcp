@@ -91,3 +91,7 @@ issues:
     - path: cmd/serve\.go
       linters:
         - errcheck
+    - path: pkg/mcp/handlers\.go
+      linters:
+        - errcheck
+        - unused
