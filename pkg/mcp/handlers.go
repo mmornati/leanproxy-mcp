@@ -435,6 +435,10 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		}, nil
 	}
 
+	if strings.HasPrefix(toolName, serverName+"_") {
+		toolName = strings.TrimPrefix(toolName, serverName+"_")
+	}
+
 	h.logger.Info("invoke_tool called", "server", serverName, "tool", toolName)
 
 	state, stateErr := h.pool.GetServerState(serverName)
