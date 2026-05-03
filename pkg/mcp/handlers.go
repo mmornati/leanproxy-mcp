@@ -8,13 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mmornati/leanproxy-mcp/pkg/compactor"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 )
 
 type Handler struct {
 	pool       *pool.StdioPool
-	compactor  *compactor.Compactor
 	manifest   *AggregatedManifest
 	logger     *slog.Logger
 	timeout    time.Duration
@@ -34,18 +32,6 @@ func NewHandler(p *pool.StdioPool, logger *slog.Logger) *Handler {
 		pool:     p,
 		logger:   logger,
 		timeout:  30 * time.Second,
-	}
-}
-
-func NewHandlerWithCompactor(p *pool.StdioPool, c *compactor.Compactor, logger *slog.Logger) *Handler {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &Handler{
-		pool:      p,
-		compactor: c,
-		logger:    logger,
-		timeout:   30 * time.Second,
 	}
 }
 
@@ -121,30 +107,30 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 }
 
 func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response, error) {
-	h.logger.Debug("tools/list request received, returning leanproxy tools only")
+	h.logger.Debug("tools/list request received, returning gateway tools only")
 
-	leanproxyTools := []Tool{
+	gatewayTools := []Tool{
 		{
-			Name:        "leanproxy_savings",
-			Description: "Display token savings statistics",
+			Name:        "search_tools",
+			Description: "Search for available MCP tools across all proxied servers. Returns tool names with summarized descriptions. Use this to discover what tools are available before invoking them.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query to find tools"}}}`),
+		},
+		{
+			Name:        "invoke_tool",
+			Description: "Invoke a tool on a specific MCP server. First use search_tools to find the right tool, then invoke it with the server name and parameters.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"server":{"type":"string","description":"Server name"},"tool":{"type":"string","description":"Tool name to invoke"},"arguments":{"type":"object","description":"Tool arguments"}}}`),
+		},
+		{
+			Name:        "list_servers",
+			Description: "List all configured MCP servers and their current status.",
 			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
-		},
-		{
-			Name:        "leanproxy_report",
-			Description: "Generate a token savings report",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"format":{"type":"string","enum":["markdown","json"]}}}}`),
-		},
-		{
-			Name:        "leanproxy_status",
-			Description: "Show status of proxied MCP servers",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"server":{"type":"string"}}}`),
 		},
 	}
 
-	result := ToolsListResult{Tools: leanproxyTools}
+	result := ToolsListResult{Tools: gatewayTools}
 	resultBytes, _ := json.Marshal(result)
 
-	h.logger.Info("tools list sent to client", "count", len(leanproxyTools))
+	h.logger.Info("gateway tools sent to client", "count", len(gatewayTools))
 
 	return &Response{
 		JSONRPC: JSONRPCVersion,
@@ -154,88 +140,11 @@ func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response,
 }
 
 func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error) {
-	servers := h.pool.ListServers()
-	manifest := &AggregatedManifest{
+	return &AggregatedManifest{
 		Tools:     make([]Tool, 0),
 		Resources: make([]Resource, 0),
 		Prompts:   make([]Prompt, 0),
-	}
-
-	processor := compactor.NewManifestProcessor(h.logger)
-
-	time.Sleep(2 * time.Second)
-
-	for _, serverName := range servers {
-		state, _ := h.pool.GetServerState(serverName)
-		h.logger.Debug("checking server for tools", "name", serverName, "state", state)
-
-		if state != "idle" && state != "running" && state != "busy" {
-			h.logger.Debug("server not in running state, skipping", "name", serverName, "state", state)
-			continue
-		}
-
-		h.logger.Debug("initializing backend server", "name", serverName)
-		if err := h.initializeServer(ctx, serverName); err != nil {
-			h.logger.Warn("failed to initialize server", "name", serverName, "error", err)
-			continue
-		}
-
-		h.logger.Debug("requesting tools/list from server", "name", serverName)
-		resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
-		if err != nil {
-			h.logger.Warn("failed to get tools from server", "name", serverName, "error", err)
-			continue
-		}
-
-		if resp.Result != nil {
-			var toolsResult ToolsListResult
-			if err := json.Unmarshal(resp.Result, &toolsResult); err == nil {
-				h.logger.Debug("received tools from server", "name", serverName, "count", len(toolsResult.Tools))
-
-				rawTools := make([]compactor.RawTool, 0, len(toolsResult.Tools))
-				for _, tool := range toolsResult.Tools {
-					paramsBytes, _ := json.Marshal(tool.InputSchema)
-					rawTools = append(rawTools, compactor.RawTool{
-						Name:        tool.Name,
-						Description: tool.Description,
-						Parameters:  paramsBytes,
-					})
-				}
-
-				rawManifest := compactor.RawManifest{
-					Name:  serverName,
-					Tools: rawTools,
-				}
-
-				distilled, err := processor.Process(ctx, rawManifest)
-				if err != nil {
-					h.logger.Warn("failed to compact manifest, using raw tools", "name", serverName, "error", err)
-					for _, tool := range toolsResult.Tools {
-						tool.Name = fmt.Sprintf("%s_%s", serverName, tool.Name)
-						manifest.Tools = append(manifest.Tools, tool)
-					}
-				} else {
-					for _, tool := range distilled.Tools {
-						paramsBytes, _ := json.Marshal(tool.Parameters)
-						manifest.Tools = append(manifest.Tools, Tool{
-							Name:        fmt.Sprintf("%s_%s", serverName, tool.Name),
-							Description: tool.Description,
-							InputSchema: paramsBytes,
-						})
-					}
-					h.logger.Info("collected and distilled tools from server", "name", serverName, "original_count", len(toolsResult.Tools), "distilled_count", len(distilled.Tools))
-				}
-			} else {
-				h.logger.Warn("failed to parse tools list from server", "name", serverName, "error", err)
-			}
-		} else if resp.Error != nil {
-			h.logger.Warn("server returned error", "name", serverName, "error", resp.Error.Message)
-		} else {
-			h.logger.Warn("server returned no result and no error", "name", serverName)
-		}
-	}
-
-	return manifest, nil
+	}, nil
 }
 
 func (h *Handler) initializeServer(ctx context.Context, serverName string) error {
@@ -301,7 +210,7 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		}, nil
 	}
 
-	if strings.HasPrefix(params.Name, "leanproxy_") {
+	if params.Name == "search_tools" || params.Name == "invoke_tool" || params.Name == "list_servers" {
 		return h.handleLeanproxyTool(ctx, req, params)
 	}
 
@@ -337,22 +246,183 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 }
 
 func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
-	tool := strings.TrimPrefix(params.Name, "leanproxy_")
+	switch params.Name {
+	case "search_tools":
+		return h.handleSearchTools(ctx, req, params)
+	case "invoke_tool":
+		return h.handleInvokeTool(ctx, req, params)
+	case "list_servers":
+		return h.handleListServers(ctx, req)
+	default:
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeMethodNotFound, fmt.Sprintf("unknown gateway tool: %s", params.Name)),
+			ID:      req.ID,
+		}, nil
+	}
+}
+
+func compactDescription(description string) string {
+	if len(description) <= 50 {
+		return description
+	}
+	return description[:47] + "..."
+}
+
+func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
+	var query string
+	if params.Arguments != nil {
+		var args map[string]interface{}
+		if err := json.Unmarshal(params.Arguments, &args); err == nil {
+			if q, ok := args["query"].(string); ok {
+				query = q
+			}
+		}
+	}
+
+	h.logger.Info("search_tools called", "query", query)
+
+	servers := h.pool.ListServers()
+	toolDescriptions := make([]string, 0)
+
+	for _, serverName := range servers {
+		state, _ := h.pool.GetServerState(serverName)
+		if state != "idle" && state != "running" && state != "busy" {
+			continue
+		}
+
+		if err := h.initializeServer(ctx, serverName); err != nil {
+			h.logger.Warn("failed to initialize server for search", "name", serverName, "error", err)
+			continue
+		}
+
+		resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
+		if err != nil {
+			h.logger.Warn("failed to get tools from server", "name", serverName, "error", err)
+			continue
+		}
+
+		if resp.Result != nil {
+			var toolsResult ToolsListResult
+			if err := json.Unmarshal(resp.Result, &toolsResult); err == nil {
+				for _, tool := range toolsResult.Tools {
+					desc := compactDescription(tool.Description)
+					toolDescriptions = append(toolDescriptions, fmt.Sprintf("%s_%s: %s", serverName, tool.Name, desc))
+				}
+			}
+		}
+	}
+
+	var filtered []string
+	if query != "" {
+		for _, t := range toolDescriptions {
+			if strings.Contains(strings.ToLower(t), strings.ToLower(query)) {
+				filtered = append(filtered, t)
+			}
+		}
+	} else {
+		filtered = toolDescriptions
+	}
 
 	result := map[string]interface{}{
 		"content": []map[string]string{
-			{"type": "text", "text": fmt.Sprintf("LeanProxy tool '%s' called. Tool execution requires routing to backend MCP servers which is not yet fully implemented in this mode.", tool)},
+			{"type": "text", "text": fmt.Sprintf("Available tools:\n%s", strings.Join(filtered, "\n"))},
 		},
 	}
-
 	resultBytes, _ := json.Marshal(result)
-	h.logger.Info("leanproxy tool called", "tool", tool)
 
 	return &Response{
 		JSONRPC: JSONRPCVersion,
 		Result:  resultBytes,
 		ID:      req.ID,
 	}, nil
+}
+
+func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
+	var serverName, toolName string
+	var arguments json.RawMessage
+
+	if params.Arguments != nil {
+		var args map[string]interface{}
+		if err := json.Unmarshal(params.Arguments, &args); err == nil {
+			if s, ok := args["server"].(string); ok {
+				serverName = s
+			}
+			if t, ok := args["tool"].(string); ok {
+				toolName = t
+			}
+			if a, ok := args["arguments"].(map[string]interface{}); ok {
+				arguments, _ = json.Marshal(a)
+			}
+		}
+	}
+
+	if serverName == "" || toolName == "" {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInvalidParams, "server and tool are required"),
+			ID:      req.ID,
+		}, nil
+	}
+
+	h.logger.Info("invoke_tool called", "server", serverName, "tool", toolName)
+
+	newParams := ToolsCallParams{
+		Name:      toolName,
+		Arguments: arguments,
+	}
+	paramsBytes, _ := json.Marshal(newParams)
+
+	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeout)
+	if err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %v", err)),
+			ID:      req.ID,
+		}, nil
+	}
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resp.Result,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) handleListServers(ctx context.Context, req *Request) (*Response, error) {
+	h.logger.Info("list_servers called")
+
+	servers := h.pool.ListServers()
+	serverList := make([]map[string]interface{}, 0)
+
+	for _, serverName := range servers {
+		state, _ := h.pool.GetServerState(serverName)
+		serverList = append(serverList, map[string]interface{}{
+			"name":  serverName,
+			"state": string(state),
+		})
+	}
+
+	result := map[string]interface{}{
+		"content": []map[string]string{
+			{"type": "text", "text": fmt.Sprintf("Configured servers:\n%s", formatServerList(serverList))},
+		},
+	}
+	resultBytes, _ := json.Marshal(result)
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
+		ID:      req.ID,
+	}, nil
+}
+
+func formatServerList(servers []map[string]interface{}) string {
+	var lines []string
+	for _, s := range servers {
+		lines = append(lines, fmt.Sprintf("- %s (%s)", s["name"], s["state"]))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (h *Handler) parseToolName(fullName string) (serverName, toolName string, err error) {
