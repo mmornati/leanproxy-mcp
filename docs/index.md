@@ -67,7 +67,7 @@ Based on [data-driven analysis](https://blog.mornati.net/the-future-of-agentic-t
 
 LeanProxy uses a **gateway pattern** with JIT (Just-In-Time) schema loading:
 
-1. **Single router schema**: Only 3 tools (`list_servers`, `invoke_tool`, `search_tools`) = **~160 tokens** vs 3,000+ for Native MCP
+1. **Single router schema**: Only 2 tools (`invoke_tool`, `search_tools`) = **~110 tokens** vs 3,000+ for Native MCP
 2. **On-demand tool registration**: Backend server schemas only load when actually needed
 3. **Session-aware caching**: Tool schemas persist across the session without per-request overhead
 

@@ -99,11 +99,6 @@ func (t *TokenEstimator) CalculateSavings(original, optimized string) (SavingsRe
 func (t *TokenEstimator) EstimateLeanProxySchemaTokens() int {
 	gatewayTools := []map[string]interface{}{
 		{
-			"name":        "list_servers",
-			"description": "List all MCP servers configured in this gateway",
-			"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{}},
-		},
-		{
 			"name":        "invoke_tool",
 			"description": "Invoke a tool on a specific MCP server",
 			"inputSchema": map[string]interface{}{

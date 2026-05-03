@@ -21,12 +21,11 @@ func TestListTools(t *testing.T) {
 
 	tools := gw.ListTools()
 
-	if len(tools) != 3 {
-		t.Errorf("ListTools() returned %d tools, want 3", len(tools))
+	if len(tools) != 2 {
+		t.Errorf("ListTools() returned %d tools, want 2", len(tools))
 	}
 
 	expectedTools := map[string]bool{
-		"list_servers": false,
 		"invoke_tool":   false,
 		"search_tools": false,
 	}
