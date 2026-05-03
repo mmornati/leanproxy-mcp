@@ -28,7 +28,7 @@ development_status:
   3-2-jit-schema-injection: review
   3-3-manifest-compactor: review
   3-4-manual-re-distillation: review
-  3-5-boilerplate-blindness: ready-for-dev
+  3-5-boilerplate-blindness: review
   4-1-dry-run-mode: ready-for-dev
   4-2-posix-compliant-cli: ready-for-dev
   4-3-ide-extension-socket: ready-for-dev
