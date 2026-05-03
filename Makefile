@@ -40,29 +40,21 @@ test-coverage: test ## Run tests with coverage report
 build: tidy ## Build all platform binaries to dist/
 	@echo "Building for all platforms..."
 	@mkdir -p $(DIST_DIR)
-	GOOS=darwin GOARCH=amd64 $(GO) build -ldflags="-s -w" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 .
-	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags="-s -w" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 .
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="-s -w" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 .
-	GOOS=linux GOARCH=arm64 $(GO) build -ldflags="-s -w" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 .
-	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="-s -w" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe .
 	@echo "Builds available in $(DIST_DIR)/"
 
 .PHONY: build-local
 build-local: tidy ## Build for current platform only
 	@echo "Building for $(shell go env GOOS)/$(shell go env GOARCH)..."
 	@mkdir -p $(DIST_DIR)
-	$(GO) build -ldflags="-s -w" -o $(DIST_DIR)/$(BINARY_NAME) .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME) .
 
 .PHONY: build-version
-build-version: tidy ## Build with custom version (VERSION=x.x.x)
-	@echo "Building version $(VERSION)..."
-	@mkdir -p $(DIST_DIR)
-	GOOS=darwin GOARCH=amd64 $(GO) build -ldflags="-s -w -X main.version=$(VERSION)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 .
-	GOOS=darwin GOARCH=arm64 $(GO) build -ldflags="-s -w -X main.version=$(VERSION)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 .
-	GOOS=linux GOARCH=amd64 $(GO) build -ldflags="-s -w -X main.version=$(VERSION)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 .
-	GOOS=linux GOARCH=arm64 $(GO) build -ldflags="-s -w -X main.version=$(VERSION)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 .
-	GOOS=windows GOARCH=amd64 $(GO) build -ldflags="-s -w -X main.version=$(VERSION)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe .
-	@echo "Version $(VERSION) builds available in $(DIST_DIR)/"
+build-version: build ## Build with custom version (overrides git tag)
 
 .PHONY: clean
 clean: ## Remove build artifacts
@@ -73,7 +65,7 @@ clean: ## Remove build artifacts
 .PHONY: install
 install: tidy ## Build and install to GOPATH/bin
 	@echo "Installing to $(GOPATH)/bin..."
-	$(GO) install -ldflags="-s -w" .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) install -ldflags="$(LDFLAGS)" .
 
 .PHONY: run
 run: ## Run the application (ARGS='serve --help')
@@ -125,4 +117,6 @@ GOPATH := $(shell go env GOPATH)
 
 LATEST_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "")
 VERSION ?= $(LATEST_TAG)
-DEFAULT_VERSION := 0.1.0
+COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "")
+BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
+LDFLAGS := -s -w -X github.com/mmornati/leanproxy-mcp/internal/version.Version=$(VERSION) -X github.com/mmornati/leanproxy-mcp/internal/version.Commit=$(COMMIT) -X github.com/mmornati/leanproxy-mcp/internal/version.BuildTime=$(BUILD_TIME)
