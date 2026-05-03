@@ -41,25 +41,29 @@ func (m *MCPServerInstance) SetStdioPool(p *pool.StdioPool) {
 func (m *MCPServerInstance) SetupGatewayTools() {
 	searchToolsTool := mcp.NewTool(
 		"search_tools",
-		mcp.WithDescription("Search for available MCP tools across all proxied servers"),
+		mcp.WithDescription("Search for tools across all configured MCP servers. Returns tool names, descriptions, and parameters. Always call this first to discover available tools before invoking."),
 		mcp.WithString("query",
-			mcp.Description("Search query to find tools"),
+			mcp.Required(),
+			mcp.Description("Search query (e.g., 'activity', 'sleep', 'garmin')"),
+		),
+		mcp.WithNumber("max_description_chars",
+			mcp.Description("Max description length (0=no limit, default 500)"),
 		),
 	)
 
 	invokeTool := mcp.NewTool(
 		"invoke_tool",
-		mcp.WithDescription("Invoke a tool on a specific MCP server"),
+		mcp.WithDescription("Invoke a tool on a configured MCP server. First use search_tools to find the server_name and tool_name, then pass the tool arguments."),
 		mcp.WithString("server",
 			mcp.Required(),
-			mcp.Description("Server name"),
+			mcp.Description("Server name from search_tools (e.g., 'garmin', 'Intervals.icu')"),
 		),
 		mcp.WithString("tool",
 			mcp.Required(),
-			mcp.Description("Tool name to invoke"),
+			mcp.Description("Tool name from search_tools (e.g., 'garmin_get_activities', 'Intervals.icu_get_activities')"),
 		),
 		mcp.WithObject("arguments",
-			mcp.Description("Tool arguments"),
+			mcp.Description("Tool arguments as key-value pairs (optional, depends on tool)"),
 		),
 	)
 

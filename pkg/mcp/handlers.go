@@ -150,18 +150,13 @@ func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response,
 	gatewayTools := []Tool{
 		{
 			Name:        "search_tools",
-			Description: "Search for available MCP tools across all proxied servers. Returns tool names with summarized descriptions. Use this to discover what tools are available before invoking them.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query to find tools"}}}`),
+			Description: "Search for tools across all configured MCP servers. Returns tool names, descriptions, and parameters. Always call this first to discover available tools before invoking.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query (e.g., 'activity', 'sleep', 'garmin')"}},"required":["query"]}`),
 		},
 		{
 			Name:        "invoke_tool",
-			Description: "Invoke a tool on a specific MCP server. First use search_tools to find the right tool, then invoke it with the server name and parameters.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"server":{"type":"string","description":"Server name"},"tool":{"type":"string","description":"Tool name to invoke"},"arguments":{"type":"object","description":"Tool arguments"}}}`),
-		},
-		{
-			Name:        "list_servers",
-			Description: "List all configured MCP servers and their current status.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{}}`),
+			Description: "Invoke a tool on a configured MCP server. First use search_tools to find the server_name and tool_name, then pass the tool arguments.",
+			InputSchema: json.RawMessage(`{"type":"object","properties":{"server":{"type":"string","description":"Server name from search_tools (e.g., 'garmin', 'Intervals.icu')"},"tool":{"type":"string","description":"Tool name from search_tools (e.g., 'garmin_get_activities')"},"arguments":{"type":"object","description":"Tool arguments as key-value pairs"}},"required":["server","tool"]}`),
 		},
 	}
 
