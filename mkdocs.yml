@@ -3,13 +3,12 @@
 site_name: LeanProxy-MCP
 site_description: "LeanProxy-MCP - Lightweight Token Firewall for MCP"
 site_author: "Massimo Mornati"
-site_url: https://github.com/mmornati/leanproxy-mcp
+site_url: https://mmornati.github.io/leanproxy-mcp
 
 # Repository settings
 repo_name: mmornati/leanproxy-mcp
 repo_url: https://github.com/mmornati/leanproxy-mcp
 edit_uri: https://github.com/mmornati/leanproxy-mcp/edit/main/docs/
-canonical_url: https://mmornati.github.io/leanproxy-mcp/
 
 # Copyright
 copyright: "Copyright &copy; 2026 Massimo Mornati"
@@ -25,15 +24,6 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
-# Features
-features:
-  - navigation.instant
-  - navigation.tracking
-  - navigation.tabs
-  - navigation.top
-  - search.highlight
-  - search.share
-
 # Navigation
 nav:
   - Home: index.md
@@ -48,15 +38,13 @@ nav:
 # Extensions
 markdown_extensions:
   - attr_list
-  - codehilite:
-      css_class: highlight
+  - codehilite
   - toc:
       permalink: true
   - admonition
   - pymdownx.details
   - pymdownx.superfences
-  - pymdownx.highlight:
-      anchor_linenums: true
+  - pymdownx.highlight
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences:
@@ -69,19 +57,13 @@ markdown_extensions:
 plugins:
   - search:
       separator: '[\s\-\.]+'
-  - mermaid2:
-      version: "10.9.1"
+  - mermaid2
 
 # Extra
 extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/mmornati/leanproxy-mcp
-
-# Analytics
-analytics:
-  provider: google
-  property: G-XXXXXXXXXX
 
 extra_css:
   - stylesheets/extra.css
