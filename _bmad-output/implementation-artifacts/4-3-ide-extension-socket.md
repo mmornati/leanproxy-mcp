@@ -9,7 +9,7 @@
 | **Epic** | Epic 4 - CLI Installation and Interaction |
 | **Title** | Implement IDE Extension Socket |
 | **Priority** | High |
-| **Status** | ready-for-dev |
+| **Status** | review |
 
 ## Story Requirements
 
@@ -183,3 +183,76 @@ pkg/
 4. Socket should be configurable as startup flag or via config file
 5. Implement `tokengate serve` command for background mode
 6. Support socket over TCP for containerized environments (configurable)
+
+## Dev Agent Record
+
+### Implementation Notes
+
+Implemented IDE Extension Socket feature with the following components:
+
+1. **SocketServer Interface** (`pkg/proxy/socket/socket.go`)
+   - Defined `SocketServer` interface with `Serve`, `Shutdown`, and `Addr` methods
+   - Added `ServerConfig` struct with configurable path, permissions, max message size, and rate limit
+
+2. **Socket Server** (`pkg/proxy/socket/server.go`)
+   - Implemented JSON-RPC 2.0 compliant server using goroutine per connection pattern
+   - Uses `bufio.Reader` for line-delimited message parsing
+   - Supports concurrent connections with atomic connection counter
+   - Implements graceful shutdown with `sync.WaitGroup` for connection draining
+   - Handles SIGHUP, SIGINT, SIGTERM for socket refresh and shutdown
+
+3. **JSON-RPC Handler** (`pkg/proxy/socket/handler.go`)
+   - Registered methods: `token.resolve`, `token.validate`, `proxy.status`, `proxy.restart`, `config.get`, `config.set`, `shutdown`
+   - Interfaces for TokenResolver, ProxyStatusProvider, ConfigGetter, ConfigSetter
+
+4. **Transport Layers**
+   - `transport_unix.go`: Unix socket transport with permission validation
+   - `transport_windows.go`: Windows named pipe transport with build tags
+
+5. **CLI Command** (`cmd/tokengate/serve.go`)
+   - `tokengate serve` command for background socket server
+   - Flags: `--socket-path`, `--socket-perm`, `--enable`
+
+6. **Tests**
+   - `server_test.go`: Server lifecycle, JSON-RPC parsing, malformed requests, concurrent connections, message size limits
+   - `handler_test.go`: Handler method tests
+   - `testing.go`: Shared mock implementations
+
+### Debug Log
+
+- Fixed missing imports in server.go (added "bufio", "runtime")
+- Fixed os.Dir usage to filepath.Dir in transport_unix.go
+- Fixed syntax errors in transport_unix.go (missing assignment operator)
+- Resolved test file conflicts by moving mockTokenResolver to testing.go
+
+### Completion Notes
+
+All acceptance criteria implemented:
+- Socket server starts on configured path with proper permissions
+- JSON-RPC request/response handling working
+- Concurrent connections supported via goroutine per connection pattern
+- Graceful shutdown cleans up socket file
+- Invalid JSON returns proper JSON-RPC error responses
+- Windows named pipe transport implemented with build tags
+
+## File List
+
+- pkg/proxy/socket/socket.go (new)
+- pkg/proxy/socket/server.go (new)
+- pkg/proxy/socket/handler.go (new)
+- pkg/proxy/socket/transport_unix.go (new)
+- pkg/proxy/socket/transport_windows.go (new)
+- pkg/proxy/socket/testing.go (new)
+- pkg/proxy/socket/server_test.go (new)
+- pkg/proxy/socket/handler_test.go (new)
+- cmd/tokengate/serve.go (new)
+
+## Change Log
+
+- 2026-05-03: Initial implementation of IDE Extension Socket feature
+  - Created socket package with Server, Handler, and transport implementations
+  - Added JSON-RPC 2.0 support with all specified methods
+  - Implemented concurrent connection handling
+  - Added graceful shutdown with context cancellation
+  - Created CLI serve command
+  - Added comprehensive unit tests
