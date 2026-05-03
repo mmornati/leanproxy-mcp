@@ -35,7 +35,7 @@ development_status:
   4-4-universal-installer: review
   4-5-shell-completion: ready-for-dev
   5-1-token-savings-calculator: ready-for-dev
-  5-2-markdown-report-generation: ready-for-dev
+  5-2-markdown-report-generation: review
   5-3-real-time-server-health: ready-for-dev
   6-1-define-leanproxy-servers-yaml-schema: ready-for-dev
   6-2-auto-detect-migration: ready-for-dev
