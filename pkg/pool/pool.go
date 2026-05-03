@@ -378,32 +378,28 @@ func (p *StdioPool) SendRequestToServerWithID(ctx context.Context, name string, 
 }
 
 func (p *StdioPool) SendNotificationToServer(ctx context.Context, name string, method string, params json.RawMessage) error {
-	id := 1
+	p.mu.RLock()
+	server, exists := p.servers[name]
+	p.mu.RUnlock()
 
-	resultCh := make(chan *Response, 1)
-	errorCh := make(chan error, 1)
-
-	poolReq := Request{
-		Method:   method,
-		Params:   params,
-		ID:       id,
-		Timeout:  5 * time.Second,
-		ResultCh: resultCh,
-		ErrorCh:  errorCh,
+	if !exists {
+		return fmt.Errorf("pool: server %s not found", name)
 	}
 
-	if err := p.PutRequest(name, poolReq); err != nil {
-		return fmt.Errorf("pool: send notification: %w", err)
+	var paramsMap map[string]interface{}
+	json.Unmarshal(params, &paramsMap)
+
+	return server.sendNotification(ctx, method, paramsMap)
+}
+
+func (p *StdioPool) SendServerNotification(ctx context.Context, name string, method string, params map[string]interface{}) error {
+	p.mu.RLock()
+	server, exists := p.servers[name]
+	p.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("pool: server %s not found", name)
 	}
 
-	select {
-	case <-resultCh:
-		return nil
-	case err := <-errorCh:
-		return err
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("notification timeout after 5s")
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return server.sendNotification(ctx, method, params)
 }

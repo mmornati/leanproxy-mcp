@@ -181,15 +181,9 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 
 	h.logger.Debug("server initialized, sending initialized notification", "name", serverName)
 
-	initializedNotification := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  "initialized",
-		"params": map[string]interface{}{
-			"capabilities": ServerCapabilities{},
-		},
-	}
-	notifBytes, _ := json.Marshal(initializedNotification)
-	h.pool.SendNotificationToServer(ctx, serverName, "initialized", notifBytes)
+	h.pool.SendServerNotification(ctx, serverName, "initialized", map[string]interface{}{
+		"capabilities": ServerCapabilities{},
+	})
 
 	h.logger.Debug("server ready", "name", serverName)
 	return nil
