@@ -27,7 +27,7 @@ development_status:
   3-1-discovery-signatures: review
   3-2-jit-schema-injection: review
   3-3-manifest-compactor: review
-  3-4-manual-re-distillation: ready-for-dev
+  3-4-manual-re-distillation: review
   3-5-boilerplate-blindness: ready-for-dev
   4-1-dry-run-mode: ready-for-dev
   4-2-posix-compliant-cli: ready-for-dev
