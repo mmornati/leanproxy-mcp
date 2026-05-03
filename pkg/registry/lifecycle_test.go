@@ -260,7 +260,9 @@ func TestProcessAlreadyExited(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
+	manager.mu.RLock()
 	entry := manager.servers[config.ID]
+	manager.mu.RUnlock()
 	if entry != nil {
 		t.Log("Server still in registry after quick exit")
 	}

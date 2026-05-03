@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 
@@ -61,11 +62,14 @@ func TestParseMethod(t *testing.T) {
 }
 
 type mockLogger struct {
+	mu    sync.Mutex
 	debugs []string
 }
 
 func (m *mockLogger) Debug(msg string, args ...any) {
+	m.mu.Lock()
 	m.debugs = append(m.debugs, msg)
+	m.mu.Unlock()
 }
 
 func TestRouter_Route(t *testing.T) {
