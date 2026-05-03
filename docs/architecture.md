@@ -264,10 +264,13 @@ graph TD
     root --> pkg["pkg/"]
     root --> docs["docs/"]
     root --> install["install/"]
-    
+
     cmd --> cmd_root["root.go"]
     cmd --> cmd_serve["serve.go"]
-    
+    cmd --> cmd_server["server.go"]
+    cmd --> cmd_status["status.go"]
+    cmd --> cmd_cache["cache.go"]
+
     pkg --> gw["gateway/"]
     pkg --> rt["router/"]
     pkg --> rg["registry/"]
@@ -276,12 +279,23 @@ graph TD
     pkg --> cp["compactor/"]
     pkg --> ut["utils/"]
     pkg --> bc["bouncer/"]
-    
+    pkg --> mc["mcp/"]
+    pkg --> ts["toolstore/"]
+    pkg --> sf["statusfile/"]
+
+    mc --> mc_handlers["handlers.go"]
+    mc --> mc_gateway["gateway_server.go"]
+    mc --> mc_types["types.go"]
+
+    ts --> ts_filecache["filecache.go"]
+
+    sf --> sf_file["file.go"]
+
     docs --> docs_index["index.md"]
     docs --> docs_install["installation.md"]
     docs --> docs_commands["commands.md"]
     docs --> docs_config["configuration.md"]
-    
+
     style root fill:#ccccff
     style pkg fill:#ccffcc
     style cmd fill:#ffcc99
@@ -292,19 +306,53 @@ graph TD
 leanproxy-mcp/
 ├── cmd/              # CLI entry points
 │   ├── root.go      # Main command
-│   └── serve.go     # Server command
+│   ├── serve.go     # serve command (HTTP proxy)
+│   ├── server.go    # server command (stdio mode)
+│   ├── status.go    # status command
+│   └── cache.go     # cache command
 ├── pkg/
 │   ├── gateway/    # HTTP/stdio gateway
 │   ├── router/     # Tool routing
 │   ├── registry/   # Tool registry
 │   ├── pool/       # Connection pooling
 │   ├── concurrent/ # Concurrency utilities
-│   ├── compactor/ # Token optimization
-│   ├── bouncer/   # Redaction engine
-│   └── utils/      # Utilities
+│   ├── compactor/  # Token optimization
+│   ├── bouncer/    # Redaction engine
+│   ├── mcp/        # MCP protocol implementation
+│   │   ├── handlers.go    # MCP request handlers
+│   │   ├── gateway_server.go  # Gateway tool implementation
+│   │   └── types.go     # MCP types
+│   ├── toolstore/  # Persistent tool cache
+│   │   └── filecache.go  # File-based cache
+│   └── statusfile/ # Shared status file
+│       └── file.go   # Status file implementation
 ├── docs/            # Documentation
 └── install/        # Installation scripts
 ```
+
+## Key Packages
+
+### MCP Package (`pkg/mcp/`)
+
+Implements the MCP protocol handling including:
+- Request routing and handling
+- Tool discovery and caching
+- Gateway tools (search_tools method)
+- Protocol type definitions
+
+### Tool Store (`pkg/toolstore/`)
+
+Persistent tool cache that stores tool signatures to disk:
+- `FileCache`: Persists tools to `~/.config/leanproxy/toolcache/`
+- Per-server cache files (e.g., `garmin.json`, `Intervals_icu.json`)
+- Avoids starting servers for tool discovery
+
+### Status File (`pkg/statusfile/`)
+
+Shared status file for detecting running instances:
+- `FileStatusStore`: Writes status to `~/.config/leanproxy/status/current.json`
+- Updated every 5 seconds by running instances
+- Used by `leanproxy status --running` to show active instances
 
 ## Next Steps
 

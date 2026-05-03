@@ -436,6 +436,18 @@ Inspect the persisted tool cache to see what tools have been indexed from MCP se
 leanproxy-mcp cache [flags]
 ```
 
+### Cache Location
+
+The tool cache is stored at:
+```
+~/.config/leanproxy/toolcache/
+```
+
+Each server's tools are cached in a separate JSON file:
+- `garmin.json`
+- `Intervals_icu.json`
+- etc.
+
 ### Flags
 
 | Flag | Type | Description |
@@ -459,8 +471,11 @@ leanproxy-mcp cache --list
 # Show cached tools for a server
 leanproxy-mcp cache --server garmin
 
-# Search in cache
-leanproxy-mcp cache --server garmin --search activity
+# Search in cache (across all servers)
+leanproxy-mcp cache --search activity
+
+# Search within a specific server
+leanproxy-mcp cache --server garmin --search sleep
 
 # Clear cache for a server
 leanproxy-mcp cache --clear --server garmin
@@ -477,41 +492,167 @@ Tool cache location: ~/.config/leanproxy/toolcache
 ```
 Servers with cached tools (2):
 
+  - Intervals_icu
   - garmin
-  - Intervals.icu
 
 Use --server <name> to see tools for a specific server
+```
+
+#### Output (--search activity)
+
+```
+Intervals_icu (4 matches):
+  get_activity_details
+    Get detailed information for a specific activity from Intervals.icu
+  get_activity_intervals
+    Get interval data for a specific activity from Intervals.icu
+  ...
+
+garmin (18 matches):
+  get_activities_by_date
+    Get activities data between specified dates, optionally filtered by activity type
+  ...
+
+Total: 22 matches across 2 servers
 ```
 
 #### Output (--server garmin)
 
 ```
-Cached tools for garmin (12 total):
+Cached tools for garmin (100 total):
 
-  garmin_get_activities
-    List activities for the authenticated user
-    Parameters:
-      - limit (number)
-      - start_date (string)
+  garmin_get_activities_by_date
+    Get activities data between specified dates, optionally filtered by activity type
 
-  garmin_get_activity
-    Downloads activity details with weather and gear
-    Parameters:
-      - activity_id (string)
-      - max_chart_size (number)
+        Args:
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+            activity_type: Optional activity type filter (e.g., cycling, running, swimming)
+         [start_date: string, end_date: string] {activity_type: string}
 
-  garmin_download_activity
-    Downloads the original activity file
-    Parameters:
-      - activity_id (string)
-      - download_format (string)
+  garmin_get_activities_fordate
+    Get activities for a specific date
+
+        Args:
+            date: Date in YYYY-MM-DD format
+         [date: string]
 ```
+
+---
+
+## `search_tools` - MCP Method
+
+LeanProxy-MCP supports a `search_tools` MCP method that allows LLMs to search across all cached tools from all configured servers. This is particularly useful when used with OpenCode.
+
+### Request Format
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "search_tools",
+  "params": {
+    "query": "activity",
+    "max_description_chars": 500
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Search query (word-based AND matching) |
+| `max_description_chars` | integer | No | Truncate descriptions to this length (0 = no truncation) |
+
+### Response Format
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "content": [{
+      "type": "text",
+      "text": "Available tools:\n[tool_name]: [description]\n\nArgs:\n    [param_name]: [description]\n [required_params] {optional_params}\n..."
+    }]
+  }
+}
+```
+
+### Tool Display Format
+
+Each tool is displayed with:
+- **Name**: `tool_name`
+- **Description**: Full or truncated description
+- **Parameters**:
+  - `[required: type]` - Required parameters in brackets
+  - `{optional: type}` - Optional parameters in braces
+
+Example:
+```
+garmin_get_activities: Get activities data between specified dates
+
+    Args:
+        start_date: Start date in YYYY-MM-DD format
+        end_date: End date in YYYY-MM-DD format
+        activity_type: Optional activity type filter
+
+ [start_date: string, end_date: string] {activity_type: string}
+```
+
+### How Tool Caching Works
+
+1. **On First Search**: When `search_tools` is called for the first time (or after cache invalidation), LeanProxy-MCP:
+   - Starts each configured MCP server
+   - Sends `initialize` request to each server
+   - Sends `tools/list` request to each server
+   - Caches the tool signatures locally in `~/.config/leanproxy/toolcache/`
+
+2. **On Subsequent Searches**: Tool signatures are loaded from the persistent cache, avoiding server startup.
+
+3. **Cache Invalidation**: Cache is invalidated when:
+   - `leanproxy cache --clear --server <name>` is called
+   - Server configuration changes
+   - Tool list changes are detected (if `listChanged` capability is supported)
+
+### Status File
+
+When `server run --stdio` or `serve` is running, a status file is written to:
+```
+~/.config/leanproxy/status/current.json
+```
+
+This allows `leanproxy status --running` to detect running instances.
+
+**Status File Contents:**
+```json
+{
+  "pid": 12345,
+  "started_at": "2026-05-03T19:30:00+02:00",
+  "listen_addr": "stdio",
+  "servers": [
+    {
+      "name": "garmin",
+      "status": "running",
+      "request_count": 10,
+      "error_count": 0,
+      "restart_count": 1
+    }
+  ]
+}
+```
+
+The status file is:
+- Written immediately when the server starts
+- Updated every 5 seconds while running
+- Removed when the server shuts down gracefully
 
 ---
 
 ## `status` - Server Status
 
-Display real-time status of all active proxied servers.
+Display real-time status of all active proxied servers. Can show status either from running instances (via status file) or from configuration.
 
 ### Usage
 
@@ -530,7 +671,19 @@ leanproxy-mcp status [flags]
 | `--verbose` | bool | false | Show additional details |
 | `--watch` | bool | false | Continuously update |
 
-#### Examples
+### Status File
+
+When using `--running`, status is read from the status file written by running instances:
+
+```
+~/.config/leanproxy/status/current.json
+```
+
+This file is created by:
+- `leanproxy serve` (HTTP proxy mode)
+- `leanproxy server run --stdio` (stdio mode, used by OpenCode)
+
+### Examples
 
 ```bash
 # Basic status (from config)
@@ -558,11 +711,18 @@ leanproxy-mcp status --watch --interval 500ms
 #### Output (--running)
 
 ```
-Running leanproxy instance (PID: 12345, started: 2026-05-03 19:30:00, listen: 127.0.0.1:8080)
+Running leanproxy instance (PID: 12345, started: 2026-05-03 19:30:00, listen: stdio)
 
-SERVER      STATUS    HEALTH    UPTIME    REQUESTS
-garmin      Up        healthy  5m32s    1,234
-Intervals  Up        healthy  5m32s    567
+SERVER       STATUS      UPTIME     LAST RESPONSE   RESTARTS
+──────────────────────────────────────────────────────────────
+garmin       running    0s         -          1
+Intervals.icu running    0s         -          1
+```
+
+**Note**: The `--running` flag reads from the status file. If no instances are running, you'll see:
+```
+No running leanproxy instance found
+No servers configured
 ```
 
 #### Output (basic)
