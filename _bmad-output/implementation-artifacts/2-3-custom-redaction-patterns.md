@@ -202,7 +202,7 @@ import (
     "log/slog"
     "os"
 
-    "github.com/mmornati/tokengate-mcp/pkg/bouncer"
+    "github.com/mmornati/leanproxy-mcp/pkg/bouncer"
     "github.com/spf13/cobra"
 )
 

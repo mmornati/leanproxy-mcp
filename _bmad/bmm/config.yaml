@@ -10,7 +10,7 @@ project_knowledge: "{project-root}/docs"
 
 # Core Configuration Values
 user_name: mmornati
-project_name: tokengate-mcp
+project_name: leanproxy-mcp
 communication_language: English
 document_output_language: English
 output_folder: "{project-root}/_bmad-output"

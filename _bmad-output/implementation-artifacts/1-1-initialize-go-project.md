@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | **ID** | 1-1 |
-| **Key** | tokengate-mcp-1-1 |
-| **Epic** | tokengate-mcp-epic-1 |
+| **Key** | leanproxy-mcp-1-1 |
+| **Epic** | leanproxy-mcp-epic-1 |
 | **Title** | Initialize Go Project with CLI Structure |
 
 ## Story Requirements
@@ -16,7 +16,7 @@
 ```
 As a developer
 I want to have a properly initialized Go project with a clean CLI structure
-So that I can build the tokengate-mcp tool with proper separation of concerns
+So that I can build the leanproxy-mcp tool with proper separation of concerns
 ```
 
 ### Acceptance Criteria (BDD Format)
@@ -33,13 +33,13 @@ Feature: Go Project Initialization
 
   Scenario: CLI application can be built
     Given the project has been initialized
-    When I run `go build -o tokengate-mcp ./cmd/`
+    When I run `go build -o leanproxy-mcp ./cmd/`
     Then the build should succeed
     And the binary should be under 20MB
 
   Scenario: CLI displays help information
-    Given the tokengate-mcp binary exists
-    When I run `./tokengate-mcp --help`
+    Given the leanproxy-mcp binary exists
+    When I run `./leanproxy-mcp --help`
     Then I should see usage information
     And I should see available commands listed
 
@@ -55,7 +55,7 @@ Feature: Go Project Initialization
 ### Technical Requirements
 
 1. **Go Module Initialization**
-   - Module name: `github.com/mmornati/tokengate-mcp`
+   - Module name: `github.com/mmornati/leanproxy-mcp`
    - Go version: 1.21+
    - Dependencies: cobra for CLI, slog for logging
 
@@ -90,7 +90,7 @@ Feature: Go Project Initialization
 ### File Structure
 
 ```
-tokengate-mcp/
+leanproxy-mcp/
 ├── cmd/
 │   ├── root.go           # Root command setup
 │   ├── serve.go          # serve subcommand
@@ -118,9 +118,9 @@ tokengate-mcp/
 
 2. **Build Verification**
    ```bash
-   go build -o tokengate-mcp ./cmd/
-   size tokengate-mcp  # Should be < 20MB
-   ./tokengate-mcp --help
+   go build -o leanproxy-mcp ./cmd/
+   size leanproxy-mcp  # Should be < 20MB
+   ./leanproxy-mcp --help
    ```
 
 3. **No Test Framework Required** for this story
@@ -154,7 +154,7 @@ tokengate-mcp/
 
 - Fixed export issue: changed `rootCmd` to `RootCmd` to make it accessible from main.go
 - Fixed duplicate command registration: removed explicit AddCommand calls from root.go init() since serve.go and version.go already register themselves in their own init()
-- Renamed project from tokengate-mcp to leanproxy-mcp throughout all files
+- Renamed project from leanproxy-mcp to leanproxy-mcp throughout all files
 - Binary size: 4.7MB (well under 20MB limit)
 
 ### Completion Notes

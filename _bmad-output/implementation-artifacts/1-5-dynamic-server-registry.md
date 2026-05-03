@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | **ID** | 1-5 |
-| **Key** | tokengate-mcp-1-5 |
-| **Epic** | tokengate-mcp-epic-1 |
+| **Key** | leanproxy-mcp-1-5 |
+| **Epic** | leanproxy-mcp-epic-1 |
 | **Title** | Implement Dynamic Server Registry |
 
 ## Story Requirements

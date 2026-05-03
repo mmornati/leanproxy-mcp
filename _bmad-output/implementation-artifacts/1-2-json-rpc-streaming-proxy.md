@@ -5,8 +5,8 @@
 | Field | Value |
 |-------|-------|
 | **ID** | 1-2 |
-| **Key** | tokengate-mcp-1-2 |
-| **Epic** | tokengate-mcp-epic-1 |
+| **Key** | leanproxy-mcp-1-2 |
+| **Epic** | leanproxy-mcp-epic-1 |
 | **Title** | Implement JSON-RPC Streaming Proxy Core |
 
 ## Story Requirements

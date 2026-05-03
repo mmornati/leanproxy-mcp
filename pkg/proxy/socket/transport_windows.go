@@ -8,7 +8,7 @@ import (
 	"net"
 )
 
-const WindowsPipeName = "tokengate"
+const WindowsPipeName = "leanproxy"
 
 type WindowsTransport struct {
 	pipeName string

@@ -15,53 +15,53 @@
 
 ### User Story
 
-As a CLI user, I want shell completion for tokengate commands and flags so that I can work more efficiently without memorizing all options.
+As a CLI user, I want shell completion for leanproxy commands and flags so that I can work more efficiently without memorizing all options.
 
 ### Acceptance Criteria (BDD Format)
 
 ```gherkin
 Feature: Shell Completion Support
   Scenario: bash completion generates valid completion script
-    Given the tokengate CLI is installed
-    When the user runs "tokengate completion bash"
+    Given the leanproxy CLI is installed
+    When the user runs "leanproxy completion bash"
     Then a valid bash completion script is output
-    And sourcing it enables tab completion for tokengate
+    And sourcing it enables tab completion for leanproxy
 
   Scenario: zsh completion generates valid completion script
-    Given the tokengate CLI is installed
-    When the user runs "tokengate completion zsh"
+    Given the leanproxy CLI is installed
+    When the user runs "leanproxy completion zsh"
     Then a valid zsh completion script is output
-    And sourcing it enables tab completion for tokengate
+    And sourcing it enables tab completion for leanproxy
 
   Scenario: bash completion suggests subcommands
     Given bash completion is enabled
-    And the user types "tokengate <TAB>"
+    And the user types "leanproxy <TAB>"
     Then "proxy", "registry", "token", "config" are suggested
     And "version", "help" are suggested
 
   Scenario: bash completion suggests flags
     Given bash completion is enabled
-    And the user types "tokengate proxy <TAB>"
+    And the user types "leanproxy proxy <TAB>"
     Then flags like "--help", "--dry-run", "--config" are suggested
     And subcommands like "start", "stop", "status" are suggested
 
   Scenario: zsh completion provides descriptions
     Given zsh completion is enabled
-    And the user types "tokengate proxy <TAB>"
+    And the user types "leanproxy proxy <TAB>"
     Then both options and descriptions are shown
     And descriptions are in English
 
   Scenario: fish completion generates valid script
-    Given the tokengate CLI is installed
-    When the user runs "tokengate completion fish"
+    Given the leanproxy CLI is installed
+    When the user runs "leanproxy completion fish"
     Then a valid fish completion script is output
-    And installing it enables tab completion for tokengate
+    And installing it enables tab completion for leanproxy
 
   Scenario: PowerShell completion generates valid script
-    Given the tokengate CLI is installed
-    When the user runs "tokengate completion powershell"
+    Given the leanproxy CLI is installed
+    When the user runs "leanproxy completion powershell"
     Then a valid PowerShell completion script is output
-    And installing it enables tab completion for tokengate
+    And installing it enables tab completion for leanproxy
 ```
 
 ## Developer Context
@@ -77,7 +77,7 @@ Feature: Shell Completion Support
 
 2. **Command Structure**
    ```
-   tokengate completion [bash|zsh|fish|powershell]
+   leanproxy completion [bash|zsh|fish|powershell]
      --no-desc           Suppress command descriptions
      --description       Custom completion description
      -h, --help          Help for completion command
@@ -114,7 +114,7 @@ Feature: Shell Completion Support
 
 ```
 cmd/
-  tokengate/
+  leanproxy/
     main.go                    # Entry point
     completion.go              # Completion command implementation
     completers.go              # Custom completion functions
@@ -133,21 +133,21 @@ pkg/
 
 2. **Integration Tests**
    - Source completion script and verify it loads without errors
-   - Use `complete -p tokengate` to verify registration
+   - Use `complete -p leanproxy` to verify registration
    - Test tab completion behavior with `compgen`
 
 3. **Test Patterns**
    ```bash
    # Verify bash completion script
-   source <(tokengate completion bash)
-   complete -p tokengate
+   source <(leanproxy completion bash)
+   complete -p leanproxy
    
    # Test completion for subcommand
-   compgen -W "$(tokengate completion bash | grep -oP '(?<=_command_words=)\S+')" tokengate
+   compgen -W "$(leanproxy completion bash | grep -oP '(?<=_command_words=)\S+')" leanproxy
    
    # Verify zsh completion file
-   tokengate completion zsh > ~/.zsh/completion/_tokengate
-   autoload -Uz _tokengate
+   leanproxy completion zsh > ~/.zsh/completion/_leanproxy
+   autoload -Uz _leanproxy
    ```
 
 ### Implementation Notes

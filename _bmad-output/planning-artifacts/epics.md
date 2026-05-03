@@ -68,7 +68,7 @@ NFR10: Users can enable a local, rotated JSON log file to audit redaction events
 
 ### Additional Requirements
 
-- **Starter Template**: Minimal Go CLI structure with `cobra` for CLI command handling. Initialize with `go mod init github.com/mmornati/tokengate-mcp` and `go get github.com/spf13/cobra@latest`.
+- **Starter Template**: Minimal Go CLI structure with `cobra` for CLI command handling. Initialize with `go mod init github.com/mmornati/leanproxy-mcp` and `go get github.com/spf13/cobra@latest`.
 - **Project Structure**: Go idiomatic structure with `cmd/` for CLI entry points, `pkg/` for internal proxy/redaction logic (bouncer, proxy, registry, utils).
 - **JSON-RPC Handling**: Manual streaming implementation using `encoding/json` and `io` streams (no external library) for sub-50ms performance.
 - **Redaction Strategy**: Streaming regex-based redaction engine for "The Bouncer".
@@ -161,7 +161,7 @@ Core Proxy Infrastructure goal: Users can intercept, route, and manage JSON-RPC 
 
 **Given** a fresh development environment with Go 1.21+ installed
 **When** I run the initialization commands
-**Then** a new `tokengate-mcp` directory is created with `go.mod` initialized
+**Then** a new `leanproxy-mcp` directory is created with `go.mod` initialized
 **And** the cobra CLI library is properly imported
 **And** the project follows idiomatic Go structure (`cmd/`, `pkg/`)
 
