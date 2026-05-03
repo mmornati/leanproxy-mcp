@@ -123,9 +123,7 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 		cmd.Dir = s.config.CWD
 	}
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -147,8 +145,7 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	}
 
 	s.process = cmd
-	pgid, _ := syscall.Getpgid(cmd.Process.Pid)
-	s.pgid = pgid
+	s.pgid = cmd.Process.Pid
 	s.state = StateIdle
 	s.restartCount = 0
 	s.backoff = time.Second
@@ -262,14 +259,11 @@ func (s *StdioServerV2) stop() error {
 	})
 
 	if s.process != nil && s.process.Process != nil {
-		pgid := s.pgid
-		signalErr := syscall.Kill(-pgid, syscall.SIGTERM)
-		if signalErr != nil {
-			s.logger.Warn("failed to send SIGTERM", "name", s.name, "error", signalErr)
-			syscall.Kill(-pgid, syscall.SIGKILL)
+		s.process.Process.Signal(syscall.SIGTERM)
+		waitErr := s.process.Wait()
+		if waitErr != nil {
+			s.logger.Warn("process exited with error after SIGTERM", "name", s.name, "error", waitErr)
 		}
-
-		s.process.Wait()
 	}
 
 	s.mu.Lock()

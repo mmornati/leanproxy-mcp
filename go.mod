@@ -1,6 +1,6 @@
 module github.com/mmornati/leanproxy-mcp
 
-go 1.21
+go 1.25.0
 
 require (
 	github.com/spf13/cobra v1.9.1
