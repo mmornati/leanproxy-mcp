@@ -116,7 +116,7 @@ func (m *Migrator) Import(ctx context.Context, servers []DiscoveredServer, targe
 
 	configPath := expandPath(targetPath)
 	dir := filepath.Dir(configPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create config directory: %w", err)
 	}
 

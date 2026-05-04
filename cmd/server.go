@@ -543,7 +543,7 @@ func runServerDisable(cmd *cobra.Command, args []string) error {
 
 func saveConfig(path string, cfg *migrate.Config) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 

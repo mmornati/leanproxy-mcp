@@ -104,7 +104,7 @@ func TestReadCurrentStatus(t *testing.T) {
 	require.NoError(t, err)
 
 	statusFile := filepath.Join(tmpDir, "status", "current.json")
-	err = os.MkdirAll(filepath.Dir(statusFile), 0755)
+	err = os.MkdirAll(filepath.Dir(statusFile), 0700)
 	require.NoError(t, err)
 	err = os.WriteFile(statusFile, data, 0644)
 	require.NoError(t, err)

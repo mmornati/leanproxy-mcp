@@ -25,7 +25,7 @@ func (t *UnixTransport) Listen() (net.Listener, error) {
 		return nil, fmt.Errorf("remove existing socket: %w", err)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(t.path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(t.path), 0700); err != nil {
 		return nil, fmt.Errorf("create socket directory: %w", err)
 	}
 

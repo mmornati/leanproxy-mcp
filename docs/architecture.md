@@ -354,6 +354,27 @@ Shared status file for detecting running instances:
 - Updated every 5 seconds by running instances
 - Used by `leanproxy status --running` to show active instances
 
+## Security
+
+### Directory Permissions
+
+All sensitive directories are created with `0700` permissions (owner read/write/execute only):
+
+| Directory | Purpose |
+|-----------|---------|
+| `~/.leanproxy/` | Unix socket files |
+| `~/.config/leanproxy/` | Config, status, and cache directories |
+| `/tmp/leanproxy/` | Temporary socket files (when used) |
+
+This ensures that:
+- Socket files are protected from unauthorized access
+- Config files containing tokens and patterns are not readable by other users
+- Cache directories with potentially sensitive data are protected
+
+### Socket Authentication
+
+The socket server supports optional token-based authentication to prevent unauthorized local access. See [Configuration](./configuration.md#socket-authentication) for details.
+
 ## Next Steps
 
 - [Commands Reference](./commands.md) - Full command documentation

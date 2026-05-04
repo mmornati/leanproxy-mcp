@@ -17,7 +17,7 @@ func TestOpenCodeScanner_Name(t *testing.T) {
 func TestOpenCodeScanner_Scan_NotFound(t *testing.T) {
 	tmpDir := os.TempDir()
 	emptyDir := filepath.Join(tmpDir, "empty_home")
-	if err := os.MkdirAll(emptyDir, 0755); err != nil {
+	if err := os.MkdirAll(emptyDir, 0700); err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(emptyDir)
@@ -41,7 +41,7 @@ func TestOpenCodeScanner_Scan_Found(t *testing.T) {
 	cfgDir := filepath.Join(tmpDir, ".config", "opencode")
 	cfgPath := filepath.Join(cfgDir, "opencode.json")
 
-	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+	if err := os.MkdirAll(cfgDir, 0700); err != nil {
 		t.Fatalf("Failed to create config dir: %v", err)
 	}
 	defer os.RemoveAll(filepath.Join(tmpDir, ".config"))

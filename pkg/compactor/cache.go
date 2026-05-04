@@ -40,7 +40,7 @@ func NewFileCache(cacheDir string, logger *slog.Logger) (*FileCache, error) {
 		cacheDir = filepath.Join(usr.HomeDir, ".config", "leanproxy", "distilled")
 	}
 
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
 		return nil, fmt.Errorf("compactor: create cache dir: %w", err)
 	}
 
