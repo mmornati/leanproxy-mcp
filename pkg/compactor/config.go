@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
 
 type Config struct {
@@ -18,6 +20,11 @@ type Config struct {
 }
 
 func LoadConfig(path string) (*Config, error) {
+	baseDir := filepath.Dir(filepath.Clean(path))
+	if err := utils.ValidatePath(path, baseDir); err != nil {
+		return nil, fmt.Errorf("compactor: path validation: %w", err)
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("compactor: read config: %w", err)

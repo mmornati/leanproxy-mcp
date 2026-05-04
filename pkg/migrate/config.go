@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
 
 type CacheSettings struct {
@@ -90,6 +92,11 @@ func (c *Config) Validate() error {
 }
 
 func LoadConfig(ctx context.Context, path string) (*Config, error) {
+	baseDir := filepath.Dir(filepath.Clean(path))
+	if err := utils.ValidatePath(path, baseDir); err != nil {
+		return nil, fmt.Errorf("path validation: %w", err)
+	}
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

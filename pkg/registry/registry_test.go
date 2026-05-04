@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -575,5 +576,63 @@ func TestMatchCriteriaMaxLoad(t *testing.T) {
 	if result.ID != "s1" {
 		t.Errorf("FindBest() ID = %v, want s1 (lower load)", result.ID)
 	}
+}
+
+func TestSaveLoadPathTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	t.Run("traversal in persist path", func(t *testing.T) {
+		traversalPath := tmpDir + "/../../../../../../etc/passwd"
+		reg := NewRegistry(logger, traversalPath).(*inMemoryRegistry)
+
+		ctx := context.Background()
+		err := reg.Save(ctx)
+		if err == nil {
+			t.Error("Save() should fail for path traversal attempt")
+		}
+		if err != nil && !strings.Contains(err.Error(), "path traversal") {
+			t.Errorf("Save() error = %v, want path traversal error", err)
+		}
+	})
+
+	t.Run("traversal in Load path", func(t *testing.T) {
+		traversalPath := tmpDir + "/../../../../../../etc/passwd"
+		reg := NewRegistry(logger, traversalPath).(*inMemoryRegistry)
+
+		ctx := context.Background()
+		err := reg.Load(ctx)
+		if err == nil {
+			t.Error("Load() should fail for path traversal attempt")
+		}
+		if err != nil && !strings.Contains(err.Error(), "path traversal") {
+			t.Errorf("Load() error = %v, want path traversal error", err)
+		}
+	})
+
+	t.Run("URL encoded traversal", func(t *testing.T) {
+		encodedPath := tmpDir + "/..%2F..%2F..%2F..%2F..%2F..%2Fetc%2Fpasswd"
+		reg := NewRegistry(logger, encodedPath).(*inMemoryRegistry)
+
+		ctx := context.Background()
+		err := reg.Save(ctx)
+		if err == nil {
+			t.Error("Save() should fail for URL encoded path traversal")
+		}
+	})
+
+	t.Run("null byte in path", func(t *testing.T) {
+		nullBytePath := tmpDir + "/config\x00.yaml"
+		reg := NewRegistry(logger, nullBytePath).(*inMemoryRegistry)
+
+		ctx := context.Background()
+		err := reg.Save(ctx)
+		if err == nil {
+			t.Error("Save() should fail for null byte injection")
+		}
+		if err != nil && !strings.Contains(err.Error(), "null byte") {
+			t.Errorf("Save() error = %v, want null byte error", err)
+		}
+	})
 }
 
