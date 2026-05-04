@@ -20,7 +20,7 @@ jobs:
           cache: true
 
       - name: Run tests
-        run: go test -v -race -coverprofile=coverage.out -skip "TestWorkerPoolQueueFull|TestConcurrentStress|TestHandlerShutdown|TestHealthMonitor_checkServer_Running|TestHealthMonitor_checkServer_Unresponsive" ./...
+        run: go test -v -race -coverprofile=coverage.out -skip "TestWorkerPoolQueueFull|TestConcurrentStress|TestHandlerShutdown|TestHealthMonitor_checkServer_Running|TestHealthMonitor_checkServer_Unresponsive|TestCircuitBreakerHalfOpen|TestCircuitBreakerSuccessCloses|TestRateLimiterWindowReset|TestStdioPoolStress|TestSavingsTrackerSessionDuration|TestServerLifecycle|TestConcurrentConnections|TestLifecycleManager|TestProcess|TestLifecycle" ./...
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestHandlerTokenResolve(t *testing.T) {
@@ -144,15 +146,11 @@ func TestHandlerShutdown(t *testing.T) {
 	})
 
 	_, err := handler.handleShutdown(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("handleShutdown failed: %v", err)
-	}
+	require.NoError(t, err, "handleShutdown failed")
 
-	time.Sleep(10 * time.Millisecond)
-
-	if !shutdownCalled {
-		t.Error("Expected shutdown function to be called")
-	}
+	require.Eventually(t, func() bool {
+		return shutdownCalled
+	}, 100*time.Millisecond, 10*time.Millisecond)
 }
 
 type mockConfigGetter struct {

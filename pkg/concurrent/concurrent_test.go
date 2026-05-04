@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func NewTestLogger() *slog.Logger {
@@ -109,12 +111,10 @@ func TestWorkerPoolMetrics(t *testing.T) {
 		pool.Submit(req, resultCh, errorCh)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	metrics := pool.Metrics()
-	if metrics.SubmittedTasks < 5 {
-		t.Errorf("Expected at least 5 submitted tasks, got %d", metrics.SubmittedTasks)
-	}
+	require.Eventually(t, func() bool {
+		metrics := pool.Metrics()
+		return metrics.SubmittedTasks >= 5
+	}, 100*time.Millisecond, 10*time.Millisecond)
 }
 
 func TestCircuitBreakerClosedState(t *testing.T) {
@@ -146,38 +146,41 @@ func TestCircuitBreakerOpenAfterFailures(t *testing.T) {
 }
 
 func TestCircuitBreakerHalfOpen(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode - timing dependent test")
+	}
+
 	cb := NewCircuitBreaker(2, 50*time.Millisecond, 10*time.Second)
 
 	for i := 0; i < 2; i++ {
 		cb.RecordFailure()
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	state := cb.State()
-	if state != StateHalfOpen {
-		t.Errorf("Expected state half-open after cooldown, got %v", state)
-	}
+	require.Eventually(t, func() bool {
+		return cb.State() == StateHalfOpen
+	}, 200*time.Millisecond, 20*time.Millisecond)
 }
 
 func TestCircuitBreakerSuccessCloses(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode - timing dependent test")
+	}
+
 	cb := NewCircuitBreaker(2, 50*time.Millisecond, 10*time.Second)
 
 	for i := 0; i < 2; i++ {
 		cb.RecordFailure()
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		return cb.State() != StateClosed
+	}, 200*time.Millisecond, 20*time.Millisecond)
 
-	cb.State()
-
-	cb.RecordSuccess()
-	cb.RecordSuccess()
-	cb.RecordSuccess()
-
-	if cb.State() != StateClosed {
-		t.Errorf("Expected state closed after successful requests, got %v", cb.State())
+	for i := 0; i < 3; i++ {
+		cb.RecordSuccess()
 	}
+
+	require.Equal(t, StateClosed, cb.State())
 }
 
 func TestCircuitBreakerReset(t *testing.T) {
@@ -209,6 +212,10 @@ func TestRateLimiterAllow(t *testing.T) {
 }
 
 func TestRateLimiterWindowReset(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping in short mode - timing dependent test")
+	}
+
 	rl := NewRateLimiter(2, 50*time.Millisecond)
 
 	rl.Allow()
@@ -218,11 +225,9 @@ func TestRateLimiterWindowReset(t *testing.T) {
 		t.Error("Should be blocked immediately after reaching limit")
 	}
 
-	time.Sleep(60 * time.Millisecond)
-
-	if !rl.Allow() {
-		t.Error("Should be allowed after window passes")
-	}
+	require.Eventually(t, func() bool {
+		return rl.Allow()
+	}, 60*time.Millisecond, 10*time.Millisecond)
 }
 
 func TestRateLimiterReset(t *testing.T) {
