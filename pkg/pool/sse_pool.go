@@ -265,6 +265,38 @@ func (p *SSEPool) SendRequestToServerWithID(ctx context.Context, name string, me
 		}
 	}
 
+	if method == "tools/list" {
+		tools, err := server.ListTools(ctx)
+		if err != nil {
+			return nil, err
+		}
+		result := mcp.ListToolsResult{Tools: tools}
+		resultBytes, _ := json.Marshal(result)
+		return &Response{
+			Result: resultBytes,
+			ID:     id,
+		}, nil
+	}
+
+	if method == "tools/call" {
+		var toolParams struct {
+			Name      string                 `json:"name"`
+			Arguments map[string]interface{} `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &toolParams); err != nil {
+			return nil, fmt.Errorf("sse_pool: invalid tools/call params: %w", err)
+		}
+		result, err := server.CallTool(ctx, toolParams.Name, toolParams.Arguments)
+		if err != nil {
+			return nil, err
+		}
+		resultBytes, _ := json.Marshal(result)
+		return &Response{
+			Result: resultBytes,
+			ID:     id,
+		}, nil
+	}
+
 	toolArgs := make(map[string]interface{})
 	if len(params) > 0 {
 		_ = json.Unmarshal(params, &toolArgs)
