@@ -65,6 +65,30 @@ func NewFileStatusStore(listenAddr string, logger *slog.Logger) (*FileStatusStor
 	return store, nil
 }
 
+func NewFileStatusStoreFromConfigDir(listenAddr string, logger *slog.Logger, configDir string) (*FileStatusStore, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	statusDir := filepath.Join(configDir, "status")
+	if err := os.MkdirAll(statusDir, 0700); err != nil {
+		return nil, fmt.Errorf("statusfile: create status dir: %w", err)
+	}
+
+	store := &FileStatusStore{
+		statusFile: filepath.Join(statusDir, "current.json"),
+		logger:     logger,
+		info: StatusInfo{
+			PID:        os.Getpid(),
+			StartedAt:  time.Now(),
+			ListenAddr: listenAddr,
+			Servers:    []ServerStatus{},
+		},
+	}
+
+	return store, nil
+}
+
 func (s *FileStatusStore) UpdateServers(servers []ServerStatus) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -115,6 +139,24 @@ func ReadCurrentStatus() (*StatusInfo, error) {
 	return &info, nil
 }
 
+func ReadCurrentStatusFromConfigDir(configDir string) (*StatusInfo, error) {
+	statusFile := filepath.Join(configDir, "status", "current.json")
+	data, err := os.ReadFile(statusFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("statusfile: read status file: %w", err)
+	}
+
+	var info StatusInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, fmt.Errorf("statusfile: unmarshal status: %w", err)
+	}
+
+	return &info, nil
+}
+
 func ListStatusFiles() ([]string, error) {
 	usr, err := user.Current()
 	if err != nil {
@@ -122,6 +164,26 @@ func ListStatusFiles() ([]string, error) {
 	}
 
 	statusDir := filepath.Join(usr.HomeDir, ".config", "leanproxy", "status")
+	entries, err := os.ReadDir(statusDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("statusfile: read status dir: %w", err)
+	}
+
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		files = append(files, entry.Name())
+	}
+	return files, nil
+}
+
+func ListStatusFilesFromConfigDir(configDir string) ([]string, error) {
+	statusDir := filepath.Join(configDir, "status")
 	entries, err := os.ReadDir(statusDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -167,6 +229,43 @@ func newFileStatusStoreWithDir(logger *slog.Logger, dir string) (*FileStatusStor
 func readCurrentStatusFromDir(dir string) (*StatusInfo, error) {
 	statusFile := filepath.Join(dir, "status", "current.json")
 	data, err := os.ReadFile(statusFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("statusfile: read status file: %w", err)
+	}
+
+	var info StatusInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		return nil, fmt.Errorf("statusfile: unmarshal status: %w", err)
+	}
+
+	return &info, nil
+}
+
+func listStatusFilesFromDir(dir string) ([]string, error) {
+	statusDir := filepath.Join(dir, "status")
+	entries, err := os.ReadDir(statusDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("statusfile: read status dir: %w", err)
+	}
+
+	var files []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		files = append(files, entry.Name())
+	}
+	return files, nil
+}
+
+func readCurrentStatusFromFile(filePath string) (*StatusInfo, error) {
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
