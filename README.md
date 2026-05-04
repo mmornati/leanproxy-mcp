@@ -156,7 +156,7 @@ Other IDEs (Claude Desktop, Cursor, Windsurf): see [Installation Guide](https://
 ### Verification
 
 ```bash
-leanproxy server list
+leanproxy-mcp server list
 ```
 
 ## Build from Source

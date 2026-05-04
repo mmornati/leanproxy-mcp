@@ -301,9 +301,9 @@ Use --stdio flag to enable stdio mode. Without --stdio, the command
 will show help for the run command.
 
 Example:
-  leanproxy server run --stdio
-  leanproxy server run --stdio --config /path/to/config.yaml
-  leanproxy server run --stdio --log-file /tmp/leanproxy.log`,
+  leanproxy-mcp server run --stdio
+  leanproxy-mcp server run --stdio --config /path/to/config.yaml
+  leanproxy-mcp server run --stdio --log-file /tmp/leanproxy.log`,
 	RunE: runServerRun,
 }
 
