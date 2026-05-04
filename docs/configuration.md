@@ -79,6 +79,8 @@ watch:
 | `socket.rate_limit` | int | `100` | Rate limit (requests/second) |
 | `socket.auth_token` | string | `""` | Authentication token (empty = no auth) |
 
+**Security:** Socket directories and config directories are created with `0700` permissions (owner read/write/execute only) to prevent unauthorized access to sensitive data.
+
 ### Bouncer (Redaction) Options
 
 | Option | Type | Default | Description |

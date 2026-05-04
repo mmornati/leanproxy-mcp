@@ -61,7 +61,7 @@ func newFileCacheWithDir(logger *slog.Logger, cacheDir string) (*FileCache, erro
 		cacheDir = filepath.Join(usr.HomeDir, ".config", "leanproxy", "toolcache")
 	}
 
-	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
 		return nil, fmt.Errorf("toolstore: create cache dir: %w", err)
 	}
 

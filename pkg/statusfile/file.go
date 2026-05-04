@@ -47,7 +47,7 @@ func NewFileStatusStore(listenAddr string, logger *slog.Logger) (*FileStatusStor
 	}
 
 	statusDir := filepath.Join(usr.HomeDir, ".config", "leanproxy", "status")
-	if err := os.MkdirAll(statusDir, 0755); err != nil {
+	if err := os.MkdirAll(statusDir, 0700); err != nil {
 		return nil, fmt.Errorf("statusfile: create status dir: %w", err)
 	}
 
@@ -146,7 +146,7 @@ func newFileStatusStoreWithDir(logger *slog.Logger, dir string) (*FileStatusStor
 	}
 
 	statusDir := filepath.Join(dir, "status")
-	if err := os.MkdirAll(statusDir, 0755); err != nil {
+	if err := os.MkdirAll(statusDir, 0700); err != nil {
 		return nil, fmt.Errorf("statusfile: create status dir: %w", err)
 	}
 

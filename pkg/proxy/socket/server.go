@@ -74,7 +74,7 @@ func NewServer(config ServerConfig, logger *slog.Logger) (*Server, error) {
 		absPath = filepath.Join(home, config.Path[1:])
 	}
 
-	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(absPath), 0700); err != nil {
 		return nil, fmt.Errorf("socket: create dir: %w", err)
 	}
 
