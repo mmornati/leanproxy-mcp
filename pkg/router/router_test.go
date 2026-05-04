@@ -236,3 +236,112 @@ func TestParseMethodPerformance(t *testing.T) {
 		t.Errorf("parseMethod() took %v, want < 50ms for 10000 iterations", elapsed)
 	}
 }
+
+func TestFindServerForTool(t *testing.T) {
+	ctx := context.Background()
+	reg := NewToolRegistry()
+
+	_ = reg.RegisterTool(ctx, ToolEntry{
+		Name:      "github.create_issue",
+		Namespace: "github",
+		ServerID:  "server-1",
+	})
+	_ = reg.RegisterTool(ctx, ToolEntry{
+		Name:      "github.read_file",
+		Namespace: "github",
+		ServerID:  "server-1",
+	})
+	_ = reg.RegisterTool(ctx, ToolEntry{
+		Name:      "filesystem.read_file",
+		Namespace: "filesystem",
+		ServerID:  "server-2",
+	})
+
+	t.Run("returns appropriate server for tool", func(t *testing.T) {
+		serverID, err := reg.FindServerForTool(ctx, "github.create_issue")
+		if err != nil {
+			t.Fatalf("FindServerForTool() error = %v", err)
+		}
+		if serverID != "server-1" {
+			t.Errorf("FindServerForTool() = %q, want %q", serverID, "server-1")
+		}
+	})
+
+	t.Run("returns server for different tool", func(t *testing.T) {
+		serverID, err := reg.FindServerForTool(ctx, "filesystem.read_file")
+		if err != nil {
+			t.Fatalf("FindServerForTool() error = %v", err)
+		}
+		if serverID != "server-2" {
+			t.Errorf("FindServerForTool() = %q, want %q", serverID, "server-2")
+		}
+	})
+}
+
+func TestFindServerForTool_NotFound(t *testing.T) {
+	ctx := context.Background()
+	reg := NewToolRegistry()
+
+	_ = reg.RegisterTool(ctx, ToolEntry{
+		Name:      "github.create_issue",
+		Namespace: "github",
+		ServerID:  "server-1",
+	})
+
+	t.Run("handles unregistered tools", func(t *testing.T) {
+		_, err := reg.FindServerForTool(ctx, "nonexistent.tool")
+		if err == nil {
+			t.Error("FindServerForTool() expected error for unregistered tool, got nil")
+		}
+	})
+
+	t.Run("empty registry returns error", func(t *testing.T) {
+		emptyReg := NewToolRegistry()
+		_, err := emptyReg.FindServerForTool(ctx, "any.tool")
+		if err == nil {
+			t.Error("FindServerForTool() expected error for empty registry, got nil")
+		}
+	})
+}
+
+func TestListTools(t *testing.T) {
+	ctx := context.Background()
+	reg := NewToolRegistry()
+
+	_ = reg.RegisterTool(ctx, ToolEntry{
+		Name:      "github.create_issue",
+		Namespace: "github",
+		ServerID:  "server-1",
+	})
+	_ = reg.RegisterTool(ctx, ToolEntry{
+		Name:      "github.read_file",
+		Namespace: "github",
+		ServerID:  "server-1",
+	})
+	_ = reg.RegisterTool(ctx, ToolEntry{
+		Name:      "filesystem.read_file",
+		Namespace: "filesystem",
+		ServerID:  "server-2",
+	})
+
+	t.Run("lists all registered tools", func(t *testing.T) {
+		tools, err := reg.ListTools(ctx)
+		if err != nil {
+			t.Fatalf("ListTools() error = %v", err)
+		}
+		if len(tools) != 3 {
+			t.Errorf("ListTools() returned %d tools, want 3", len(tools))
+		}
+	})
+
+	t.Run("empty registry returns empty list", func(t *testing.T) {
+		emptyReg := NewToolRegistry()
+		tools, err := emptyReg.ListTools(ctx)
+		if err != nil {
+			t.Fatalf("ListTools() error = %v", err)
+		}
+		if len(tools) != 0 {
+			t.Errorf("ListTools() returned %d tools, want 0", len(tools))
+		}
+	})
+}
