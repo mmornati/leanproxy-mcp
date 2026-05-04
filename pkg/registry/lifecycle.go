@@ -52,6 +52,7 @@ type LifecycleManager interface {
 	Restart(ctx context.Context, id string) error
 	Status(ctx context.Context, id string) (ServerStatus, error)
 	List(ctx context.Context) ([]ServerStatus, error)
+	Close()
 }
 
 type serverEntry struct {
@@ -67,13 +68,17 @@ type lifecycleManager struct {
 	servers map[string]*serverEntry
 	logger  *slog.Logger
 	mu      sync.RWMutex
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
 }
 
 func NewLifecycleManager(logger *slog.Logger) LifecycleManager {
 	m := &lifecycleManager{
 		servers: make(map[string]*serverEntry),
 		logger:  logger,
+		stopCh:  make(chan struct{}),
 	}
+	m.wg.Add(1)
 	go m.reapProcesses()
 	return m
 }
@@ -260,19 +265,34 @@ func (m *lifecycleManager) List(ctx context.Context) ([]ServerStatus, error) {
 }
 
 func (m *lifecycleManager) reapProcesses() {
-	for range time.Tick(5 * time.Second) {
-		m.mu.Lock()
-		for id, entry := range m.servers {
-			entry.mu.RLock()
-			state := entry.status.State
-			entry.mu.RUnlock()
-			if state == StateStopped || state == StateError {
-				delete(m.servers, id)
-				m.logger.Debug("reaped dead server", "id", id)
+	defer m.wg.Done()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			m.mu.Lock()
+			for id, entry := range m.servers {
+				entry.mu.RLock()
+				state := entry.status.State
+				entry.mu.RUnlock()
+				if state == StateStopped || state == StateError {
+					delete(m.servers, id)
+					m.logger.Debug("reaped dead server", "id", id)
+				}
 			}
+			m.mu.Unlock()
+		case <-m.stopCh:
+			return
 		}
-		m.mu.Unlock()
 	}
+}
+
+func (m *lifecycleManager) Close() {
+	close(m.stopCh)
+	m.wg.Wait()
 }
 
 func getProcessStats(pid int) (float64, float64, error) {

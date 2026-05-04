@@ -266,4 +266,19 @@ func TestProcessAlreadyExited(t *testing.T) {
 	if entry != nil {
 		t.Log("Server still in registry after quick exit")
 	}
+
+	manager.Close()
+}
+
+func TestLifecycleManagerClose(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	manager := NewLifecycleManager(logger).(*lifecycleManager)
+
+	manager.Close()
+
+	select {
+	case <-manager.stopCh:
+	default:
+		t.Error("stopCh should be closed after Close()")
+	}
 }
