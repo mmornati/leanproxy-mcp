@@ -12,6 +12,8 @@ type RateLimiter struct {
 	window   time.Duration
 	requests []time.Time
 	blocked  int64
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
 }
 
 func NewRateLimiter(max int, window time.Duration) *RateLimiter {
@@ -26,8 +28,10 @@ func NewRateLimiter(max int, window time.Duration) *RateLimiter {
 		max:      max,
 		window:   window,
 		requests: make([]time.Time, 0, max),
+		stopCh:   make(chan struct{}),
 	}
 
+	rl.wg.Add(1)
 	go rl.cleanupLoop()
 
 	return rl
@@ -58,23 +62,35 @@ func (rl *RateLimiter) Allow() bool {
 }
 
 func (rl *RateLimiter) cleanupLoop() {
+	defer rl.wg.Done()
+
 	ticker := time.NewTicker(rl.window)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		rl.mu.Lock()
-		now := time.Now()
-		windowStart := now.Add(-rl.window)
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			now := time.Now()
+			windowStart := now.Add(-rl.window)
 
-		filtered := make([]time.Time, 0, len(rl.requests))
-		for _, t := range rl.requests {
-			if !t.Before(windowStart) {
-				filtered = append(filtered, t)
+			filtered := make([]time.Time, 0, len(rl.requests))
+			for _, t := range rl.requests {
+				if !t.Before(windowStart) {
+					filtered = append(filtered, t)
+				}
 			}
+			rl.requests = filtered
+			rl.mu.Unlock()
+		case <-rl.stopCh:
+			return
 		}
-		rl.requests = filtered
-		rl.mu.Unlock()
 	}
+}
+
+func (rl *RateLimiter) Close() {
+	close(rl.stopCh)
+	rl.wg.Wait()
 }
 
 func (rl *RateLimiter) GetUsage() (current int, max int) {
@@ -162,6 +178,16 @@ func (m *MultiServerRateLimiter) ResetAll() {
 	for _, limiter := range m.limiters {
 		limiter.Reset()
 	}
+}
+
+func (m *MultiServerRateLimiter) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, limiter := range m.limiters {
+		limiter.Close()
+	}
+	m.limiters = make(map[string]*RateLimiter)
 }
 
 func (m *MultiServerRateLimiter) GetStats(serverName string) RateLimiterStats {

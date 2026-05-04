@@ -258,6 +258,60 @@ func TestMultiServerRateLimiter(t *testing.T) {
 	}
 }
 
+func TestRateLimiterClose(t *testing.T) {
+	rl := NewRateLimiter(3, 100*time.Millisecond)
+
+	for i := 0; i < 3; i++ {
+		if !rl.Allow() {
+			t.Errorf("Request %d should be allowed", i)
+		}
+	}
+
+	rl.Close()
+
+	if rl.Allow() {
+		t.Error("Request should be blocked after rate limit reached")
+	}
+}
+
+func TestRateLimiterCloseNoLeak(t *testing.T) {
+	rl := NewRateLimiter(3, 100*time.Millisecond)
+
+	rl.Allow()
+	rl.Allow()
+
+	done := make(chan struct{})
+	go func() {
+		rl.Close()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Error("RateLimiter.Close() did not complete in time")
+	}
+}
+
+func TestMultiServerRateLimiterClose(t *testing.T) {
+	config := RateLimiterConfig{MaxRequests: 2, Window: 100 * time.Millisecond}
+	msrl := NewMultiServerRateLimiter(config)
+
+	msrl.Allow("server1")
+	msrl.Allow("server1")
+	msrl.Allow("server2")
+
+	msrl.Close()
+
+	msrl.mu.Lock()
+	limiterCount := len(msrl.limiters)
+	msrl.mu.Unlock()
+
+	if limiterCount != 0 {
+		t.Errorf("Expected 0 limiters after close, got %d", limiterCount)
+	}
+}
+
 func TestQueueManagerEnqueue(t *testing.T) {
 	qm := NewQueueManager(10, time.Second)
 
