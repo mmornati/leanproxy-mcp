@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
 
 type TransportType string
@@ -390,6 +393,11 @@ func (r *inMemoryRegistry) Save(ctx context.Context) error {
 		return nil
 	}
 
+	baseDir := filepath.Dir(filepath.Clean(r.persist))
+	if err := utils.ValidatePath(r.persist, baseDir); err != nil {
+		return fmt.Errorf("registry: path validation: %w", err)
+	}
+
 	r.mu.RLock()
 	data := struct {
 		Servers []*ServerEntry `json:"servers"`
@@ -422,6 +430,11 @@ func (r *inMemoryRegistry) Save(ctx context.Context) error {
 func (r *inMemoryRegistry) Load(ctx context.Context) error {
 	if r.persist == "" {
 		return nil
+	}
+
+	baseDir := filepath.Dir(filepath.Clean(r.persist))
+	if err := utils.ValidatePath(r.persist, baseDir); err != nil {
+		return fmt.Errorf("registry: path validation: %w", err)
 	}
 
 	file, err := os.Open(r.persist)

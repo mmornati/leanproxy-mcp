@@ -239,6 +239,35 @@ leanproxy-mcp bouncer disable
 leanproxy-mcp bouncer enable
 ```
 
+## Path Traversal Protection
+
+LeanProxy-MCP validates all file paths to prevent path traversal attacks. This protection applies to:
+- Server configuration files
+- Registry persistence files
+- Compactor configuration
+
+### Protected Operations
+
+| Operation | Protection |
+|-----------|------------|
+| Config file loading | Path must be within parent directory |
+| Registry save/load | Path must be within parent directory |
+| Compactor config | Path must be within parent directory |
+
+### Security Checks
+
+1. **Traversal pattern detection**: Blocks `../` and URL-encoded variants (`%2E%2E%2F`)
+2. **Null byte prevention**: Rejects paths containing `\x00`
+3. **Directory boundary enforcement**: Resolved paths must stay within base directory
+
+### Example Attacks Blocked
+
+```
+../../../etc/passwd        -> BLOCKED
+..%2F..%2F..%2Fetc/passwd  -> BLOCKED
+config.yaml\x00           -> BLOCKED
+```
+
 ## Environment Variables
 
 | Variable | Description |

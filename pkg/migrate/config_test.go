@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
@@ -331,5 +332,41 @@ servers:
 	}
 	if cfg.Servers[0].Transport != registry.TransportSSE {
 		t.Errorf("Transport = %v, want sse", cfg.Servers[0].Transport)
+	}
+}
+
+func TestLoadConfigPathTraversal(t *testing.T) {
+	tests := []struct {
+		name    string
+		path    string
+		wantErr string
+	}{
+		{
+			name:    "path with .. sequences",
+			path:    "../../../etc/passwd",
+			wantErr: "path traversal",
+		},
+		{
+			name:    "URL encoded traversal",
+			path:    "..%2F..%2F..%2Fetc%2Fpasswd",
+			wantErr: "path traversal",
+		},
+		{
+			name:    "null byte injection",
+			path:    "/tmp/config.yaml\x00",
+			wantErr: "null byte",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			_, err := LoadConfig(ctx, tt.path)
+			if err == nil {
+				t.Errorf("LoadConfig() expected error containing %q, got nil", tt.wantErr)
+			} else if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("LoadConfig() error = %v, want error containing %q", err, tt.wantErr)
+			}
+		})
 	}
 }
