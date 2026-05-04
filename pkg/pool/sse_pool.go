@@ -319,4 +319,9 @@ func (p *SSEPool) ServerCount() int {
 	return len(p.servers)
 }
 
-var _ ServerSource = (*SSEPool)(nil)
+func (p *SSEPool) HasServer(name string) bool {
+	p.mu.RLock()
+	_, exists := p.servers[name]
+	p.mu.RUnlock()
+	return exists
+}

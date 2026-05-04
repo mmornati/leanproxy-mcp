@@ -134,7 +134,7 @@ func getRealStatusList() proxy.ServerStatusList {
 	}
 
 	stdioPool := pool.NewStdioPool(5, 5*time.Minute, slog.Default())
-	httpPool := pool.NewHTTPPool(slog.Default())
+	httpPool := pool.NewHTTPClientPool(slog.Default())
 	ssePool := pool.NewSSEPool(slog.Default())
 	unifiedPool := pool.NewUnifiedPool(stdioPool, httpPool, ssePool, slog.Default())
 

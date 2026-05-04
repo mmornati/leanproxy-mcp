@@ -46,7 +46,7 @@ var (
 	toolReg       router.ToolRegistry
 	gatewayTools  gateway.GatewayTools
 	stdioPool     *pool.StdioPool
-	httpPool      *pool.HTTPPool
+	httpPool      *pool.HTTPClientPool
 	ssePool       *pool.SSEPool
 	unifiedPool   *pool.UnifiedPool
 	statusStore   *statusfile.FileStatusStore
@@ -88,7 +88,7 @@ func runServe(cmd *cobra.Command, args []string) {
 	r := router.NewRouter(toolReg, serverReg, slog.Default())
 	gatewayTools = gateway.NewGatewayTools(serverReg, toolReg, r, slog.Default())
 	stdioPool = pool.NewStdioPool(5, 5*time.Minute, slog.Default())
-	httpPool = pool.NewHTTPPool(slog.Default())
+	httpPool = pool.NewHTTPClientPool(slog.Default())
 	ssePool = pool.NewSSEPool(slog.Default())
 	unifiedPool = pool.NewUnifiedPool(stdioPool, httpPool, ssePool, slog.Default())
 

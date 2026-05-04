@@ -14,6 +14,16 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 )
 
+type ServerSource interface {
+	SendRequestToServer(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration) (*Response, error)
+	SendRequestToServerWithID(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration, id int) (*Response, error)
+	SendServerNotification(ctx context.Context, name string, method string, params map[string]interface{}) error
+	ListServers() []string
+	GetServerState(name string) (ServerState, error)
+	RestartServer(ctx context.Context, name string) error
+	Close() error
+}
+
 type Request struct {
 	Method     string          `json:"method"`
 	Params     json.RawMessage `json:"params,omitempty"`
@@ -254,6 +264,13 @@ func (p *StdioPool) ServerCount() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return len(p.servers)
+}
+
+func (p *StdioPool) HasServer(name string) bool {
+	p.mu.RLock()
+	_, exists := p.servers[name]
+	p.mu.RUnlock()
+	return exists
 }
 
 func (p *StdioPool) GetServerState(name string) (ServerState, error) {
