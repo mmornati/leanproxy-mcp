@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -175,13 +176,119 @@ func TestParseJSONRPCBatchRequest(t *testing.T) {
 		{"jsonrpc":"2.0","method":"test2","id":2}
 	]`)
 
-	reqs, err := ParseJSONRPCBatchRequest(data)
+	reqs, err := ParseJSONRPCBatchRequest(data, 0)
 	if err != nil {
 		t.Fatalf("ParseJSONRPCBatchRequest() failed: %v", err)
 	}
 	if len(reqs) != 2 {
 		t.Errorf("expected 2 requests, got %d", len(reqs))
 	}
+}
+
+func TestParseJSONRPCBatchRequestSizeLimit(t *testing.T) {
+	tests := []struct {
+		name        string
+		data        []byte
+		maxBatchSize int
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "within limit",
+			data: []byte(`[
+				{"jsonrpc":"2.0","method":"test","id":1},
+				{"jsonrpc":"2.0","method":"test2","id":2}
+			]`),
+			maxBatchSize: 5,
+			wantErr:      false,
+		},
+		{
+			name: "exactly at limit",
+			data: []byte(`[
+				{"jsonrpc":"2.0","method":"test","id":1},
+				{"jsonrpc":"2.0","method":"test2","id":2}
+			]`),
+			maxBatchSize: 2,
+			wantErr:      false,
+		},
+		{
+			name: "exceeds limit",
+			data: []byte(`[
+				{"jsonrpc":"2.0","method":"test","id":1},
+				{"jsonrpc":"2.0","method":"test2","id":2},
+				{"jsonrpc":"2.0","method":"test3","id":3}
+			]`),
+			maxBatchSize: 2,
+			wantErr:      true,
+			errContains: "batch size 3 exceeds limit 2",
+		},
+		{
+			name:        "zero limit disables check",
+			data:        []byte(`[{"jsonrpc":"2.0","method":"test","id":1},{"jsonrpc":"2.0","method":"test2","id":2},{"jsonrpc":"2.0","method":"test3","id":3}]`),
+			maxBatchSize: 0,
+			wantErr:      false,
+		},
+		{
+			name:        "large batch within limit",
+			data:        []byte(`[` + generateLargeBatch(50) + `]`),
+			maxBatchSize: 100,
+			wantErr:      false,
+		},
+		{
+			name:        "large batch exceeds limit",
+			data:        []byte(`[` + generateLargeBatch(150) + `]`),
+			maxBatchSize: 100,
+			wantErr:      true,
+			errContains: "batch size 150 exceeds limit 100",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reqs, err := ParseJSONRPCBatchRequest(tt.data, tt.maxBatchSize)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("ParseJSONRPCBatchRequest() expected error, got nil")
+				} else if tt.errContains != "" {
+					if err.Error() != "" && !contains(err.Error(), tt.errContains) {
+						t.Errorf("ParseJSONRPCBatchRequest() error = %v, want contains %q", err, tt.errContains)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("ParseJSONRPCBatchRequest() unexpected error: %v", err)
+			}
+			if reqs == nil {
+				t.Error("ParseJSONRPCBatchRequest() returned nil reqs")
+			}
+		})
+	}
+}
+
+func generateLargeBatch(count int) string {
+	result := ""
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			result += ","
+		}
+		result += fmt.Sprintf(`{"jsonrpc":"2.0","method":"test%d","id":%d}`, i, i)
+	}
+	return result
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNewJSONRPCError(t *testing.T) {

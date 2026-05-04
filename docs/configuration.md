@@ -67,6 +67,7 @@ watch:
 | `server.host` | string | `"127.0.0.1"` | Listen host |
 | `server.port` | int | `8080` | Listen port |
 | `server.timeout` | duration | `30s` | Request timeout |
+| `server.max_batch_size` | int | `100` | Maximum batch size for JSON-RPC batch requests (0 = unlimited) |
 
 ### Socket Options
 

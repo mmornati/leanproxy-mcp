@@ -318,7 +318,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 }
 
 func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, r Router, gt gateway.GatewayTools, p Pool) {
-	reqs, err := proxy.ParseJSONRPCBatchRequest(line)
+	reqs, err := proxy.ParseJSONRPCBatchRequest(line, GetConfig().MaxBatchSize)
 	if err != nil {
 		writeError(writer, proxy.ErrCodeParseError, "Parse error")
 		return
@@ -482,10 +482,12 @@ func writeError(writer *bufio.Writer, code int, message string) {
 
 type ServeConfig struct {
 	RequestTimeout time.Duration
+	MaxBatchSize  int
 }
 
 var serveConfig = &ServeConfig{
 	RequestTimeout: 30 * time.Second,
+	MaxBatchSize:   100,
 }
 
 func GetConfig() *ServeConfig {
@@ -495,6 +497,9 @@ func GetConfig() *ServeConfig {
 func SetConfig(cfg *ServeConfig) {
 	if cfg != nil && cfg.RequestTimeout > 0 {
 		serveConfig.RequestTimeout = cfg.RequestTimeout
+	}
+	if cfg != nil && cfg.MaxBatchSize > 0 {
+		serveConfig.MaxBatchSize = cfg.MaxBatchSize
 	}
 }
 
@@ -528,7 +533,7 @@ func writeErrorAsync(writer *bufio.Writer, mu *sync.Mutex, code int, message str
 }
 
 func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Writer, writerMu *sync.Mutex, r Router, gt gateway.GatewayTools, p Pool) {
-	reqs, err := proxy.ParseJSONRPCBatchRequest(line)
+	reqs, err := proxy.ParseJSONRPCBatchRequest(line, GetConfig().MaxBatchSize)
 	if err != nil {
 		writeErrorAsync(writer, writerMu, proxy.ErrCodeParseError, "Parse error")
 		return
