@@ -245,6 +245,12 @@ func (p *StdioPool) Close() error {
 		p.logger.Info("server stopped", "name", name)
 	}
 
+	for name, limiter := range p.rateLimiters {
+		limiter.Close()
+		p.logger.Info("rate limiter closed", "name", name)
+	}
+	p.rateLimiters = make(map[string]*concurrent.RateLimiter)
+
 	p.servers = make(map[string]*StdioServerV2)
 	return nil
 }
