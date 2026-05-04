@@ -391,8 +391,6 @@ func (r *inMemoryRegistry) Save(ctx context.Context) error {
 	}
 
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	data := struct {
 		Servers []*ServerEntry `json:"servers"`
 	}{
@@ -402,6 +400,7 @@ func (r *inMemoryRegistry) Save(ctx context.Context) error {
 	for _, entry := range r.servers {
 		data.Servers = append(data.Servers, entry)
 	}
+	r.mu.RUnlock()
 
 	file, err := os.OpenFile(r.persist, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
