@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -218,26 +219,23 @@ func TestServerStateTransitions(t *testing.T) {
 		name:           "test",
 		config:         StdioServerConfig{Name: "test"},
 		requestCh:      make(chan Request, 5),
-		state:          StateIdle,
 		maxConcurrent: 5,
 		logger:         slog.Default(),
 	}
+
+	atomic.StoreInt32(&server.state, stateIdle)
 
 	if !server.isHealthy() {
 		t.Error("expected server to be healthy in idle state")
 	}
 
-	server.mu.Lock()
-	server.state = StateBusy
-	server.mu.Unlock()
+	atomic.StoreInt32(&server.state, stateBusy)
 
 	if !server.isHealthy() {
 		t.Error("expected server to be healthy in busy state")
 	}
 
-	server.mu.Lock()
-	server.state = StateError
-	server.mu.Unlock()
+	atomic.StoreInt32(&server.state, stateError)
 
 	if server.isHealthy() {
 		t.Error("expected server to not be healthy in error state")
@@ -249,7 +247,6 @@ func TestServerCanAcceptRequest(t *testing.T) {
 		name:           "test",
 		config:         StdioServerConfig{Name: "test", MaxConcurrent: 3},
 		requestCh:      make(chan Request, 6),
-		state:          StateIdle,
 		maxConcurrent:  3,
 		currentLoad:    0,
 		logger:         slog.Default(),
@@ -438,9 +435,10 @@ func TestServerGetState(t *testing.T) {
 	server := &StdioServerV2{
 		name:   "test",
 		config: StdioServerConfig{Name: "test"},
-		state:  StateRunning,
 		logger: slog.Default(),
 	}
+
+	atomic.StoreInt32(&server.state, stateRunning)
 
 	state := server.getState()
 	if state != StateRunning {
@@ -453,7 +451,6 @@ func TestServerEnqueueRequest(t *testing.T) {
 		name:           "test",
 		config:         StdioServerConfig{Name: "test", MaxConcurrent: 2},
 		requestCh:      make(chan Request, 4),
-		state:          StateIdle,
 		maxConcurrent:  2,
 		currentLoad:    0,
 		logger:         slog.Default(),

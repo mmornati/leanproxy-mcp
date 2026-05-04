@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/concurrent"
@@ -78,6 +79,7 @@ const (
 	StateStopped  ServerState = "stopped"
 	StateStarting ServerState = "starting"
 	StateError    ServerState = "error"
+	StateUnknown  ServerState = "unknown"
 )
 
 type StdioPool struct {
@@ -330,11 +332,10 @@ func (p *StdioPool) RestartServer(ctx context.Context, name string) error {
 
 	time.Sleep(500 * time.Millisecond)
 
-	server.mu.Lock()
-	if server.state == StateStopping {
-		server.state = StateStopped
+	currentState := atomic.LoadInt32(&server.state)
+	if currentState == stateStopping {
+		atomic.StoreInt32(&server.state, stateStopped)
 	}
-	server.mu.Unlock()
 
 	return server.spawn(ctx)
 }
