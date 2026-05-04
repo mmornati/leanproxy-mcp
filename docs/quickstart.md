@@ -15,6 +15,79 @@ leanproxy-mcp server add filesystem "npx -y @modelcontextprotocol/server-filesys
 # Or manually edit ~/.config/leanproxy_servers.yaml
 ```
 
+#### Server Configuration Format
+
+The server configuration file supports three transport types: `stdio`, `http`, and `sse`.
+
+```yaml
+version: "1.0"
+servers:
+  - name: <server-name>
+    enabled: true
+    transport: <stdio|http|sse>
+    timeout: 30s
+    connect_timeout: 10s
+    # Transport-specific configuration
+    stdio:
+      command: <command>
+      args: [<args>]
+      env: [<env-vars>]
+      cwd: <working-directory>
+    http:
+      url: <http-url>
+      headers:
+        <header-key>: <header-value>
+    sse:
+      url: <sse-url>
+```
+
+##### Stdio Transport Example
+
+```yaml
+servers:
+  - name: filesystem
+    enabled: true
+    transport: stdio
+    stdio:
+      command: npx
+      args:
+        - -y
+        - @modelcontextprotocol/server-filesystem
+        - ./"
+      cwd: .
+    timeout: 30s
+```
+
+##### HTTP Transport Example (with Authentication)
+
+```yaml
+servers:
+  - name: github
+    enabled: true
+    transport: http
+    http:
+      url: https://api.githubcopilot.com/mcp
+      headers:
+        Authorization: Bearer ghp_yourPersonalAccessToken
+        Content-Type: application/json
+    timeout: 30s
+    connect_timeout: 10s
+```
+
+##### SSE Transport Example
+
+```yaml
+servers:
+  - name: my-sse-server
+    enabled: true
+    transport: sse
+    sse:
+      url: https://your-server.com/mcp/sse
+    timeout: 30s
+```
+
+> **Tip**: For GitHub Copilot, use the `/mcp` endpoint (not `/mcp/sse`) with HTTP transport and your PAT in the Authorization header.
+
 ### 2. Run LeanProxy-MCP as an MCP Server
 
 Start leanproxy-mcp in stdio mode to proxy all configured MCP servers:

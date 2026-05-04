@@ -347,6 +347,9 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	}
 
 	stdioPool := pool.NewStdioPool(5, 5*time.Minute, slog.Default())
+	httpPool := pool.NewHTTPClientPool(slog.Default())
+	ssePool := pool.NewSSEPool(slog.Default())
+	unifiedPool := pool.NewUnifiedPool(stdioPool, httpPool, ssePool, slog.Default())
 
 	startedCount := 0
 	for _, srv := range cfg.Servers {
@@ -354,15 +357,28 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 			slog.Debug("server disabled, skipping", "name", srv.Name)
 			continue
 		}
-		if srv.Transport != registry.TransportStdio {
-			slog.Debug("server not stdio transport, skipping", "name", srv.Name, "transport", srv.Transport)
-			continue
-		}
-		if err := stdioPool.StartServer(ctx, srv); err != nil {
-			slog.Warn("failed to start server", "name", srv.Name, "error", err)
-		} else {
-			startedCount++
-			slog.Info("server started", "name", srv.Name)
+		switch srv.Transport {
+		case registry.TransportStdio:
+			if err := stdioPool.StartServer(ctx, srv); err != nil {
+				slog.Warn("failed to start stdio server", "name", srv.Name, "error", err)
+			} else {
+				startedCount++
+				slog.Info("stdio server started", "name", srv.Name)
+			}
+		case registry.TransportHTTP:
+			if err := httpPool.StartServer(ctx, srv); err != nil {
+				slog.Warn("failed to start HTTP server", "name", srv.Name, "error", err)
+			} else {
+				startedCount++
+				slog.Info("HTTP server started", "name", srv.Name)
+			}
+		case registry.TransportSSE:
+			if err := ssePool.StartServer(ctx, srv); err != nil {
+				slog.Warn("failed to start SSE server", "name", srv.Name, "error", err)
+			} else {
+				startedCount++
+				slog.Info("SSE server started", "name", srv.Name)
+			}
 		}
 	}
 
@@ -397,14 +413,15 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 			statusStore.RemoveFile()
 		}
 		stdioPool.Close()
+		httpPool.Close()
 		os.Exit(0)
 	}()
 
 	if statusStore != nil {
-		go updateStdioServerStatus(statusStore, stdioPool)
+		go updateServerStatus(statusStore, unifiedPool, stdioPool)
 	}
 
-	handler := mcp.NewHandlerWithToolStore(stdioPool, slog.Default(), cache)
+	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), cache)
 
 	return handleStdio(ctx, handler, stdioPool, statusStore)
 }
@@ -445,21 +462,26 @@ func updateStdioServerStatusOnce(statusStore *statusfile.FileStatusStore, stdioP
 	statusStore.UpdateServers(statuses)
 }
 
-func updateStdioServerStatus(statusStore *statusfile.FileStatusStore, stdioPool *pool.StdioPool) {
+func updateServerStatus(statusStore *statusfile.FileStatusStore, unifiedPool pool.ServerSource, stdioPool *pool.StdioPool) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if statusStore == nil || stdioPool == nil {
+		if statusStore == nil || unifiedPool == nil {
 			continue
 		}
 
-		servers := stdioPool.ListServers()
+		servers := unifiedPool.ListServers()
 		statuses := make([]statusfile.ServerStatus, 0, len(servers))
 
 		for _, name := range servers {
-			state, _ := stdioPool.GetServerState(name)
-			stats, _ := stdioPool.GetServerStats(name)
+			state, _ := unifiedPool.GetServerState(name)
+
+			stats := pool.ServerStats{}
+			stdioStats, err := stdioPool.GetServerStats(name)
+			if err == nil {
+				stats = stdioStats
+			}
 
 			status := statusfile.ServerStatus{
 				Name:         name,

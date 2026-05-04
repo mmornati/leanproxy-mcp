@@ -17,12 +17,14 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/router"
 	"github.com/mmornati/leanproxy-mcp/pkg/statusfile"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils/dryrun"
 	"github.com/spf13/cobra"
 )
@@ -40,11 +42,14 @@ var serveFlags struct {
 }
 
 var (
-	serverReg    registry.Registry
-	toolReg      router.ToolRegistry
-	gatewayTools gateway.GatewayTools
-	stdioPool    *pool.StdioPool
-	statusStore  *statusfile.FileStatusStore
+	serverReg     registry.Registry
+	toolReg       router.ToolRegistry
+	gatewayTools  gateway.GatewayTools
+	stdioPool     *pool.StdioPool
+	httpPool      *pool.HTTPClientPool
+	ssePool       *pool.SSEPool
+	unifiedPool   *pool.UnifiedPool
+	statusStore   *statusfile.FileStatusStore
 )
 
 type Router interface {
@@ -83,6 +88,9 @@ func runServe(cmd *cobra.Command, args []string) {
 	r := router.NewRouter(toolReg, serverReg, slog.Default())
 	gatewayTools = gateway.NewGatewayTools(serverReg, toolReg, r, slog.Default())
 	stdioPool = pool.NewStdioPool(5, 5*time.Minute, slog.Default())
+	httpPool = pool.NewHTTPClientPool(slog.Default())
+	ssePool = pool.NewSSEPool(slog.Default())
+	unifiedPool = pool.NewUnifiedPool(stdioPool, httpPool, ssePool, slog.Default())
 
 	configPath := GlobalConfigPath
 	if configPath == "" {
@@ -104,9 +112,21 @@ func runServe(cmd *cobra.Command, args []string) {
 					"transport", srv.Transport,
 					"enabled", srv.Enabled != nil && *srv.Enabled,
 				)
-				if srv.Transport == registry.TransportStdio && srv.Enabled != nil && *srv.Enabled {
+				if srv.Enabled == nil || !*srv.Enabled {
+					continue
+				}
+				switch srv.Transport {
+				case registry.TransportStdio:
 					if err := stdioPool.StartServer(ctx, srv); err != nil {
-						slog.Warn("failed to start server", "name", srv.Name, "error", err)
+						slog.Warn("failed to start stdio server", "name", srv.Name, "error", err)
+					}
+				case registry.TransportHTTP:
+					if err := httpPool.StartServer(ctx, srv); err != nil {
+						slog.Warn("failed to start HTTP server", "name", srv.Name, "error", err)
+					}
+				case registry.TransportSSE:
+					if err := ssePool.StartServer(ctx, srv); err != nil {
+						slog.Warn("failed to start SSE server", "name", srv.Name, "error", err)
 					}
 				}
 			}
@@ -114,6 +134,22 @@ func runServe(cmd *cobra.Command, args []string) {
 	} else {
 		slog.Info("no config file specified, starting in passthrough mode")
 	}
+
+	var toolStore toolstore.Cache
+	fileCache, err := toolstore.NewFileCache(slog.Default())
+	if err != nil {
+		slog.Warn("failed to create tool cache, using no-op cache", "error", err)
+		toolStore = toolstore.NewNoOpCache()
+	} else {
+		toolStore = fileCache
+		slog.Info("tool cache enabled", "path", fileCache.GetCacheDir())
+	}
+
+	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), toolStore)
+
+	cacheCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	handler.PopulateToolCache(cacheCtx)
 
 	slog.Info("starting server", "listen", serveFlags.listenAddr, "upstream", serveFlags.upstreamURL)
 
@@ -143,6 +179,12 @@ func runServe(cmd *cobra.Command, args []string) {
 		if stdioPool != nil {
 			stdioPool.Close()
 		}
+		if httpPool != nil {
+			httpPool.Close()
+		}
+		if ssePool != nil {
+			ssePool.Close()
+		}
 		os.Exit(0)
 	}()
 
@@ -155,7 +197,7 @@ func runServe(cmd *cobra.Command, args []string) {
 			continue
 		}
 		slog.Debug("connection accepted", "remote", conn.RemoteAddr())
-		go handleConnection(conn, r, gatewayTools, stdioPool)
+		go handleConnection(conn, r, gatewayTools, unifiedPool)
 	}
 }
 
@@ -566,22 +608,27 @@ func updateServerStatusPeriodically() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if statusStore == nil || stdioPool == nil {
+		if statusStore == nil || unifiedPool == nil {
 			continue
 		}
 
-		servers := stdioPool.ListServers()
+		servers := unifiedPool.ListServers()
 		statuses := make([]statusfile.ServerStatus, 0, len(servers))
 
 		for _, name := range servers {
-			state, _ := stdioPool.GetServerState(name)
-			stats, _ := stdioPool.GetServerStats(name)
+			state, _ := unifiedPool.GetServerState(name)
+
+			stats := pool.ServerStats{}
+			stdioStats, err := stdioPool.GetServerStats(name)
+			if err == nil {
+				stats = stdioStats
+			}
 
 			status := statusfile.ServerStatus{
 				Name:         name,
 				RequestCount: stats.RequestCount,
 				ErrorCount:   stats.ErrorCount,
-				RestartCount:  stats.RestartCount,
+				RestartCount: stats.RestartCount,
 				Uptime:       formatUptime(stats),
 			}
 
