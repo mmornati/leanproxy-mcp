@@ -271,7 +271,8 @@ func (p *HTTPClientPool) SendRequestToServerWithID(ctx context.Context, name str
 		if err != nil {
 			return nil, err
 		}
-		resultBytes, _ := json.Marshal(tools)
+		result := mcp.ListToolsResult{Tools: tools}
+		resultBytes, _ := json.Marshal(result)
 		return &Response{
 			Result: resultBytes,
 			ID:     id,
