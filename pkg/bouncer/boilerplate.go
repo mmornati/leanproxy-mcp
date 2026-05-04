@@ -85,7 +85,7 @@ func NewBoilerplatePruner(enabled, redactImports, redactLicenses bool, customPat
 	}
 
 	for _, cp := range customPatterns {
-		re, err := regexp.Compile(cp.Pattern)
+		re, err := SafeCompile(cp.Pattern)
 		if err != nil {
 			slog.Warn("invalid custom boilerplate pattern, skipping",
 				"name", cp.Name,
