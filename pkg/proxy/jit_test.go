@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
-	"time"
 )
 
 type mockSchemaCache struct {
@@ -445,6 +444,4 @@ func ExampleJITHandler() {
 
 	cached, _ := cache.Get("myserver/example-tool")
 	_ = cached
-
-	time.Sleep(1 * time.Millisecond)
 }

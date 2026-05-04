@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestServerConfigValidation(t *testing.T) {
@@ -254,18 +256,14 @@ func TestProcessAlreadyExited(t *testing.T) {
 	}
 
 	_, err := manager.Start(context.Background(), config)
-	if err != nil {
-		t.Fatalf("Start() failed: %v", err)
-	}
+	require.NoError(t, err, "Start() failed")
 
-	time.Sleep(100 * time.Millisecond)
-
-	manager.mu.RLock()
-	entry := manager.servers[config.ID]
-	manager.mu.RUnlock()
-	if entry != nil {
-		t.Log("Server still in registry after quick exit")
-	}
+	require.Eventually(t, func() bool {
+		manager.mu.RLock()
+		entry := manager.servers[config.ID]
+		manager.mu.RUnlock()
+		return entry == nil
+	}, 100*time.Millisecond, 10*time.Millisecond)
 
 	manager.Close()
 }

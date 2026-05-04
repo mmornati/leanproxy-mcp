@@ -12,6 +12,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewStdioPool(t *testing.T) {
@@ -204,16 +205,10 @@ func TestStdioPoolServerRestart(t *testing.T) {
 	}
 
 	err := pool.StartServer(ctx, config)
-	if err != nil {
-		t.Fatalf("failed to start server: %v", err)
-	}
-
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, err, "failed to start server")
 
 	err = pool.RestartServer(ctx, "test-server")
-	if err != nil {
-		t.Fatalf("RestartServer failed: %v", err)
-	}
+	require.NoError(t, err, "RestartServer failed")
 }
 
 func TestServerStateTransitions(t *testing.T) {
@@ -623,16 +618,13 @@ func TestPoolSendRequestTimeout(t *testing.T) {
 	}
 
 	pool.StartServer(ctx, config)
-	time.Sleep(100 * time.Millisecond)
 
 	_, err := pool.SendRequest(ctx, "test-server", &proxy.JSONRPCRequest{
 		Method: "test",
 		ID:     1,
 	}, 100*time.Millisecond)
 
-	if err == nil {
-		t.Error("expected timeout error")
-	}
+	require.Error(t, err, "expected timeout error")
 }
 
 func TestPoolSendRequestToServer(t *testing.T) {

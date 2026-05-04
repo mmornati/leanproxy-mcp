@@ -9,7 +9,20 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
+
+func waitForSocket(path string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if _, err := net.Dial("unix", path); err == nil {
+			return nil
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return fmt.Errorf("socket not ready")
+}
 
 func TestServerLifecycle(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -23,9 +36,7 @@ func TestServerLifecycle(t *testing.T) {
 	}
 
 	server, err := NewServer(config, nil)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	require.NoError(t, err, "NewServer failed")
 
 	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
 		return map[string]string{"echo": "ok"}, nil
@@ -39,7 +50,7 @@ func TestServerLifecycle(t *testing.T) {
 		errChan <- server.Serve(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, waitForSocket(socketPath, 100*time.Millisecond), "socket not ready")
 
 	select {
 	case err := <-errChan:
@@ -102,9 +113,7 @@ func TestJSONRPCRequestParsing(t *testing.T) {
 	}
 
 	server, err := NewServer(config, nil)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	require.NoError(t, err, "NewServer failed")
 
 	resolver := &mockTokenResolver{}
 	handler := NewHandler(resolver, nil, nil, nil, nil)
@@ -117,12 +126,10 @@ func TestJSONRPCRequestParsing(t *testing.T) {
 		server.Serve(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, waitForSocket(socketPath, 100*time.Millisecond), "socket not ready")
 
 	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatalf("Dial failed: %v", err)
-	}
+	require.NoError(t, err, "Dial failed")
 	defer conn.Close()
 
 	req := `{"jsonrpc":"2.0","method":"token.resolve","params":{"uri":"api://example"},"id":1}`
@@ -190,12 +197,10 @@ func TestMalformedRequest(t *testing.T) {
 		server.Serve(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, waitForSocket(socketPath, 100*time.Millisecond), "socket not ready")
 
 	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatalf("Dial failed: %v", err)
-	}
+	require.NoError(t, err, "Dial failed")
 
 	req := `{invalid jsonrpc request}`
 	_, err = fmt.Fprintf(conn, "%s\n", req)
@@ -238,9 +243,7 @@ func TestConcurrentConnections(t *testing.T) {
 	}
 
 	server, err := NewServer(config, nil)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	require.NoError(t, err, "NewServer failed")
 
 	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
 		return map[string]string{"echo": "ok"}, nil
@@ -253,12 +256,10 @@ func TestConcurrentConnections(t *testing.T) {
 		server.Serve(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, waitForSocket(socketPath, 100*time.Millisecond), "socket not ready")
 
 	conn1, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatalf("Dial 1 failed: %v", err)
-	}
+	require.NoError(t, err, "Dial 1 failed")
 	defer conn1.Close()
 
 	conn2, err := net.Dial("unix", socketPath)
@@ -322,9 +323,7 @@ func TestMessageTooLarge(t *testing.T) {
 	}
 
 	server, err := NewServer(config, nil)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	require.NoError(t, err, "NewServer failed")
 
 	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
 		return nil, nil
@@ -337,21 +336,18 @@ func TestMessageTooLarge(t *testing.T) {
 		server.Serve(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, waitForSocket(socketPath, 100*time.Millisecond), "socket not ready")
 
 	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatalf("Dial failed: %v", err)
-	}
+	require.NoError(t, err, "Dial failed")
 	defer conn.Close()
 
 	largeReq := `{"jsonrpc":"2.0","method":"test.echo","params":{},"id":1}` + string(make([]byte, 200))
 	_, err = fmt.Fprintf(conn, "%s\n", largeReq)
-	if err != nil {
-		t.Fatalf("Write failed: %v", err)
-	}
+	require.NoError(t, err, "Write failed")
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, waitForSocket(socketPath, 100*time.Millisecond), "server not ready after write")
+
 	conn.Close()
 	cancel()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -410,9 +406,7 @@ func TestRequestWithAuthToken(t *testing.T) {
 	}
 
 	server, err := NewServer(config, nil)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	require.NoError(t, err, "NewServer failed")
 
 	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
 		return map[string]string{"echo": "ok"}, nil
@@ -425,12 +419,10 @@ func TestRequestWithAuthToken(t *testing.T) {
 		server.Serve(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, waitForSocket(socketPath, 100*time.Millisecond), "socket not ready")
 
 	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatalf("Dial failed: %v", err)
-	}
+	require.NoError(t, err, "Dial failed")
 	defer conn.Close()
 
 	req := `{"jsonrpc":"2.0","method":"test.echo","params":{},"id":1,"auth_token":"my-secret-token"}`
@@ -478,9 +470,7 @@ func TestRequestWithoutAuthToken(t *testing.T) {
 	}
 
 	server, err := NewServer(config, nil)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	require.NoError(t, err, "NewServer failed")
 
 	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
 		return map[string]string{"echo": "ok"}, nil
@@ -493,12 +483,10 @@ func TestRequestWithoutAuthToken(t *testing.T) {
 		server.Serve(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, waitForSocket(socketPath, 100*time.Millisecond), "socket not ready")
 
 	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatalf("Dial failed: %v", err)
-	}
+	require.NoError(t, err, "Dial failed")
 	defer conn.Close()
 
 	req := `{"jsonrpc":"2.0","method":"test.echo","params":{},"id":1}`
@@ -551,9 +539,7 @@ func TestRequestWithInvalidAuthToken(t *testing.T) {
 	}
 
 	server, err := NewServer(config, nil)
-	if err != nil {
-		t.Fatalf("NewServer failed: %v", err)
-	}
+	require.NoError(t, err, "NewServer failed")
 
 	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
 		return map[string]string{"echo": "ok"}, nil
@@ -566,12 +552,10 @@ func TestRequestWithInvalidAuthToken(t *testing.T) {
 		server.Serve(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, waitForSocket(socketPath, 100*time.Millisecond), "socket not ready")
 
 	conn, err := net.Dial("unix", socketPath)
-	if err != nil {
-		t.Fatalf("Dial failed: %v", err)
-	}
+	require.NoError(t, err, "Dial failed")
 	defer conn.Close()
 
 	req := `{"jsonrpc":"2.0","method":"test.echo","params":{},"id":1,"auth_token":"wrong-token"}`
