@@ -17,10 +17,11 @@ import (
 )
 
 type jsonRPCRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	ID      interface{}     `json:"id"`
+	JSONRPC  string          `json:"jsonrpc"`
+	Method   string          `json:"method"`
+	Params   json.RawMessage `json:"params,omitempty"`
+	ID       interface{}     `json:"id"`
+	AuthToken string         `json:"auth_token,omitempty"`
 }
 
 type jsonRPCResponse struct {
@@ -42,6 +43,7 @@ const (
 	ErrCodeMethodNotFound = -32601
 	ErrCodeInvalidParams  = -32602
 	ErrCodeInternalError  = -32603
+	ErrCodeUnauthorized   = -32604
 )
 
 type MethodHandler func(ctx context.Context, params json.RawMessage) (interface{}, error)
@@ -175,6 +177,11 @@ func (s *Server) handleRequest(conn net.Conn, data []byte, reader *bufio.Reader)
 		return
 	}
 
+	if !s.Authenticate(req.AuthToken) {
+		s.sendError(conn, req.ID, ErrCodeUnauthorized, "authentication required")
+		return
+	}
+
 	s.mu.RLock()
 	handler, ok := s.methods[req.Method]
 	s.mu.RUnlock()
@@ -241,6 +248,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 func (s *Server) Addr() net.Addr {
 	return s.listener.Addr()
+}
+
+func (s *Server) Authenticate(token string) bool {
+	if s.config.AuthToken == "" {
+		return true
+	}
+	return token == s.config.AuthToken
 }
 
 func (s *Server) getTransport() (string, string) {

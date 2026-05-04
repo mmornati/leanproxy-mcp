@@ -358,3 +358,256 @@ func TestMessageTooLarge(t *testing.T) {
 	defer shutdownCancel()
 	server.Shutdown(shutdownCtx)
 }
+
+func TestAuthenticateWithToken(t *testing.T) {
+	config := ServerConfig{
+		Path:       "/tmp/test.sock",
+		Perm:       0700,
+		MaxMsgSize: 1024 * 1024,
+		AuthToken:  "secret-token",
+	}
+
+	server, err := NewServer(config, nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if !server.Authenticate("secret-token") {
+		t.Error("Expected valid token to authenticate")
+	}
+
+	if server.Authenticate("wrong-token") {
+		t.Error("Expected invalid token to fail authentication")
+	}
+}
+
+func TestAuthenticateNoTokenConfigured(t *testing.T) {
+	config := ServerConfig{
+		Path:       "/tmp/test.sock",
+		Perm:       0700,
+		MaxMsgSize: 1024 * 1024,
+	}
+
+	server, err := NewServer(config, nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	if !server.Authenticate("any-token") {
+		t.Error("Expected any token to succeed when no auth token configured")
+	}
+}
+
+func TestRequestWithAuthToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	config := ServerConfig{
+		Path:       socketPath,
+		Perm:       0700,
+		MaxMsgSize: 1024 * 1024,
+		AuthToken:  "my-secret-token",
+	}
+
+	server, err := NewServer(config, nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		return map[string]string{"echo": "ok"}, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		server.Serve(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := `{"jsonrpc":"2.0","method":"test.echo","params":{},"id":1,"auth_token":"my-secret-token"}`
+	_, err = fmt.Fprintf(conn, "%s\n", req)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	resp := make([]byte, 4096)
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := conn.Read(resp)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	var rpcResp map[string]interface{}
+	if err := json.Unmarshal(resp[:n], &rpcResp); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if rpcResp["id"] != float64(1) {
+		t.Errorf("Expected id 1, got %v", rpcResp["id"])
+	}
+
+	if rpcResp["error"] != nil {
+		t.Error("Expected successful response with valid token")
+	}
+
+	conn.Close()
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	server.Shutdown(shutdownCtx)
+}
+
+func TestRequestWithoutAuthToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	config := ServerConfig{
+		Path:       socketPath,
+		Perm:       0700,
+		MaxMsgSize: 1024 * 1024,
+		AuthToken:  "my-secret-token",
+	}
+
+	server, err := NewServer(config, nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		return map[string]string{"echo": "ok"}, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		server.Serve(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := `{"jsonrpc":"2.0","method":"test.echo","params":{},"id":1}`
+	_, err = fmt.Fprintf(conn, "%s\n", req)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	resp := make([]byte, 4096)
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := conn.Read(resp)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	var rpcResp map[string]interface{}
+	if err := json.Unmarshal(resp[:n], &rpcResp); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if rpcResp["id"] != float64(1) {
+		t.Errorf("Expected id 1, got %v", rpcResp["id"])
+	}
+
+	errObj, ok := rpcResp["error"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected error response when auth token missing")
+	}
+
+	if errObj["code"].(float64) != -32604 {
+		t.Errorf("Expected error code -32604 (unauthorized), got %v", errObj["code"])
+	}
+
+	conn.Close()
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	server.Shutdown(shutdownCtx)
+}
+
+func TestRequestWithInvalidAuthToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	socketPath := filepath.Join(tmpDir, "test.sock")
+
+	config := ServerConfig{
+		Path:       socketPath,
+		Perm:       0700,
+		MaxMsgSize: 1024 * 1024,
+		AuthToken:  "my-secret-token",
+	}
+
+	server, err := NewServer(config, nil)
+	if err != nil {
+		t.Fatalf("NewServer failed: %v", err)
+	}
+
+	server.RegisterMethod("test.echo", func(ctx context.Context, params json.RawMessage) (interface{}, error) {
+		return map[string]string{"echo": "ok"}, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		server.Serve(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	conn, err := net.Dial("unix", socketPath)
+	if err != nil {
+		t.Fatalf("Dial failed: %v", err)
+	}
+	defer conn.Close()
+
+	req := `{"jsonrpc":"2.0","method":"test.echo","params":{},"id":1,"auth_token":"wrong-token"}`
+	_, err = fmt.Fprintf(conn, "%s\n", req)
+	if err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+
+	resp := make([]byte, 4096)
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	n, err := conn.Read(resp)
+	if err != nil {
+		t.Fatalf("Read failed: %v", err)
+	}
+
+	var rpcResp map[string]interface{}
+	if err := json.Unmarshal(resp[:n], &rpcResp); err != nil {
+		t.Fatalf("Unmarshal failed: %v", err)
+	}
+
+	if rpcResp["id"] != float64(1) {
+		t.Errorf("Expected id 1, got %v", rpcResp["id"])
+	}
+
+	errObj, ok := rpcResp["error"].(map[string]interface{})
+	if !ok {
+		t.Fatal("Expected error response when auth token is invalid")
+	}
+
+	if errObj["code"].(float64) != -32604 {
+		t.Errorf("Expected error code -32604 (unauthorized), got %v", errObj["code"])
+	}
+
+	conn.Close()
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	server.Shutdown(shutdownCtx)
+}

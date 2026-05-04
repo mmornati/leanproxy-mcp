@@ -68,6 +68,16 @@ watch:
 | `server.port` | int | `8080` | Listen port |
 | `server.timeout` | duration | `30s` | Request timeout |
 
+### Socket Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `socket.path` | string | `"~/.leanproxy/leanproxy.sock"` | Unix socket path |
+| `socket.perm` | int | `0700` | Socket file permissions |
+| `socket.max_msg_size` | int | `1048576` (1MB) | Maximum message size |
+| `socket.rate_limit` | int | `100` | Rate limit (requests/second) |
+| `socket.auth_token` | string | `""` | Authentication token (empty = no auth) |
+
 ### Bouncer (Redaction) Options
 
 | Option | Type | Default | Description |
@@ -121,6 +131,54 @@ Output:
   - bearer-token: JWT Bearer token (three base64url segments)
   - env-var-value: Environment variable assignment
 ```
+
+## Socket Authentication
+
+The socket server supports optional token-based authentication to prevent unauthorized access.
+
+### Enabling Authentication
+
+To enable authentication, set the `auth_token` in your socket configuration:
+
+```yaml
+socket:
+  auth_token: "your-secret-token"
+```
+
+### Using Authenticated Requests
+
+When authentication is enabled, all JSON-RPC requests must include the `auth_token` field:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "token.resolve",
+  "params": {"uri": "api://example"},
+  "id": 1,
+  "auth_token": "your-secret-token"
+}
+```
+
+### Error Responses
+
+When authentication fails (missing or invalid token), the server returns:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "error": {
+    "code": -32604,
+    "message": "authentication required"
+  }
+}
+```
+
+### Security Notes
+
+- Without an auth token configured, all requests are allowed
+- The auth token is transmitted in plain text - use TLS or Unix socket permissions for security
+- Token comparison is exact (no hashing)
 
 ## Custom Redaction Patterns
 
