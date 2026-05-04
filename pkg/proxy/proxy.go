@@ -195,10 +195,13 @@ func IsBatchRequest(data []byte) bool {
 	return false
 }
 
-func ParseJSONRPCBatchRequest(data []byte) ([]JSONRPCRequest, error) {
+func ParseJSONRPCBatchRequest(data []byte, maxBatchSize int) ([]JSONRPCRequest, error) {
 	var reqs []JSONRPCRequest
 	if err := json.Unmarshal(data, &reqs); err != nil {
 		return nil, fmt.Errorf("proxy: parse batch request: %w", err)
+	}
+	if maxBatchSize > 0 && len(reqs) > maxBatchSize {
+		return nil, fmt.Errorf("proxy: batch size %d exceeds limit %d", len(reqs), maxBatchSize)
 	}
 	return reqs, nil
 }
