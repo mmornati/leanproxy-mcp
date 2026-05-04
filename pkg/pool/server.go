@@ -43,11 +43,11 @@ type ServerHandle struct {
 }
 
 type ServerStats struct {
-	RequestCount  int64
-	ErrorCount    int64
-	AvgLatencyMs  float64
-	LastRequestAt time.Time
-	RestartCount  int
+	RequestCount   int64
+	ErrorCount     int64
+	AvgLatencyMs   float64
+	LastRequestAt  time.Time
+	RestartCount   int
 	CurrentBackoff time.Duration
 }
 

@@ -15,14 +15,14 @@ import (
 )
 
 type SSEServer struct {
-	name     string
-	config   *migrate.ServerConfig
+	name      string
+	config    *migrate.ServerConfig
 	mcpClient *client.Client
-	state    ServerState
-	mu       sync.RWMutex
-	logger   *slog.Logger
-	initOnce sync.Once
-	initErr  error
+	state     ServerState
+	mu        sync.RWMutex
+	logger    *slog.Logger
+	initOnce  sync.Once
+	initErr   error
 }
 
 func NewSSEServer(name string, config *migrate.ServerConfig, logger *slog.Logger) *SSEServer {

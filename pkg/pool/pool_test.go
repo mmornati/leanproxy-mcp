@@ -2,6 +2,7 @@ package pool
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 )
 
@@ -34,7 +36,7 @@ func TestStdioPoolServerLifecycle(t *testing.T) {
 	defer pool.Close()
 
 	config := &migrate.ServerConfig{
-		Name: "test-server",
+		Name:      "test-server",
 		Transport: registry.TransportStdio,
 		Stdio: &migrate.StdioConfig{
 			Command: "cat",
@@ -78,8 +80,8 @@ func TestStdioPoolStartAllServers(t *testing.T) {
 
 	configs := []*migrate.ServerConfig{
 		{
-			Name:     "server1",
-			Enabled:  &enabled,
+			Name:      "server1",
+			Enabled:   &enabled,
 			Transport: registry.TransportStdio,
 			Stdio: &migrate.StdioConfig{
 				Command: "sleep",
@@ -88,8 +90,8 @@ func TestStdioPoolStartAllServers(t *testing.T) {
 			TimeoutValue: 30 * time.Second,
 		},
 		{
-			Name:     "server2",
-			Enabled:  &enabled,
+			Name:      "server2",
+			Enabled:   &enabled,
 			Transport: registry.TransportStdio,
 			Stdio: &migrate.StdioConfig{
 				Command: "sleep",
@@ -98,8 +100,8 @@ func TestStdioPoolStartAllServers(t *testing.T) {
 			TimeoutValue: 30 * time.Second,
 		},
 		{
-			Name:     "server3-disabled",
-			Enabled:  &disabled,
+			Name:      "server3-disabled",
+			Enabled:   &disabled,
 			Transport: registry.TransportStdio,
 			Stdio: &migrate.StdioConfig{
 				Command: "sleep",
@@ -131,7 +133,7 @@ func TestStdioPoolGetServer(t *testing.T) {
 	}
 
 	config := &migrate.ServerConfig{
-		Name: "test-server",
+		Name:      "test-server",
 		Transport: registry.TransportStdio,
 		Stdio: &migrate.StdioConfig{
 			Command: "cat",
@@ -164,7 +166,7 @@ func TestStdioPoolClose(t *testing.T) {
 	pool := NewStdioPool(5, 5*time.Minute, nil)
 
 	config := &migrate.ServerConfig{
-		Name: "test-server",
+		Name:      "test-server",
 		Transport: registry.TransportStdio,
 		Stdio: &migrate.StdioConfig{
 			Command: "sleep",
@@ -192,7 +194,7 @@ func TestStdioPoolServerRestart(t *testing.T) {
 	defer pool.Close()
 
 	config := &migrate.ServerConfig{
-		Name: "test-server",
+		Name:      "test-server",
 		Transport: registry.TransportStdio,
 		Stdio: &migrate.StdioConfig{
 			Command: "cat",
@@ -216,11 +218,11 @@ func TestStdioPoolServerRestart(t *testing.T) {
 
 func TestServerStateTransitions(t *testing.T) {
 	server := &StdioServerV2{
-		name:           "test",
-		config:         StdioServerConfig{Name: "test"},
-		requestCh:      make(chan Request, 5),
+		name:          "test",
+		config:        StdioServerConfig{Name: "test"},
+		requestCh:     make(chan Request, 5),
 		maxConcurrent: 5,
-		logger:         slog.Default(),
+		logger:        slog.Default(),
 	}
 
 	atomic.StoreInt32(&server.state, stateIdle)
@@ -244,12 +246,12 @@ func TestServerStateTransitions(t *testing.T) {
 
 func TestServerCanAcceptRequest(t *testing.T) {
 	server := &StdioServerV2{
-		name:           "test",
-		config:         StdioServerConfig{Name: "test", MaxConcurrent: 3},
-		requestCh:      make(chan Request, 6),
-		maxConcurrent:  3,
-		currentLoad:    0,
-		logger:         slog.Default(),
+		name:          "test",
+		config:        StdioServerConfig{Name: "test", MaxConcurrent: 3},
+		requestCh:     make(chan Request, 6),
+		maxConcurrent: 3,
+		currentLoad:   0,
+		logger:        slog.Default(),
 	}
 
 	if !server.canAcceptRequest() {
@@ -396,7 +398,7 @@ func TestConcurrentRequests(t *testing.T) {
 	defer pool.Close()
 
 	config := &migrate.ServerConfig{
-		Name: "test-server",
+		Name:      "test-server",
 		Transport: registry.TransportStdio,
 		Stdio: &migrate.StdioConfig{
 			Command: "cat",
@@ -415,10 +417,10 @@ func TestConcurrentRequests(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			req := Request{
-				Method:  "test",
-				Params:  nil,
-				ID:      id,
-				Timeout: 2 * time.Second,
+				Method:   "test",
+				Params:   nil,
+				ID:       id,
+				Timeout:  2 * time.Second,
 				ResultCh: make(chan *Response, 1),
 			}
 			err := pool.PutRequest("test-server", req)
@@ -448,12 +450,12 @@ func TestServerGetState(t *testing.T) {
 
 func TestServerEnqueueRequest(t *testing.T) {
 	server := &StdioServerV2{
-		name:           "test",
-		config:         StdioServerConfig{Name: "test", MaxConcurrent: 2},
-		requestCh:      make(chan Request, 4),
-		maxConcurrent:  2,
-		currentLoad:    0,
-		logger:         slog.Default(),
+		name:          "test",
+		config:        StdioServerConfig{Name: "test", MaxConcurrent: 2},
+		requestCh:     make(chan Request, 4),
+		maxConcurrent: 2,
+		currentLoad:   0,
+		logger:        slog.Default(),
 	}
 
 	req := Request{
@@ -480,7 +482,7 @@ func TestPoolGetServerStats(t *testing.T) {
 	defer pool.Close()
 
 	config := &migrate.ServerConfig{
-		Name: "test-server",
+		Name:      "test-server",
 		Transport: registry.TransportStdio,
 		Stdio: &migrate.StdioConfig{
 			Command: "cat",
@@ -507,7 +509,7 @@ func TestPoolStopServer(t *testing.T) {
 	defer pool.Close()
 
 	config := &migrate.ServerConfig{
-		Name: "test-server",
+		Name:      "test-server",
 		Transport: registry.TransportStdio,
 		Stdio: &migrate.StdioConfig{
 			Command: "cat",
@@ -527,4 +529,312 @@ func TestPoolStopServer(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for stopped server")
 	}
+}
+
+func TestPoolHasServer(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	if pool.HasServer("nonexistent") {
+		t.Error("expected HasServer to return false for nonexistent server")
+	}
+
+	config := &migrate.ServerConfig{
+		Name:      "test-server",
+		Transport: registry.TransportStdio,
+		Stdio: &migrate.StdioConfig{
+			Command: "cat",
+			Args:    []string{},
+		},
+		TimeoutValue: 30 * time.Second,
+	}
+
+	pool.StartServer(ctx, config)
+
+	if !pool.HasServer("test-server") {
+		t.Error("expected HasServer to return true for existing server")
+	}
+}
+
+func TestPoolSendRequest(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	config := &migrate.ServerConfig{
+		Name:      "test-server",
+		Transport: registry.TransportStdio,
+		Stdio: &migrate.StdioConfig{
+			Command: "cat",
+			Args:    []string{},
+		},
+		TimeoutValue: 30 * time.Second,
+	}
+
+	pool.StartServer(ctx, config)
+
+	resultCh := make(chan *Response, 1)
+	errorCh := make(chan error, 1)
+
+	req := Request{
+		Method:   "test",
+		Params:   nil,
+		ID:       1,
+		Timeout:  2 * time.Second,
+		ResultCh: resultCh,
+		ErrorCh:  errorCh,
+	}
+
+	go func() {
+		server, err := pool.GetServer("test-server")
+		if err != nil {
+			errorCh <- err
+			return
+		}
+		server.requestCh <- req
+	}()
+
+	select {
+	case resp := <-resultCh:
+		if resp == nil {
+			t.Error("expected non-nil response")
+		}
+	case err := <-errorCh:
+		t.Logf("Request error (expected in some cases): %v", err)
+	case <-time.After(5 * time.Second):
+		t.Error("test timeout")
+	}
+}
+
+func TestPoolSendRequestTimeout(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(1, 5*time.Minute, nil)
+	defer pool.Close()
+
+	config := &migrate.ServerConfig{
+		Name:      "test-server",
+		Transport: registry.TransportStdio,
+		Stdio: &migrate.StdioConfig{
+			Command: "sleep",
+			Args:    []string{"10"},
+		},
+		TimeoutValue: 30 * time.Second,
+	}
+
+	pool.StartServer(ctx, config)
+	time.Sleep(100 * time.Millisecond)
+
+	_, err := pool.SendRequest(ctx, "test-server", &proxy.JSONRPCRequest{
+		Method: "test",
+		ID:     1,
+	}, 100*time.Millisecond)
+
+	if err == nil {
+		t.Error("expected timeout error")
+	}
+}
+
+func TestPoolSendRequestToServer(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	config := &migrate.ServerConfig{
+		Name:      "test-server",
+		Transport: registry.TransportStdio,
+		Stdio: &migrate.StdioConfig{
+			Command: "cat",
+			Args:    []string{},
+		},
+		TimeoutValue: 30 * time.Second,
+	}
+
+	pool.StartServer(ctx, config)
+
+	resultCh := make(chan *Response, 1)
+	errorCh := make(chan error, 1)
+
+	req := Request{
+		Method:   "test",
+		Params:   nil,
+		ID:       1,
+		Timeout:  2 * time.Second,
+		ResultCh: resultCh,
+		ErrorCh:  errorCh,
+	}
+
+	go func() {
+		server, _ := pool.GetServer("test-server")
+		if server != nil {
+			server.requestCh <- req
+		}
+	}()
+
+	select {
+	case resp := <-resultCh:
+		if resp == nil {
+			t.Error("expected non-nil response")
+		}
+	case err := <-errorCh:
+		t.Logf("Request error: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Error("test timeout")
+	}
+}
+
+func TestPoolSendRequestToServerWithID(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	config := &migrate.ServerConfig{
+		Name:      "test-server",
+		Transport: registry.TransportStdio,
+		Stdio: &migrate.StdioConfig{
+			Command: "cat",
+			Args:    []string{},
+		},
+		TimeoutValue: 30 * time.Second,
+	}
+
+	pool.StartServer(ctx, config)
+
+	resultCh := make(chan *Response, 1)
+	errorCh := make(chan error, 1)
+
+	req := Request{
+		Method:   "test",
+		Params:   nil,
+		ID:       42,
+		Timeout:  2 * time.Second,
+		ResultCh: resultCh,
+		ErrorCh:  errorCh,
+	}
+
+	go func() {
+		server, _ := pool.GetServer("test-server")
+		if server != nil {
+			server.requestCh <- req
+		}
+	}()
+
+	select {
+	case resp := <-resultCh:
+		if resp == nil {
+			t.Error("expected non-nil response")
+		}
+	case err := <-errorCh:
+		t.Logf("Request error: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Error("test timeout")
+	}
+}
+
+func TestPoolSendNotificationToServer(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	config := &migrate.ServerConfig{
+		Name:      "test-server",
+		Transport: registry.TransportStdio,
+		Stdio: &migrate.StdioConfig{
+			Command: "cat",
+			Args:    []string{},
+		},
+		TimeoutValue: 30 * time.Second,
+	}
+
+	pool.StartServer(ctx, config)
+
+	err := pool.SendNotificationToServer(ctx, "test-server", "test notification", nil)
+	if err != nil {
+		t.Logf("Notification error (expected in some cases): %v", err)
+	}
+}
+
+func TestPoolSendNotificationToServerNotFound(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	err := pool.SendNotificationToServer(ctx, "nonexistent", "test notification", nil)
+	if err == nil {
+		t.Error("expected error for nonexistent server")
+	}
+}
+
+func TestPoolSendServerNotification(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	config := &migrate.ServerConfig{
+		Name:      "test-server",
+		Transport: registry.TransportStdio,
+		Stdio: &migrate.StdioConfig{
+			Command: "cat",
+			Args:    []string{},
+		},
+		TimeoutValue: 30 * time.Second,
+	}
+
+	pool.StartServer(ctx, config)
+
+	err := pool.SendServerNotification(ctx, "test-server", "test notification", map[string]interface{}{"key": "value"})
+	if err != nil {
+		t.Logf("Notification error (expected in some cases): %v", err)
+	}
+}
+
+func TestPoolSendServerNotificationNotFound(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	err := pool.SendServerNotification(ctx, "nonexistent", "test notification", nil)
+	if err == nil {
+		t.Error("expected error for nonexistent server")
+	}
+}
+
+func TestJSONRPCError(t *testing.T) {
+	err := &JSONRPCError{
+		Code:    -32603,
+		Message: "Internal error",
+	}
+
+	expected := "jsonrpc: error -32603: Internal error"
+	if err.Error() != expected {
+		t.Errorf("expected error message '%s', got '%s'", expected, err.Error())
+	}
+}
+
+func TestJSONRPCErrorWithData(t *testing.T) {
+	data := json.RawMessage(`{"key":"value"}`)
+	err := &JSONRPCError{
+		Code:    -32000,
+		Message: "Server error",
+		Data:    data,
+	}
+
+	expected := "jsonrpc: error -32000: Server error"
+	if err.Error() != expected {
+		t.Errorf("expected error message '%s', got '%s'", expected, err.Error())
+	}
+}
+
+func TestServerSourceInterface(t *testing.T) {
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	var source ServerSource = pool
+	if source == nil {
+		t.Error("expected non-nil ServerSource")
+	}
+
+	_ = source.ListServers()
+	_, _ = source.GetServerState("test")
+	_ = source.Close()
 }
