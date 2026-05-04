@@ -10,8 +10,19 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+)
+
+const (
+	stateIdle int32 = iota
+	stateRunning
+	stateBusy
+	stateStopping
+	stateStopped
+	stateStarting
+	stateError
 )
 
 type StdioServerConfig struct {
@@ -50,7 +61,7 @@ type StdioServerV2 struct {
 	mu             sync.Mutex
 	requestCh      chan Request
 	responseCh     chan Response
-	state          ServerState
+	state          int32
 	stats          ServerStats
 	restartCount   int
 	maxRestarts    int
@@ -93,7 +104,7 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 		config:         config,
 		requestCh:      make(chan Request, maxConcurrent),
 		responseCh:     make(chan Response, maxConcurrent),
-		state:          StateIdle,
+		state:          stateIdle,
 		stats:          ServerStats{},
 		maxRestarts:    5,
 		backoff:        time.Second,
@@ -106,15 +117,49 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 	}
 }
 
+func (s *StdioServerV2) getState() ServerState {
+	return toServerState(atomic.LoadInt32(&s.state))
+}
+
+func (s *StdioServerV2) setState(newState int32) {
+	atomic.StoreInt32(&s.state, newState)
+}
+
+func (s *StdioServerV2) compareAndSwapState(oldState, newState int32) bool {
+	return atomic.CompareAndSwapInt32(&s.state, oldState, newState)
+}
+
+func toServerState(state int32) ServerState {
+	switch state {
+	case stateIdle:
+		return StateIdle
+	case stateRunning:
+		return StateRunning
+	case stateBusy:
+		return StateBusy
+	case stateStopping:
+		return StateStopping
+	case stateStopped:
+		return StateStopped
+	case stateStarting:
+		return StateStarting
+	case stateError:
+		return StateError
+	default:
+		return StateUnknown
+	}
+}
+
 func (s *StdioServerV2) spawn(ctx context.Context) error {
 	s.mu.Lock()
 
-	if s.state == StateRunning || s.state == StateBusy || s.state == StateStarting {
+	currentState := atomic.LoadInt32(&s.state)
+	if currentState == stateRunning || currentState == stateBusy || currentState == stateStarting {
 		s.mu.Unlock()
-		return fmt.Errorf("pool: cannot spawn server in state %s", s.state)
+		return fmt.Errorf("pool: cannot spawn server in state %s", toServerState(currentState))
 	}
 
-	s.state = StateStarting
+	atomic.StoreInt32(&s.state, stateStarting)
 
 	cmd := exec.CommandContext(ctx, s.config.Command, s.config.Args...)
 	if s.config.Env != nil {
@@ -147,7 +192,7 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 
 	s.process = cmd
 	s.pgid = cmd.Process.Pid
-	s.state = StateIdle
+	atomic.StoreInt32(&s.state, stateIdle)
 	s.restartCount = 0
 	s.backoff = time.Second
 	s.stats.RestartCount++
@@ -170,13 +215,14 @@ func (s *StdioServerV2) waitForExit(ctx context.Context) {
 	err := s.process.Wait()
 
 	s.mu.Lock()
-	if s.state == StateStopping {
-		s.state = StateStopped
+	currentState := atomic.LoadInt32(&s.state)
+	if currentState == stateStopping {
+		atomic.StoreInt32(&s.state, stateStopped)
 		s.mu.Unlock()
 		return
 	}
 
-	s.state = StateError
+	atomic.StoreInt32(&s.state, stateError)
 	s.mu.Unlock()
 
 	s.logger.Warn("server process exited", "name", s.name, "error", err)
@@ -190,7 +236,7 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 	if s.restartCount > s.maxRestarts {
 		s.mu.Unlock()
 		s.logger.Error("max restarts exceeded", "name", s.name, "restarts", s.restartCount)
-		s.state = StateError
+		atomic.StoreInt32(&s.state, stateError)
 		return
 	}
 
@@ -211,7 +257,8 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 	}
 
 	s.mu.Lock()
-	if s.state == StateStopping {
+	currentState := atomic.LoadInt32(&s.state)
+	if currentState == stateStopping {
 		s.mu.Unlock()
 		return
 	}
@@ -268,11 +315,12 @@ func (s *StdioServerV2) readResponses() {
 
 func (s *StdioServerV2) stop() error {
 	s.mu.Lock()
-	if s.state == StateStopping || s.state == StateStopped {
+	currentState := atomic.LoadInt32(&s.state)
+	if currentState == stateStopping || currentState == stateStopped {
 		s.mu.Unlock()
 		return nil
 	}
-	s.state = StateStopping
+	atomic.StoreInt32(&s.state, stateStopping)
 	s.mu.Unlock()
 
 	s.stopChOnce.Do(func() {
@@ -289,9 +337,8 @@ func (s *StdioServerV2) stop() error {
 }
 
 func (s *StdioServerV2) isHealthy() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.state == StateIdle || s.state == StateRunning || s.state == StateBusy
+	currentState := atomic.LoadInt32(&s.state)
+	return currentState == stateIdle || currentState == stateRunning || currentState == stateBusy
 }
 
 func (s *StdioServerV2) canAcceptRequest() bool {
@@ -303,7 +350,8 @@ func (s *StdioServerV2) canAcceptRequest() bool {
 func (s *StdioServerV2) isIdle() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.currentLoad == 0 && (s.state == StateIdle || s.state == StateRunning)
+	currentState := atomic.LoadInt32(&s.state)
+	return s.currentLoad == 0 && (currentState == stateIdle || currentState == stateRunning)
 }
 
 func (s *StdioServerV2) getStats() ServerStats {
@@ -311,13 +359,6 @@ func (s *StdioServerV2) getStats() ServerStats {
 	stats := s.stats
 	s.mu.Unlock()
 	return stats
-}
-
-func (s *StdioServerV2) getState() ServerState {
-	s.mu.Lock()
-	state := s.state
-	s.mu.Unlock()
-	return state
 }
 
 func (s *StdioServerV2) enqueueRequest(req Request) bool {
@@ -366,14 +407,14 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request) {
 
 	resp := &Response{ID: req.ID}
 
-	s.mu.Lock()
-	s.state = StateBusy
-	s.mu.Unlock()
+	atomic.StoreInt32(&s.state, stateBusy)
 
 	result, sendErr := s.sendRequest(ctx, req)
 	if sendErr != nil {
 		resp.Error = &JSONRPCError{Code: ErrCodeServerError, Message: sendErr.Error()}
+		s.mu.Lock()
 		s.stats.ErrorCount++
+		s.mu.Unlock()
 	} else {
 		resp.Result = result
 	}
@@ -382,8 +423,9 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request) {
 	s.mu.Lock()
 	s.stats.RequestCount++
 	s.stats.AvgLatencyMs = (s.stats.AvgLatencyMs*float64(s.stats.RequestCount-1) + latency) / float64(s.stats.RequestCount)
-	if s.state != StateStopping {
-		s.state = StateIdle
+	currentState := atomic.LoadInt32(&s.state)
+	if currentState != stateStopping {
+		atomic.StoreInt32(&s.state, stateIdle)
 	}
 	s.mu.Unlock()
 
@@ -471,7 +513,8 @@ func (s *StdioServerV2) sendNotification(ctx context.Context, method string, par
 func (s *StdioServerV2) checkIdleTimeout(ctx context.Context) {
 	s.mu.Lock()
 	idleDuration := time.Since(s.lastRequestAt)
-	shouldStop := s.currentLoad == 0 && idleDuration > s.idleTimeout && s.state == StateIdle
+	currentState := atomic.LoadInt32(&s.state)
+	shouldStop := s.currentLoad == 0 && idleDuration > s.idleTimeout && currentState == stateIdle
 	s.mu.Unlock()
 
 	if shouldStop {
