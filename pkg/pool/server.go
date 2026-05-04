@@ -65,6 +65,7 @@ type StdioServerV2 struct {
 	stopped        bool
 	logger         *slog.Logger
 	stopChOnce     sync.Once
+	wg             sync.WaitGroup
 }
 
 func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *StdioServerV2 {
@@ -156,13 +157,16 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 
 	s.mu.Unlock()
 
+	s.wg.Add(1)
 	go s.waitForExit(ctx)
+	s.wg.Add(1)
 	go s.readResponses()
 
 	return nil
 }
 
 func (s *StdioServerV2) waitForExit(ctx context.Context) {
+	defer s.wg.Done()
 	err := s.process.Wait()
 
 	s.mu.Lock()
@@ -219,6 +223,7 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 }
 
 func (s *StdioServerV2) readResponses() {
+	defer s.wg.Done()
 	scanner := bufio.NewScanner(s.stdout)
 	scanner.Buffer(make([]byte, 1024), 50*1024*1024)
 
@@ -277,6 +282,8 @@ func (s *StdioServerV2) stop() error {
 	if s.process != nil && s.process.Process != nil {
 		s.process.Process.Signal(syscall.SIGTERM)
 	}
+
+	s.wg.Wait()
 
 	return nil
 }
