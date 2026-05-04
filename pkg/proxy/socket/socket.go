@@ -9,6 +9,7 @@ type SocketServer interface {
 	Serve(ctx context.Context) error
 	Shutdown(ctx context.Context) error
 	Addr() net.Addr
+	Authenticate(token string) bool
 }
 
 type ServerConfig struct {
@@ -16,6 +17,7 @@ type ServerConfig struct {
 	Perm       uint32
 	MaxMsgSize int64
 	RateLimit  int
+	AuthToken  string
 }
 
 func DefaultConfig() ServerConfig {
