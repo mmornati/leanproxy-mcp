@@ -45,7 +45,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 
 	if len(result.Servers) == 0 {
 		fmt.Println("No MCP configurations found on this system.")
-		fmt.Println("To add servers manually, use: leanproxy server add")
+		fmt.Println("To add servers manually, use: leanproxy-mcp server add")
 		return nil
 	}
 

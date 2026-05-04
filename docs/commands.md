@@ -680,8 +680,8 @@ When using `--running`, status is read from the status file written by running i
 ```
 
 This file is created by:
-- `leanproxy serve` (HTTP proxy mode)
-- `leanproxy server run --stdio` (stdio mode, used by OpenCode)
+- `leanproxy-mcp serve` (HTTP proxy mode)
+- `leanproxy-mcp server run --stdio` (stdio mode, used by OpenCode)
 
 ### Examples
 
