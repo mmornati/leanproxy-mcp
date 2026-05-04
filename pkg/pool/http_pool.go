@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -400,14 +399,6 @@ func (p *UnifiedPool) SendRequestToServer(ctx context.Context, name string, meth
 		return p.ssePool.SendRequestToServer(ctx, name, method, params, timeout)
 	}
 	return nil, fmt.Errorf("server %s not found in any pool", name)
-}
-
-func isNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "not found")
 }
 
 func (p *UnifiedPool) RestartServer(ctx context.Context, name string) error {

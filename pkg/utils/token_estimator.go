@@ -136,7 +136,7 @@ func (t *TokenEstimator) CompareMCPConfigurations(servers map[string]MCPServerCo
 	var serverBreakdown []MCPServerAnalysis
 
 	avgToolsPerServer := 35
-	for name, _ := range servers {
+	for name := range servers {
 		serverTokens := t.EstimateNativeMCPOverhead(name, avgToolsPerServer)
 		totalNativeTokens += serverTokens
 		serverBreakdown = append(serverBreakdown, MCPServerAnalysis{
