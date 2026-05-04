@@ -47,6 +47,7 @@ var (
 	gatewayTools  gateway.GatewayTools
 	stdioPool     *pool.StdioPool
 	httpPool      *pool.HTTPPool
+	ssePool       *pool.SSEPool
 	unifiedPool   *pool.UnifiedPool
 	statusStore   *statusfile.FileStatusStore
 )
@@ -88,7 +89,8 @@ func runServe(cmd *cobra.Command, args []string) {
 	gatewayTools = gateway.NewGatewayTools(serverReg, toolReg, r, slog.Default())
 	stdioPool = pool.NewStdioPool(5, 5*time.Minute, slog.Default())
 	httpPool = pool.NewHTTPPool(slog.Default())
-	unifiedPool = pool.NewUnifiedPool(stdioPool, httpPool, slog.Default())
+	ssePool = pool.NewSSEPool(slog.Default())
+	unifiedPool = pool.NewUnifiedPool(stdioPool, httpPool, ssePool, slog.Default())
 
 	configPath := GlobalConfigPath
 	if configPath == "" {
@@ -118,9 +120,13 @@ func runServe(cmd *cobra.Command, args []string) {
 					if err := stdioPool.StartServer(ctx, srv); err != nil {
 						slog.Warn("failed to start stdio server", "name", srv.Name, "error", err)
 					}
-				case registry.TransportHTTP, registry.TransportSSE:
+				case registry.TransportHTTP:
 					if err := httpPool.StartServer(ctx, srv); err != nil {
 						slog.Warn("failed to start HTTP server", "name", srv.Name, "error", err)
+					}
+				case registry.TransportSSE:
+					if err := ssePool.StartServer(ctx, srv); err != nil {
+						slog.Warn("failed to start SSE server", "name", srv.Name, "error", err)
 					}
 				}
 			}
@@ -175,6 +181,9 @@ func runServe(cmd *cobra.Command, args []string) {
 		}
 		if httpPool != nil {
 			httpPool.Close()
+		}
+		if ssePool != nil {
+			ssePool.Close()
 		}
 		os.Exit(0)
 	}()

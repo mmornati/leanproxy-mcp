@@ -135,7 +135,8 @@ func getRealStatusList() proxy.ServerStatusList {
 
 	stdioPool := pool.NewStdioPool(5, 5*time.Minute, slog.Default())
 	httpPool := pool.NewHTTPPool(slog.Default())
-	unifiedPool := pool.NewUnifiedPool(stdioPool, httpPool, slog.Default())
+	ssePool := pool.NewSSEPool(slog.Default())
+	unifiedPool := pool.NewUnifiedPool(stdioPool, httpPool, ssePool, slog.Default())
 
 	for _, srv := range cfg.Servers {
 		if srv.Enabled != nil && !*srv.Enabled {
@@ -146,9 +147,13 @@ func getRealStatusList() proxy.ServerStatusList {
 			if err := stdioPool.StartServer(ctx, srv); err != nil {
 				slog.Warn("failed to start server for status check", "name", srv.Name, "error", err)
 			}
-		case registry.TransportHTTP, registry.TransportSSE:
+		case registry.TransportHTTP:
 			if err := httpPool.StartServer(ctx, srv); err != nil {
 				slog.Warn("failed to start HTTP server for status check", "name", srv.Name, "error", err)
+			}
+		case registry.TransportSSE:
+			if err := ssePool.StartServer(ctx, srv); err != nil {
+				slog.Warn("failed to start SSE server for status check", "name", srv.Name, "error", err)
 			}
 		}
 	}

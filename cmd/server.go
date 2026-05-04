@@ -348,7 +348,8 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 
 	stdioPool := pool.NewStdioPool(5, 5*time.Minute, slog.Default())
 	httpPool := pool.NewHTTPPool(slog.Default())
-	unifiedPool := pool.NewUnifiedPool(stdioPool, httpPool, slog.Default())
+	ssePool := pool.NewSSEPool(slog.Default())
+	unifiedPool := pool.NewUnifiedPool(stdioPool, httpPool, ssePool, slog.Default())
 
 	startedCount := 0
 	for _, srv := range cfg.Servers {
@@ -364,12 +365,19 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 				startedCount++
 				slog.Info("stdio server started", "name", srv.Name)
 			}
-		case registry.TransportHTTP, registry.TransportSSE:
+		case registry.TransportHTTP:
 			if err := httpPool.StartServer(ctx, srv); err != nil {
 				slog.Warn("failed to start HTTP server", "name", srv.Name, "error", err)
 			} else {
 				startedCount++
 				slog.Info("HTTP server started", "name", srv.Name)
+			}
+		case registry.TransportSSE:
+			if err := ssePool.StartServer(ctx, srv); err != nil {
+				slog.Warn("failed to start SSE server", "name", srv.Name, "error", err)
+			} else {
+				startedCount++
+				slog.Info("SSE server started", "name", srv.Name)
 			}
 		}
 	}

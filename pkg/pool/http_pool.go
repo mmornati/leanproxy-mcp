@@ -67,7 +67,7 @@ func (s *HTTPServer) setState(state ServerState) {
 
 func (s *HTTPServer) SendRequest(ctx context.Context, method string, params json.RawMessage, timeout time.Duration) (*Response, error) {
 	var reqParams interface{}
-	if params != nil && len(params) > 0 {
+	if len(params) > 0 {
 		if err := json.Unmarshal(params, &reqParams); err != nil {
 			reqParams = params
 		}
@@ -301,20 +301,23 @@ type ServerSource interface {
 
 var _ ServerSource = (*StdioPool)(nil)
 var _ ServerSource = (*HTTPPool)(nil)
+var _ ServerSource = (*SSEPool)(nil)
 
 type UnifiedPool struct {
 	stdioPool *StdioPool
 	httpPool  *HTTPPool
+	ssePool   *SSEPool
 	logger    *slog.Logger
 }
 
-func NewUnifiedPool(stdioPool *StdioPool, httpPool *HTTPPool, logger *slog.Logger) *UnifiedPool {
+func NewUnifiedPool(stdioPool *StdioPool, httpPool *HTTPPool, ssePool *SSEPool, logger *slog.Logger) *UnifiedPool {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &UnifiedPool{
 		stdioPool: stdioPool,
 		httpPool:  httpPool,
+		ssePool:   ssePool,
 		logger:    logger,
 	}
 }
@@ -323,6 +326,9 @@ func (p *UnifiedPool) ListServers() []string {
 	var servers []string
 	servers = append(servers, p.stdioPool.ListServers()...)
 	servers = append(servers, p.httpPool.ListServers()...)
+	if p.ssePool != nil {
+		servers = append(servers, p.ssePool.ListServers()...)
+	}
 	return servers
 }
 
@@ -331,7 +337,14 @@ func (p *UnifiedPool) GetServerState(name string) (ServerState, error) {
 	if err == nil {
 		return state, nil
 	}
-	return p.httpPool.GetServerState(name)
+	state, err = p.httpPool.GetServerState(name)
+	if err == nil {
+		return state, nil
+	}
+	if p.ssePool != nil {
+		return p.ssePool.GetServerState(name)
+	}
+	return "", fmt.Errorf("server %s not found in any pool", name)
 }
 
 func (p *UnifiedPool) SendRequestToServer(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration) (*Response, error) {
@@ -339,7 +352,14 @@ func (p *UnifiedPool) SendRequestToServer(ctx context.Context, name string, meth
 	if err == nil {
 		return resp, nil
 	}
-	return p.httpPool.SendRequestToServer(ctx, name, method, params, timeout)
+	resp, err = p.httpPool.SendRequestToServer(ctx, name, method, params, timeout)
+	if err == nil {
+		return resp, nil
+	}
+	if p.ssePool != nil {
+		return p.ssePool.SendRequestToServer(ctx, name, method, params, timeout)
+	}
+	return nil, fmt.Errorf("server %s not found", name)
 }
 
 func (p *UnifiedPool) RestartServer(ctx context.Context, name string) error {
@@ -347,7 +367,14 @@ func (p *UnifiedPool) RestartServer(ctx context.Context, name string) error {
 	if err == nil {
 		return nil
 	}
-	return p.httpPool.RestartServer(ctx, name)
+	err = p.httpPool.RestartServer(ctx, name)
+	if err == nil {
+		return nil
+	}
+	if p.ssePool != nil {
+		return p.ssePool.RestartServer(ctx, name)
+	}
+	return fmt.Errorf("server %s not found", name)
 }
 
 func (p *UnifiedPool) SendRequestToServerWithID(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration, id int) (*Response, error) {
@@ -355,7 +382,14 @@ func (p *UnifiedPool) SendRequestToServerWithID(ctx context.Context, name string
 	if err == nil {
 		return resp, nil
 	}
-	return p.httpPool.SendRequestToServerWithID(ctx, name, method, params, timeout, id)
+	resp, err = p.httpPool.SendRequestToServerWithID(ctx, name, method, params, timeout, id)
+	if err == nil {
+		return resp, nil
+	}
+	if p.ssePool != nil {
+		return p.ssePool.SendRequestToServerWithID(ctx, name, method, params, timeout, id)
+	}
+	return nil, fmt.Errorf("server %s not found", name)
 }
 
 func (p *UnifiedPool) SendServerNotification(ctx context.Context, name string, method string, params map[string]interface{}) error {
@@ -363,12 +397,22 @@ func (p *UnifiedPool) SendServerNotification(ctx context.Context, name string, m
 	if err == nil {
 		return nil
 	}
-	return p.httpPool.SendServerNotification(ctx, name, method, params)
+	err = p.httpPool.SendServerNotification(ctx, name, method, params)
+	if err == nil {
+		return nil
+	}
+	if p.ssePool != nil {
+		return p.ssePool.SendServerNotification(ctx, name, method, params)
+	}
+	return fmt.Errorf("server %s not found", name)
 }
 
 func (p *UnifiedPool) Close() error {
 	p.stdioPool.Close()
 	p.httpPool.Close()
+	if p.ssePool != nil {
+		p.ssePool.Close()
+	}
 	return nil
 }
 
@@ -377,7 +421,14 @@ func (p *UnifiedPool) SendRequest(ctx context.Context, serverName string, req *p
 	if err == nil {
 		return resp, nil
 	}
-	return p.httpPool.SendRequest(ctx, serverName, req, timeout)
+	resp, err = p.httpPool.SendRequest(ctx, serverName, req, timeout)
+	if err == nil {
+		return resp, nil
+	}
+	if p.ssePool != nil {
+		return p.ssePool.SendRequest(ctx, serverName, req, timeout)
+	}
+	return nil, fmt.Errorf("server %s not found", serverName)
 }
 
 var _ ServerSource = (*UnifiedPool)(nil)
