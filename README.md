@@ -132,7 +132,7 @@ leanproxy-mcp compactor --manifest ./mcp.json
 
 ### IDE Configuration
 
-LeanProxy can be configured as an MCP server in your IDE. For detailed setup instructions, see the [Installation Guide](docs/installation.md).
+LeanProxy can be configured as an MCP server in your IDE. For detailed setup instructions, see the [Installation Guide](https://mmornati.github.io/leanproxy-mcp/installation/).
 
 #### OpenCode Example
 
@@ -151,7 +151,7 @@ Add to your `~/.config/opencode/opencode.json`:
 }
 ```
 
-Other IDEs (Claude Desktop, Cursor, Windsurf): see [Installation Guide](docs/installation.md).
+Other IDEs (Claude Desktop, Cursor, Windsurf): see [Installation Guide](https://mmornati.github.io/leanproxy-mcp/installation/).
 
 ### Verification
 
@@ -182,14 +182,14 @@ For detailed documentation, see:
 
 | Guide | Description |
 |-------|-------------|
-| [User Documentation](docs/index.md) | Overview, economics, and key concepts |
-| [Installation Guide](docs/installation.md) | Download, install, and IDE setup |
-| [Quick Start](docs/quickstart.md) | Get up and running in minutes |
-| [Commands Reference](docs/commands.md) | Complete CLI command documentation |
-| [Configuration](docs/configuration.md) | Customize LeanProxy behavior |
-| [Architecture](docs/architecture.md) | Understanding internal design |
-| [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
-| [FAQ](docs/faq.md) | Frequently asked questions |
+| [User Documentation](https://mmornati.github.io/leanproxy-mcp/) | Overview, economics, and key concepts |
+| [Installation Guide](https://mmornati.github.io/leanproxy-mcp/installation/) | Download, install, and IDE setup |
+| [Quick Start](https://mmornati.github.io/leanproxy-mcp/quickstart/) | Get up and running in minutes |
+| [Commands Reference](https://mmornati.github.io/leanproxy-mcp/commands/) | Complete CLI command documentation |
+| [Configuration](https://mmornati.github.io/leanproxy-mcp/configuration/) | Customize LeanProxy behavior |
+| [Architecture](https://mmornati.github.io/leanproxy-mcp/architecture/) | Understanding internal design |
+| [Troubleshooting](https://mmornati.github.io/leanproxy-mcp/troubleshooting/) | Common issues and solutions |
+| [FAQ](https://mmornati.github.io/leanproxy-mcp/faq/) | Frequently asked questions |
 
 ## License
 
