@@ -195,6 +195,30 @@ bouncer:
       replacement: "MY_API_KEY=REDACTED"
 ```
 
+### Pattern Safety (ReDoS Protection)
+
+LeanProxy-MCP validates all user-provided regex patterns to prevent Regular Expression Denial of Service (ReDoS) attacks. Dangerous patterns that can cause catastrophic backtracking are rejected.
+
+**Blocked dangerous patterns include:**
+- Nested quantifiers: `(.+)+`, `(.*)*`, `(a+)*`
+- Character class with nested quantifiers: `([a-z]+)+`
+- Overlapping alternation: `(a|b)*`
+
+**Safe patterns:**
+- Simple character classes: `[A-Za-z0-9]+`
+- Anchored patterns: `^api_key_[a-f0-9]{32}$`
+- Quantified character classes: `[a-z]{8,64}`
+
+If an invalid pattern is detected, it is logged and skipped with a warning message.
+
+### Validate Patterns
+
+Check if your patterns are safe before deploying:
+
+```bash
+leanproxy-mcp bouncer validate-patterns
+```
+
 ### Pattern Types
 
 | Type | Description |

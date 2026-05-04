@@ -40,7 +40,7 @@ func (c *Config) CompilePatterns() (*LoadedPatterns, error) {
 	}
 
 	for _, p := range c.CustomPatterns {
-		re, err := regexp.Compile(p.Pattern)
+		re, err := SafeCompile(p.Pattern)
 		if err != nil {
 			slog.Warn("invalid custom pattern, skipping",
 				"name", p.Name,
