@@ -12,36 +12,36 @@ type HealthStatus string
 
 const (
 	HealthUnknown   HealthStatus = "unknown"
-	HealthHealthy  HealthStatus = "healthy"
-	HealthDegraded HealthStatus = "degraded"
+	HealthHealthy   HealthStatus = "healthy"
+	HealthDegraded  HealthStatus = "degraded"
 	HealthUnhealthy HealthStatus = "unhealthy"
-	HealthError    HealthStatus = "error"
+	HealthError     HealthStatus = "error"
 )
 
 type HealthCheckResult struct {
-	ServerName    string
-	Status        HealthStatus
-	LatencyMs     float64
-	Error         string
-	CheckedAt     time.Time
+	ServerName string
+	Status     HealthStatus
+	LatencyMs  float64
+	Error      string
+	CheckedAt  time.Time
 }
 
 type HealthChecker struct {
-	pool    *StdioPool
-	logger  *slog.Logger
-	checks  map[string]*healthCheck
-	mu      sync.RWMutex
-	stopCh  chan struct{}
+	pool   *StdioPool
+	logger *slog.Logger
+	checks map[string]*healthCheck
+	mu     sync.RWMutex
+	stopCh chan struct{}
 }
 
 type healthCheck struct {
-	serverName    string
-	lastCheck     time.Time
-	lastStatus    HealthStatus
-	lastLatencyMs float64
-	lastError     string
+	serverName          string
+	lastCheck           time.Time
+	lastStatus          HealthStatus
+	lastLatencyMs       float64
+	lastError           string
 	consecutiveFailures int
-	mu             sync.Mutex
+	mu                  sync.Mutex
 }
 
 func NewHealthChecker(pool *StdioPool, logger *slog.Logger) *HealthChecker {
@@ -178,11 +178,11 @@ func (hc *HealthChecker) GetAllHealth() map[string]HealthCheckResult {
 	for name, check := range hc.checks {
 		check.mu.Lock()
 		result := HealthCheckResult{
-			ServerName:    name,
-			Status:        check.lastStatus,
-			LatencyMs:     check.lastLatencyMs,
-			Error:         check.lastError,
-			CheckedAt:     check.lastCheck,
+			ServerName: name,
+			Status:     check.lastStatus,
+			LatencyMs:  check.lastLatencyMs,
+			Error:      check.lastError,
+			CheckedAt:  check.lastCheck,
 		}
 		check.mu.Unlock()
 		results[name] = result
@@ -198,8 +198,8 @@ type PingRequest struct {
 }
 
 type PingResponse struct {
-	ID      interface{} `json:"id"`
-	JSONRPC string      `json:"jsonrpc"`
+	ID      interface{}     `json:"id"`
+	JSONRPC string          `json:"jsonrpc"`
 	Result  json.RawMessage `json:"result,omitempty"`
 	Error   *JSONRPCError   `json:"error,omitempty"`
 }

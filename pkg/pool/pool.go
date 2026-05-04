@@ -26,23 +26,23 @@ type ServerSource interface {
 }
 
 type Request struct {
-	Method     string          `json:"method"`
-	Params     json.RawMessage `json:"params,omitempty"`
-	ID         interface{}     `json:"id"`
-	Timeout    time.Duration   `json:"-"`
-	ResultCh   chan *Response   `json:"-"`
-	ErrorCh    chan error        `json:"-"`
+	Method   string          `json:"method"`
+	Params   json.RawMessage `json:"params,omitempty"`
+	ID       interface{}     `json:"id"`
+	Timeout  time.Duration   `json:"-"`
+	ResultCh chan *Response  `json:"-"`
+	ErrorCh  chan error      `json:"-"`
 }
 
 func (r Request) MarshalJSON() ([]byte, error) {
 	type Alias Request
 	return json.Marshal(&struct {
 		Alias
-		JSONRPC  string          `json:"jsonrpc"`
-		Timeout time.Duration   `json:"timeout,omitempty"`
+		JSONRPC string        `json:"jsonrpc"`
+		Timeout time.Duration `json:"timeout,omitempty"`
 	}{
 		Alias:   Alias(r),
-		JSONRPC:  "2.0",
+		JSONRPC: "2.0",
 		Timeout: r.Timeout,
 	})
 }
@@ -83,19 +83,19 @@ const (
 )
 
 type StdioPool struct {
-	servers        map[string]*StdioServerV2
-	mu             sync.RWMutex
-	maxPerServer   int
-	idleTimeout    time.Duration
-	logger         *slog.Logger
-	ctx            context.Context
-	cancel         context.CancelFunc
-	requestWaiters map[string][]chan Request
-	waiterMu       sync.Mutex
-	rateLimiters   map[string]*concurrent.RateLimiter
+	servers         map[string]*StdioServerV2
+	mu              sync.RWMutex
+	maxPerServer    int
+	idleTimeout     time.Duration
+	logger          *slog.Logger
+	ctx             context.Context
+	cancel          context.CancelFunc
+	requestWaiters  map[string][]chan Request
+	waiterMu        sync.Mutex
+	rateLimiters    map[string]*concurrent.RateLimiter
 	circuitBreakers map[string]*concurrent.CircuitBreaker
-	maxQueueSize   int
-	workerPool     *concurrent.WorkerPool
+	maxQueueSize    int
+	workerPool      *concurrent.WorkerPool
 }
 
 func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logger) *StdioPool {
@@ -138,13 +138,13 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 	}
 
 	serverConfig := StdioServerConfig{
-		Name:          config.Name,
-		Command:       config.Stdio.Command,
-		Args:          config.Stdio.Args,
-		Env:           config.Stdio.Env,
-		CWD:           config.Stdio.CWD,
-		MaxConcurrent: p.maxPerServer,
-		IdleTimeout:   p.idleTimeout,
+		Name:           config.Name,
+		Command:        config.Stdio.Command,
+		Args:           config.Stdio.Args,
+		Env:            config.Stdio.Env,
+		CWD:            config.Stdio.CWD,
+		MaxConcurrent:  p.maxPerServer,
+		IdleTimeout:    p.idleTimeout,
 		RequestTimeout: config.TimeoutValue,
 	}
 

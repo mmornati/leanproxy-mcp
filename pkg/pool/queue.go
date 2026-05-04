@@ -14,12 +14,12 @@ type queuedRequest struct {
 }
 
 type RequestQueue struct {
-	queue      chan queuedRequest
-	maxSize    int
-	timeout    time.Duration
-	mu         sync.Mutex
+	queue       chan queuedRequest
+	maxSize     int
+	timeout     time.Duration
+	mu          sync.Mutex
 	activeCount int
-	logger     *slog.Logger
+	logger      *slog.Logger
 }
 
 func NewRequestQueue(maxSize int, timeout time.Duration, logger *slog.Logger) *RequestQueue {
@@ -72,12 +72,12 @@ func (q *RequestQueue) IsEmpty() bool {
 }
 
 type ServerQueue struct {
-	name       string
-	queue      *RequestQueue
+	name          string
+	queue         *RequestQueue
 	maxConcurrent int
-	active     int
-	mu         sync.Mutex
-	logger     *slog.Logger
+	active        int
+	mu            sync.Mutex
+	logger        *slog.Logger
 }
 
 func NewServerQueue(name string, maxConcurrent int, queueTimeout time.Duration, logger *slog.Logger) *ServerQueue {
@@ -132,9 +132,9 @@ func (sq *ServerQueue) IsAtCapacity() bool {
 }
 
 type PoolQueueManager struct {
-	queues   map[string]*ServerQueue
-	mu       sync.RWMutex
-	logger   *slog.Logger
+	queues map[string]*ServerQueue
+	mu     sync.RWMutex
+	logger *slog.Logger
 }
 
 func NewPoolQueueManager(logger *slog.Logger) *PoolQueueManager {
