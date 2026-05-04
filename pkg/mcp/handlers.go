@@ -147,17 +147,13 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response, error) {
 	h.logger.Debug("tools/list request received, returning gateway tools only")
 
-	gatewayTools := []Tool{
-		{
-			Name:        "search_tools",
-			Description: "Search for tools across all configured MCP servers. Returns tool names, descriptions, and parameters. Always call this first to discover available tools before invoking.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"Search query (e.g., 'activity', 'sleep', 'garmin')"}},"required":["query"]}`),
-		},
-		{
-			Name:        "invoke_tool",
-			Description: "Invoke a tool on a configured MCP server. First use search_tools to find the server_name and tool_name, then pass the tool arguments.",
-			InputSchema: json.RawMessage(`{"type":"object","properties":{"server":{"type":"string","description":"Server name from search_tools (e.g., 'garmin', 'Intervals.icu')"},"tool":{"type":"string","description":"Tool name from search_tools (e.g., 'garmin_get_activities')"},"arguments":{"type":"object","description":"Tool arguments as key-value pairs"}},"required":["server","tool"]}`),
-		},
+	gatewayTools := make([]Tool, 0)
+	for _, def := range GetAllToolDefinitions() {
+		gatewayTools = append(gatewayTools, Tool{
+			Name:        def.Name,
+			Description: def.Description,
+			InputSchema: def.InputSchema,
+		})
 	}
 
 	result := ToolsListResult{Tools: gatewayTools}
@@ -293,6 +289,7 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 	if params.Arguments != nil {
 		var args map[string]interface{}
 		if err := json.Unmarshal(params.Arguments, &args); err == nil {
+			args = ApplyDefaults("search_tools", args)
 			if q, ok := args["query"].(string); ok {
 				query = q
 			}
@@ -300,6 +297,26 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 				maxDescChars = int(m)
 			}
 		}
+	}
+
+	if query == "" {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInvalidParams, "query parameter is required. Use search_tools to discover available tools."),
+			ID:      req.ID,
+		}, nil
+	}
+
+	if valid, msg := ValidateParam("search_tools", "max_description_chars", float64(maxDescChars)); !valid {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInvalidParams, fmt.Sprintf("max_description_chars %s", msg)),
+			ID:      req.ID,
+		}, nil
+	}
+
+	if maxDescChars == 0 {
+		maxDescChars = 200
 	}
 
 	h.logger.Info("search_tools called", "query", query, "max_desc_chars", maxDescChars)
@@ -487,6 +504,7 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	if params.Arguments != nil {
 		var args map[string]interface{}
 		if err := json.Unmarshal(params.Arguments, &args); err == nil {
+			args = ApplyDefaults("invoke_tool", args)
 			if s, ok := args["server"].(string); ok {
 				serverName = s
 			}
@@ -505,7 +523,7 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	if serverName == "" || toolName == "" {
 		return &Response{
 			JSONRPC: JSONRPCVersion,
-			Error:   NewError(ErrCodeInvalidParams, "server and tool are required"),
+			Error:   NewError(ErrCodeInvalidParams, "server and tool are required. Use search_tools to discover available tools."),
 			ID:      req.ID,
 		}, nil
 	}
@@ -523,9 +541,13 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		h.logger.Warn("server not running, attempting to restart", "name", serverName, "state", state)
 		if err := h.pool.RestartServer(ctx, serverName); err != nil {
 			h.logger.Error("failed to restart server", "name", serverName, "error", err)
+			enrichedError := FormatErrorWithHint(
+				fmt.Sprintf("server %s is not running (state: %s) and failed to restart: %v", serverName, state, err),
+				serverName, toolName,
+			)
 			return &Response{
 				JSONRPC: JSONRPCVersion,
-				Error:   NewError(ErrCodeServerError, fmt.Sprintf("server %s is not running (state: %s) and failed to restart: %v", serverName, state, err)),
+				Error:   NewError(ErrCodeServerError, enrichedError),
 				ID:      req.ID,
 			}, nil
 		}
@@ -543,7 +565,8 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	if err != nil {
 		h.logger.Error("invoke_tool failed", "server", serverName, "tool", toolName, "error", err)
 		schema := h.lookupToolSchema(serverName, toolName)
-		errResp := NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %v", err))
+		enrichedError := FormatErrorWithHint(fmt.Sprintf("tool invocation failed: %v", err), serverName, toolName)
+		errResp := NewError(ErrCodeServerError, enrichedError)
 		if schema != nil {
 			dataBytes, _ := json.Marshal(map[string]interface{}{
 				"tool":   toolName,
@@ -561,7 +584,8 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	if resp.Error != nil {
 		h.logger.Error("invoke_tool received error from server", "server", serverName, "tool", toolName, "error", resp.Error.Message)
 		schema := h.lookupToolSchema(serverName, toolName)
-		errResp := NewError(ErrCodeServerError, fmt.Sprintf("tool invocation failed: %s", resp.Error.Message))
+		enrichedError := FormatErrorWithHint(fmt.Sprintf("tool invocation failed: %s", resp.Error.Message), serverName, toolName)
+		errResp := NewError(ErrCodeServerError, enrichedError)
 		if schema != nil {
 			dataBytes, _ := json.Marshal(map[string]interface{}{
 				"tool":   toolName,
