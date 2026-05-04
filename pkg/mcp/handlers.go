@@ -26,12 +26,12 @@ type ToolCache struct {
 }
 
 type Handler struct {
-	pool       *pool.StdioPool
-	manifest   *AggregatedManifest
-	logger     *slog.Logger
-	timeout    time.Duration
-	toolCache  *ToolCache
-	toolStore  toolstore.Cache
+	pool      pool.ServerSource
+	logger    *slog.Logger
+	timeout   time.Duration
+	toolCache *ToolCache
+	toolStore toolstore.Cache
+	manifest  *AggregatedManifest
 }
 
 type AggregatedManifest struct {
@@ -40,7 +40,7 @@ type AggregatedManifest struct {
 	Prompts   []Prompt
 }
 
-func NewHandler(p *pool.StdioPool, logger *slog.Logger) *Handler {
+func NewHandler(p pool.ServerSource, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -54,7 +54,7 @@ func NewHandler(p *pool.StdioPool, logger *slog.Logger) *Handler {
 	}
 }
 
-func NewHandlerWithToolStore(p *pool.StdioPool, logger *slog.Logger, store toolstore.Cache) *Handler {
+func NewHandlerWithToolStore(p pool.ServerSource, logger *slog.Logger, store toolstore.Cache) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -309,7 +309,7 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 	h.toolCache.mu.RUnlock()
 
 	if !cachePopulated {
-		h.populateToolCache(ctx)
+		h.PopulateToolCache(ctx)
 	}
 
 	results := h.searchToolCache(query, maxDescChars)
@@ -344,7 +344,7 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 	}, nil
 }
 
-func (h *Handler) populateToolCache(ctx context.Context) {
+func (h *Handler) PopulateToolCache(ctx context.Context) {
 	h.logger.Info("populating tool cache from backend servers")
 
 	if h.toolStore != nil {
@@ -401,9 +401,9 @@ func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
 			time.Sleep(500 * time.Millisecond)
 		}
 
-		if err := h.initializeServer(ctx, serverName); err != nil {
-			h.logger.Warn("failed to initialize server for cache", "name", serverName, "error", err)
-			continue
+		initErr := h.initializeServer(ctx, serverName)
+		if initErr != nil {
+			h.logger.Debug("failed to initialize server, will try without initialization", "name", serverName, "error", initErr)
 		}
 
 		h.logger.Debug("requesting tools/list for cache", "name", serverName)

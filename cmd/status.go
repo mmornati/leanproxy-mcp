@@ -134,25 +134,36 @@ func getRealStatusList() proxy.ServerStatusList {
 	}
 
 	stdioPool := pool.NewStdioPool(5, 5*time.Minute, slog.Default())
+	httpPool := pool.NewHTTPPool(slog.Default())
+	unifiedPool := pool.NewUnifiedPool(stdioPool, httpPool, slog.Default())
 
 	for _, srv := range cfg.Servers {
 		if srv.Enabled != nil && !*srv.Enabled {
 			continue
 		}
-		if srv.Transport != registry.TransportStdio {
-			continue
-		}
-		if err := stdioPool.StartServer(ctx, srv); err != nil {
-			slog.Warn("failed to start server for status check", "name", srv.Name, "error", err)
+		switch srv.Transport {
+		case registry.TransportStdio:
+			if err := stdioPool.StartServer(ctx, srv); err != nil {
+				slog.Warn("failed to start server for status check", "name", srv.Name, "error", err)
+			}
+		case registry.TransportHTTP, registry.TransportSSE:
+			if err := httpPool.StartServer(ctx, srv); err != nil {
+				slog.Warn("failed to start HTTP server for status check", "name", srv.Name, "error", err)
+			}
 		}
 	}
 
-	servers := stdioPool.ListServers()
+	servers := unifiedPool.ListServers()
 	statusList := make([]proxy.ServerStatus, 0, len(servers))
 
 	for _, serverName := range servers {
-		state, _ := stdioPool.GetServerState(serverName)
-		stats, _ := stdioPool.GetServerStats(serverName)
+		state, _ := unifiedPool.GetServerState(serverName)
+
+		stats := pool.ServerStats{}
+		stdioStats, err := stdioPool.GetServerStats(serverName)
+		if err == nil {
+			stats = stdioStats
+		}
 
 		status := proxy.ServerStatus{
 			Name:            serverName,
@@ -188,6 +199,7 @@ func getRealStatusList() proxy.ServerStatusList {
 	}
 
 	stdioPool.Close()
+	httpPool.Close()
 
 	return proxy.ServerStatusList{
 		Timestamp: time.Now(),
