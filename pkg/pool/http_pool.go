@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
@@ -56,15 +57,19 @@ func (s *HTTPClientServer) Initialize(ctx context.Context) error {
 		baseURL := s.config.HTTP.URL
 		s.logger.Debug("http_pool: creating StreamableHTTP client", "server", s.name, "url", baseURL)
 
-		c, err := client.NewStreamableHttpClient(baseURL)
+		headers := make(map[string]string)
+		if s.config.HTTP != nil && s.config.HTTP.Headers != nil {
+			for k, v := range s.config.HTTP.Headers {
+				headers[k] = v
+			}
+		}
+
+		c, err := client.NewStreamableHttpClient(baseURL, transport.WithHTTPHeaders(headers))
 		if err != nil {
 			s.initErr = fmt.Errorf("http_pool: create client: %w", err)
 			s.setState(StateError)
 			return
 		}
-
-		// For servers that need headers, we set them via a header function
-		// Note: mcp-go handles auth internally for most cases
 
 		s.logger.Debug("http_pool: initializing StreamableHTTP client", "server", s.name)
 		startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -259,6 +264,18 @@ func (p *HTTPClientPool) SendRequestToServerWithID(ctx context.Context, name str
 		if err := server.Initialize(initCtx); err != nil {
 			return nil, err
 		}
+	}
+
+	if method == "tools/list" {
+		tools, err := server.ListTools(ctx)
+		if err != nil {
+			return nil, err
+		}
+		resultBytes, _ := json.Marshal(tools)
+		return &Response{
+			Result: resultBytes,
+			ID:     id,
+		}, nil
 	}
 
 	toolArgs := make(map[string]interface{})
