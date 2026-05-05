@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/stretchr/testify/assert"
@@ -24,7 +25,7 @@ type mockPool struct {
 
 type MockRequestResult struct {
 	Result json.RawMessage
-	Error  *pool.JSONRPCError
+	Error  *errors.JSONRPCError
 }
 
 func newMockPool() *mockPool {
@@ -101,7 +102,7 @@ func (m *mockPool) SetTools(serverName string, tools []Tool) {
 	m.tools[serverName] = tools
 }
 
-func (m *mockPool) SetRequestResult(result json.RawMessage, err *pool.JSONRPCError) {
+func (m *mockPool) SetRequestResult(result json.RawMessage, err *errors.JSONRPCError) {
 	m.requestResult = &MockRequestResult{Result: result, Error: err}
 }
 

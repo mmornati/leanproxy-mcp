@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 )
 
 type jsonRPCRequest struct {
@@ -25,26 +27,11 @@ type jsonRPCRequest struct {
 }
 
 type jsonRPCResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *jsonRPCError   `json:"error,omitempty"`
-	ID      interface{}     `json:"id"`
+	JSONRPC string                `json:"jsonrpc"`
+	Result  json.RawMessage       `json:"result,omitempty"`
+	Error   *errors.JSONRPCError  `json:"error,omitempty"`
+	ID      interface{}          `json:"id"`
 }
-
-type jsonRPCError struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
-}
-
-const (
-	ErrCodeParseError     = -32700
-	ErrCodeInvalidRequest = -32600
-	ErrCodeMethodNotFound = -32601
-	ErrCodeInvalidParams  = -32602
-	ErrCodeInternalError  = -32603
-	ErrCodeUnauthorized   = -32604
-)
 
 type MethodHandler func(ctx context.Context, params json.RawMessage) (interface{}, error)
 
@@ -176,7 +163,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		}
 
 		if len(line) > int(s.config.MaxMsgSize) {
-			s.sendError(conn, nil, ErrCodeInvalidRequest, "message too large")
+			s.sendError(conn, nil, errors.ErrCodeInvalidRequest, "message too large")
 			continue
 		}
 
@@ -190,12 +177,12 @@ func (s *Server) handleRequest(conn net.Conn, data []byte, reader *bufio.Reader)
 
 	var req jsonRPCRequest
 	if err := json.Unmarshal(data, &req); err != nil {
-		s.sendError(conn, nil, ErrCodeParseError, "parse error")
+		s.sendError(conn, nil, errors.ErrCodeParseError, "parse error")
 		return
 	}
 
 	if !s.Authenticate(req.AuthToken) {
-		s.sendError(conn, req.ID, ErrCodeUnauthorized, "authentication required")
+		s.sendError(conn, req.ID, errors.ErrCodeUnauthorized, "authentication required")
 		return
 	}
 
@@ -204,13 +191,13 @@ func (s *Server) handleRequest(conn net.Conn, data []byte, reader *bufio.Reader)
 	s.mu.RUnlock()
 
 	if !ok {
-		s.sendError(conn, req.ID, ErrCodeMethodNotFound, "method not found")
+		s.sendError(conn, req.ID, errors.ErrCodeMethodNotFound, "method not found")
 		return
 	}
 
 	result, err := handler(ctx, req.Params)
 	if err != nil {
-		s.sendError(conn, req.ID, ErrCodeInternalError, err.Error())
+		s.sendError(conn, req.ID, errors.ErrCodeInternalError, err.Error())
 		return
 	}
 
@@ -231,7 +218,7 @@ func (s *Server) sendError(conn net.Conn, id interface{}, code int, message stri
 	resp := jsonRPCResponse{
 		JSONRPC: "2.0",
 		ID:      id,
-		Error: &jsonRPCError{
+		Error: &errors.JSONRPCError{
 			Code:    code,
 			Message: message,
 		},

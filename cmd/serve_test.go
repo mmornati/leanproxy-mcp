@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
@@ -156,7 +157,7 @@ func TestWriteError(t *testing.T) {
 	readBuf := &bytes.Buffer{}
 	writer := bufio.NewWriter(readBuf)
 
-	writeError(writer, proxy.ErrCodeMethodNotFound, "Method not found")
+	writeError(writer, errors.ErrCodeMethodNotFound, "Method not found")
 	writer.Flush()
 
 	output := readBuf.String()
@@ -170,8 +171,8 @@ func TestWriteError(t *testing.T) {
 		t.Fatal("expected error in response")
 	}
 
-	if parsed.Error.Code != proxy.ErrCodeMethodNotFound {
-		t.Errorf("expected error code %d, got %d", proxy.ErrCodeMethodNotFound, parsed.Error.Code)
+	if parsed.Error.Code != errors.ErrCodeMethodNotFound {
+		t.Errorf("expected error code %d, got %d", errors.ErrCodeMethodNotFound, parsed.Error.Code)
 	}
 
 	if parsed.Error.Message != "Method not found" {
@@ -264,8 +265,8 @@ func TestHandleConnection_ParseError(t *testing.T) {
 		t.Fatal("expected error response for malformed JSON")
 	}
 
-	if resp.Error.Code != proxy.ErrCodeParseError {
-		t.Errorf("expected parse error code %d, got %d", proxy.ErrCodeParseError, resp.Error.Code)
+	if resp.Error.Code != errors.ErrCodeParseError {
+		t.Errorf("expected parse error code %d, got %d", errors.ErrCodeParseError, resp.Error.Code)
 	}
 }
 
@@ -283,7 +284,7 @@ func TestHandleConnection_EOF(t *testing.T) {
 func TestHandleSingleRequest_RouteError(t *testing.T) {
 	mockR := &mockRouter{
 		routeFunc: func(ctx context.Context, method string) (*registry.ServerEntry, error) {
-			return nil, router.NewRouterError(proxy.ErrCodeMethodNotFound, "method not found", router.ErrToolNotFound)
+			return nil, router.NewRouterError(errors.ErrCodeMethodNotFound, "method not found", router.ErrToolNotFound)
 		},
 	}
 	mockGT := &mockGatewayTools{}
@@ -306,7 +307,7 @@ func TestHandleSingleRequest_RouteError(t *testing.T) {
 		t.Fatal("expected error response")
 	}
 
-	if resp.Error.Code != proxy.ErrCodeMethodNotFound {
+	if resp.Error.Code != errors.ErrCodeMethodNotFound {
 		t.Errorf("expected method not found error, got %d", resp.Error.Code)
 	}
 }

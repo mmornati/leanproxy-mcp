@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 )
 
 type JITConfig struct {
@@ -112,8 +114,8 @@ func newSuccessResponse(result interface{}, id interface{}) JSONRPCResponse {
 func newErrorResponse(err error, id interface{}) JSONRPCResponse {
 	return JSONRPCResponse{
 		JSONRPC: "2.0",
-		Error: &JSONRPCError{
-			Code:    ErrCodeInternalError,
+		Error: &errors.JSONRPCError{
+			Code:    errors.ErrCodeInternalError,
 			Message: err.Error(),
 		},
 		ID: id,

@@ -11,6 +11,8 @@ import (
 	"net/textproto"
 	"sync"
 	"time"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 )
 
 type SchemaCache interface {
@@ -214,33 +216,8 @@ type JSONRPCRequest struct {
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string          `json:"jsonrpc"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *JSONRPCError   `json:"error,omitempty"`
-	ID      interface{}     `json:"id"`
+	JSONRPC string              `json:"jsonrpc"`
+	Result  json.RawMessage     `json:"result,omitempty"`
+	Error   *errors.JSONRPCError `json:"error,omitempty"`
+	ID      interface{}         `json:"id"`
 }
-
-type JSONRPCError struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
-}
-
-func NewJSONRPCError(code int, message string) *JSONRPCError {
-	return &JSONRPCError{
-		Code:    code,
-		Message: message,
-	}
-}
-
-func (e *JSONRPCError) Error() string {
-	return fmt.Sprintf("jsonrpc: error %d: %s", e.Code, e.Message)
-}
-
-const (
-	ErrCodeParseError       = -32700
-	ErrCodeInvalidRequest   = -32600
-	ErrCodeMethodNotFound   = -32601
-	ErrCodeInvalidParams    = -32602
-	ErrCodeInternalError    = -32603
-)
