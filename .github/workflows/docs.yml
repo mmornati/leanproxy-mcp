@@ -74,7 +74,7 @@ jobs:
       - name: Update Deployment Status
         uses: chrnorm/deployment-status@v2
         with:
-          environment_url: https://mmornati.github.io/leanproxy-mcp/
+          environment-url: https://mmornati.github.io/leanproxy-mcp/
           state: ${{ job.status }}
-          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+          deployment-id: ${{ steps.deployment.outputs.deployment_id }}
           token: ${{ secrets.GITHUB_TOKEN }}
