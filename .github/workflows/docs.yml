@@ -32,10 +32,11 @@ jobs:
       - name: Create GitHub Deployment
         uses: chrnorm/deployment-action@v2
         with:
-          target-url: https://mmornati.github.io/leanproxy-mcp/
+          environment-url: https://mmornati.github.io/leanproxy-mcp/
           description: Deploy documentation to GitHub Pages
           environment: github-pages
           ref: ${{ github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
         id: deployment
 
       - name: Setup Python
@@ -73,6 +74,7 @@ jobs:
       - name: Update Deployment Status
         uses: chrnorm/deployment-status@v2
         with:
-          target_url: https://mmornati.github.io/leanproxy-mcp/
+          environment_url: https://mmornati.github.io/leanproxy-mcp/
           state: ${{ job.status }}
           deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
