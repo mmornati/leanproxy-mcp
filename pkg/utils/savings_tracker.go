@@ -7,6 +7,23 @@ import (
 	"time"
 )
 
+type Clock interface {
+	Now() time.Time
+	Since(time.Time) time.Duration
+}
+
+type RealClock struct{}
+
+func (RealClock) Now() time.Time {
+	return time.Now()
+}
+
+func (RealClock) Since(t time.Time) time.Duration {
+	return time.Since(t)
+}
+
+var defaultClock Clock = RealClock{}
+
 type ServerSavings struct {
 	ServerName      string
 	OriginalTokens  int64
@@ -28,12 +45,18 @@ type SavingsTracker struct {
 	totalOptimized   int64
 	serverSavings    map[string]*ServerSavings
 	mu               sync.Mutex
+	clock          Clock
 }
 
 func NewSavingsTracker() *SavingsTracker {
+	return newSavingsTracker(defaultClock)
+}
+
+func newSavingsTracker(clock Clock) *SavingsTracker {
 	return &SavingsTracker{
-		sessionStart: time.Now(),
+		sessionStart: clock.Now(),
 		serverSavings: make(map[string]*ServerSavings),
+		clock:       clock,
 	}
 }
 
@@ -79,7 +102,7 @@ func (s *SavingsTracker) GetCumulativeSavings() CumulativeSavings {
 		TotalOriginal:     s.totalOriginal,
 		TotalOptimized:    s.totalOptimized,
 		TotalSaved:        s.totalOriginal - s.totalOptimized,
-		SessionDuration:   time.Since(s.sessionStart),
+		SessionDuration:   s.clock.Since(s.sessionStart),
 		RequestsProcessed: len(s.serverSavings),
 	}
 }
@@ -99,7 +122,7 @@ func (s *SavingsTracker) Reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.sessionStart = time.Now()
+	s.sessionStart = s.clock.Now()
 	s.totalOriginal = 0
 	s.totalOptimized = 0
 	s.serverSavings = make(map[string]*ServerSavings)

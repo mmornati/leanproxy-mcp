@@ -39,6 +39,7 @@ type CircuitBreaker struct {
 	successes       int32
 	totalSuccesses   int32
 	totalFailures    int32
+	clock          Clock
 }
 
 type CircuitBreakerConfig struct {
@@ -53,15 +54,20 @@ func NewCircuitBreaker(threshold int, cooldown time.Duration, halfOpenCooldown t
 		maxSuccess = 3
 	}
 
+	return newCircuitBreaker(threshold, cooldown, maxSuccess, defaultClock)
+}
+
+func newCircuitBreaker(threshold int, cooldown time.Duration, halfOpenMax int, clock Clock) *CircuitBreaker {
 	return &CircuitBreaker{
 		threshold:       threshold,
 		cooldown:        cooldown,
-		halfOpenMax:     maxSuccess,
+		halfOpenMax:     halfOpenMax,
 		state:           StateClosed,
 		lastFailure:     time.Time{},
 		successes:       0,
 		totalSuccesses:  0,
 		totalFailures:   0,
+		clock:          clock,
 	}
 }
 
@@ -73,7 +79,7 @@ func (cb *CircuitBreaker) State() CircuitState {
 	cb.mu.RUnlock()
 
 	if state == StateOpen {
-		if time.Since(lastFailure) >= cb.cooldown {
+		if cb.clock.Since(lastFailure) >= cb.cooldown {
 			cb.mu.Lock()
 			if cb.state == StateOpen {
 				cb.state = StateHalfOpen
@@ -117,7 +123,7 @@ func (cb *CircuitBreaker) RecordFailure() {
 
 	atomic.AddInt32(&cb.totalFailures, 1)
 	cb.failures++
-	cb.lastFailure = time.Now()
+	cb.lastFailure = cb.clock.Now()
 
 	switch cb.state {
 	case StateClosed:
@@ -179,7 +185,7 @@ type CircuitBreakerGroup struct {
 func NewCircuitBreakerGroup() *CircuitBreakerGroup {
 	return &CircuitBreakerGroup{
 		breakers: make(map[string]*CircuitBreaker),
-		defaultCB: NewCircuitBreaker(5, 50*time.Second, 10*time.Second),
+		defaultCB: newCircuitBreaker(5, 50*time.Second, 3, defaultClock),
 	}
 }
 
@@ -199,7 +205,7 @@ func (g *CircuitBreakerGroup) Get(name string) *CircuitBreaker {
 		return cb
 	}
 
-	cb = NewCircuitBreaker(5, 50*time.Second, 10*time.Second)
+	cb = newCircuitBreaker(5, 50*time.Second, 3, defaultClock)
 	g.breakers[name] = cb
 	return cb
 }
