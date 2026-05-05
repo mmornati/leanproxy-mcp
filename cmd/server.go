@@ -656,6 +656,27 @@ var healthTimeout time.Duration
 func runServerHealth(cmd *cobra.Command, args []string) error {
 	serverName := args[0]
 
+	info, err := statusfile.ReadCurrentStatus()
+	hasRunningInstance := err == nil && info != nil
+
+	if hasRunningInstance {
+		for _, s := range info.Servers {
+			if s.Name == serverName && s.Status == "running" {
+				var uptime time.Duration
+				if s.Uptime != "" {
+					uptime, _ = time.ParseDuration(s.Uptime)
+				}
+				fmt.Printf("✓ Server %q is healthy (status: running, uptime: %v)\n", serverName, uptime)
+				fmt.Printf("  Note: Connected to running LeanProxy instance (PID: %d)\n", info.PID)
+				return nil
+			}
+		}
+		if info.PID > 0 {
+			fmt.Printf("Note: Found running LeanProxy (PID: %d) but server %q may have stopped\n", info.PID, serverName)
+			fmt.Printf("      Attempting to restart server...\n")
+		}
+	}
+
 	configPath := runFlags.config
 	if configPath == "" {
 		configPath = userConfigPath()
@@ -740,7 +761,11 @@ func runServerHealth(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("✓ Server %q is healthy (latency: %v)\n", serverName, elapsed)
 	if initialized {
-		fmt.Printf("  Note: Server was initialized during health check\n")
+		if hasRunningInstance {
+			fmt.Printf("  Note: Server was stopped in running LeanProxy, restarted successfully\n")
+		} else {
+			fmt.Printf("  Note: Started new LeanProxy instance for health check\n")
+		}
 	}
 	return nil
 }
