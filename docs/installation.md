@@ -18,7 +18,7 @@ This single command works on macOS and Linux, automatically detecting your archi
 
 ```bash
 # Download latest version (auto-detects OS/arch)
-VERSION=${VERSION:-$(curl -sL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | grep -o '"tag_name"' | cut -d'"' -f4)}
+VERSION=${VERSION:-$(curl -sL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')}
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
 [ "$ARCH" = "x86_64" ] && ARCH="amd64"
