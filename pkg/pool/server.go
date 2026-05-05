@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 )
 
 const (
@@ -411,7 +413,7 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request) {
 
 	result, sendErr := s.sendRequest(ctx, req)
 	if sendErr != nil {
-		resp.Error = &JSONRPCError{Code: ErrCodeServerError, Message: sendErr.Error()}
+		resp.Error = &errors.JSONRPCError{Code: errors.ErrCodeServerError, Message: sendErr.Error()}
 		s.mu.Lock()
 		s.stats.ErrorCount++
 		s.mu.Unlock()

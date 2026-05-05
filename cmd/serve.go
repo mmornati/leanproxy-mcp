@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
@@ -253,7 +254,7 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer, r Router, gt gateway.GatewayTools, p Pool) {
 	req, err := proxy.ParseJSONRPCRequest(line)
 	if err != nil {
-		writeError(writer, proxy.ErrCodeParseError, "Parse error")
+		writeError(writer, errors.ErrCodeParseError, "Parse error")
 		return
 	}
 
@@ -264,7 +265,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 
 	server, err := r.Route(ctx, req.Method)
 	if err != nil {
-		writeError(writer, proxy.ErrCodeMethodNotFound, "Method not found")
+		writeError(writer, errors.ErrCodeMethodNotFound, "Method not found")
 		return
 	}
 
@@ -275,7 +276,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 
 	resp, err := p.SendRequest(ctx, server.ID, req, timeout)
 	if err != nil {
-		writeError(writer, proxy.ErrCodeInternalError, err.Error())
+		writeError(writer, errors.ErrCodeInternalError, err.Error())
 		return
 	}
 
@@ -285,7 +286,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Writer, writerMu *sync.Mutex, r Router, gt gateway.GatewayTools, p Pool) {
 	req, err := proxy.ParseJSONRPCRequest(line)
 	if err != nil {
-		writeErrorAsync(writer, writerMu, proxy.ErrCodeParseError, "Parse error")
+		writeErrorAsync(writer, writerMu, errors.ErrCodeParseError, "Parse error")
 		return
 	}
 
@@ -299,7 +300,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 
 	server, err := r.Route(ctx, req.Method)
 	if err != nil {
-		writeErrorAsync(writer, writerMu, proxy.ErrCodeMethodNotFound, "Method not found")
+		writeErrorAsync(writer, writerMu, errors.ErrCodeMethodNotFound, "Method not found")
 		return
 	}
 
@@ -310,7 +311,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 
 	resp, err := p.SendRequest(ctx, server.ID, req, timeout)
 	if err != nil {
-		writeErrorAsync(writer, writerMu, proxy.ErrCodeInternalError, err.Error())
+		writeErrorAsync(writer, writerMu, errors.ErrCodeInternalError, err.Error())
 		return
 	}
 
@@ -320,12 +321,12 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, r Router, gt gateway.GatewayTools, p Pool) {
 	reqs, err := proxy.ParseJSONRPCBatchRequest(line, GetConfig().MaxBatchSize)
 	if err != nil {
-		writeError(writer, proxy.ErrCodeParseError, "Parse error")
+		writeError(writer, errors.ErrCodeParseError, "Parse error")
 		return
 	}
 
 	if len(reqs) == 0 {
-		writeError(writer, proxy.ErrCodeInvalidRequest, "Empty batch")
+		writeError(writer, errors.ErrCodeInvalidRequest, "Empty batch")
 		return
 	}
 
@@ -348,7 +349,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 		if err != nil {
 			responses = append(responses, &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   proxy.NewJSONRPCError(proxy.ErrCodeMethodNotFound, "Method not found"),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeMethodNotFound, "Method not found"),
 				ID:      req.ID,
 			})
 			continue
@@ -362,7 +363,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 		if err != nil {
 			responses = append(responses, &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   proxy.NewJSONRPCError(proxy.ErrCodeInternalError, err.Error()),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, err.Error()),
 				ID:      req.ID,
 			})
 			continue
@@ -373,7 +374,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 
 	data, err := json.Marshal(responses)
 	if err != nil {
-		writeError(writer, proxy.ErrCodeInternalError, "Failed to marshal batch response")
+		writeError(writer, errors.ErrCodeInternalError, "Failed to marshal batch response")
 		return
 	}
 
@@ -402,7 +403,7 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 		if listErr != nil {
 			return &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   proxy.NewJSONRPCError(proxy.ErrCodeInternalError, listErr.Error()),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, listErr.Error()),
 				ID:      req.ID,
 			}
 		}
@@ -418,7 +419,7 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 		if searchErr != nil {
 			return &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   proxy.NewJSONRPCError(proxy.ErrCodeInternalError, searchErr.Error()),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, searchErr.Error()),
 				ID:      req.ID,
 			}
 		}
@@ -430,7 +431,7 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 		}
 		invokeResult, invokeErr := gt.InvokeTool(ctx, params)
 		if invokeErr != nil {
-			if rpcErr, ok := invokeErr.(*proxy.JSONRPCError); ok {
+			if rpcErr, ok := invokeErr.(*errors.JSONRPCError); ok {
 				return &proxy.JSONRPCResponse{
 					JSONRPC: "2.0",
 					Error:   rpcErr,
@@ -439,7 +440,7 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 			}
 			return &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   proxy.NewJSONRPCError(proxy.ErrCodeInternalError, invokeErr.Error()),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, invokeErr.Error()),
 				ID:      req.ID,
 			}
 		}
@@ -469,7 +470,7 @@ func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {
 func writeError(writer *bufio.Writer, code int, message string) {
 	resp := &proxy.JSONRPCResponse{
 		JSONRPC: "2.0",
-		Error:   proxy.NewJSONRPCError(code, message),
+		Error:   errors.NewJSONRPCError(code, message),
 		ID:      nil,
 	}
 	data, err := json.Marshal(resp)
@@ -518,7 +519,7 @@ func writeResponseAsync(writer *bufio.Writer, mu *sync.Mutex, resp *proxy.JSONRP
 func writeErrorAsync(writer *bufio.Writer, mu *sync.Mutex, code int, message string) {
 	resp := &proxy.JSONRPCResponse{
 		JSONRPC: "2.0",
-		Error:   proxy.NewJSONRPCError(code, message),
+		Error:   errors.NewJSONRPCError(code, message),
 		ID:      nil,
 	}
 	mu.Lock()
@@ -535,12 +536,12 @@ func writeErrorAsync(writer *bufio.Writer, mu *sync.Mutex, code int, message str
 func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Writer, writerMu *sync.Mutex, r Router, gt gateway.GatewayTools, p Pool) {
 	reqs, err := proxy.ParseJSONRPCBatchRequest(line, GetConfig().MaxBatchSize)
 	if err != nil {
-		writeErrorAsync(writer, writerMu, proxy.ErrCodeParseError, "Parse error")
+		writeErrorAsync(writer, writerMu, errors.ErrCodeParseError, "Parse error")
 		return
 	}
 
 	if len(reqs) == 0 {
-		writeErrorAsync(writer, writerMu, proxy.ErrCodeInvalidRequest, "Empty batch")
+		writeErrorAsync(writer, writerMu, errors.ErrCodeInvalidRequest, "Empty batch")
 		return
 	}
 
@@ -563,7 +564,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 		if err != nil {
 			responses = append(responses, &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   proxy.NewJSONRPCError(proxy.ErrCodeMethodNotFound, "Method not found"),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeMethodNotFound, "Method not found"),
 				ID:      req.ID,
 			})
 			continue
@@ -577,7 +578,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 		if err != nil {
 			responses = append(responses, &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   proxy.NewJSONRPCError(proxy.ErrCodeInternalError, err.Error()),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, err.Error()),
 				ID:      req.ID,
 			})
 			continue
@@ -588,7 +589,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 
 	data, err := json.Marshal(responses)
 	if err != nil {
-		writeErrorAsync(writer, writerMu, proxy.ErrCodeInternalError, "Failed to marshal batch response")
+		writeErrorAsync(writer, writerMu, errors.ErrCodeInternalError, "Failed to marshal batch response")
 		return
 	}
 

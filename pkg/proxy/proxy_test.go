@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 )
 
 func TestNewProxy(t *testing.T) {
@@ -292,7 +294,7 @@ func findSubstring(s, substr string) bool {
 }
 
 func TestNewJSONRPCError(t *testing.T) {
-	err := NewJSONRPCError(-32600, "Invalid Request")
+	err := errors.NewJSONRPCError(-32600, "Invalid Request")
 	if err.Code != -32600 {
 		t.Errorf("expected code -32600, got %d", err.Code)
 	}
@@ -302,7 +304,7 @@ func TestNewJSONRPCError(t *testing.T) {
 }
 
 func TestJSONRPCErrorError(t *testing.T) {
-	err := NewJSONRPCError(-32600, "Invalid Request")
+	err := errors.NewJSONRPCError(-32600, "Invalid Request")
 	expected := "jsonrpc: error -32600: Invalid Request"
 	if err.Error() != expected {
 		t.Errorf("Error() = '%s', expected '%s'", err.Error(), expected)

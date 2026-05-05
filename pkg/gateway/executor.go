@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/router"
@@ -40,24 +41,24 @@ func (g *gatewayTools) ListServers(ctx context.Context) ([]ServerInfo, error) {
 
 func (g *gatewayTools) InvokeTool(ctx context.Context, params InvokeToolParams) (interface{}, error) {
 	if params.ServerName == "" {
-		return nil, proxy.NewJSONRPCError(proxy.ErrCodeInvalidParams, "server_name is required")
+		return nil, errors.NewJSONRPCError(errors.ErrCodeInvalidParams, "server_name is required")
 	}
 	if params.ToolName == "" {
-		return nil, proxy.NewJSONRPCError(proxy.ErrCodeInvalidParams, "tool_name is required")
+		return nil, errors.NewJSONRPCError(errors.ErrCodeInvalidParams, "tool_name is required")
 	}
 
 	entry, err := g.serverReg.Get(ctx, params.ServerName)
 	if err != nil {
-		return nil, proxy.NewJSONRPCError(proxy.ErrCodeInvalidParams, fmt.Sprintf("server not found: %s", params.ServerName))
+		return nil, errors.NewJSONRPCError(errors.ErrCodeInvalidParams, fmt.Sprintf("server not found: %s", params.ServerName))
 	}
 
 	if entry.Health != registry.HealthHealthy && entry.Health != registry.HealthUnknown {
-		return nil, proxy.NewJSONRPCError(proxy.ErrCodeInvalidParams, fmt.Sprintf("server not running: %s", params.ServerName))
+		return nil, errors.NewJSONRPCError(errors.ErrCodeInvalidParams, fmt.Sprintf("server not running: %s", params.ServerName))
 	}
 
 	allTools, err := g.toolReg.ListTools(ctx)
 	if err != nil {
-		return nil, proxy.NewJSONRPCError(proxy.ErrCodeInternalError, "failed to list tools")
+		return nil, errors.NewJSONRPCError(errors.ErrCodeInternalError, "failed to list tools")
 	}
 
 	var foundTool *router.ToolEntry
@@ -73,12 +74,12 @@ func (g *gatewayTools) InvokeTool(ctx context.Context, params InvokeToolParams) 
 	}
 
 	if foundTool == nil {
-		return nil, proxy.NewJSONRPCError(proxy.ErrCodeInvalidParams, fmt.Sprintf("tool %s not found on server %s", params.ToolName, params.ServerName))
+		return nil, errors.NewJSONRPCError(errors.ErrCodeInvalidParams, fmt.Sprintf("tool %s not found on server %s", params.ToolName, params.ServerName))
 	}
 
 	argsJSON, err := json.Marshal(params.Arguments)
 	if err != nil {
-		return nil, proxy.NewJSONRPCError(proxy.ErrCodeInvalidParams, "invalid arguments format")
+		return nil, errors.NewJSONRPCError(errors.ErrCodeInvalidParams, "invalid arguments format")
 	}
 
 	req := proxy.JSONRPCRequest{

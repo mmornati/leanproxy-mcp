@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/router"
 )
@@ -147,12 +147,12 @@ func TestInvokeTool(t *testing.T) {
 		if err == nil {
 			t.Error("InvokeTool() expected error for missing server_name, got nil")
 		}
-		rpcErr, ok := err.(*proxy.JSONRPCError)
+		rpcErr, ok := err.(*errors.JSONRPCError)
 		if !ok {
-			t.Fatalf("InvokeTool() returned error type %T, want *proxy.JSONRPCError", err)
+			t.Fatalf("InvokeTool() returned error type %T, want *errors.JSONRPCError", err)
 		}
-		if rpcErr.Code != proxy.ErrCodeInvalidParams {
-			t.Errorf("InvokeTool() error code = %d, want %d", rpcErr.Code, proxy.ErrCodeInvalidParams)
+		if rpcErr.Code != errors.ErrCodeInvalidParams {
+			t.Errorf("InvokeTool() error code = %d, want %d", rpcErr.Code, errors.ErrCodeInvalidParams)
 		}
 	})
 
@@ -176,12 +176,12 @@ func TestInvokeTool(t *testing.T) {
 		if err == nil {
 			t.Error("InvokeTool() expected error for nonexistent server, got nil")
 		}
-		rpcErr, ok := err.(*proxy.JSONRPCError)
+		rpcErr, ok := err.(*errors.JSONRPCError)
 		if !ok {
-			t.Fatalf("InvokeTool() returned error type %T, want *proxy.JSONRPCError", err)
+			t.Fatalf("InvokeTool() returned error type %T, want *errors.JSONRPCError", err)
 		}
-		if rpcErr.Code != proxy.ErrCodeInvalidParams {
-			t.Errorf("InvokeTool() error code = %d, want %d", rpcErr.Code, proxy.ErrCodeInvalidParams)
+		if rpcErr.Code != errors.ErrCodeInvalidParams {
+			t.Errorf("InvokeTool() error code = %d, want %d", rpcErr.Code, errors.ErrCodeInvalidParams)
 		}
 	})
 

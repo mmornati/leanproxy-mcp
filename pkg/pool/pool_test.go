@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
@@ -792,7 +793,7 @@ func TestPoolSendServerNotificationNotFound(t *testing.T) {
 }
 
 func TestJSONRPCError(t *testing.T) {
-	err := &JSONRPCError{
+	err := &errors.JSONRPCError{
 		Code:    -32603,
 		Message: "Internal error",
 	}
@@ -805,7 +806,7 @@ func TestJSONRPCError(t *testing.T) {
 
 func TestJSONRPCErrorWithData(t *testing.T) {
 	data := json.RawMessage(`{"key":"value"}`)
-	err := &JSONRPCError{
+	err := &errors.JSONRPCError{
 		Code:    -32000,
 		Message: "Server error",
 		Data:    data,

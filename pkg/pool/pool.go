@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/concurrent"
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
@@ -48,26 +49,10 @@ func (r Request) MarshalJSON() ([]byte, error) {
 }
 
 type Response struct {
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *JSONRPCError   `json:"error,omitempty"`
-	ID     interface{}     `json:"id"`
+	Result json.RawMessage   `json:"result,omitempty"`
+	Error  *errors.JSONRPCError `json:"error,omitempty"`
+	ID     interface{}       `json:"id"`
 }
-
-type JSONRPCError struct {
-	Code    int             `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data,omitempty"`
-}
-
-func (e *JSONRPCError) Error() string {
-	return fmt.Sprintf("jsonrpc: error %d: %s", e.Code, e.Message)
-}
-
-const (
-	ErrCodeInternalError = -32603
-	ErrCodeServerError   = -32000
-	ErrCodeTimeout       = -32001
-)
 
 type ServerState string
 

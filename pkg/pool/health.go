@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 )
 
 type HealthStatus string
@@ -198,10 +200,10 @@ type PingRequest struct {
 }
 
 type PingResponse struct {
-	ID      interface{}     `json:"id"`
-	JSONRPC string          `json:"jsonrpc"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *JSONRPCError   `json:"error,omitempty"`
+	ID      interface{}         `json:"id"`
+	JSONRPC string              `json:"jsonrpc"`
+	Result  json.RawMessage     `json:"result,omitempty"`
+	Error   *errors.JSONRPCError `json:"error,omitempty"`
 }
 
 func (hc *HealthChecker) performPingCheck(ctx context.Context, server *StdioServerV2) (bool, float64) {
