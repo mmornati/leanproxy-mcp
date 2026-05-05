@@ -6,7 +6,7 @@ LeanProxy-MCP can be installed on macOS, Linux, and Windows.
 
 - **macOS, Linux, or Windows**
 - **IDE with MCP support** (Claude Desktop, Cursor, OpenCode, Windsurf)
-- Optionally: **Go 1.21+** (for building from source)
+- Optionally: **Go 1.25+** (for building from source)
 
 ## Download Binary
 
