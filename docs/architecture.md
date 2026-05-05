@@ -437,6 +437,95 @@ logging:
   file: ""      # empty = stdout
 ```
 
+## Error Handling
+
+LeanProxy-MCP follows JSON-RPC 2.0 error handling conventions with structured logging for diagnostics.
+
+### JSON-RPC Errors
+
+Errors are returned using the JSON-RPC error response format:
+
+```go
+type JSONRPCError struct {
+    Code    int             `json:"code"`
+    Message string          `json:"message"`
+    Data    json.RawMessage `json:"data,omitempty"`
+}
+```
+
+**Standard Error Codes:**
+
+| Code | Meaning |
+|------|---------|
+| `-32700` | Parse error - Invalid JSON received |
+| `-32600` | Invalid request - Malformed JSON-RPC |
+| `-32600` | Method not found - Unknown method |
+| `-32500` | Internal error - Unexpected server failure |
+
+**Custom Application Codes:**
+
+| Code | Meaning |
+|------|---------|
+| `-32000` | Server error - Implementation-specific errors |
+
+### Handler Patterns
+
+When handling errors in MCP request handlers, return the error via JSON-RPC response:
+
+```go
+// Return error to client via JSON-RPC response
+return &Response{
+    Error: &JSONRPCError{
+        Code:    -32000,
+        Message: err.Error(),
+    },
+}, nil
+```
+
+**Best Practices:**
+- Always return meaningful error messages to help debugging
+- Use structured error data for complex failures
+- Log errors at the appropriate level before returning
+
+### Logging Levels
+
+Use log levels to categorize error severity:
+
+| Level | Usage |
+|-------|-------|
+| `Debug` | Detailed flow information, request/response content |
+| `Info` | Important milestones, server startup, connections established |
+| `Warn` | Recoverable issues that don't block operation |
+| `Error` | Failed operations that may affect user experience |
+
+### Error Handling Anti-Patterns
+
+**BAD - Silent error swallowing:**
+
+```go
+// Error is logged but execution continues without handling
+if err != nil {
+    log.Debug("operation failed", "error", err)
+    // continues without proper handling
+}
+```
+
+**GOOD - Proper error propagation:**
+
+```go
+// Error is properly returned to caller
+if err != nil {
+    return &Response{
+        Error: &JSONRPCError{
+            Code:    -32000,
+            Message: err.Error(),
+        },
+    }, err
+}
+```
+
+Key principle: **Never silently ignore errors**. Either handle them properly or propagate them up the call stack.
+
 ## Next Steps
 
 - [Commands Reference](./commands.md) - Full command documentation
