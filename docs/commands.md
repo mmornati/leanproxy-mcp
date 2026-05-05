@@ -251,6 +251,77 @@ No servers configured.
 
 ---
 
+### `server health` - Health Check
+
+Check if an MCP server is healthy and responding. This command sends a `ping` request to the MCP server to verify it's working.
+
+#### Usage
+
+```bash
+leanproxy-mcp server health <server_name> [flags]
+```
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--timeout` | duration | 10s | Health check timeout |
+| `--config` | string | - | Path to leanproxy_servers.yaml config file |
+
+#### Examples
+
+```bash
+# Check health of garmin server
+leanproxy-mcp server health garmin
+
+# Check health with custom timeout
+leanproxy-mcp server health garmin --timeout 30s
+```
+
+#### Output (Server healthy)
+
+```
+✓ Server "garmin" is healthy (status: running, uptime: 5m30s)
+  Note: Connected to running LeanProxy instance
+```
+
+#### Output (Server was stopped, restarted)
+
+```
+Note: Found running LeanProxy (PID: 1656) but server "garmin" may have stopped
+      Attempting to restart server...
+✓ Server "garmin" is healthy (latency: 2.1s)
+  Note: Server was stopped in running LeanProxy, restarted successfully
+```
+
+#### Output (No running LeanProxy)
+
+```
+Note: No running LeanProxy instance found
+time=2026-05-05T21:18:16.467+02:00 level=INFO msg="worker pool started" workers=4 queue_size=1000
+time=2026-05-05T21:18:16.469+02:00 level=INFO msg="server spawned" name=garmin pid=91333
+✓ Server "garmin" is healthy (latency: 1.7s)
+  Note: Started new LeanProxy instance for health check
+```
+
+#### How It Works
+
+1. **Check running LeanProxy**: First checks if there's a running LeanProxy instance
+2. **Check server status**: If found, checks if the server is marked as "running" in the status file
+3. **Connect or restart**:
+   - If server is running → returns healthy immediately
+   - If server is stopped but LeanProxy is running → restarts the MCP server
+   - If no LeanProxy running → starts a new one just for health check
+4. **Send ping**: Sends MCP protocol `ping` request to verify responsiveness
+
+#### Use Cases
+
+- **CI/CD verification**: Verify MCP servers are healthy before running tests
+- **Monitoring**: Quick status check without using LLM tokens
+- **Debugging**: Verify a specific server is responding
+
+---
+
 ### `server enable` - Enable Server
 
 Enable a disabled MCP server.

@@ -26,7 +26,7 @@ In a 20-prompt coding session where GitHub is called only twice, Native MCP wast
 
 LeanProxy uses a gateway pattern with Just-In-Time schema loading:
 
-- **Single router schema**: Only 2 tools (`invoke_tool`, `list_tools`) = **~110 tokens** vs 3,000+ for Native MCP
+- **Single router schema**: Only 2 tools (`invoke_tool`, `search_tools`) = **~110 tokens** vs 3,000+ for Native MCP
 - **On-demand tool registration**: Backend server schemas load only when actually invoked
 - **Session-aware caching**: Tool schemas persist across the session without per-request overhead
 
@@ -108,18 +108,9 @@ Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy onl
 brew tap mmornati/leanproxy-mcp
 brew install leanproxy-mcp
 
-# Download binary (auto-detects OS/arch)
-VERSION=${VERSION:-$(curl -sL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | grep -o '"tag_name"' | cut -d'"' -f4)}
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-ARCH=$(uname -m)
-[ "$ARCH" = "x86_64" ] && ARCH="amd64"
-[ "$ARCH" = "arm64" ] && ARCH="arm64"
-curl -fsSL "https://github.com/mmornati/leanproxy-mcp/releases/download/${VERSION}/leanproxy-mcp_${VERSION#v}_${OS}_${ARCH}.tar.gz" -o leanproxy-mcp.tar.gz
-tar -xzf leanproxy-mcp.tar.gz
+# Download binary from releases
+curl -fsSL https://github.com/mmornati/leanproxy-mcp/releases/latest/download/leanproxy-mcp -o leanproxy-mcp
 chmod +x leanproxy-mcp && sudo mv leanproxy-mcp /usr/local/bin/
-rm leanproxy-mcp.tar.gz
-
-# Override version: VERSION=v0.5.2 ...
 
 # Build from source
 git clone https://github.com/mmornati/leanproxy-mcp.git
@@ -141,7 +132,7 @@ leanproxy-mcp compactor --manifest ./mcp.json
 
 ### IDE Configuration
 
-LeanProxy can be configured as an MCP server in your IDE. For detailed setup instructions, see the [Installation Guide](https://mmornati.github.io/leanproxy-mcp/installation/).
+LeanProxy can be configured as an MCP server in your IDE. For detailed setup instructions, see the [Installation Guide](docs/installation.md).
 
 #### OpenCode Example
 
@@ -160,12 +151,12 @@ Add to your `~/.config/opencode/opencode.json`:
 }
 ```
 
-Other IDEs (Claude Desktop, Cursor, Windsurf): see [Installation Guide](https://mmornati.github.io/leanproxy-mcp/installation/).
+Other IDEs (Claude Desktop, Cursor, Windsurf): see [Installation Guide](docs/installation.md).
 
 ### Verification
 
 ```bash
-leanproxy-mcp server list
+leanproxy server list
 ```
 
 ## Build from Source
@@ -191,14 +182,14 @@ For detailed documentation, see:
 
 | Guide | Description |
 |-------|-------------|
-| [User Documentation](https://mmornati.github.io/leanproxy-mcp/) | Overview, economics, and key concepts |
-| [Installation Guide](https://mmornati.github.io/leanproxy-mcp/installation/) | Download, install, and IDE setup |
-| [Quick Start](https://mmornati.github.io/leanproxy-mcp/quickstart/) | Get up and running in minutes |
-| [Commands Reference](https://mmornati.github.io/leanproxy-mcp/commands/) | Complete CLI command documentation |
-| [Configuration](https://mmornati.github.io/leanproxy-mcp/configuration/) | Customize LeanProxy behavior |
-| [Architecture](https://mmornati.github.io/leanproxy-mcp/architecture/) | Understanding internal design |
-| [Troubleshooting](https://mmornati.github.io/leanproxy-mcp/troubleshooting/) | Common issues and solutions |
-| [FAQ](https://mmornati.github.io/leanproxy-mcp/faq/) | Frequently asked questions |
+| [User Documentation](docs/index.md) | Overview, economics, and key concepts |
+| [Installation Guide](docs/installation.md) | Download, install, and IDE setup |
+| [Quick Start](docs/quickstart.md) | Get up and running in minutes |
+| [Commands Reference](docs/commands.md) | Complete CLI command documentation |
+| [Configuration](docs/configuration.md) | Customize LeanProxy behavior |
+| [Architecture](docs/architecture.md) | Understanding internal design |
+| [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
+| [FAQ](docs/faq.md) | Frequently asked questions |
 
 ## License
 
