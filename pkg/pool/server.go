@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	errstd "errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mmornati/leanproxy-mcp/pkg/errors"
+	errs "github.com/mmornati/leanproxy-mcp/pkg/errors"
 )
 
 const (
@@ -28,7 +29,7 @@ const (
 )
 
 type StdioServerConfig struct {
-	Name           string
+	Name            string
 	Command        string
 	Args           []string
 	Env            []string
@@ -36,6 +37,7 @@ type StdioServerConfig struct {
 	MaxConcurrent  int
 	IdleTimeout    time.Duration
 	RequestTimeout time.Duration
+	MaxResponseSize int
 }
 
 type ServerHandle struct {
@@ -54,7 +56,7 @@ type ServerStats struct {
 }
 
 type StdioServerV2 struct {
-	name           string
+	name            string
 	config         StdioServerConfig
 	process        *exec.Cmd
 	pgid           int
@@ -72,6 +74,7 @@ type StdioServerV2 struct {
 	idleTimeout    time.Duration
 	requestTimeout time.Duration
 	maxConcurrent  int
+	maxResponseSize int
 	currentLoad    int
 	healthTicker   *time.Ticker
 	stopCh         chan struct{}
@@ -101,21 +104,27 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 		requestTimeout = 30 * time.Second
 	}
 
+	maxResponseSize := config.MaxResponseSize
+	if maxResponseSize == 0 {
+		maxResponseSize = 1024 * 1024 // 1MB default
+	}
+
 	return &StdioServerV2{
-		name:           name,
-		config:         config,
-		requestCh:      make(chan Request, maxConcurrent),
-		responseCh:     make(chan Response, maxConcurrent),
-		state:          stateIdle,
-		stats:          ServerStats{},
+		name:             name,
+		config:           config,
+		requestCh:        make(chan Request, maxConcurrent),
+		responseCh:      make(chan Response, maxConcurrent),
+		state:           stateIdle,
+		stats:           ServerStats{},
 		maxRestarts:    5,
 		backoff:        time.Second,
 		idleTimeout:    idleTimeout,
 		requestTimeout: requestTimeout,
 		maxConcurrent:  maxConcurrent,
+		maxResponseSize: maxResponseSize,
 		healthTicker:   time.NewTicker(30 * time.Second),
-		stopCh:         make(chan struct{}),
-		logger:         logger,
+		stopCh:          make(chan struct{}),
+		logger:          logger,
 	}
 }
 
@@ -274,7 +283,7 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 func (s *StdioServerV2) readResponses() {
 	defer s.wg.Done()
 	scanner := bufio.NewScanner(s.stdout)
-	scanner.Buffer(make([]byte, 1024), 50*1024*1024)
+	scanner.Buffer(make([]byte, 1024), s.maxResponseSize)
 
 	for {
 		select {
@@ -282,6 +291,15 @@ func (s *StdioServerV2) readResponses() {
 			return
 		default:
 			if scanner.Scan() {
+				if scanner.Err() != nil {
+					if errstd.Is(scanner.Err(), bufio.ErrBufferFull) {
+						s.logger.Error("response exceeds max buffer size", "name", s.name, "maxSize", s.maxResponseSize)
+					} else {
+						s.logger.Error("scanner error", "name", s.name, "error", scanner.Err())
+					}
+					return
+				}
+
 				line := scanner.Bytes()
 				s.logger.Debug("read from server stdout", "name", s.name, "line", string(line))
 
@@ -413,7 +431,7 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request) {
 
 	result, sendErr := s.sendRequest(ctx, req)
 	if sendErr != nil {
-		resp.Error = &errors.JSONRPCError{Code: errors.ErrCodeServerError, Message: sendErr.Error()}
+		resp.Error = &errs.JSONRPCError{Code: errs.ErrCodeServerError, Message: sendErr.Error()}
 		s.mu.Lock()
 		s.stats.ErrorCount++
 		s.mu.Unlock()
