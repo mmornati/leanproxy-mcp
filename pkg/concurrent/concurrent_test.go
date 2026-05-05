@@ -150,15 +150,25 @@ func TestCircuitBreakerHalfOpen(t *testing.T) {
 		t.Skip("skipping in short mode - timing dependent test")
 	}
 
-	cb := NewCircuitBreaker(2, 50*time.Millisecond, 10*time.Second)
+	cb := NewCircuitBreaker(3, 50*time.Millisecond, 10*time.Millisecond)
 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 3; i++ {
 		cb.RecordFailure()
 	}
 
 	require.Eventually(t, func() bool {
-		return cb.State() == StateHalfOpen
-	}, 200*time.Millisecond, 20*time.Millisecond)
+		return cb.State() != StateClosed
+	}, 100*time.Millisecond, 10*time.Millisecond)
+
+	time.Sleep(60 * time.Millisecond)
+
+	require.Equal(t, StateHalfOpen, cb.State())
+
+	for i := 0; i < 3; i++ {
+		cb.RecordSuccess()
+	}
+
+	require.Equal(t, StateClosed, cb.State())
 }
 
 func TestCircuitBreakerSuccessCloses(t *testing.T) {
@@ -166,7 +176,7 @@ func TestCircuitBreakerSuccessCloses(t *testing.T) {
 		t.Skip("skipping in short mode - timing dependent test")
 	}
 
-	cb := NewCircuitBreaker(2, 50*time.Millisecond, 10*time.Second)
+	cb := NewCircuitBreaker(2, 50*time.Millisecond, 10*time.Millisecond)
 
 	for i := 0; i < 2; i++ {
 		cb.RecordFailure()
@@ -174,7 +184,11 @@ func TestCircuitBreakerSuccessCloses(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		return cb.State() != StateClosed
-	}, 200*time.Millisecond, 20*time.Millisecond)
+	}, 100*time.Millisecond, 10*time.Millisecond)
+
+	time.Sleep(60 * time.Millisecond)
+
+	require.Equal(t, StateHalfOpen, cb.State())
 
 	for i := 0; i < 3; i++ {
 		cb.RecordSuccess()

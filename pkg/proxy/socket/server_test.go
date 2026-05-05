@@ -163,6 +163,7 @@ func TestJSONRPCRequestParsing(t *testing.T) {
 
 	conn.Close()
 	cancel()
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -226,6 +227,7 @@ func TestMalformedRequest(t *testing.T) {
 
 	conn.Close()
 	cancel()
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	server.Shutdown(shutdownCtx)
@@ -304,6 +306,7 @@ func TestConcurrentConnections(t *testing.T) {
 	conn1.Close()
 	conn2.Close()
 	cancel()
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -350,6 +353,7 @@ func TestMessageTooLarge(t *testing.T) {
 
 	conn.Close()
 	cancel()
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	server.Shutdown(shutdownCtx)
@@ -453,6 +457,7 @@ func TestRequestWithAuthToken(t *testing.T) {
 
 	conn.Close()
 	cancel()
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	server.Shutdown(shutdownCtx)
@@ -522,6 +527,7 @@ func TestRequestWithoutAuthToken(t *testing.T) {
 
 	conn.Close()
 	cancel()
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	server.Shutdown(shutdownCtx)
@@ -591,6 +597,7 @@ func TestRequestWithInvalidAuthToken(t *testing.T) {
 
 	conn.Close()
 	cancel()
+
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 	server.Shutdown(shutdownCtx)

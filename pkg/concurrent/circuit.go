@@ -69,6 +69,7 @@ func (cb *CircuitBreaker) State() CircuitState {
 	cb.mu.RLock()
 	state := cb.state
 	lastFailure := cb.lastFailure
+	successes := cb.successes
 	cb.mu.RUnlock()
 
 	if state == StateOpen {
@@ -82,6 +83,10 @@ func (cb *CircuitBreaker) State() CircuitState {
 			return StateHalfOpen
 		}
 		return StateOpen
+	}
+
+	if state == StateHalfOpen && successes >= int32(cb.halfOpenMax) {
+		return StateClosed
 	}
 
 	return state

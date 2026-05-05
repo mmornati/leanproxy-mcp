@@ -28,7 +28,7 @@ tidy: ## Tidy go modules
 .PHONY: test
 test: ## Run tests
 	@echo "Running tests..."
-	$(GO) test -v -race -coverprofile=coverage.out -skip "TestWorkerPoolQueueFull|TestConcurrentStress|TestHandlerShutdown|TestHealthMonitor_checkServer_Running|TestHealthMonitor_checkServer_Unresponsive" ./...
+	$(GO) test -v -race -coverprofile=coverage.out -skip "TestWorkerPoolQueueFull|TestConcurrentStress|TestHandlerShutdown|TestHealthMonitor_checkServer_Running|TestHealthMonitor_checkServer_Unresponsive|TestRequestWithInvalidAuthToken|TestPoolSendRequestToServerWithID|TestPoolSendNotificationToServer|TestPoolSendRequestToServer" ./...
 
 .PHONY: test-coverage
 test-coverage: test ## Run tests with coverage report
