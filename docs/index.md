@@ -22,6 +22,7 @@ This documentation is designed for:
 | [Commands Reference](./commands.md) | Complete CLI command documentation |
 | [Configuration](./configuration.md) | Customize LeanProxy-MCP behavior |
 | [Architecture](./architecture.md) | Understanding the internal design |
+| [Security](./security.md) | Security hardening features |
 | [Troubleshooting](./troubleshooting.md) | Common issues and solutions |
 | [FAQ](./faq.md) | Frequently asked questions |
 
