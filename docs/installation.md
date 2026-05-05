@@ -39,8 +39,8 @@ If you prefer, download manually from: https://github.com/mmornati/leanproxy-mcp
 ## Install via Homebrew (macOS/Linux)
 
 ```bash
-# Add custom tap
-brew tap mmornati/leanproxy-mcp
+# Add custom tap (point to this repository)
+brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
 
 # Install
 brew install leanproxy-mcp
