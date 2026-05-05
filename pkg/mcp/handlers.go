@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 )
@@ -74,6 +75,14 @@ func NewHandlerWithToolStore(p pool.ServerSource, logger *slog.Logger, store too
 
 func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, error) {
 	h.logger.Debug("handling mcp request", "method", req.Method, "id", req.ID)
+
+	if err := errors.ValidateContext(ctx); err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInternalError, err.Error()),
+			ID:      req.ID,
+		}, nil
+	}
 
 	switch req.Method {
 	case MethodInitialize:

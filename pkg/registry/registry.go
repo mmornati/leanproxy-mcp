@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
 
@@ -504,8 +505,8 @@ func (r *inMemoryRegistry) emitEvent(event RegistryEvent) {
 }
 
 func contextToErr(ctx context.Context) error {
-	if ctx != nil && ctx.Err() != nil {
-		return ctx.Err()
+	if err := errors.ValidateContext(ctx); err != nil {
+		return err
 	}
 	return nil
 }

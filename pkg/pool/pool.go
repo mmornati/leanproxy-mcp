@@ -113,6 +113,10 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 		return fmt.Errorf("pool: server name required")
 	}
 
+	if err := errors.ValidateContext(ctx); err != nil {
+		return fmt.Errorf("pool: %w", err)
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -303,6 +307,10 @@ func (p *StdioPool) StopServer(name string) error {
 }
 
 func (p *StdioPool) RestartServer(ctx context.Context, name string) error {
+	if err := errors.ValidateContext(ctx); err != nil {
+		return fmt.Errorf("pool: %w", err)
+	}
+
 	p.mu.RLock()
 	server, exists := p.servers[name]
 	p.mu.RUnlock()
@@ -326,6 +334,10 @@ func (p *StdioPool) RestartServer(ctx context.Context, name string) error {
 }
 
 func (p *StdioPool) SendRequest(ctx context.Context, serverName string, req *proxy.JSONRPCRequest, timeout time.Duration) (*proxy.JSONRPCResponse, error) {
+	if err := errors.ValidateContext(ctx); err != nil {
+		return nil, fmt.Errorf("pool: %w", err)
+	}
+
 	id := req.ID
 	if id == nil {
 		id = 1
@@ -371,6 +383,10 @@ func (p *StdioPool) SendRequestToServer(ctx context.Context, name string, method
 }
 
 func (p *StdioPool) SendRequestToServerWithID(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration, id int) (*Response, error) {
+	if err := errors.ValidateContext(ctx); err != nil {
+		return nil, fmt.Errorf("pool: %w", err)
+	}
+
 	resultCh := make(chan *Response, 1)
 	errorCh := make(chan error, 1)
 
@@ -400,6 +416,10 @@ func (p *StdioPool) SendRequestToServerWithID(ctx context.Context, name string, 
 }
 
 func (p *StdioPool) SendNotificationToServer(ctx context.Context, name string, method string, params json.RawMessage) error {
+	if err := errors.ValidateContext(ctx); err != nil {
+		return fmt.Errorf("pool: %w", err)
+	}
+
 	p.mu.RLock()
 	server, exists := p.servers[name]
 	p.mu.RUnlock()
@@ -415,6 +435,10 @@ func (p *StdioPool) SendNotificationToServer(ctx context.Context, name string, m
 }
 
 func (p *StdioPool) SendServerNotification(ctx context.Context, name string, method string, params map[string]interface{}) error {
+	if err := errors.ValidateContext(ctx); err != nil {
+		return fmt.Errorf("pool: %w", err)
+	}
+
 	p.mu.RLock()
 	server, exists := p.servers[name]
 	p.mu.RUnlock()
