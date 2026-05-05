@@ -322,6 +322,16 @@ func init() {
 	runCmd.Flags().StringVar(&runFlags.logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	runCmd.Flags().BoolVarP(&runFlags.verbose, "verbose", "v", false, "Enable verbose logging")
 	serverCmd.AddCommand(runCmd)
+
+	var healthCmd = &cobra.Command{
+		Use:   "health <server_name>",
+		Short: "Check if an MCP server is healthy and responding",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runServerHealth,
+	}
+	healthCmd.Flags().StringVar(&runFlags.config, "config", "", "Path to leanproxy_servers.yaml config file")
+	healthCmd.Flags().DurationVar(&healthTimeout, "timeout", 10*time.Second, "Health check timeout")
+	serverCmd.AddCommand(healthCmd)
 }
 
 func runServerRun(cmd *cobra.Command, args []string) error {
@@ -639,4 +649,98 @@ func trimStdioNewline(data []byte) []byte {
 		data = data[:len(data)-1]
 	}
 	return data
+}
+
+var healthTimeout time.Duration
+
+func runServerHealth(cmd *cobra.Command, args []string) error {
+	serverName := args[0]
+
+	configPath := runFlags.config
+	if configPath == "" {
+		configPath = userConfigPath()
+	}
+
+	ctx := context.Background()
+
+	cfg, err := migrate.LoadConfig(ctx, configPath)
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+	if cfg == nil {
+		return fmt.Errorf("no servers configured in %s", configPath)
+	}
+
+	var serverCfg *migrate.ServerConfig
+	for _, s := range cfg.Servers {
+		if s.Name == serverName {
+			serverCfg = s
+			break
+		}
+	}
+	if serverCfg == nil {
+		return fmt.Errorf("server %q not found in config", serverName)
+	}
+
+	if serverCfg.Enabled != nil && !*serverCfg.Enabled {
+		return fmt.Errorf("server %q is disabled", serverName)
+	}
+
+	logger := slog.Default()
+
+	stdioP := pool.NewStdioPool(2, healthTimeout, logger)
+	httpP := pool.NewHTTPClientPool(logger)
+	sseP := pool.NewSSEPool(logger)
+
+	switch serverCfg.Transport {
+	case "stdio":
+		if err := stdioP.StartServer(ctx, serverCfg); err != nil {
+			return fmt.Errorf("failed to start stdio server: %w", err)
+		}
+	case "http":
+		if err := httpP.StartServer(ctx, serverCfg); err != nil {
+			return fmt.Errorf("failed to start http server: %w", err)
+		}
+	case "sse":
+		if err := sseP.StartServer(ctx, serverCfg); err != nil {
+			return fmt.Errorf("failed to start sse server: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported transport type: %s", serverCfg.Transport)
+	}
+
+	start := time.Now()
+
+	initialized := false
+	var resp *pool.Response
+	var healthErr error
+
+	switch serverCfg.Transport {
+	case "stdio":
+		_, initErr := stdioP.SendRequestToServerWithID(ctx, serverName, mcp.MethodInitialize, []byte(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"leanproxy-healthcheck","version":"1.0"}}`), healthTimeout, 1)
+		if initErr != nil {
+			return fmt.Errorf("failed to initialize server: %w", initErr)
+		}
+		initialized = true
+		resp, healthErr = stdioP.SendRequestToServerWithID(ctx, serverName, mcp.MethodPing, nil, healthTimeout, 2)
+	case "http":
+		resp, healthErr = httpP.SendRequestToServerWithID(ctx, serverName, mcp.MethodPing, nil, healthTimeout, 1)
+	case "sse":
+		resp, healthErr = sseP.SendRequestToServerWithID(ctx, serverName, mcp.MethodPing, nil, healthTimeout, 1)
+	}
+	elapsed := time.Since(start)
+
+	if healthErr != nil {
+		return fmt.Errorf("health check failed for %q: %w", serverName, healthErr)
+	}
+
+	if resp != nil && resp.Error != nil {
+		return fmt.Errorf("health check returned error for %q: %s", serverName, resp.Error.Message)
+	}
+
+	fmt.Printf("✓ Server %q is healthy (latency: %v)\n", serverName, elapsed)
+	if initialized {
+		fmt.Printf("  Note: Server was initialized during health check\n")
+	}
+	return nil
 }
