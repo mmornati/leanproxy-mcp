@@ -9,16 +9,16 @@ type ParameterMeta struct {
 	SuggestedValues []string
 }
 
-var SearchToolsParamDefaults = map[string]interface{}{
+var ListToolsParamDefaults = map[string]interface{}{
 	"max_description_chars": 200,
 }
 
-var SearchToolsParamMeta = map[string]ParameterMeta{
-	"query": {
+var ListToolsParamMeta = map[string]ParameterMeta{
+	"server_name": {
 		Required:      true,
 		Default:      nil,
-		Description:  "Search query (e.g., 'github issues', 'garmin activities', 'filesystem'). Supports fuzzy matching across tool names and descriptions.",
-		SuggestedValues: []string{"github", "filesystem", "garmin", "intervals", "productivity"},
+		Description:  "MCP server name (from list_servers). Required - identifies which server's tools to list.",
+		SuggestedValues: []string{"github", "garmin", "filesystem", "intervals"},
 	},
 	"max_description_chars": {
 		Required:    false,
@@ -34,22 +34,22 @@ var InvokeToolParamDefaults = map[string]interface{}{}
 var InvokeToolParamMeta = map[string]ParameterMeta{
 	"server": {
 		Required:    true,
-		Description: "Server name from search_tools (e.g., 'github', 'garmin', 'filesystem'). Must be a configured and running MCP server.",
+		Description: "Server name from list_servers (e.g., 'github', 'garmin', 'filesystem'). Must be a configured and running MCP server.",
 	},
 	"tool": {
 		Required:    true,
-		Description: "Tool name from search_tools (e.g., 'github_list_issues', 'garmin_get_activities'). Do NOT prefix with server name.",
+		Description: "Tool name from list_tools (e.g., 'list_issues', 'get_activities'). Do NOT prefix with server name.",
 	},
 	"arguments": {
 		Required:    false,
-		Description: "Tool arguments as key-value pairs. Refer to search_tools output for available parameters. Pass empty object {} if no arguments needed.",
+		Description: "Tool arguments as key-value pairs. Refer to list_tools output for available parameters. Pass empty object {} if no arguments needed.",
 	},
 }
 
 func GetParamDefault(toolName, paramName string) interface{} {
 	switch toolName {
-	case "search_tools":
-		return SearchToolsParamDefaults[paramName]
+	case "list_tools":
+		return ListToolsParamDefaults[paramName]
 	case "invoke_tool":
 		return InvokeToolParamDefaults[paramName]
 	}
@@ -58,8 +58,8 @@ func GetParamDefault(toolName, paramName string) interface{} {
 
 func GetParamMeta(toolName, paramName string) *ParameterMeta {
 	switch toolName {
-	case "search_tools":
-		if meta, ok := SearchToolsParamMeta[paramName]; ok {
+	case "list_tools":
+		if meta, ok := ListToolsParamMeta[paramName]; ok {
 			return &meta
 		}
 	case "invoke_tool":
@@ -76,9 +76,9 @@ func ApplyDefaults(toolName string, args map[string]interface{}) map[string]inte
 	}
 
 	switch toolName {
-	case "search_tools":
+	case "list_tools":
 		if _, hasKey := args["max_description_chars"]; !hasKey {
-			args["max_description_chars"] = SearchToolsParamDefaults["max_description_chars"]
+			args["max_description_chars"] = ListToolsParamDefaults["max_description_chars"]
 		}
 	case "invoke_tool":
 		// No defaults for invoke_tool - all params required or user-dependent
@@ -89,8 +89,8 @@ func ApplyDefaults(toolName string, args map[string]interface{}) map[string]inte
 
 func GetAllParamDefaults(toolName string) map[string]interface{} {
 	switch toolName {
-	case "search_tools":
-		return SearchToolsParamDefaults
+	case "list_tools":
+		return ListToolsParamDefaults
 	case "invoke_tool":
 		return InvokeToolParamDefaults
 	}

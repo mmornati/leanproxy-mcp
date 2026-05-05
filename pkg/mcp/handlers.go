@@ -98,8 +98,6 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, e
 		return h.handleToolsList(ctx, req)
 	case MethodToolsCall:
 		return h.handleToolsCall(ctx, req)
-	case MethodSearchTools:
-		return h.handleSearchTools(ctx, req, ToolsCallParams{})
 	case MethodPing:
 		return h.handlePing(ctx, req)
 	case MethodShutdown:
@@ -245,7 +243,7 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		}, nil
 	}
 
-	if params.Name == "search_tools" || params.Name == "invoke_tool" {
+	if params.Name == "list_tools" || params.Name == "invoke_tool" {
 		return h.handleLeanproxyTool(ctx, req, params)
 	}
 
@@ -282,8 +280,8 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 
 func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
 	switch params.Name {
-	case "search_tools":
-		return h.handleSearchTools(ctx, req, params)
+	case "list_tools":
+		return h.handleListTools(ctx, req, params)
 	case "invoke_tool":
 		return h.handleInvokeTool(ctx, req, params)
 	default:
@@ -295,15 +293,15 @@ func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params 
 	}
 }
 
-func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
-	var query string
+func (h *Handler) handleListTools(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
+	var serverName string
 	var maxDescChars int
 	if params.Arguments != nil {
 		var args map[string]interface{}
 		if err := json.Unmarshal(params.Arguments, &args); err == nil {
-			args = ApplyDefaults("search_tools", args)
-			if q, ok := args["query"].(string); ok {
-				query = q
+			args = ApplyDefaults("list_tools", args)
+			if s, ok := args["server_name"].(string); ok {
+				serverName = s
 			}
 			if m, ok := args["max_description_chars"].(float64); ok {
 				maxDescChars = int(m)
@@ -311,15 +309,15 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 		}
 	}
 
-	if query == "" {
+	if serverName == "" {
 		return &Response{
 			JSONRPC: JSONRPCVersion,
-			Error:   NewError(ErrCodeInvalidParams, "query parameter is required. Use search_tools to discover available tools."),
+			Error:   NewError(ErrCodeInvalidParams, "server_name parameter is required. Use list_servers to get available server names, then use list_tools to see tools on a specific server."),
 			ID:      req.ID,
 		}, nil
 	}
 
-	if valid, msg := ValidateParam("search_tools", "max_description_chars", float64(maxDescChars)); !valid {
+	if valid, msg := ValidateParam("list_tools", "max_description_chars", float64(maxDescChars)); !valid {
 		return &Response{
 			JSONRPC: JSONRPCVersion,
 			Error:   NewError(ErrCodeInvalidParams, fmt.Sprintf("max_description_chars %s", msg)),
@@ -331,24 +329,22 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 		maxDescChars = 200
 	}
 
-	h.logger.Info("search_tools called", "query", query, "max_desc_chars", maxDescChars)
+	h.logger.Info("list_tools called", "server_name", serverName, "max_desc_chars", maxDescChars)
 
-	h.toolCache.mu.RLock()
-	cachePopulated := len(h.toolCache.tools) > 0
-	h.toolCache.mu.RUnlock()
-
-	if !cachePopulated {
-		h.PopulateToolCache(ctx)
+	servers := h.pool.ListServers()
+	serverFound := false
+	for _, s := range servers {
+		if s == serverName {
+			serverFound = true
+			break
+		}
 	}
 
-	results := h.searchToolCache(query, maxDescChars)
-
-	h.logger.Info("search_tools completed", "results", len(results))
-
-	if len(results) == 0 {
+	if !serverFound {
+		serversList := strings.Join(servers, ", ")
 		result := map[string]interface{}{
 			"content": []map[string]string{
-				{"type": "text", "text": "No tools found matching your query. Try a different search term or invoke a tool directly using invoke_tool."},
+				{"type": "text", "text": fmt.Sprintf("Server '%s' not found. Available servers: %s. Use list_servers to see all available servers.", serverName, serversList)},
 			},
 		}
 		resultBytes, _ := json.Marshal(result)
@@ -359,9 +355,42 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 		}, nil
 	}
 
+	h.toolCache.mu.RLock()
+	tools, exists := h.toolCache.tools[serverName]
+	h.toolCache.mu.RUnlock()
+
+	if !exists || len(tools) == 0 {
+		h.PopulateToolCache(ctx)
+		h.toolCache.mu.RLock()
+		tools = h.toolCache.tools[serverName]
+		h.toolCache.mu.RUnlock()
+	}
+
+	if len(tools) == 0 {
+		result := map[string]interface{}{
+			"content": []map[string]string{
+				{"type": "text", "text": fmt.Sprintf("No tools available on server '%s'. The server may be unavailable or have no tools.", serverName)},
+			},
+		}
+		resultBytes, _ := json.Marshal(result)
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Result:  resultBytes,
+			ID:      req.ID,
+		}, nil
+	}
+
+	var formattedTools []string
+	for _, tool := range tools {
+		formatted := formatTool(tool, serverName, maxDescChars)
+		formattedTools = append(formattedTools, formatted)
+	}
+
+	h.logger.Info("list_tools completed", "server", serverName, "results", len(formattedTools))
+
 	result := map[string]interface{}{
 		"content": []map[string]string{
-			{"type": "text", "text": fmt.Sprintf("Available tools:\n%s", strings.Join(results, "\n"))},
+			{"type": "text", "text": fmt.Sprintf("%s tools (%d):\n%s", serverName, len(tools), strings.Join(formattedTools, "\n"))},
 		},
 	}
 	resultBytes, _ := json.Marshal(result)
@@ -596,7 +625,7 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	if serverName == "" || toolName == "" {
 		return &Response{
 			JSONRPC: JSONRPCVersion,
-			Error:   NewError(ErrCodeInvalidParams, "server and tool are required. Use search_tools to discover available tools."),
+			Error:   NewError(ErrCodeInvalidParams, "server and tool are required. Use list_servers to get server names, then list_tools to discover available tools."),
 			ID:      req.ID,
 		}, nil
 	}
@@ -826,6 +855,11 @@ func formatToolSearchResult(serverName, toolName, description string, required, 
 	}
 
 	return sb.String()
+}
+
+func formatTool(tool Tool, serverName string, maxDescChars int) string {
+	required, optional := parseInputSchema(tool.InputSchema)
+	return formatToolSearchResult(serverName, tool.Name, tool.Description, required, optional, maxDescChars)
 }
 
 func truncateDescription(description string, maxChars int) string {

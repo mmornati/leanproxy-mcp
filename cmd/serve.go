@@ -384,7 +384,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 var ctx = context.Background()
 
 func isGatewayTool(method string) bool {
-	return method == "invoke_tool" || method == "search_tools"
+	return method == "invoke_tool" || method == "list_tools" || method == "list_servers"
 }
 
 func handleGatewayTool(ctx context.Context, req *proxy.JSONRPCRequest, writer *bufio.Writer, gt gateway.GatewayTools) {
@@ -408,22 +408,25 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 			}
 		}
 		result, _ = json.Marshal(servers)
-	case "search_tools":
+	case "list_tools":
 		var params struct {
-			Query string `json:"query"`
+			ServerName string `json:"server_name"`
 		}
 		if req.Params != nil {
 			json.Unmarshal(req.Params, &params)
 		}
-		searchResults, searchErr := gt.SearchTools(ctx, params.Query)
-		if searchErr != nil {
+		if params.ServerName == "" {
 			return &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, searchErr.Error()),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeInvalidParams, "server_name parameter is required. Use list_servers to get available servers."),
 				ID:      req.ID,
 			}
 		}
-		result, _ = json.Marshal(searchResults)
+		result, _ = json.Marshal(map[string]interface{}{
+			"content": []map[string]string{
+				{"type": "text", "text": fmt.Sprintf("list_tools for server '%s' is not available in simple gateway mode. Use stdio mode (leanproxy serve) for full list_tools functionality with tool caching.", params.ServerName)},
+			},
+		})
 	case "invoke_tool":
 		var params gateway.InvokeToolParams
 		if req.Params != nil {

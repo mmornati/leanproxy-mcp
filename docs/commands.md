@@ -251,6 +251,77 @@ No servers configured.
 
 ---
 
+### `server health` - Health Check
+
+Check if an MCP server is healthy and responding. This command sends a `ping` request to the MCP server to verify it's working.
+
+#### Usage
+
+```bash
+leanproxy-mcp server health <server_name> [flags]
+```
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--timeout` | duration | 10s | Health check timeout |
+| `--config` | string | - | Path to leanproxy_servers.yaml config file |
+
+#### Examples
+
+```bash
+# Check health of garmin server
+leanproxy-mcp server health garmin
+
+# Check health with custom timeout
+leanproxy-mcp server health garmin --timeout 30s
+```
+
+#### Output (Server healthy)
+
+```
+✓ Server "garmin" is healthy (status: running, uptime: 5m30s)
+  Note: Connected to running LeanProxy instance
+```
+
+#### Output (Server was stopped, restarted)
+
+```
+Note: Found running LeanProxy (PID: 1656) but server "garmin" may have stopped
+      Attempting to restart server...
+✓ Server "garmin" is healthy (latency: 2.1s)
+  Note: Server was stopped in running LeanProxy, restarted successfully
+```
+
+#### Output (No running LeanProxy)
+
+```
+Note: No running LeanProxy instance found
+time=2026-05-05T21:18:16.467+02:00 level=INFO msg="worker pool started" workers=4 queue_size=1000
+time=2026-05-05T21:18:16.469+02:00 level=INFO msg="server spawned" name=garmin pid=91333
+✓ Server "garmin" is healthy (latency: 1.7s)
+  Note: Started new LeanProxy instance for health check
+```
+
+#### How It Works
+
+1. **Check running LeanProxy**: First checks if there's a running LeanProxy instance
+2. **Check server status**: If found, checks if the server is marked as "running" in the status file
+3. **Connect or restart**:
+   - If server is running → returns healthy immediately
+   - If server is stopped but LeanProxy is running → restarts the MCP server
+   - If no LeanProxy running → starts a new one just for health check
+4. **Send ping**: Sends MCP protocol `ping` request to verify responsiveness
+
+#### Use Cases
+
+- **CI/CD verification**: Verify MCP servers are healthy before running tests
+- **Monitoring**: Quick status check without using LLM tokens
+- **Debugging**: Verify a specific server is responding
+
+---
+
 ### `server enable` - Enable Server
 
 Enable a disabled MCP server.
@@ -540,9 +611,9 @@ Cached tools for garmin (100 total):
 
 ---
 
-## `search_tools` - MCP Method
+## `list_tools` - MCP Method
 
-LeanProxy-MCP supports a `search_tools` MCP method that allows LLMs to search across all cached tools from all configured servers. This is particularly useful when used with OpenCode.
+LeanProxy-MCP supports a `list_tools` MCP method that allows LLMs to list all tools available on a specific MCP server. This is particularly useful when used with OpenCode - the LLM first calls `list_servers` to get available servers, then `list_tools` to see tools on a specific server.
 
 ### Request Format
 
@@ -550,10 +621,13 @@ LeanProxy-MCP supports a `search_tools` MCP method that allows LLMs to search ac
 {
   "jsonrpc": "2.0",
   "id": 1,
-  "method": "search_tools",
+  "method": "tools/call",
   "params": {
-    "query": "activity",
-    "max_description_chars": 500
+    "name": "list_tools",
+    "arguments": {
+      "server_name": "garmin",
+      "max_description_chars": 200
+    }
   }
 }
 ```
@@ -562,8 +636,8 @@ LeanProxy-MCP supports a `search_tools` MCP method that allows LLMs to search ac
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `query` | string | Yes | Search query (word-based AND matching) |
-| `max_description_chars` | integer | No | Truncate descriptions to this length (0 = no truncation) |
+| `server_name` | string | Yes | MCP server name (from `list_servers`). Identifies which server's tools to list. |
+| `max_description_chars` | integer | No | Truncate descriptions to this length (default: 200, range: 50-500) |
 
 ### Response Format
 
@@ -574,7 +648,7 @@ LeanProxy-MCP supports a `search_tools` MCP method that allows LLMs to search ac
   "result": {
     "content": [{
       "type": "text",
-      "text": "Available tools:\n[tool_name]: [description]\n\nArgs:\n    [param_name]: [description]\n [required_params] {optional_params}\n..."
+      "text": "github tools (12):\ngithub_create_issue: Create a new issue... [title: string, body: string] {labels: string}\ngithub_list_issues: List repository issues... [owner: string, repo: string] {state: string}\n..."
     }]
   }
 }
@@ -583,7 +657,7 @@ LeanProxy-MCP supports a `search_tools` MCP method that allows LLMs to search ac
 ### Tool Display Format
 
 Each tool is displayed with:
-- **Name**: `tool_name`
+- **Name**: `tool_name` (without server prefix in list_tools output)
 - **Description**: Full or truncated description
 - **Parameters**:
   - `[required: type]` - Required parameters in brackets
@@ -591,25 +665,20 @@ Each tool is displayed with:
 
 Example:
 ```
-garmin_get_activities: Get activities data between specified dates
-
-    Args:
-        start_date: Start date in YYYY-MM-DD format
-        end_date: End date in YYYY-MM-DD format
-        activity_type: Optional activity type filter
-
- [start_date: string, end_date: string] {activity_type: string}
+garmin tools (5):
+get_activities: Get activities data between specified dates [start_date: string, end_date: string] {activity_type: string}
+get_sleep_data: Get sleep data [start_date: string, end_date: string] {}
 ```
 
 ### How Tool Caching Works
 
-1. **On First Search**: When `search_tools` is called for the first time (or after cache invalidation), LeanProxy-MCP:
-   - Starts each configured MCP server
-   - Sends `initialize` request to each server
-   - Sends `tools/list` request to each server
+1. **On First Call**: When `list_tools` is called for a specific server for the first time (or after cache invalidation), LeanProxy-MCP:
+   - Starts the specified MCP server (if not running)
+   - Sends `initialize` request to the server
+   - Sends `tools/list` request to the server
    - Caches the tool signatures locally in `~/.config/leanproxy/toolcache/`
 
-2. **On Subsequent Searches**: Tool signatures are loaded from the persistent cache, avoiding server startup.
+2. **On Subsequent Calls**: Tool signatures are loaded from the persistent cache, avoiding server startup.
 
 3. **Cache Invalidation**: Cache is invalidated when:
    - `leanproxy cache --clear --server <name>` is called
