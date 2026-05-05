@@ -141,9 +141,16 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	s.logger.Debug("client connected", "remote", conn.RemoteAddr())
 
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	reader := bufio.NewReader(conn)
 	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+
+		conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			if err == io.EOF {
@@ -151,15 +158,25 @@ func (s *Server) handleConn(conn net.Conn) {
 			}
 			netErr, ok := err.(net.Error)
 			if ok && netErr.Timeout() {
-				return
+				select {
+				case <-s.ctx.Done():
+					return
+				default:
+				}
+				continue
 			}
 			s.logger.Debug("read error", "error", err)
 			return
 		}
 
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+
 		if len(line) > int(s.config.MaxMsgSize) {
 			s.sendError(conn, nil, ErrCodeInvalidRequest, "message too large")
-			conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 			continue
 		}
 
