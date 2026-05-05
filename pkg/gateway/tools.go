@@ -85,20 +85,20 @@ var invokeToolTool = Tool{
 	},
 }
 
-var searchToolsTool = Tool{
-	Name:        "search_tools",
-	Description: "Search for tools across all configured MCP servers",
+var listToolsTool = Tool{
+	Name:        "list_tools",
+	Description: "List all tools available on a specific MCP server",
 	InputSchema: map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"query": map[string]interface{}{
+			"server_name": map[string]interface{}{
 				"type": "string",
 			},
 		},
-		"required": []string{"query"},
+		"required": []string{"server_name"},
 	},
 }
 
 func (g *gatewayTools) ListTools() []Tool {
-	return []Tool{listServersTool, invokeToolTool, searchToolsTool}
+	return []Tool{listServersTool, invokeToolTool, listToolsTool}
 }

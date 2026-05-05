@@ -39,36 +39,36 @@ func (m *MCPServerInstance) SetStdioPool(p *pool.StdioPool) {
 }
 
 func (m *MCPServerInstance) SetupGatewayTools() {
-	searchToolsTool := mcp.NewTool(
-		"search_tools",
-		mcp.WithDescription("Search for tools across all configured MCP servers. Returns tool names, descriptions, and parameters. Always call this first to discover available tools before invoking."),
-		mcp.WithString("query",
+	listToolsTool := mcp.NewTool(
+		"list_tools",
+		mcp.WithDescription("List all tools available on a specific MCP server. Always call list_servers first to get server names, then use this tool to see available tools on a specific server."),
+		mcp.WithString("server_name",
 			mcp.Required(),
-			mcp.Description("Search query (e.g., 'activity', 'sleep', 'garmin')"),
+			mcp.Description("MCP server name (e.g., 'garmin', 'github', 'filesystem'). Use list_servers to get available server names."),
 		),
 		mcp.WithNumber("max_description_chars",
-			mcp.Description("Max description length (0=no limit, default 500)"),
+			mcp.Description("Max description length (default 200, min 50, max 500)"),
 		),
 	)
 
 	invokeTool := mcp.NewTool(
 		"invoke_tool",
-		mcp.WithDescription("Invoke a tool on a configured MCP server. First use search_tools to find the server_name and tool_name, then pass the tool arguments."),
+		mcp.WithDescription("Invoke a tool on a configured MCP server. First use list_servers to get server names, then use list_tools to find available tools on that server."),
 		mcp.WithString("server",
 			mcp.Required(),
-			mcp.Description("Server name from search_tools (e.g., 'garmin', 'Intervals.icu')"),
+			mcp.Description("Server name from list_servers (e.g., 'garmin', 'github')"),
 		),
 		mcp.WithString("tool",
 			mcp.Required(),
-			mcp.Description("Tool name from search_tools (e.g., 'garmin_get_activities', 'Intervals.icu_get_activities')"),
+			mcp.Description("Tool name from list_tools (e.g., 'get_activities', 'list_issues')"),
 		),
 		mcp.WithObject("arguments",
 			mcp.Description("Tool arguments as key-value pairs (optional, depends on tool)"),
 		),
 	)
 
-	m.server.AddTool(searchToolsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		return m.handleSearchTools(ctx, request)
+	m.server.AddTool(listToolsTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return m.handleListTools(ctx, request)
 	})
 
 	m.server.AddTool(invokeTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -78,11 +78,11 @@ func (m *MCPServerInstance) SetupGatewayTools() {
 	m.logger.Info("gateway tools registered for SSE/HTTP")
 }
 
-func (m *MCPServerInstance) handleSearchTools(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (m *MCPServerInstance) handleListTools(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
-	query, _ := args["query"].(string)
-	m.logger.Info("search_tools called", "query", query)
-	return mcp.NewToolResultText("Search functionality available via stdio mode"), nil
+	serverName, _ := args["server_name"].(string)
+	m.logger.Info("list_tools called", "server_name", serverName)
+	return mcp.NewToolResultText("List tools functionality available via stdio mode. Use stdio mode for full tool listing."), nil
 }
 
 func (m *MCPServerInstance) handleInvokeTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

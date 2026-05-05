@@ -11,8 +11,8 @@ func TestGetToolDefinition(t *testing.T) {
 		wantNil   bool
 	}{
 		{
-			name:       "search_tools exists",
-			searchName: "search_tools",
+			name:       "list_tools exists",
+			searchName: "list_tools",
 			wantNil:   false,
 		},
 		{
@@ -45,21 +45,21 @@ func TestGetAllToolDefinitions(t *testing.T) {
 }
 
 func TestToolDefinitionFields(t *testing.T) {
-	searchTools := GetToolDefinition("search_tools")
-	if searchTools == nil {
-		t.Fatal("search_tools should not be nil")
+	listTools := GetToolDefinition("list_tools")
+	if listTools == nil {
+		t.Fatal("list_tools should not be nil")
 	}
 
-	if searchTools.Name != "search_tools" {
-		t.Errorf("Name = %s, want search_tools", searchTools.Name)
+	if listTools.Name != "list_tools" {
+		t.Errorf("Name = %s, want list_tools", listTools.Name)
 	}
 
-	if len(searchTools.Examples) == 0 {
-		t.Error("search_tools should have examples")
+	if len(listTools.Examples) == 0 {
+		t.Error("list_tools should have examples")
 	}
 
-	if searchTools.InputSchema == nil {
-		t.Error("search_tools should have InputSchema")
+	if listTools.InputSchema == nil {
+		t.Error("list_tools should have InputSchema")
 	}
 }
 

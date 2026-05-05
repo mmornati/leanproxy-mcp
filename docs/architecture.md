@@ -337,7 +337,7 @@ leanproxy-mcp/
 Implements the MCP protocol handling including:
 - Request routing and handling
 - Tool discovery and caching
-- Gateway tools (search_tools method)
+- Gateway tools (list_tools method)
 - Protocol type definitions
 
 ### Tool Store (`pkg/toolstore/`)

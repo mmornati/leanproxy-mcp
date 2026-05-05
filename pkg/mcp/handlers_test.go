@@ -393,10 +393,16 @@ func TestHandleToolsCall(t *testing.T) {
 			errorCode:   ErrCodeInvalidParams,
 		},
 		{
-			name: "builtin search_tools",
+			name: "builtin list_tools",
 			params: ToolsCallParams{
-				Name: "search_tools",
-				Arguments: json.RawMessage(`{"query": "test"}`),
+				Name: "list_tools",
+				Arguments: json.RawMessage(`{"server_name": "github"}`),
+			},
+			poolSetup: func(mp *mockPool) {
+				mp.SetServerState("github", pool.StateIdle)
+				mp.SetTools("github", []Tool{
+					{Name: "list_issues", Description: "List issues"},
+				})
 			},
 			expectError: false,
 		},
@@ -479,18 +485,18 @@ func TestHandleToolsCall(t *testing.T) {
 	}
 }
 
-func TestHandleSearchTools(t *testing.T) {
+func TestHandleListTools(t *testing.T) {
 	tests := []struct {
 		name        string
-		query       string
+		serverName  string
 		maxDesc     int
 		poolSetup   func(*mockPool)
 		expectText  string
 		expectEmpty bool
 	}{
 		{
-			name:        "empty query",
-			query:        "",
+			name:        "empty server_name",
+			serverName:  "",
 			poolSetup: func(mp *mockPool) {
 				mp.SetServerState("github", pool.StateIdle)
 				mp.SetTools("github", []Tool{
@@ -502,12 +508,12 @@ func TestHandleSearchTools(t *testing.T) {
 				})
 			},
 			expectEmpty: true,
-			expectText:  "query parameter is required",
+			expectText:  "server_name parameter is required",
 		},
 		{
-			name:       "query with results",
-			query:       "github",
-			maxDesc:     200,
+			name:       "valid server with results",
+			serverName: "github",
+			maxDesc:    200,
 			poolSetup: func(mp *mockPool) {
 				mp.SetServerState("github", pool.StateIdle)
 				mp.SetTools("github", []Tool{
@@ -518,12 +524,11 @@ func TestHandleSearchTools(t *testing.T) {
 					},
 				})
 			},
-			expectText: "github_list_issues",
+			expectText: "github tools (1):",
 		},
 		{
-			name:       "no matching results",
-			query:       "nonexistent",
-			maxDesc:     200,
+			name:       "unknown server",
+			serverName: "unknown",
 			poolSetup: func(mp *mockPool) {
 				mp.SetServerState("github", pool.StateIdle)
 				mp.SetTools("github", []Tool{
@@ -534,13 +539,21 @@ func TestHandleSearchTools(t *testing.T) {
 					},
 				})
 			},
-			expectEmpty: true,
-			expectText:  "No tools found",
+			expectText: "not found",
+		},
+		{
+			name:       "server with no tools",
+			serverName: "github",
+			maxDesc:    200,
+			poolSetup: func(mp *mockPool) {
+				mp.SetServerState("github", pool.StateIdle)
+			},
+			expectText: "No tools available",
 		},
 		{
 			name:       "custom max_description_chars",
-			query:       "github",
-			maxDesc:     20,
+			serverName: "github",
+			maxDesc:    20,
 			poolSetup: func(mp *mockPool) {
 				mp.SetServerState("github", pool.StateIdle)
 				mp.SetTools("github", []Tool{
@@ -567,14 +580,14 @@ func TestHandleSearchTools(t *testing.T) {
 
 			h := NewHandler(pool, logger)
 
-			args := map[string]interface{}{"query": tt.query}
+			args := map[string]interface{}{"server_name": tt.serverName}
 			if tt.maxDesc > 0 {
 				args["max_description_chars"] = float64(tt.maxDesc)
 			}
 			argsBytes, _ := json.Marshal(args)
 
 			params := ToolsCallParams{
-				Name:      "search_tools",
+				Name:      "list_tools",
 				Arguments: argsBytes,
 			}
 			paramsBytes, _ := json.Marshal(params)

@@ -31,33 +31,33 @@ type FieldDescription struct {
 
 var LeanproxyTools = []ToolDefinition{
 	{
-		Name:        "search_tools",
-		Description: "Search for tools across all configured MCP servers. **IMPORTANT:** Always call this first to discover available server_name and tool_name before invoking any tool. Returns tool names, descriptions, and parameters.",
+		Name:        "list_tools",
+		Description: "List all tools available on a specific MCP server. **IMPORTANT:** Always call list_servers first to get available server names, then use this tool to see tools on a specific server.",
 		Categories:  []string{"discovery", "meta"},
 		Examples: []ToolExample{
 			{
 				Input: map[string]interface{}{
-					"query": "github",
+					"server_name": "github",
 				},
-				Description: "Find all tools related to GitHub operations",
+				Description: "List all tools available on the github server",
 			},
 			{
 				Input: map[string]interface{}{
-					"query":        "activity",
+					"server_name": "garmin",
+				},
+				Description: "List all tools available on the garmin server",
+			},
+			{
+				Input: map[string]interface{}{
+					"server_name":        "github",
 					"max_description_chars": 150,
 				},
-				Description: "Search for 'activity' tools with shorter descriptions",
-			},
-			{
-				Input: map[string]interface{}{
-					"query": "issues",
-				},
-				Description: "Find all issue-tracking tools across servers",
+				Description: "List github tools with shorter descriptions",
 			},
 		},
 		Returns: ReturnSchema{
 			Type:        "object",
-			Description: "Returns a content block with formatted tool results",
+			Description: "Returns a content block with formatted tool list for the specified server",
 			Fields: []FieldDescription{
 				{Name: "content", Type: "array", Desc: "Array of text content blocks"},
 			},
@@ -65,9 +65,9 @@ var LeanproxyTools = []ToolDefinition{
 		InputSchema: json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"query": {
+				"server_name": {
 					"type": "string",
-					"description": "Search query (e.g., 'github issues', 'garmin activities', 'filesystem'). Supports fuzzy matching."
+					"description": "MCP server name (from list_servers). Required - identifies which server's tools to list."
 				},
 				"max_description_chars": {
 					"type": "number",
@@ -75,18 +75,18 @@ var LeanproxyTools = []ToolDefinition{
 					"default": 200
 				}
 			},
-			"required": ["query"]
+			"required": ["server_name"]
 		}`),
 	},
 	{
 		Name:        "invoke_tool",
-		Description: "Invoke a tool on a configured MCP server. **Required:** First use search_tools to discover server_name and tool_name, then pass them as arguments.",
+		Description: "Invoke a tool on a configured MCP server. **Required:** First use list_servers to get server names, then use list_tools to discover available tools on that server.",
 		Categories:  []string{"execution", "meta"},
 		Examples: []ToolExample{
 			{
 				Input: map[string]interface{}{
 					"server": "github",
-					"tool":   "github_list_issues",
+					"tool":   "list_issues",
 					"arguments": map[string]interface{}{
 						"owner":  "mmornati",
 						"repo":   "leanproxy-mcp",
@@ -99,7 +99,7 @@ var LeanproxyTools = []ToolDefinition{
 			{
 				Input: map[string]interface{}{
 					"server": "github",
-					"tool":   "github_search_issues",
+					"tool":   "search_issues",
 					"arguments": map[string]interface{}{
 						"query":  "is:issue is:open label:bug",
 						"owner":  "mmornati",
@@ -122,15 +122,15 @@ var LeanproxyTools = []ToolDefinition{
 			"properties": {
 				"server": {
 					"type": "string",
-					"description": "Server name from search_tools (e.g., 'github', 'garmin', 'filesystem'). Must be a configured MCP server."
+					"description": "Server name from list_servers (e.g., 'github', 'garmin', 'filesystem'). Must be a configured MCP server."
 				},
 				"tool": {
 					"type": "string",
-					"description": "Tool name from search_tools (e.g., 'github_list_issues', 'garmin_get_activities'). Do NOT prefix with server name."
+					"description": "Tool name from list_tools (e.g., 'list_issues', 'get_activities'). Do NOT prefix with server name."
 				},
 				"arguments": {
 					"type": "object",
-					"description": "Tool arguments as key-value pairs. Refer to search_tools output for available parameters."
+					"description": "Tool arguments as key-value pairs. Refer to list_tools output for available parameters."
 				}
 			},
 			"required": ["server", "tool"],

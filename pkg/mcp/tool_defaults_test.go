@@ -12,20 +12,20 @@ func TestApplyDefaults(t *testing.T) {
 		expected map[string]interface{}
 	}{
 		{
-			name:     "search_tools with no max_description_chars",
-			toolName: "search_tools",
-			args:    map[string]interface{}{"query": "github"},
-			expected: map[string]interface{}{"query": "github", "max_description_chars": 200},
+			name:     "list_tools with no max_description_chars",
+			toolName: "list_tools",
+			args:    map[string]interface{}{"server_name": "github"},
+			expected: map[string]interface{}{"server_name": "github", "max_description_chars": 200},
 		},
 		{
-			name:     "search_tools with existing max_description_chars",
-			toolName: "search_tools",
-			args:    map[string]interface{}{"query": "github", "max_description_chars": float64(100)},
-			expected: map[string]interface{}{"query": "github", "max_description_chars": float64(100)},
+			name:     "list_tools with existing max_description_chars",
+			toolName: "list_tools",
+			args:    map[string]interface{}{"server_name": "github", "max_description_chars": float64(100)},
+			expected: map[string]interface{}{"server_name": "github", "max_description_chars": float64(100)},
 		},
 		{
-			name:     "search_tools with nil args",
-			toolName: "search_tools",
+			name:     "list_tools with nil args",
+			toolName: "list_tools",
 			args:    nil,
 			expected: map[string]interface{}{"max_description_chars": 200},
 		},
@@ -59,49 +59,49 @@ func TestValidateParam(t *testing.T) {
 	}{
 		{
 			name:      "valid max_description_chars",
-			toolName: "search_tools",
+			toolName: "list_tools",
 			param:   "max_description_chars",
 			value:   float64(100),
 			wantOk:  true,
 		},
 		{
 			name:      "max_description_chars below min",
-			toolName: "search_tools",
+			toolName: "list_tools",
 			param:   "max_description_chars",
 			value:   float64(30),
 			wantOk:  false,
 		},
 		{
 			name:      "max_description_chars above max",
-			toolName: "search_tools",
+			toolName: "list_tools",
 			param:   "max_description_chars",
 			value:   float64(600),
 			wantOk:  false,
 		},
 		{
 			name:      "edge case min",
-			toolName: "search_tools",
+			toolName: "list_tools",
 			param:   "max_description_chars",
 			value:   float64(50),
 			wantOk:  true,
 		},
 		{
 			name:      "edge case max",
-			toolName: "search_tools",
+			toolName: "list_tools",
 			param:   "max_description_chars",
 			value:   float64(500),
 			wantOk:  true,
 		},
 		{
 			name:      "zero value should pass",
-			toolName: "search_tools",
+			toolName: "list_tools",
 			param:   "max_description_chars",
 			value:   float64(0),
 			wantOk:  true,
 		},
 		{
 			name:      "nil value should pass",
-			toolName: "search_tools",
+			toolName: "list_tools",
 			param:   "max_description_chars",
 			value:   nil,
 			wantOk:  true,
@@ -119,20 +119,20 @@ func TestValidateParam(t *testing.T) {
 }
 
 func TestGetParamMeta(t *testing.T) {
-	meta := GetParamMeta("search_tools", "query")
+	meta := GetParamMeta("list_tools", "server_name")
 	if meta == nil {
 		t.Fatal("meta should not be nil")
 	}
 
 	if !meta.Required {
-		t.Error("query should be required")
+		t.Error("server_name should be required")
 	}
 
 	if meta.Description == "" {
-		t.Error("query should have description")
+		t.Error("server_name should have description")
 	}
 
-	meta = GetParamMeta("search_tools", "max_description_chars")
+	meta = GetParamMeta("list_tools", "max_description_chars")
 	if meta == nil {
 		t.Fatal("meta should not be nil for max_description_chars")
 	}
@@ -143,7 +143,7 @@ func TestGetParamMeta(t *testing.T) {
 }
 
 func TestGetAllParamDefaults(t *testing.T) {
-	defaults := GetAllParamDefaults("search_tools")
+	defaults := GetAllParamDefaults("list_tools")
 	if defaults == nil {
 		t.Fatal("defaults should not be nil")
 	}

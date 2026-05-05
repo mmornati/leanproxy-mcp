@@ -112,12 +112,15 @@ func (t *TokenEstimator) EstimateLeanProxySchemaTokens() int {
 			},
 		},
 		{
-			"name":        "search_tools",
-			"description": "Search for tools across all configured MCP servers",
+			"name":        "list_tools",
+			"description": "List all tools available on a specific MCP server",
 			"inputSchema": map[string]interface{}{
-				"type":       "object",
-				"properties": map[string]interface{}{"query": map[string]interface{}{"type": "string"}},
-				"required":   []string{"query"},
+				"type": "object",
+				"properties": map[string]interface{}{
+					"server_name":         map[string]interface{}{"type": "string"},
+					"max_description_chars": map[string]interface{}{"type": "number"},
+				},
+				"required": []string{"server_name"},
 			},
 		},
 	}

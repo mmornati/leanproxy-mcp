@@ -128,10 +128,10 @@ leanproxy-mcp server --config /path/to/config.yaml --stdio "..."
 
 ## Cache Issues
 
-### Cache Empty After Search
+### Cache Empty After List Tools
 
 **Symptom:**
-`search_tools` returns no results or tools are not cached.
+`list_tools` returns no results or tools are not cached.
 
 **Solutions:**
 
@@ -141,16 +141,16 @@ leanproxy-mcp cache --location
 ls -la ~/.config/leanproxy/toolcache/
 ```
 
-2. Verify search_tools method works:
+2. Verify list_tools method works:
 ```bash
-printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}\n{"jsonrpc":"2.0","id":2,"method":"search_tools","params":{"query":"garmin"}}\n' | leanproxy-mcp server run --stdio
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tools","arguments":{"server_name":"garmin"}}}\n' | leanproxy-mcp server run --stdio
 ```
 
 3. Check logs for errors:
 ```bash
 leanproxy-mcp server run --stdio --log-level debug --log-file /tmp/leanproxy.log
-# Then search in another terminal
-tail -f /tmp/leanproxy.log | grep -i "search_tools\|cache\|error"
+# Then list tools in another terminal
+tail -f /tmp/leanproxy.log | grep -i "list_tools\|cache\|error"
 ```
 
 4. Clear and rebuild cache:

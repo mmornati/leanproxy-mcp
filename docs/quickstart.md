@@ -152,7 +152,7 @@ For example, if you have a `github` server with a tool called `list_repos`, the 
 ### Tool Cache
 
 LeanProxy-MCP automatically caches tool signatures from your MCP servers. This allows:
-- **Fast tool search**: Use `search_tools` to find tools across all servers instantly
+- **Fast tool listing**: Use `list_tools` to list tools on a specific server
 - **Offline access**: Tool information is persisted to disk at `~/.config/leanproxy/toolcache/`
 - **No server startup**: Search cached tools without starting backend servers
 
