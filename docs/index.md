@@ -23,6 +23,7 @@ This documentation is designed for:
 | [Configuration](./configuration.md) | Customize LeanProxy-MCP behavior |
 | [Architecture](./architecture.md) | Understanding the internal design |
 | [Security](./security.md) | Security hardening features |
+| [Graceful Shutdown](./shutdown.md) | Proper shutdown patterns and best practices |
 | [Troubleshooting](./troubleshooting.md) | Common issues and solutions |
 | [FAQ](./faq.md) | Frequently asked questions |
 
