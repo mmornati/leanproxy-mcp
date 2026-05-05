@@ -108,9 +108,18 @@ Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy onl
 brew tap mmornati/leanproxy-mcp
 brew install leanproxy-mcp
 
-# Download binary from releases
-curl -fsSL https://github.com/mmornati/leanproxy-mcp/releases/latest/download/leanproxy-mcp -o leanproxy-mcp
+# Download binary (auto-detects OS/arch)
+VERSION=${VERSION:-$(curl -sL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | grep -o '"tag_name"' | cut -d'"' -f4)}
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+[ "$ARCH" = "x86_64" ] && ARCH="amd64"
+[ "$ARCH" = "arm64" ] && ARCH="arm64"
+curl -fsSL "https://github.com/mmornati/leanproxy-mcp/releases/download/${VERSION}/leanproxy-mcp_${VERSION#v}_${OS}_${ARCH}.tar.gz" -o leanproxy-mcp.tar.gz
+tar -xzf leanproxy-mcp.tar.gz
 chmod +x leanproxy-mcp && sudo mv leanproxy-mcp /usr/local/bin/
+rm leanproxy-mcp.tar.gz
+
+# Override version: VERSION=v0.5.2 ...
 
 # Build from source
 git clone https://github.com/mmornati/leanproxy-mcp.git

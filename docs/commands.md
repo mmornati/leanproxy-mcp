@@ -976,10 +976,10 @@ leanproxy-mcp version
 #### Output
 
 ```
- leanproxy-mcp version v0.2.0
- build date: 2026-05-01
+ leanproxy-mcp version 0.5.2
+ build date: 2026-05-04
  platform: darwin/arm64
- go: go1.26.2
+ go: go1.25.5
 ```
 
 ---

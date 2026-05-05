@@ -8,47 +8,33 @@ LeanProxy-MCP can be installed on macOS, Linux, and Windows.
 - **IDE with MCP support** (Claude Desktop, Cursor, OpenCode, Windsurf)
 - Optionally: **Go 1.21+** (for building from source)
 
-## Download Binary (v0.2.1)
+## Download Binary
 
 Download the pre-built binary for your platform from the GitHub Releases page:
 
-### macOS
+### Automatic (All Platforms)
+
+This single command works on macOS and Linux, automatically detecting your architecture:
 
 ```bash
-# Apple Silicon (M1/M2/M3/M4)
-curl -fsSL https://github.com/mmornati/leanproxy-mcp/releases/download/v0.2.1/leanproxy-mcp_0.2.1_darwin_arm64.tar.gz -o leanproxy-mcp.tar.gz
+# Download latest version (auto-detects OS/arch)
+VERSION=${VERSION:-$(curl -sL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | grep -o '"tag_name"' | cut -d'"' -f4)}
+OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+ARCH=$(uname -m)
+[ "$ARCH" = "x86_64" ] && ARCH="amd64"
+[ "$ARCH" = "arm64" ] && ARCH="arm64"
+curl -fsSL "https://github.com/mmornati/leanproxy-mcp/releases/download/${VERSION}/leanproxy-mcp_${VERSION#v}_${OS}_${ARCH}.tar.gz" -o leanproxy-mcp.tar.gz
 tar -xzf leanproxy-mcp.tar.gz
 chmod +x leanproxy-mcp
 sudo mv leanproxy-mcp /usr/local/bin/
 rm leanproxy-mcp.tar.gz
 
-# Intel (x86_64)
-curl -fsSL https://github.com/mmornati/leanproxy-mcp/releases/download/v0.2.1/leanproxy-mcp_0.2.1_darwin_amd64.tar.gz -o leanproxy-mcp.tar.gz
-tar -xzf leanproxy-mcp.tar.gz
-chmod +x leanproxy-mcp
-sudo mv leanproxy-mcp /usr/local/bin/
-rm leanproxy-mcp.tar.gz
+# Override version: VERSION=v0.2.0 ... (run the full command above with VERSION set)
 ```
 
-### Linux
+### Manual Download
 
-```bash
-# x86_64
-curl -fsSL https://github.com/mmornati/leanproxy-mcp/releases/download/v0.2.1/leanproxy-mcp_0.2.1_linux_amd64.tar.gz -o leanproxy-mcp.tar.gz
-tar -xzf leanproxy-mcp.tar.gz
-chmod +x leanproxy-mcp
-sudo mv leanproxy-mcp /usr/local/bin/
-rm leanproxy-mcp.tar.gz
-
-# ARM64
-curl -fsSL https://github.com/mmornati/leanproxy-mcp/releases/download/v0.2.1/leanproxy-mcp_0.2.1_linux_arm64.tar.gz -o leanproxy-mcp.tar.gz
-tar -xzf leanproxy-mcp.tar.gz
-chmod +x leanproxy-mcp
-sudo mv leanproxy-mcp /usr/local/bin/
-rm leanproxy-mcp.tar.gz
-```
-
-Or download directly from: https://github.com/mmornati/leanproxy-mcp/releases/tag/v0.2.1
+If you prefer, download manually from: https://github.com/mmornati/leanproxy-mcp/releases
 
 ## Install via Homebrew (macOS/Linux)
 
@@ -89,10 +75,10 @@ leanproxy-mcp version
 
 Expected output:
 ```
- leanproxy-mcp version v0.2.1
- build date: 2026-05-03
+ leanproxy-mcp version 0.5.2
+ build date: 2026-05-04
  platform: darwin/arm64
- go: go1.26.2
+ go: go1.25.5
 ```
 
 ## IDE Configuration

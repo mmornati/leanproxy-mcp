@@ -33,7 +33,7 @@ LeanProxy-MCP is language-agnostic. It works with any MCP server regardless of t
 
 ### Where can I download the binary?
 
-Download from GitHub Releases: https://github.com/mmornati/leanproxy-mcp/releases/tag/v0.2.0
+Download from GitHub Releases: https://github.com/mmornati/leanproxy-mcp/releases
 
 ### Which platforms are supported?
 
@@ -57,10 +57,12 @@ go build -o leanproxy-mcp .
 
 ### How do I install on Windows?
 
-Download the `.exe` from releases and add to your PATH. For example:
+Download the `.exe` from [GitHub Releases](https://github.com/mmornati/leanproxy-mcp/releases) and add to your PATH.
 
+For PowerShell (replace VERSION with desired version, e.g., v0.5.2):
 ```powershell
-Invoke-WebRequest -Uri https://github.com/mmornati/leanproxy-mcp/releases/download/v0.2.0/leanproxy-mcp_windows_amd64.exe -OutFile leanproxy.exe
+$VERSION = "VERSION"
+Invoke-WebRequest -Uri "https://github.com/mmornati/leanproxy-mcp/releases/download/${VERSION}/leanproxy-mcp_windows_amd64.exe" -OutFile leanproxy.exe
 Move-Item leanproxy.exe $env:LOCALAPPDATA\Microsoft\Windows\Tools\
 ```
 
