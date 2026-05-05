@@ -14,6 +14,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  deployments: write
 
 concurrency:
   group: docs-pages
@@ -27,6 +28,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Create GitHub Deployment
+        uses: chrnorm/deployment-action@v2
+        with:
+          target-url: https://mmornati.github.io/leanproxy-mcp/
+          description: Deploy documentation to GitHub Pages
+          environment: github-pages
+          ref: ${{ github.ref_name }}
+        id: deployment
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -59,3 +69,10 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deploy
         uses: actions/deploy-pages@v4
+
+      - name: Update Deployment Status
+        uses: chrnorm/deployment-status@v2
+        with:
+          target_url: https://mmornati.github.io/leanproxy-mcp/
+          state: ${{ job.status }}
+          deployment_id: ${{ steps.deployment.outputs.deployment_id }}
