@@ -14,9 +14,14 @@ type RateLimiter struct {
 	blocked  int64
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
+	clock    Clock
 }
 
 func NewRateLimiter(max int, window time.Duration) *RateLimiter {
+	return newRateLimiter(max, window, defaultClock)
+}
+
+func newRateLimiter(max int, window time.Duration, clock Clock) *RateLimiter {
 	if max <= 0 {
 		max = 10
 	}
@@ -29,6 +34,7 @@ func NewRateLimiter(max int, window time.Duration) *RateLimiter {
 		window:   window,
 		requests: make([]time.Time, 0, max),
 		stopCh:   make(chan struct{}),
+		clock:   clock,
 	}
 
 	rl.wg.Add(1)
@@ -41,7 +47,7 @@ func (rl *RateLimiter) Allow() bool {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	now := time.Now()
+	now := rl.clock.Now()
 	windowStart := now.Add(-rl.window)
 
 	for i := 0; i < len(rl.requests); {
@@ -71,7 +77,7 @@ func (rl *RateLimiter) cleanupLoop() {
 		select {
 		case <-ticker.C:
 			rl.mu.Lock()
-			now := time.Now()
+			now := rl.clock.Now()
 			windowStart := now.Add(-rl.window)
 
 			filtered := make([]time.Time, 0, len(rl.requests))

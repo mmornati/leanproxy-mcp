@@ -4,8 +4,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestSavingsTrackerRecordRequest(t *testing.T) {
@@ -118,14 +116,18 @@ func TestSavingsTrackerThreadSafety(t *testing.T) {
 }
 
 func TestSavingsTrackerSessionDuration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping in short mode - timing dependent test")
+	fakeClock := NewFakeClock(time.Now())
+	tracker := newSavingsTracker(fakeClock)
+
+	cumulative := tracker.GetCumulativeSavings()
+	if cumulative.SessionDuration != 0 {
+		t.Errorf("Expected zero duration initially, got %v", cumulative.SessionDuration)
 	}
 
-	tracker := NewSavingsTracker()
+	fakeClock.Add(10 * time.Millisecond)
 
-	require.Eventually(t, func() bool {
-		cumulative := tracker.GetCumulativeSavings()
-		return cumulative.SessionDuration >= 10*time.Millisecond
-	}, 100*time.Millisecond, 10*time.Millisecond)
+	cumulative = tracker.GetCumulativeSavings()
+	if cumulative.SessionDuration < 10*time.Millisecond {
+		t.Errorf("Expected >= 10ms duration, got %v", cumulative.SessionDuration)
+	}
 }
