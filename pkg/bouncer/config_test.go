@@ -204,3 +204,112 @@ func TestPatternDefStruct(t *testing.T) {
 		t.Errorf("expected Pattern 'test-[a-z]+', got %s", pd.Pattern)
 	}
 }
+
+func TestValidatePattern_Valid(t *testing.T) {
+	validPatterns := []string{
+		"[A-Z0-9]{20}",
+		"api_key_[a-f0-9]{32}",
+		"sk_live_[A-Za-z0-9]+",
+		"ghp_[A-Za-z0-9]{36}",
+		"Bearer [A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+\\.[A-Za-z0-9\\-_]+",
+		"[a-z]+",
+		"\\d{3}-\\d{4}",
+	}
+
+	for _, p := range validPatterns {
+		if err := ValidatePattern(p); err != nil {
+			t.Errorf("pattern %q should be valid, got %v", p, err)
+		}
+	}
+}
+
+func TestValidatePattern_NestedQuantifiers(t *testing.T) {
+	dangerousPatterns := []string{
+		"(.+)+",
+		"(.*)*",
+		"(a+)+",
+		"([a-z]+)+",
+		"(x+)++",
+	}
+
+	for _, p := range dangerousPatterns {
+		if err := ValidatePattern(p); err == nil {
+			t.Errorf("pattern %q should be rejected as dangerous nested quantifier", p)
+		}
+	}
+}
+
+func TestValidatePattern_OverlappingAlt(t *testing.T) {
+	dangerousPatterns := []string{
+		"(a|a)*",
+		"(x|y)*",
+		"(foo|bar)*",
+		"(abc|def)*",
+	}
+
+	for _, p := range dangerousPatterns {
+		if err := ValidatePattern(p); err == nil {
+			t.Errorf("pattern %q should be rejected as overlapping alternation", p)
+		}
+	}
+}
+
+func TestValidatePattern_GreedyQuantifiers(t *testing.T) {
+	dangerousPatterns := []string{
+		"(.*)*",
+		"(a+)*",
+		"(a+)++",
+	}
+
+	for _, p := range dangerousPatterns {
+		if err := ValidatePattern(p); err == nil {
+			t.Errorf("pattern %q should be rejected as greedy quantifier", p)
+		}
+	}
+}
+
+func TestValidatePattern_ComplexBacktracking(t *testing.T) {
+	dangerousPatterns := []string{
+		"(a+)+(a+)+",
+		"(a*)*(.*)*",
+		"([a-z]+)([a-z]+)+",
+	}
+
+	for _, p := range dangerousPatterns {
+		if err := ValidatePattern(p); err == nil {
+			t.Errorf("pattern %q should be rejected as complex backtracking", p)
+		}
+	}
+}
+
+func TestValidatePattern_EmptyPattern(t *testing.T) {
+	if err := ValidatePattern(""); err != nil {
+		t.Errorf("expected empty pattern to be valid, got %v", err)
+	}
+}
+
+func TestValidatePattern_VeryLongPattern(t *testing.T) {
+	longPattern := "a" + strings.Repeat("[a-z0-9]", 1000)
+	if err := ValidatePattern(longPattern); err != nil {
+		t.Errorf("expected long valid pattern to pass, got %v", err)
+	}
+}
+
+func TestCompilePatterns_ValidRejectsDangerous(t *testing.T) {
+	cfg := &Config{
+		CustomPatterns: []PatternDef{
+			{Name: "dangerous", Pattern: "(.+)+"},
+			{Name: "safe", Pattern: "safe-pattern"},
+		},
+	}
+	loaded, err := cfg.CompilePatterns()
+	if err != nil {
+		t.Fatalf("CompilePatterns should not error on dangerous patterns: %v", err)
+	}
+	if len(loaded.Custom) != 1 {
+		t.Errorf("expected 1 valid custom pattern after rejection, got %d", len(loaded.Custom))
+	}
+	if loaded.Custom[0].Name != "safe" {
+		t.Errorf("expected only 'safe' pattern, got %s", loaded.Custom[0].Name)
+	}
+}
