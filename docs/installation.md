@@ -6,7 +6,7 @@ LeanProxy-MCP can be installed on macOS, Linux, and Windows.
 
 - **macOS, Linux, or Windows**
 - **IDE with MCP support** (Claude Desktop, Cursor, OpenCode, Windsurf)
-- Optionally: **Go 1.21+** (for building from source)
+- Optionally: **Go 1.25+** (for building from source)
 
 ## Download Binary
 
@@ -39,8 +39,8 @@ If you prefer, download manually from: https://github.com/mmornati/leanproxy-mcp
 ## Install via Homebrew (macOS/Linux)
 
 ```bash
-# Add custom tap
-brew tap mmornati/leanproxy-mcp
+# Add custom tap (point to this repository)
+brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
 
 # Install
 brew install leanproxy-mcp

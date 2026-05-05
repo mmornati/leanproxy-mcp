@@ -47,7 +47,7 @@ Download from GitHub Releases: https://github.com/mmornati/leanproxy-mcp/release
 
 ### Do I need Go to build from source?
 
-Yes, Go 1.21+ is required to build from source:
+Yes, Go 1.25+ is required to build from source:
 
 ```bash
 git clone https://github.com/mmornati/leanproxy-mcp.git

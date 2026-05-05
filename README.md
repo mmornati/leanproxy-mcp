@@ -105,7 +105,7 @@ Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy onl
 
 ```bash
 # macOS/Linux via Homebrew
-brew tap mmornati/leanproxy-mcp
+brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
 brew install leanproxy-mcp
 
 # Download binary (auto-detects OS/arch)

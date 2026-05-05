@@ -1,0 +1,134 @@
+name: Homebrew Formula Update
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to update (e.g., v0.5.2)'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${{ github.event.release.tag_name }}"
+          fi
+          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Download and verify release binaries
+        id: sha256
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          declare -A shas
+
+          for arch in amd64 arm64; do
+            for os in darwin linux; do
+              url="https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_${os}_${arch}.tar.gz"
+              echo "Downloading $url..."
+              curl -sL "$url" -o /tmp/archive.tar.gz
+              sha=$(sha256sum /tmp/archive.tar.gz | cut -d' ' -f1)
+              key="${os}_${arch}"
+              echo "${key}=${sha}" >> $GITHUB_OUTPUT
+              rm -f /tmp/archive.tar.gz
+            done
+          done
+
+      - name: Update Homebrew formula
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA_DARWIN_AMD64: ${{ steps.sha256.outputs.darwin_amd64 }}
+          SHA_DARWIN_ARM64: ${{ steps.sha256.outputs.darwin_arm64 }}
+          SHA_LINUX_AMD64: ${{ steps.sha256.outputs.linux_amd64 }}
+          SHA_LINUX_ARM64: ${{ steps.sha256.outputs.linux_arm64 }}
+        run: |
+          cat > Formula/leanproxy-mcp.rb << EOF
+          class LeanproxyMcp < Formula
+            desc "LeanProxy-MCP - A lightweight token firewall for MCP servers"
+            homepage "https://github.com/mmornati/leanproxy-mcp"
+            license "MIT"
+
+            version "$VERSION"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_darwin_arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_darwin_amd64.tar.gz"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_linux_arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_linux_amd64.tar.gz"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install "leanproxy-mcp"
+            end
+
+            test do
+              system "#{bin}/leanproxy-mcp", "version"
+            end
+          end
+          EOF
+          echo "Formula updated successfully"
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(homebrew): update formula to v${{ steps.version.outputs.version }}"
+          title: "chore(homebrew): update formula to v${{ steps.version.outputs.version }}"
+          body: |
+            ## Summary
+
+            This PR updates the Homebrew formula to version **${{ steps.version.outputs.version }}**.
+
+            ### Changes
+
+            - Updated SHA256 checksums for all platform binaries:
+              - darwin/amd64
+              - darwin/arm64
+              - linux/amd64
+              - linux/arm64
+
+            ### Verification
+
+            The formula is now ready for Homebrew installation:
+            ```bash
+            brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
+            brew install leanproxy-mcp
+            ```
+
+            Created by GitHub Actions - [Homebrew Formula Update](https://github.com/mmornati/leanproxy-mcp/actions/workflows/homebrew-formula-update.yml)
+          branch: homebrew-formula-update-v${{ steps.version.outputs.version }}
+          delete-branch: true
+          token: ${{ secrets.GITHUB_TOKEN }}
