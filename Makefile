@@ -40,18 +40,18 @@ test-coverage: test ## Run tests with coverage report
 build: tidy ## Build all platform binaries to dist/
 	@echo "Building for all platforms..."
 	@mkdir -p $(DIST_DIR)
-	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 .
-	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 .
-	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 .
-	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 .
-	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe .
 	@echo "Builds available in $(DIST_DIR)/"
 
 .PHONY: build-local
 build-local: tidy ## Build for current platform only
 	@echo "Building for $(shell go env GOOS)/$(shell go env GOARCH)..."
 	@mkdir -p $(DIST_DIR)
-	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -o $(DIST_DIR)/$(BINARY_NAME) .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME) .
 
 .PHONY: build-version
 build-version: build ## Build with custom version (overrides git tag)
@@ -65,7 +65,7 @@ clean: ## Remove build artifacts
 .PHONY: install
 install: tidy ## Build and install to GOPATH/bin
 	@echo "Installing to $(GOPATH)/bin..."
-	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) install -ldflags="$(LDFLAGS)" .
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) install -ldflags="$(LDFLAGS)" -trimpath .
 
 .PHONY: run
 run: ## Run the application (ARGS='serve --help')
@@ -100,6 +100,16 @@ deps: ## Download dependencies
 tag: ## Tag with VERSION (VERSION=v1.0.0)
 	@git tag -a $(VERSION) -m "Release $(VERSION)"
 	@echo "Tagged: $(VERSION)"
+
+.sbom-install:
+	@which syft >/dev/null 2>&1 || $(GO) install github.com/anchore/syft/cmd/syft@latest
+	@touch .sbom-install
+
+.PHONY: sbom
+sbom: .sbom-install build-local ## Generate SBOM
+	@echo "Generating SBOM..."
+	@syft packages -o cyclonedx-json=$(DIST_DIR)/sbom.json $(BINARY_NAME)
+	@echo "SBOM generated: $(DIST_DIR)/sbom.json"
 
 .PHONY: release
 release: tag build-version ## Create a release: tag and build
