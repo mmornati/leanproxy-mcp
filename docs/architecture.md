@@ -375,6 +375,68 @@ This ensures that:
 
 The socket server supports optional token-based authentication to prevent unauthorized local access. See [Configuration](./configuration.md#socket-authentication) for details.
 
+## Logging
+
+LeanProxy-MCP uses Go's standard `log/slog` package for structured logging. All constructors accept an optional `*slog.Logger` parameter, enabling dependency injection for testability and consistent log output control.
+
+### Logger Injection Pattern
+
+All package constructors accept a `*slog.Logger` parameter with a sensible default:
+
+```go
+func NewHandler(p pool.ServerSource, logger *slog.Logger) *Handler {
+    if logger == nil {
+        logger = slog.Default()
+    }
+    return &Handler{
+        pool:    p,
+        logger:  logger,
+        // ...
+    }
+}
+```
+
+**Benefits:**
+- **Testability**: Pass a no-op logger in tests to reduce noise
+- **Consistency**: Inject the same logger across all components for unified output
+- **Flexibility**: Configure log level and output destination in one place
+
+### Constructors with Logger Support
+
+| Package | Constructor | Default |
+|---------|------------|---------|
+| `pkg/mcp/` | `NewHandler(p, logger)` | `slog.Default()` |
+| `pkg/pool/` | `NewStdioPool(maxPerServer, idleTimeout, logger)` | `slog.Default()` |
+| `pkg/pool/` | `NewSSEPool(logger)` | `slog.Default()` |
+
+### Structured Logging
+
+All log calls use key-value pairs for structured output:
+
+```go
+h.logger.Info("initialized leanproxy-mcp", "client", params.ClientInfo.Name, "version", params.ClientInfo.Version)
+h.logger.Debug("handling mcp request", "method", req.Method, "id", req.ID)
+```
+
+### Log Levels
+
+| Level | Usage |
+|-------|-------|
+| `Debug` | Detailed diagnostic information |
+| `Info` | General operational events |
+| `Warn` | Unexpected but recoverable issues |
+| `Error` | Errors that require attention |
+
+### Configuration
+
+Log level is configurable via `logging.level` in config or `LEANPROXY_LOG_LEVEL` environment variable:
+
+```yaml
+logging:
+  level: "debug"  # debug, info, warn, error
+  file: ""      # empty = stdout
+```
+
 ## Next Steps
 
 - [Commands Reference](./commands.md) - Full command documentation
