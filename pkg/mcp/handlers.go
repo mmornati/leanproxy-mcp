@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
@@ -26,12 +27,14 @@ type ToolCache struct {
 }
 
 type Handler struct {
-	pool      pool.ServerSource
-	logger    *slog.Logger
-	timeout   time.Duration
-	toolCache *ToolCache
-	toolStore toolstore.Cache
-	manifest  *AggregatedManifest
+	pool           pool.ServerSource
+	logger         *slog.Logger
+	timeout        time.Duration
+	toolCache      *ToolCache
+	toolStore      toolstore.Cache
+	manifest       *AggregatedManifest
+	cacheRefreshes atomic.Uint64
+	cacheFailures   atomic.Uint64
 }
 
 type AggregatedManifest struct {
@@ -403,6 +406,7 @@ func (h *Handler) loadFromPersistentCache(ctx context.Context) {
 }
 
 func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
+	h.cacheRefreshes.Add(1)
 	servers := h.pool.ListServers()
 
 	for _, serverName := range servers {
@@ -410,9 +414,10 @@ func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
 		h.logger.Debug("checking server for cache refresh", "name", serverName, "state", state)
 
 		if state != "idle" && state != "running" && state != "busy" {
-			h.logger.Debug("server not running, attempting restart", "name", serverName, "state", state)
+			h.logger.Warn("server not running, attempting restart", "name", serverName, "state", state)
 			if err := h.pool.RestartServer(ctx, serverName); err != nil {
-				h.logger.Warn("failed to restart server for cache", "name", serverName, "error", err)
+				h.logger.Error("failed to restart server for cache", "name", serverName, "error", err)
+				h.cacheFailures.Add(1)
 				continue
 			}
 			time.Sleep(500 * time.Millisecond)
@@ -420,34 +425,39 @@ func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
 
 		initErr := h.initializeServer(ctx, serverName)
 		if initErr != nil {
-			h.logger.Debug("failed to initialize server, will try without initialization", "name", serverName, "error", initErr)
+			h.logger.Warn("failed to initialize server, will try without initialization", "name", serverName, "error", initErr)
 		}
 
 		h.logger.Debug("requesting tools/list for cache", "name", serverName)
 		resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
 		if err != nil {
-			h.logger.Warn("failed to get tools for cache", "name", serverName, "error", err)
+			h.logger.Error("failed to get tools for cache", "name", serverName, "error", err)
+			h.cacheFailures.Add(1)
 			continue
 		}
 
 		if resp != nil && resp.Error != nil {
-			h.logger.Warn("server error during cache population", "name", serverName, "error", resp.Error.Message)
+			h.logger.Error("server error during cache population", "name", serverName, "error", resp.Error.Message)
+			h.cacheFailures.Add(1)
 			continue
 		}
 
 		if resp == nil || resp.Result == nil {
-			h.logger.Warn("server returned no result for cache", "name", serverName, "resp", fmt.Sprintf("%+v", resp))
+			h.logger.Error("server returned no result for cache", "name", serverName, "resp", fmt.Sprintf("%+v", resp))
+			h.cacheFailures.Add(1)
 			continue
 		}
 
 		if len(resp.Result) == 0 || string(resp.Result) == "null" {
-			h.logger.Warn("server returned null/empty result for cache", "name", serverName, "resp", fmt.Sprintf("%+v", resp))
+			h.logger.Error("server returned null/empty result for cache", "name", serverName, "resp", fmt.Sprintf("%+v", resp))
+			h.cacheFailures.Add(1)
 			continue
 		}
 
 		var toolsResult ToolsListResult
 		if err := json.Unmarshal(resp.Result, &toolsResult); err != nil {
-			h.logger.Warn("failed to parse tools for cache", "name", serverName, "error", err, "result", string(resp.Result))
+			h.logger.Error("failed to parse tools for cache", "name", serverName, "error", err, "result", string(resp.Result))
+			h.cacheFailures.Add(1)
 			continue
 		}
 
