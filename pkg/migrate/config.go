@@ -48,6 +48,8 @@ type ServerConfig struct {
 	TimeoutValue       time.Duration            `yaml:"-"`
 	ConnectTimeout     string                   `yaml:"connect_timeout"`
 	ConnectTimeoutValue time.Duration           `yaml:"-"`
+	IdleTimeout        string                   `yaml:"idle_timeout"`
+	IdleTimeoutValue   time.Duration            `yaml:"-"`
 	CacheSettings      *CacheSettings           `yaml:"cache_settings,omitempty"`
 	SummarizeSettings  *SummarizeSettings       `yaml:"summarize_settings,omitempty"`
 }
@@ -129,6 +131,16 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 			server.ConnectTimeoutValue = d
 		} else {
 			server.ConnectTimeoutValue = 10 * time.Second
+		}
+
+		if server.IdleTimeout != "" {
+			d, err := time.ParseDuration(server.IdleTimeout)
+			if err != nil {
+				return nil, fmt.Errorf("server %s: invalid idle_timeout duration: %w", server.Name, err)
+			}
+			server.IdleTimeoutValue = d
+		} else {
+			server.IdleTimeoutValue = 30 * time.Minute
 		}
 
 		if server.CacheSettings != nil && server.CacheSettings.TTL != "" {

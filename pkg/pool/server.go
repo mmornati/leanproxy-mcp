@@ -53,6 +53,8 @@ type ServerStats struct {
 	LastRequestAt  time.Time
 	RestartCount   int
 	CurrentBackoff time.Duration
+	LastError      string
+	LastErrorAt    time.Time
 }
 
 type StdioServerV2 struct {
@@ -198,6 +200,11 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 
 	if err := cmd.Start(); err != nil {
 		s.mu.Unlock()
+		s.logger.Error("failed to start server process",
+			"name", s.name,
+			"command", s.config.Command,
+			"args", s.config.Args,
+			"error", err)
 		return fmt.Errorf("pool: start %s: %w", s.name, err)
 	}
 
@@ -234,9 +241,23 @@ func (s *StdioServerV2) waitForExit(ctx context.Context) {
 	}
 
 	atomic.StoreInt32(&s.state, stateError)
+
+	errorMsg := "unknown"
+	if err != nil {
+		errorMsg = err.Error()
+		s.stats.LastError = errorMsg
+		s.stats.LastErrorAt = time.Now()
+		s.stats.ErrorCount++
+	}
+
 	s.mu.Unlock()
 
-	s.logger.Warn("server process exited", "name", s.name, "error", err)
+	s.logger.Error("server process crashed",
+		"name", s.name,
+		"error", errorMsg,
+		"pid", s.process.Process.Pid,
+		"state", currentState,
+		"restart_count", s.restartCount)
 
 	s.scheduleRestart(ctx)
 	s.wg.Done()
