@@ -98,7 +98,7 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 
 	idleTimeout := config.IdleTimeout
 	if idleTimeout == 0 {
-		idleTimeout = 5 * time.Minute
+		idleTimeout = 30 * time.Minute
 	}
 
 	requestTimeout := config.RequestTimeout
