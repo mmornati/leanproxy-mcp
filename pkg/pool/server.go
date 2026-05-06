@@ -226,8 +226,8 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 
 	s.mu.Unlock()
 
-	s.wg.Add(1)
 	go s.readStderr(stderrR)
+	s.wg.Add(1)
 	go s.waitForExit(ctx)
 	s.wg.Add(1)
 	go s.readResponses()
@@ -368,7 +368,6 @@ func (s *StdioServerV2) readResponses() {
 }
 
 func (s *StdioServerV2) readStderr(stderr io.Reader) {
-	defer s.wg.Done()
 	scanner := bufio.NewScanner(stderr)
 
 	for {
