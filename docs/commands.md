@@ -451,9 +451,44 @@ Error: invalid regex pattern '[' at line 3
 
 ---
 
-## `compactor` - Manifest Caching
+## `compactor` - Token Optimization via Manifest Distillation
 
-Manage distilled manifest caching and re-distillation.
+The compactor optimizes token usage by compressing MCP server tool descriptions using an LLM.
+
+### What it does
+
+When an MCP server starts, it provides a manifest listing all its tools with descriptions. These descriptions can be verbose, causing unnecessary token usage on every LLM request.
+
+The compactor:
+1. Takes each tool's description
+2. Uses an LLM to compress it to ~50 characters while preserving technical accuracy
+3. Caches the optimized version to avoid re-distillation
+
+This is transparent to users - LeanProxy automatically uses distilled manifests when available.
+
+### Example
+
+**Before (raw manifest):**
+```
+Tool: "read_file" - "Reads the complete contents of a file from the filesystem, supporting both text and binary formats, with optional encoding selection"
+```
+
+**After (distilled):**
+```
+Tool: "read_file" - "Read file contents from filesystem"
+```
+
+### Configuration
+
+The compactor requires LLM configuration in `leanproxy_servers.yaml`:
+
+```yaml
+compactor:
+  enabled: true
+  llm-endpoint: "https://api.openai.com/v1/chat/completions"
+  llm-api-key: "${OPENAI_API_KEY}"
+  llm-model: "gpt-4o-mini"
+```
 
 ### Usage
 
@@ -471,28 +506,36 @@ leanproxy-mcp compactor [command]
 
 ### `compactor rebuild` - Rebuild Manifests
 
-Force re-distillation of all server manifests.
+Force re-distillation of server manifests to refresh stale discovery signatures.
+
+**When to use:**
+- Tool descriptions have changed in the MCP server
+- You want to re-optimize with a different LLM model
+- The cache became stale
 
 #### Usage
 
 ```bash
-leanproxy-mcp compactor rebuild [flags]
+leanproxy-mcp compactor rebuild [server-name] [flags]
 ```
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--all` | bool | false | Rebuild all servers |
 
 #### Examples
 
 ```bash
-# Rebuild all manifests
-leanproxy-mcp compactor rebuild
+# Rebuild a specific server
+leanproxy-mcp compactor rebuild github
+
+# Rebuild all servers
+leanproxy-mcp compactor rebuild --all
 
 # Dry run
-leanproxy-mcp compactor rebuild --dry-run
-```
-
-#### Output
-
-```
-Distillates rebuilt for 3 servers.
+leanproxy-mcp compactor rebuild github --dry-run
 ```
 
 ---
