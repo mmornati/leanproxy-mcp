@@ -28,6 +28,34 @@ var ErrorHintRegistry = map[string][]ErrorHint{
 			Action:    "restart_server",
 		},
 	},
+	"not healthy": {
+		{
+			Original:   "not healthy",
+			Suggestion: "The server is in an error state. Check 'leanproxy-mcp status --running' for details. The server will automatically restart on the next request.",
+			Action:    "restart_server",
+		},
+	},
+	"server not available": {
+		{
+			Original:   "server not available",
+			Suggestion: "The server crashed or failed to start. Check the logs at /tmp/leanproxy.log for error details. The server will attempt to restart automatically.",
+			Action:    "check_logs",
+		},
+	},
+	"signal: killed": {
+		{
+			Original:   "signal: killed",
+			Suggestion: "The server process was killed (likely by the system or OOM). Check /tmp/leanproxy.log for more details. Auto-restart will attempt recovery.",
+			Action:    "check_logs",
+		},
+	},
+	"command not found": {
+		{
+			Original:   "command not found",
+			Suggestion: "The server command (e.g., npx, uv) is not installed or not in PATH. Check your configuration and install the required dependencies.",
+			Action:    "check_dependencies",
+		},
+	},
 	"failed": {
 		{
 			Original:   "server error",
