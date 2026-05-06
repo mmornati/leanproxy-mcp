@@ -198,6 +198,12 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	}
 	s.stdout = stdoutR
 
+	stderrR, err := cmd.StderrPipe()
+	if err != nil {
+		s.mu.Unlock()
+		return fmt.Errorf("pool: stderr pipe: %w", err)
+	}
+
 	if err := cmd.Start(); err != nil {
 		s.mu.Unlock()
 		s.logger.Error("failed to start server process",
@@ -216,11 +222,12 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	s.stats.RestartCount++
 	s.stats.CurrentBackoff = s.backoff
 
-	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid)
+	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", s.config.Args)
 
 	s.mu.Unlock()
 
 	s.wg.Add(1)
+	go s.readStderr(stderrR)
 	go s.waitForExit(ctx)
 	s.wg.Add(1)
 	go s.readResponses()
@@ -352,6 +359,32 @@ func (s *StdioServerV2) readResponses() {
 				case s.responseCh <- resp:
 				default:
 					s.logger.Warn("response channel full, dropping response", "name", s.name)
+				}
+			} else {
+				return
+			}
+		}
+	}
+}
+
+func (s *StdioServerV2) readStderr(stderr io.Reader) {
+	defer s.wg.Done()
+	scanner := bufio.NewScanner(stderr)
+
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		default:
+			if scanner.Scan() {
+				if scanner.Err() != nil {
+					s.logger.Error("stderr scanner error", "name", s.name, "error", scanner.Err())
+					return
+				}
+
+				line := scanner.Bytes()
+				if len(line) > 0 {
+					s.logger.Info("server stderr", "name", s.name, "output", string(line))
 				}
 			} else {
 				return
