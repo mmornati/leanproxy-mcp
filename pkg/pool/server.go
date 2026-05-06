@@ -222,7 +222,6 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 }
 
 func (s *StdioServerV2) waitForExit(ctx context.Context) {
-	defer s.wg.Done()
 	err := s.process.Wait()
 
 	s.mu.Lock()
@@ -230,6 +229,7 @@ func (s *StdioServerV2) waitForExit(ctx context.Context) {
 	if currentState == stateStopping {
 		atomic.StoreInt32(&s.state, stateStopped)
 		s.mu.Unlock()
+		s.wg.Done()
 		return
 	}
 
@@ -239,9 +239,15 @@ func (s *StdioServerV2) waitForExit(ctx context.Context) {
 	s.logger.Warn("server process exited", "name", s.name, "error", err)
 
 	s.scheduleRestart(ctx)
+	s.wg.Done()
 }
 
 func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
+	currentState := atomic.LoadInt32(&s.state)
+	if currentState == stateStopping || currentState == stateStopped {
+		return
+	}
+
 	s.mu.Lock()
 	s.restartCount++
 	if s.restartCount > s.maxRestarts {
@@ -268,7 +274,7 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 	}
 
 	s.mu.Lock()
-	currentState := atomic.LoadInt32(&s.state)
+	currentState = atomic.LoadInt32(&s.state)
 	if currentState == stateStopping {
 		s.mu.Unlock()
 		return

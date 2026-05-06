@@ -25,7 +25,7 @@ npx @modelcontextprotocol/server-filesystem ./  # Test standalone
 
 3. Check logs:
 ```bash
-leanproxy-mcp server --verbose --stdio "npx @modelcontextprotocol/server-filesystem ./"
+leanproxy-mcp server run --verbose --stdio
 ```
 
 ### Redaction Not Working
@@ -63,17 +63,17 @@ Token usage not decreasing.
 
 1. Run in dry-run mode to see what's being redacted:
 ```bash
-leanproxy-mcp server --dry-run --stdio "npx @modelcontextprotocol/server-filesystem ./"
+leanproxy-mcp server run --dry-run --stdio
 ```
 
-2. Analyze manifest:
+2. Generate report:
 ```bash
-leanproxy-mcp compactor --manifest ./mcp.json --output report.md
+leanproxy-mcp report --output report.md
 ```
 
 3. Enable debug logging:
 ```bash
-leanproxy-mcp server --debug --stdio "..."
+leanproxy-mcp server run --debug --stdio
 ```
 
 ### IDE Connection Issues
@@ -94,7 +94,7 @@ leanproxy-mcp version
   "mcpServers": {
     "leanproxy": {
       "command": "leanproxy-mcp",
-      "args": ["server", "--stdio", "npx", "@modelcontextprotocol/server-filesystem", "./"]
+      "args": ["server", "run", "--stdio"]
     }
   }
 }
@@ -123,7 +123,7 @@ leanproxy-mcp context validate
 
 3. Use explicit config:
 ```bash
-leanproxy-mcp server --config /path/to/config.yaml --stdio "..."
+leanproxy-mcp server run --config /path/to/config.yaml --stdio
 ```
 
 ## Cache Issues

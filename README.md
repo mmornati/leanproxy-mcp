@@ -186,13 +186,13 @@ cd leanproxy-mcp && make build
 
 ```bash
 # Start the proxy with a local MCP server
-leanproxy-mcp server --stdio "npx @modelcontextprotocol/server-filesystem ./my-project"
+leanproxy-mcp server run --stdio
 
 # Run in dry-run mode to see potential savings
-leanproxy-mcp server --dry-run --stdio "npx @modelcontextprotocol/server-filesystem ./my-project"
+leanproxy-mcp server run --dry-run --stdio
 
 # Generate a token savings report
-leanproxy-mcp compactor --manifest ./mcp.json
+leanproxy-mcp report --output report.md
 ```
 
 ### IDE Configuration
