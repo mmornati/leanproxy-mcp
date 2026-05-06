@@ -53,6 +53,8 @@ type ServerStats struct {
 	LastRequestAt  time.Time
 	RestartCount   int
 	CurrentBackoff time.Duration
+	LastError      string
+	LastErrorAt    time.Time
 }
 
 type StdioServerV2 struct {
@@ -96,7 +98,7 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 
 	idleTimeout := config.IdleTimeout
 	if idleTimeout == 0 {
-		idleTimeout = 5 * time.Minute
+		idleTimeout = 30 * time.Minute
 	}
 
 	requestTimeout := config.RequestTimeout
@@ -196,8 +198,19 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	}
 	s.stdout = stdoutR
 
+	stderrR, err := cmd.StderrPipe()
+	if err != nil {
+		s.mu.Unlock()
+		return fmt.Errorf("pool: stderr pipe: %w", err)
+	}
+
 	if err := cmd.Start(); err != nil {
 		s.mu.Unlock()
+		s.logger.Error("failed to start server process",
+			"name", s.name,
+			"command", s.config.Command,
+			"args", s.config.Args,
+			"error", err)
 		return fmt.Errorf("pool: start %s: %w", s.name, err)
 	}
 
@@ -209,10 +222,11 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	s.stats.RestartCount++
 	s.stats.CurrentBackoff = s.backoff
 
-	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid)
+	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", s.config.Args)
 
 	s.mu.Unlock()
 
+	go s.readStderr(stderrR)
 	s.wg.Add(1)
 	go s.waitForExit(ctx)
 	s.wg.Add(1)
@@ -234,9 +248,23 @@ func (s *StdioServerV2) waitForExit(ctx context.Context) {
 	}
 
 	atomic.StoreInt32(&s.state, stateError)
+
+	errorMsg := "unknown"
+	if err != nil {
+		errorMsg = err.Error()
+		s.stats.LastError = errorMsg
+		s.stats.LastErrorAt = time.Now()
+		s.stats.ErrorCount++
+	}
+
 	s.mu.Unlock()
 
-	s.logger.Warn("server process exited", "name", s.name, "error", err)
+	s.logger.Error("server process crashed",
+		"name", s.name,
+		"error", errorMsg,
+		"pid", s.process.Process.Pid,
+		"state", currentState,
+		"restart_count", s.restartCount)
 
 	s.scheduleRestart(ctx)
 	s.wg.Done()
@@ -331,6 +359,31 @@ func (s *StdioServerV2) readResponses() {
 				case s.responseCh <- resp:
 				default:
 					s.logger.Warn("response channel full, dropping response", "name", s.name)
+				}
+			} else {
+				return
+			}
+		}
+	}
+}
+
+func (s *StdioServerV2) readStderr(stderr io.Reader) {
+	scanner := bufio.NewScanner(stderr)
+
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		default:
+			if scanner.Scan() {
+				if scanner.Err() != nil {
+					s.logger.Error("stderr scanner error", "name", s.name, "error", scanner.Err())
+					return
+				}
+
+				line := scanner.Bytes()
+				if len(line) > 0 {
+					s.logger.Info("server stderr", "name", s.name, "output", string(line))
 				}
 			} else {
 				return

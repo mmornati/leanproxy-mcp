@@ -102,13 +102,20 @@ func (hc *HealthChecker) checkAllServers(ctx context.Context) {
 		if result.Status == HealthUnhealthy || result.Status == HealthError {
 			check.consecutiveFailures++
 		} else {
+			if check.consecutiveFailures > 0 {
+				hc.logger.Info("server recovered from consecutive failures",
+					"name", name,
+					"previous_failures", check.consecutiveFailures)
+			}
 			check.consecutiveFailures = 0
 		}
 		check.mu.Unlock()
 
-		if check.consecutiveFailures >= 3 {
-			hc.logger.Warn("server marked unhealthy after consecutive failures",
-				"name", name, "failures", check.consecutiveFailures)
+		if check.consecutiveFailures >= 3 && check.lastStatus != HealthHealthy {
+			hc.logger.Warn("server had consecutive failures, will attempt recovery on next request",
+				"name", name,
+				"failures", check.consecutiveFailures,
+				"last_error", check.lastError)
 		}
 	}
 }

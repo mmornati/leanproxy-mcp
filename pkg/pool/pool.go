@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -133,7 +134,7 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 		Env:            config.Stdio.Env,
 		CWD:            config.Stdio.CWD,
 		MaxConcurrent:  p.maxPerServer,
-		IdleTimeout:    p.idleTimeout,
+		IdleTimeout:    config.IdleTimeoutValue,
 		RequestTimeout: config.TimeoutValue,
 	}
 
@@ -184,8 +185,58 @@ func (p *StdioPool) GetServer(name string) (*StdioServerV2, error) {
 	return server, nil
 }
 
-func (p *StdioPool) PutRequest(name string, req Request) error {
+func (p *StdioPool) GetOrStartServer(ctx context.Context, name string) (*StdioServerV2, error) {
 	server, err := p.GetServer(name)
+	if err == nil {
+		return server, nil
+	}
+
+	if !strings.Contains(err.Error(), "not healthy") {
+		return nil, err
+	}
+
+	p.logger.Info("server not healthy, attempting to restart", "name", name)
+
+	if err := p.RestartServer(ctx, name); err != nil {
+		p.logger.Error("failed to restart server", "name", name, "error", err)
+		return nil, fmt.Errorf("pool: failed to restart server %s: %w", name, err)
+	}
+
+	if err := p.waitForServerReady(ctx, name, 10*time.Second); err != nil {
+		p.logger.Warn("server may not be fully initialized", "name", name, "error", err)
+	}
+
+	server, err = p.GetServer(name)
+	if err != nil {
+		return nil, fmt.Errorf("pool: server still not available after restart: %w", err)
+	}
+
+	p.logger.Info("server restarted and ready", "name", name)
+	return server, nil
+}
+
+func (p *StdioPool) waitForServerReady(ctx context.Context, name string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Until(deadline)):
+			return fmt.Errorf("timeout waiting for server ready")
+		case <-ticker.C:
+			server, err := p.GetServer(name)
+			if err == nil && server.isHealthy() {
+				return nil
+			}
+		}
+	}
+}
+
+func (p *StdioPool) PutRequest(name string, req Request) error {
+	server, err := p.GetOrStartServer(p.ctx, name)
 	if err != nil {
 		return err
 	}

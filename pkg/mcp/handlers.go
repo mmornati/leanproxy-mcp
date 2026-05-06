@@ -187,7 +187,7 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 }
 
 func (h *Handler) initializeServer(ctx context.Context, serverName string) error {
-	h.logger.Debug("initializing server", "name", serverName)
+	h.logger.Info("initializing server", "name", serverName)
 
 	initParams := InitializeParams{
 		ProtocolVersion: "2024-11-05",
@@ -199,22 +199,29 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 	}
 	paramsBytes, _ := json.Marshal(initParams)
 
+	h.logger.Debug("sending initialize request", "name", serverName, "params", string(paramsBytes))
+
 	resp, err := h.pool.SendRequestToServerWithID(ctx, serverName, MethodInitialize, paramsBytes, 10*time.Second, 1)
 	if err != nil {
+		h.logger.Error("initialize request failed", "name", serverName, "error", err)
 		return fmt.Errorf("initialize request failed: %w", err)
 	}
 
 	if resp != nil && resp.Error != nil {
+		h.logger.Error("server returned initialize error", "name", serverName, "error", resp.Error.Message)
 		return fmt.Errorf("server returned error: %s", resp.Error.Message)
 	}
 
 	h.logger.Debug("server initialized, sending initialized notification", "name", serverName)
 
-	h.pool.SendServerNotification(ctx, serverName, "notifications/initialized", map[string]interface{}{
+	notifyErr := h.pool.SendServerNotification(ctx, serverName, "notifications/initialized", map[string]interface{}{
 		"capabilities": ServerCapabilities{},
 	})
+	if notifyErr != nil {
+		h.logger.Warn("failed to send initialized notification", "name", serverName, "error", notifyErr)
+	}
 
-	h.logger.Debug("server ready", "name", serverName)
+	h.logger.Info("server ready", "name", serverName)
 	return nil
 }
 
