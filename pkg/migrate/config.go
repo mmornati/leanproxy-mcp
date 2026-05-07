@@ -26,6 +26,14 @@ type SummarizeSettings struct {
 	Strategy       string `yaml:"strategy"`
 }
 
+type LazyLoadingSettings struct {
+	Enabled    bool     `yaml:"enabled"`
+	StubTokens int      `yaml:"stub_tokens"`
+	CacheTTL   string   `yaml:"cache_ttl"`
+	CacheTTLValue time.Duration `yaml:"-"`
+	Prewarm    []string `yaml:"prewarm"`
+}
+
 type StdioConfig struct {
 	Command string   `yaml:"command"`
 	Args    []string `yaml:"args"`
@@ -64,8 +72,13 @@ type ServerConfig struct {
 }
 
 type Config struct {
-	Version string         `yaml:"version"`
-	Servers []*ServerConfig `yaml:"servers"`
+	Version       string             `yaml:"version"`
+	Servers       []*ServerConfig    `yaml:"servers"`
+	Optimization *OptimizationConfig `yaml:"optimization,omitempty"`
+}
+
+type OptimizationConfig struct {
+	LazyLoading *LazyLoadingSettings `yaml:"lazy_loading,omitempty"`
 }
 
 func (c *ServerConfig) Validate() error {
@@ -167,6 +180,23 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
+	}
+
+	if cfg.Optimization != nil && cfg.Optimization.LazyLoading != nil {
+		lazy := cfg.Optimization.LazyLoading
+		if lazy.CacheTTL != "" {
+			d, err := time.ParseDuration(lazy.CacheTTL)
+			if err != nil {
+				return nil, fmt.Errorf("invalid lazy_loading cache_ttl: %w", err)
+			}
+			lazy.CacheTTLValue = d
+		} else {
+			lazy.CacheTTLValue = 24 * time.Hour
+		}
+
+		if lazy.StubTokens == 0 {
+			lazy.StubTokens = 54
+		}
 	}
 
 	return &cfg, nil

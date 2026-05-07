@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
+	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 )
@@ -28,14 +29,16 @@ type ToolCache struct {
 }
 
 type Handler struct {
-	pool           pool.ServerSource
-	logger         *slog.Logger
-	timeout        time.Duration
-	toolCache      *ToolCache
-	toolStore      toolstore.Cache
-	manifest       *AggregatedManifest
-	cacheRefreshes atomic.Uint64
-	cacheFailures   atomic.Uint64
+	pool             pool.ServerSource
+	logger           *slog.Logger
+	timeout          time.Duration
+	toolCache        *ToolCache
+	toolStore        toolstore.Cache
+	manifest         *AggregatedManifest
+	cacheRefreshes   atomic.Uint64
+	cacheFailures    atomic.Uint64
+	lazyLoading      bool
+	lazySchemaCache  *registry.LazySchemaCache
 }
 
 type AggregatedManifest struct {
@@ -73,6 +76,12 @@ func NewHandlerWithToolStore(p pool.ServerSource, logger *slog.Logger, store too
 	}
 }
 
+func (h *Handler) EnableLazyLoading(ttl time.Duration) {
+	h.lazyLoading = true
+	h.lazySchemaCache = registry.NewLazySchemaCache(ttl)
+	h.logger.Info("lazy loading enabled", "ttl", ttl)
+}
+
 func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, error) {
 	h.logger.Debug("handling mcp request", "method", req.Method, "id", req.ID)
 
@@ -96,6 +105,8 @@ func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, e
 		return h.handlePromptsList(ctx, req)
 	case MethodToolsList:
 		return h.handleToolsList(ctx, req)
+	case "get_tool_schema":
+		return h.handleGetToolSchema(ctx, req)
 	case MethodToolsCall:
 		return h.handleToolsCall(ctx, req)
 	case MethodPing:
@@ -164,6 +175,37 @@ func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response,
 			Description: def.Description,
 			InputSchema: def.InputSchema,
 		})
+	}
+
+	if h.lazyLoading {
+		h.logger.Debug("lazy loading enabled, populating tool stubs from servers")
+		if len(h.toolCache.tools) == 0 {
+			h.refreshToolCacheFromServers(ctx)
+		}
+
+		h.toolCache.mu.RLock()
+		for serverName, tools := range h.toolCache.tools {
+			for _, tool := range tools {
+				stub := registry.ToolStub{
+					Name:        serverName + "_" + tool.Name,
+					Description: tool.Description,
+				}
+				h.lazySchemaCache.SetFullSchema(stub.Name, registry.ToolSchema{
+					Name:         tool.Name,
+					Description:  tool.Description,
+					InputSchema:  tool.InputSchema,
+					ServerID:     serverName,
+				})
+				gatewayTools = append(gatewayTools, Tool{
+					Name:        stub.Name,
+					Description: stub.Description,
+					InputSchema: json.RawMessage("{}"),
+				})
+			}
+		}
+		h.toolCache.mu.RUnlock()
+
+		h.logger.Info("lazy loading: sent tool stubs to client", "count", len(gatewayTools))
 	}
 
 	result := ToolsListResult{Tools: gatewayTools}
@@ -712,6 +754,119 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	return &Response{
 		JSONRPC: JSONRPCVersion,
 		Result:  resp.Result,
+		ID:      req.ID,
+	}, nil
+}
+
+func (h *Handler) handleGetToolSchema(ctx context.Context, req *Request) (*Response, error) {
+	if !h.lazyLoading || h.lazySchemaCache == nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeMethodNotFound, "lazy loading not enabled"),
+			ID:      req.ID,
+		}, nil
+	}
+
+	var params struct {
+		Name string `json:"name"`
+	}
+	if req.Params != nil {
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return &Response{
+				JSONRPC: JSONRPCVersion,
+				Error:   NewError(ErrCodeInvalidParams, fmt.Sprintf("invalid params: %v", err)),
+				ID:      req.ID,
+			}, nil
+		}
+	}
+
+	if params.Name == "" {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInvalidParams, "tool name is required"),
+			ID:      req.ID,
+		}, nil
+	}
+
+	schema, found := h.lazySchemaCache.GetFullSchema(params.Name)
+	if found {
+		h.logger.Debug("lazy loading: cache hit", "tool", params.Name)
+		resultBytes, _ := json.Marshal(schema)
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Result:  resultBytes,
+			ID:      req.ID,
+		}, nil
+	}
+
+	h.logger.Debug("lazy loading: cache miss, fetching from MCP server", "tool", params.Name)
+
+	serverName, toolName, err := h.parseToolName(params.Name)
+	if err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInvalidParams, err.Error()),
+			ID:      req.ID,
+		}, nil
+	}
+
+	h.initializeServer(ctx, serverName)
+
+	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
+	if err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeServerError, fmt.Sprintf("failed to fetch tool schema: %v", err)),
+			ID:      req.ID,
+		}, nil
+	}
+
+	if resp.Error != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeServerError, resp.Error.Message),
+			ID:      req.ID,
+		}, nil
+	}
+
+	var toolsResult ToolsListResult
+	if err := json.Unmarshal(resp.Result, &toolsResult); err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInternalError, fmt.Sprintf("failed to parse tool schema: %v", err)),
+			ID:      req.ID,
+		}, nil
+	}
+
+	var fullSchema registry.ToolSchema
+	for _, tool := range toolsResult.Tools {
+		if tool.Name == toolName {
+			fullSchema = registry.ToolSchema{
+				Name:         tool.Name,
+				Description:  tool.Description,
+				InputSchema:  tool.InputSchema,
+				ServerID:     serverName,
+			}
+			break
+		}
+	}
+
+	if fullSchema.Name == "" {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeInvalidParams, fmt.Sprintf("tool not found: %s", params.Name)),
+			ID:      req.ID,
+		}, nil
+	}
+
+	h.lazySchemaCache.SetFullSchema(params.Name, fullSchema)
+
+	h.logger.Info("lazy loading: schema loaded and cached", "tool", params.Name)
+
+	resultBytes, _ := json.Marshal(fullSchema)
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
 		ID:      req.ID,
 	}, nil
 }
