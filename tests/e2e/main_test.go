@@ -15,48 +15,33 @@ import (
 	"time"
 )
 
-func getBinaryPath() string {
-	if path := os.Getenv("LEANPROXY_BINARY"); path != "" {
-		if filepath.IsAbs(path) {
-			if _, err := os.Stat(path); err == nil {
-				return path
-			}
-		}
-	}
-	
+func runBinary(args ...string) (string, string, int) {
 	wd, _ := os.Getwd()
 	
 	names := []string{"leanproxy-mcp", "leanproxy-mcp.exe"}
+	binaryPath := ""
 	for _, name := range names {
+		path := filepath.Join(wd, name)
+		if _, err := os.Stat(path); err == nil {
+			binaryPath = path
+			break
+		}
 		if _, err := os.Stat(name); err == nil {
-			return name
-		}
-		fullPath := filepath.Join(wd, name)
-		if _, err := os.Stat(fullPath); err == nil {
-			return fullPath
+			binaryPath = name
+			break
 		}
 	}
 	
-	parentWd := filepath.Dir(wd)
-	for _, name := range names {
-		parentPath := filepath.Join(parentWd, name)
-		if _, err := os.Stat(parentPath); err == nil {
-			return parentPath
-		}
+	if binaryPath == "" {
+		binaryPath = filepath.Join(wd, "leanproxy-mcp")
 	}
-	
-	return names[0]
-}
-
-func runBinary(args ...string) (string, string, int) {
-	binaryPath := getBinaryPath()
-	wd, _ := os.Getwd()
 	
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command(binaryPath, args...)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.Dir = wd
+	cmd.Path = binaryPath
 
 	err := cmd.Run()
 	exitCode := 0
@@ -72,9 +57,6 @@ func runBinary(args ...string) (string, string, int) {
 }
 
 func TestCLI_HelpCommand(t *testing.T) {
-	binaryPath := getBinaryPath()
-	t.Logf("Using binary: %s", binaryPath)
-	
 	stdout, stderr, exitCode := runBinary("--help")
 	output := stdout + stderr
 
@@ -102,13 +84,12 @@ func TestCLI_VersionCommand(t *testing.T) {
 
 func TestCLI_InvalidCommand(t *testing.T) {
 	_, stderr, exitCode := runBinary("nonexistent-command")
-	output := stderr
 
 	if exitCode == 0 {
 		t.Errorf("Expected non-zero exit code for invalid command")
 	}
 
-	t.Logf("stderr: %s", output)
+	t.Logf("stderr: %s", stderr)
 }
 
 func TestServer_ListCommand(t *testing.T) {
@@ -118,8 +99,7 @@ func TestServer_ListCommand(t *testing.T) {
 	defer os.Unsetenv("LEANPROXY_CONFIG")
 
 	stdout, stderr, _ := runBinary("server", "list")
-	output := stdout + stderr
-	t.Logf("Server list: %s", output)
+	t.Logf("Server list: %s %s", stdout, stderr)
 }
 
 func TestServer_AddCommand(t *testing.T) {
@@ -144,21 +124,10 @@ func TestServe_BasicStart(t *testing.T) {
 	os.Setenv("LEANPROXY_CONFIG", configPath)
 	defer os.Unsetenv("LEANPROXY_CONFIG")
 
-	binaryPath := getBinaryPath()
-	cmd := exec.Command(binaryPath, "serve", "--listen", "127.0.0.1:18082")
-	cmd.Env = append(os.Environ(), "LEANPROXY_CONFIG="+configPath)
-
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("Failed to start server: %v", err)
-	}
+	stdout, _, _ := runBinary("serve", "--listen", "127.0.0.1:18082")
+	t.Logf("Serve output: %s", stdout)
 
 	time.Sleep(500 * time.Millisecond)
-
-	if err := cmd.Process.Kill(); err != nil {
-		t.Logf("Failed to kill process: %v", err)
-	}
-
-	cmd.Wait()
 }
 
 func createTestConfig(t *testing.T, path string) {
@@ -195,7 +164,7 @@ func TestStatus_Commands(t *testing.T) {
 
 func TestConfig_Validation(t *testing.T) {
 	tests := []struct {
-		name string
+		name   string
 		config string
 	}{
 		{
