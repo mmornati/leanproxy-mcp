@@ -810,7 +810,9 @@ func (h *Handler) handleGetToolSchema(ctx context.Context, req *Request) (*Respo
 		}, nil
 	}
 
-	h.initializeServer(ctx, serverName)
+	if err := h.initializeServer(ctx, serverName); err != nil {
+		h.logger.Warn("lazy loading: failed to initialize server, continuing anyway", "server", serverName, "error", err)
+	}
 
 	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsList, nil, 10*time.Second)
 	if err != nil {
