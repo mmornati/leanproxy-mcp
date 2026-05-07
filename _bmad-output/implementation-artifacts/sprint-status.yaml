@@ -1,5 +1,6 @@
 # Sprint Status - leanproxy-mcp
 # Generated: 2026-05-01
+# Updated: 2026-05-07 (added Epics 8-9 from market research)
 ---
 development_status:
   epic-1: backlog
@@ -14,6 +15,12 @@ development_status:
   epic-5-retrospective: backlog
   epic-6: backlog
   epic-6-retrospective: backlog
+  epic-7: backlog
+  epic-7-retrospective: backlog
+  epic-8: in-progress
+  epic-8-retrospective: backlog
+  epic-9: in-progress
+  epic-9-retrospective: backlog
   1-1-initialize-go-project: ready-for-dev
   1-2-json-rpc-streaming-proxy: review
   1-3-server-lifecycle-management: review
@@ -43,9 +50,17 @@ development_status:
   6-4-ide-configuration-documentation: ready-for-dev
   7-1-tool-to-server-routing: review
   7-2-expose-gateway-tools: review
-  leanproxy-7-3: review
-  leanproxy-7-4: review
-  leanproxy-7-6: review
+  7-3-stdio-pool-manager: review
+  7-4-registry-proxy-integration: review
+  7-5-rewrite-handleconnection: review
+  7-6-concurrent-multi-server: review
+  8-1-lazy-loading-tool-schemas: ready-for-dev
+  8-2-connection-pooling: ready-for-dev
+  8-3-minimal-session-reinit: ready-for-dev
+  8-4-cost-attribution: ready-for-dev
+  9-1-streamable-http-transport: ready-for-dev
+  9-2-hierarchical-namespaces: ready-for-dev
+  9-3-simple-federation: ready-for-dev
 
-last_updated: 2026-05-03
-sprint_goal: Implement all 27 stories across 6 epics
+last_updated: 2026-05-07
+sprint_goal: Implement all 39 stories across 9 epics (including Epics 8-9 from market research)

@@ -4,10 +4,30 @@ inputDocuments:
   - _bmad-output/planning-artifacts/prd.md
   - _bmad-output/planning-artifacts/architecture.md
   - code-analysis-2026-05-02.md
+  - _bmad-output/planning-artifacts/research/market-mcp-proxy-server-features-token-savings-latency-2026-research-2026-05-07.md
 notes: |
   2026-05-02: Added Epic 7: Multi-Server Gateway Mode based on code analysis finding
   that FR5 (multi-server routing) was not implemented. Current proxy only supports
   single upstream server. New epic enables LeanProxy-MCP to act as gateway for 100+ MCP servers.
+  
+  2026-05-07: Added EPICs 8 and 9 from market research findings:
+  - Epic 8: Token Optimization & Performance (lazy-loading, connection pooling, cost attribution)
+  - Epic 9: Enterprise Transport & Architecture (Streamable HTTP, namespaces, federation)
+  
+  Stories created (implementation-artifacts):
+  - 8-1-lazy-loading-tool-schemas.md (CRITICAL)
+  - 8-2-connection-pooling.md (CRITICAL)
+  - 8-3-minimal-session-reinit.md (HIGH)
+  - 8-4-cost-attribution.md (HIGH)
+  - 9-1-streamable-http-transport.md (HIGH)
+  - 9-2-hierarchical-namespaces.md (MEDIUM)
+  - 9-3-simple-federation.md (MEDIUM)
+---
+  
+  Market Research Key Findings:
+  - 72% context consumed by tool schemas (token bloat)
+  - 187x latency in naive proxy implementations (15s vs 80ms)
+  - Open design space: no tool fully satisfies hierarchy + federation + lightweight
 ---
 
 # LeanProxy-MCP - Epic Breakdown
@@ -1048,3 +1068,223 @@ Multi-Server Gateway Mode goal: LeanProxy-MCP acts as a unified gateway that pro
 **When** they arrive simultaneously
 **Then** they are serialized to prevent race conditions
 **And** responses are matched to correct requests by ID
+
+---
+
+# NEW EPICS ADDED FROM MARKET RESEARCH (May 2026)
+
+These epics were added based on market research findings identifying critical features for token savings and latency optimization.
+
+## Epic 8: Token Optimization & Performance
+
+Token Optimization goal: Users experience 6-7x token reduction through lazy-loading and connection reuse, with minimal latency overhead.
+
+### Story 8.1: Implement Lazy-Loading Tool Schemas
+
+**As a** developer,
+**I want to** load tool schemas on-demand rather than at startup,
+**So that** initial context overhead is dramatically reduced (6-7x token savings).
+
+**Acceptance Criteria:**
+
+**Given** 10 MCP servers with 100 tools total configured
+**When** the proxy starts in lazy-loading mode
+**Then** only compact tool stubs (~54 tokens each) are sent to the IDE
+**And** full schemas are loaded only when a tool is actually invoked
+
+**Given** an IDE requests `get_tool_schema` for a specific tool
+**When** the lazy-loading proxy receives the request
+**Then** it fetches the full schema from the MCP server
+**And** caches it for subsequent requests
+**And** returns the complete schema
+
+**Given** a tool is not invoked within a session
+**When** the session ends
+**Then** the full schema was never loaded
+**And** token savings are achieved
+
+**Given** lazy-loading mode is disabled in config
+**When** the proxy starts
+**Then** all full schemas are loaded at startup (legacy behavior)
+
+### Story 8.2: Implement Connection Pooling
+
+**As a** developer,
+**I want to** reuse MCP server sessions across multiple requests,
+**So that** the 187x overhead issue (15s vs 80ms) is fixed.
+
+**Acceptance Criteria:**
+
+**Given** a stateless HTTP proxy setup
+**When** multiple tool calls are made to the same server
+**Then** a new client is NOT created on every call
+**And** the same underlying session is reused
+**And** latency overhead is reduced from 15s to under 100ms
+
+**Given** connection pooling is enabled
+**When** the proxy starts
+**Then** initial connections are established proactively
+**And** kept alive with keepalive heartbeats
+
+**Given** a server connection is lost
+**When** the proxy detects the failure
+**Then** it automatically re-establishes the connection
+**And** retries the pending request
+
+**Given** connection pool size is configured (default: 5)
+**When** more concurrent requests arrive
+**Then** they are queued until a connection becomes available
+
+### Story 8.3: Implement Minimal Session Re-Initialization
+
+**As a** developer,
+**I want to** avoid repeated MCP handshake overhead,
+**So that** tool calls complete in under 100ms vs current 15s.
+
+**Acceptance Criteria:**
+
+**Given** a proxy session is established
+**When** a new tool call arrives
+**Then** the MCP initialize handshake is NOT repeated
+**And** only the tool call is sent to the server
+
+**Given** session state can be serialized
+**When** the proxy restarts or reconnects
+**Then** session state can be restored without full re-initialization
+
+**Given** multiple clients connect to the same server
+**When** requests arrive
+**Then** session复用 is attempted before creating new sessions
+
+### Story 8.4: Implement Cost Attribution Layer
+
+**As a** user,
+**I want to** track token usage per tool and per server,
+**So that** I can see which tools consume the most tokens.
+
+**Acceptance Criteria:**
+
+**Given** a session is active
+**When** tools are invoked
+**Then** token counts are tracked per tool name
+**And** per-MCP-server totals are accumulated
+
+**Given** the user runs `leanproxy cost`
+**When** the command executes
+**Then** a breakdown is shown:
+- Token count per tool
+- Token count per server
+- Total session tokens
+
+**Given** cost attribution is enabled
+**When** detailed tracking is available
+**Then** the data is also available via the status socket
+
+---
+
+## Epic 9: Enterprise Transport & Architecture
+
+Enterprise Transport goal: Support Streamable HTTP and hierarchical namespaces for enterprise deployments.
+
+### Story 9.1: Implement Streamable HTTP Transport
+
+**As a** enterprise user,
+**I want to** use Streamable HTTP instead of SSE,
+**So that** the proxy works with corporate proxies and load balancers.
+
+**Acceptance Criteria:**
+
+**Given** Streamable HTTP transport is configured
+**When** the proxy starts
+**Then** it listens on a single HTTP endpoint
+**And** supports both synchronous and streaming responses
+
+**Given** a client connects via Streamable HTTP
+**When** the connection goes through a corporate proxy
+**Then** the connection is not broken by proxy timeouts
+**And** SSE stream buffering issues are avoided
+
+**Given** both stdio and Streamable HTTP are configured
+**When** the proxy starts
+**Then** both transports are available
+**And** clients can connect via either
+
+**Given** Streamable HTTP is used
+**When** the specification changes
+**Then** the proxy can be updated to match spec
+
+### Story 9.2: Implement Hierarchical Namespaces
+
+**As a** enterprise user,
+**I want to** organize MCP servers into hierarchical namespaces,
+**So that** multi-team organizations can manage access cleanly.
+
+**Acceptance Criteria:**
+
+**Given** namespace configuration in leanproxy.yaml
+**When** the proxy starts
+**Then** servers are grouped under their namespaces
+**And** tools are namespaced accordingly
+
+**Given** a client requests tools from namespace "engineering"
+**When** the request arrives
+**Then** only servers in the engineering namespace are included
+**And** other namespaces are excluded
+
+**Given** nested namespaces are configured
+**When** the proxy processes requests
+**Then** the hierarchy is respected (parent includes child namespaces)
+
+**Given** namespace-level access control is configured
+**When** a client connects
+**Then** access is restricted to their assigned namespaces
+
+### Story 9.3: Implement Simple Federation
+
+**As a** enterprise user,
+**I want to** connect multiple LeanProxy instances,
+**So that** servers can be federated across organizations.
+
+**Acceptance Criteria:**
+
+**Given** federation configuration is defined
+**When** the proxy starts
+**Then** it can discover and connect to other LeanProxy instances
+
+**Given** a tool request for an unknown tool
+**When** the proxy processes it
+**Then** it looks up the tool in federated instances
+**And** routes to the instance that has the tool
+
+**Given** a federated instance goes offline
+**When** requests are pending
+**Then** the proxy detects the failure
+**And** routes to backup instances if available
+
+---
+
+## FR Coverage Map (Updated)
+
+New functional requirements from market research:
+
+FR33: Epic 8.1 - Lazy-loading tool schemas
+FR34: Epic 8.2 - Connection pooling  
+FR35: Epic 9.1 - Streamable HTTP transport
+FR36: Epic 8.4 - Cost attribution layer
+FR37: Epic 8.3 - Minimal session re-initialization
+FR38: Epic 9.2 - Hierarchical namespaces
+FR39: Epic 9.3 - Simple federation
+
+---
+
+## Implementation Priority (Based on Market Research)
+
+| Priority | Epic | Story | Expected KPI Impact |
+|----------|------|-------|----------------|
+| CRITICAL | Epic 8.1 | Lazy-loading tool schemas | 6-7x token reduction |
+| CRITICAL | Epic 8.2 | Connection pooling | Fixes 187x latency |
+| HIGH | Epic 8.3 | Minimal session re-init | Target <100ms |
+| HIGH | Epic 9.1 | Streamable HTTP | Enterprise compat |
+| HIGH | Epic 8.4 | Cost attribution | Differentiation |
+| MEDIUM | Epic 9.2 | Hierarchical namespaces | Enterprise |
+| MEDIUM | Epic 9.3 | Simple federation | Multi-org |
