@@ -110,16 +110,17 @@ func NewServerPool(maxSize int, config PoolConfig, logger *slog.Logger) *ServerP
 func (sp *ServerPool) GetClient(ctx context.Context, createFunc func() (*client.Client, error)) (*ClientConnection, error) {
 	select {
 	case conn := <-sp.available:
-		atomic.AddInt64(&sp.metrics.AvailableClients, -1)
-		atomic.AddInt64(&sp.metrics.ActiveClients, 1)
 		if conn.IsHealthy() {
+			sp.mu.Lock()
+			sp.active[conn] = struct{}{}
+			sp.mu.Unlock()
+			atomic.AddInt64(&sp.metrics.AvailableClients, -1)
+			atomic.AddInt64(&sp.metrics.ActiveClients, 1)
 			return conn, nil
 		}
 		sp.logger.Debug("client unhealthy, creating new one", "server", conn.server)
-		if conn.client != nil {
-			conn.client.Close()
-		}
-		return sp.createNewClient(ctx, createFunc)
+		conn.client.Close()
+		atomic.AddInt64(&sp.metrics.AvailableClients, -1)
 	default:
 		sp.mu.Lock()
 		currentActive := len(sp.active)
@@ -127,11 +128,16 @@ func (sp *ServerPool) GetClient(ctx context.Context, createFunc func() (*client.
 
 		if currentActive < sp.maxSize {
 			atomic.AddInt64(&sp.metrics.ActiveClients, 1)
-			return sp.createNewClient(ctx, createFunc)
+			conn, err := sp.createNewClient(ctx, createFunc)
+			if err != nil {
+				atomic.AddInt64(&sp.metrics.ActiveClients, -1)
+				return nil, err
+			}
+			return conn, nil
 		}
-
-		return sp.waitForClient(ctx, createFunc)
 	}
+
+	return sp.waitForClient(ctx, createFunc)
 }
 
 func (sp *ServerPool) createNewClient(ctx context.Context, createFunc func() (*client.Client, error)) (*ClientConnection, error) {
@@ -196,9 +202,7 @@ func (sp *ServerPool) ReturnClient(conn *ClientConnection) {
 
 	if !conn.IsHealthy() {
 		sp.logger.Debug("client unhealthy on return, closing", "server", conn.server)
-		if conn.client != nil {
-			conn.client.Close()
-		}
+		conn.client.Close()
 		return
 	}
 
@@ -208,9 +212,7 @@ func (sp *ServerPool) ReturnClient(conn *ClientConnection) {
 		conn.lastUsed = time.Now()
 	default:
 		sp.logger.Debug("pool full on return, closing client", "server", conn.server)
-		if conn.client != nil {
-			conn.client.Close()
-		}
+		conn.client.Close()
 	}
 }
 
