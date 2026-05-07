@@ -101,6 +101,37 @@ watch:
 |--------|------|---------|-------------|
 | `watch.interval` | string | `"1s"` | Status refresh interval |
 
+### Optimization Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `optimization.lazy_loading.enabled` | bool | `true` | Enable lazy-loading tool schemas |
+| `optimization.lazy_loading.stub_tokens` | int | `54` | Expected token count per stub |
+| `optimization.lazy_loading.cache_ttl` | duration | `24h` | Cache validity duration |
+| `optimization.lazy_loading.prewarm` | []string | `[]` | Tools to pre-load on startup |
+
+#### Lazy Loading
+
+Lazy-loading reduces initial context overhead by sending only compact tool stubs (~54 tokens each) at startup instead of full schemas. Full schemas are loaded on-demand when a tool is first invoked.
+
+**Benefits:**
+- 6-7x token reduction at startup
+- Only loads full schemas for tools that are actually used
+- In-memory caching with TTL for frequently accessed schemas
+
+**Example:**
+
+```yaml
+optimization:
+  lazy_loading:
+    enabled: true
+    stub_tokens: 54
+    cache_ttl: 24h
+    prewarm:
+      - github_search_code
+      - filesystem_read_file
+```
+
 ## Built-in Redaction Patterns
 
 LeanProxy-MCP includes these built-in patterns:
