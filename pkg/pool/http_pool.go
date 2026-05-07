@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ type HTTPClientServer struct {
 	logger    *slog.Logger
 	initOnce  sync.Once
 	initErr   error
+	oauthOpts []transport.StreamableHTTPCOption
 }
 
 func NewHTTPClientServer(name string, config *migrate.ServerConfig, logger *slog.Logger) *HTTPClientServer {
@@ -31,11 +33,44 @@ func NewHTTPClientServer(name string, config *migrate.ServerConfig, logger *slog
 		logger = slog.Default()
 	}
 
+	var oauthOpts []transport.StreamableHTTPCOption
+	if config.HTTP != nil && config.HTTP.Auth != nil {
+		authCfg := config.HTTP.Auth
+		authType := strings.ToLower(strings.TrimSpace(authCfg.Type))
+
+		switch authType {
+		case "bearer":
+			if authCfg.ClientSecret == "" {
+				logger.Warn("http_pool: bearer auth configured but client_secret is empty", "server", name)
+				break
+			}
+			oauthOpts = append(oauthOpts, transport.WithHTTPHeaders(map[string]string{
+				"Authorization": "Bearer " + authCfg.ClientSecret,
+			}))
+		case "oauth2":
+			if authCfg.ClientID == "" || authCfg.ClientSecret == "" {
+				logger.Warn("http_pool: oauth2 auth configured but client_id or client_secret is empty", "server", name)
+				break
+			}
+			oauthCfg := transport.OAuthConfig{
+				ClientID:     authCfg.ClientID,
+				ClientSecret: authCfg.ClientSecret,
+				Scopes:       authCfg.Scopes,
+			}
+			oauthOpts = append(oauthOpts, transport.WithHTTPOAuth(oauthCfg))
+		default:
+			if authType != "" {
+				logger.Warn("http_pool: unknown auth type, skipping authentication", "server", name, "auth_type", authCfg.Type)
+			}
+		}
+	}
+
 	return &HTTPClientServer{
-		name:   name,
-		config: config,
-		state:  StateStarting,
-		logger: logger,
+		name:     name,
+		config:   config,
+		state:   StateStarting,
+		logger:  logger,
+		oauthOpts: oauthOpts,
 	}
 }
 
@@ -63,7 +98,10 @@ func (s *HTTPClientServer) Initialize(ctx context.Context) error {
 			}
 		}
 
-		c, err := client.NewStreamableHttpClient(baseURL, transport.WithHTTPHeaders(headers))
+		opts := []transport.StreamableHTTPCOption{transport.WithHTTPHeaders(headers)}
+		opts = append(opts, s.oauthOpts...)
+
+		c, err := client.NewStreamableHttpClient(baseURL, opts...)
 		if err != nil {
 			s.initErr = fmt.Errorf("http_pool: create client: %w", err)
 			s.setState(StateError)

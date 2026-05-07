@@ -36,6 +36,15 @@ type StdioConfig struct {
 type HTTPConfig struct {
 	URL     string            `yaml:"url"`
 	Headers map[string]string `yaml:"headers"`
+	Auth    *AuthConfig      `yaml:"auth,omitempty"`
+}
+
+type AuthConfig struct {
+	Type          string   `yaml:"type"`           // bearer, oauth2
+	ClientID      string   `yaml:"client_id"`
+	ClientSecret string   `yaml:"client_secret"`
+	Scopes       []string `yaml:"scopes"`
+	TokenURL     string   `yaml:"token_url"`       // optional, for bearer token exchange
 }
 
 type ServerConfig struct {

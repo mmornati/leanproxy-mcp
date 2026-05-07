@@ -61,6 +61,13 @@ servers:
       url: http://localhost:8080
       headers:
         Authorization: Bearer token123
+      auth:
+        type: oauth2
+        client_id: my-client-id
+        client_secret: my-secret
+        scopes:
+          - mcp:read
+          - mcp:write
     timeout: 60s
     connect_timeout: 5s
     cache_settings:
@@ -101,6 +108,21 @@ servers:
 	}
 	if server.HTTP.Headers["Authorization"] != "Bearer token123" {
 		t.Errorf("Authorization header = %v, want Bearer token123", server.HTTP.Headers["Authorization"])
+	}
+	if server.HTTP.Auth == nil {
+		t.Fatal("HTTP.Auth should not be nil")
+	}
+	if server.HTTP.Auth.Type != "oauth2" {
+		t.Errorf("Auth.Type = %v, want oauth2", server.HTTP.Auth.Type)
+	}
+	if server.HTTP.Auth.ClientID != "my-client-id" {
+		t.Errorf("Auth.ClientID = %v, want my-client-id", server.HTTP.Auth.ClientID)
+	}
+	if server.HTTP.Auth.ClientSecret != "my-secret" {
+		t.Errorf("Auth.ClientSecret = %v, want my-secret", server.HTTP.Auth.ClientSecret)
+	}
+	if len(server.HTTP.Auth.Scopes) != 2 || server.HTTP.Auth.Scopes[0] != "mcp:read" {
+		t.Errorf("Auth.Scopes = %v, want [mcp:read mcp:write]", server.HTTP.Auth.Scopes)
 	}
 	if server.TimeoutValue != 60*1e9 {
 		t.Errorf("TimeoutValue = %v, want 60s", server.TimeoutValue)
@@ -332,6 +354,40 @@ servers:
 	}
 	if cfg.Servers[0].Transport != registry.TransportSSE {
 		t.Errorf("Transport = %v, want sse", cfg.Servers[0].Transport)
+	}
+}
+
+func TestLoadConfigBearerAuth(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: bearer-server
+    transport: http
+    http:
+      url: http://localhost:8080
+      auth:
+        type: bearer
+        client_secret: my-api-key
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+
+	ctx := context.Background()
+	cfg, err := LoadConfig(ctx, configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+	server := cfg.Servers[0]
+	if server.HTTP.Auth == nil {
+		t.Fatal("HTTP.Auth should not be nil")
+	}
+	if server.HTTP.Auth.Type != "bearer" {
+		t.Errorf("Auth.Type = %v, want bearer", server.HTTP.Auth.Type)
+	}
+	if server.HTTP.Auth.ClientSecret != "my-api-key" {
+		t.Errorf("Auth.ClientSecret = %v, want my-api-key", server.HTTP.Auth.ClientSecret)
 	}
 }
 
