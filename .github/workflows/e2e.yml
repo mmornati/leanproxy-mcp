@@ -25,19 +25,23 @@ jobs:
           go-version: '1.25'
           cache: true
 
+      - name: Determine OS suffix
+        id: os-suffix
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "suffix=.exe" >> $GITHUB_OUTPUT
+          else
+            echo "suffix=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Build binary
         run: |
-          OS=${{ matrix.os }}
-          EXT=""
-          if [ "$OS" = "windows-latest" ]; then
-            EXT=".exe"
-          fi
-          go build -ldflags="-s -w" -o leanproxy-mcp${EXT} .
+          go build -ldflags="-s -w" -o leanproxy-mcp${{ steps.os-suffix.outputs.suffix }} .
 
       - name: Run E2E tests
-        run: go test -v -tags=e2e -timeout 10m ./tests/e2e/...
+        run: go test -v -timeout 10m ./tests/e2e/...
         env:
-          LEANPROXY_BINARY: ${{ runner.os }}-leanproxy-mcp
+          LEANPROXY_BINARY: leanproxy-mcp
 
   integration:
     runs-on: ubuntu-latest

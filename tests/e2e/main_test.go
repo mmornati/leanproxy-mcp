@@ -15,18 +15,35 @@ import (
 	"time"
 )
 
-var projectRoot = "/Users/mmornati/Projects/leanproxy-mcp"
-
 func getBinaryPath() string {
-	return filepath.Join(projectRoot, "leanproxy-mcp")
+	if path := os.Getenv("LEANPROXY_BINARY"); path != "" {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	paths := []string{"./leanproxy-mcp", "leanproxy-mcp", "./leanproxy-mcp.exe", "leanproxy-mcp.exe"}
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	wd, _ := os.Getwd()
+	defaultPath := filepath.Join(wd, "leanproxy-mcp")
+	if _, err := os.Stat(defaultPath); err == nil {
+		return defaultPath
+	}
+	return "leanproxy-mcp"
 }
 
 func TestCLI_HelpCommand(t *testing.T) {
 	binaryPath := getBinaryPath()
+	t.Logf("Using binary path: %s", binaryPath)
+
 	var stdout bytes.Buffer
+	var stderr bytes.Buffer
 	cmd := exec.Command(binaryPath, "--help")
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stdout
+	cmd.Stderr = &stderr
 
 	err := cmd.Run()
 	exitCode := 0
