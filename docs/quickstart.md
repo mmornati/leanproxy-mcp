@@ -70,9 +70,38 @@ servers:
       headers:
         Authorization: Bearer ghp_yourPersonalAccessToken
         Content-Type: application/json
+      auth:
+        type: bearer
+        client_secret: ghp_yourPersonalAccessToken
     timeout: 30s
     connect_timeout: 10s
 ```
+
+##### HTTP Transport with OAuth2 Authentication
+
+```yaml
+servers:
+  - name: enterprise-mcp
+    enabled: true
+    transport: http
+    http:
+      url: https://api.enterprise.com/mcp
+      auth:
+        type: oauth2
+        client_id: my-client-id
+        client_secret: my-client-secret
+        scopes:
+          - mcp:read
+          - mcp:write
+    timeout: 60s
+```
+
+#### Auth Types
+
+| Type | Description |
+|------|-------------|
+| `bearer` | Simple API key in Authorization header |
+| `oauth2` | Full OAuth 2.0 flow with automatic token refresh |
 
 ##### SSE Transport Example
 
