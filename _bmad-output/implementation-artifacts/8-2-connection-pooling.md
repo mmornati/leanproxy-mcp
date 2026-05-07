@@ -4,7 +4,7 @@ story_key: 8-2-connection-pooling
 epic_num: 8
 story_num: 2
 story_title: "Implement Connection Pooling"
-status: ready-for-dev
+status: review
 created: 2026-05-07
 source: market-research-2026-05-07
 priority: CRITICAL
@@ -146,26 +146,26 @@ Based on `maxim-ai/bifrost` patterns (11µs overhead):
 
 ## Implementation Tasks
 
-- [ ] 1. Create `pkg/proxy/pool.go`
-  - [ ] 1.1 Define ConnectionPool and ServerPool structs
-  - [ ] 1.2 Implement NewConnectionPool() constructor
-  - [ ] 1.3 Implement GetClient() with queue handling
-  - [ ] 1.4 Implement ReturnClient() 
-  - [ ] 1.5 Implement HealthCheck()
-  - [ ] 1.6 Implement Close() graceful shutdown
-- [ ] 2. Modify `pkg/proxy/client.go`
-  - [ ] 2.1 Add PoolClient wrapper
-  - [ ] 2.2 Implement pooling interface
-- [ ] 3. Modify `pkg/proxy/server.go`
-  - [ ] 3.1 Wire ConnectionPool into server
-  - [ ] 3.2 Update request handling to use pooled clients
-- [ ] 4. Modify `pkg/health/health.go`
-  - [ ] 4.1 Add pool health metrics
-  - [ ] 4.2 Track pool hit/miss rates
-- [ ] 5. Testing
-  - [ ] 5.1 Unit tests for ConnectionPool
-  - [ ] 5.2 Latency benchmark (15s → <100ms target)
-  - [ ] 5.3 Concurrency test
+- [x] 1. Create `pkg/connpool/pool.go`
+  - [x] 1.1 Define ConnectionPool and ServerPool structs
+  - [x] 1.2 Implement NewConnectionPool() constructor
+  - [x] 1.3 Implement GetClient() with queue handling
+  - [x] 1.4 Implement ReturnClient() 
+  - [x] 1.5 Implement HealthCheck()
+  - [x] 1.6 Implement Close() graceful shutdown
+- [x] 2. Modify `pkg/pool/http_pool.go`
+  - [x] 2.1 Add PoolClient wrapper
+  - [x] 2.2 Implement pooling interface
+- [x] 3. Modify `pkg/proxy/server.go`
+  - [x] 3.1 Wire ConnectionPool into server
+  - [x] 3.2 Update request handling to use pooled clients
+- [x] 4. Modify `pkg/health/health.go`
+  - [x] 4.1 Add pool health metrics
+  - [x] 4.2 Track pool hit/miss rates
+- [x] 5. Testing
+  - [x] 5.1 Unit tests for ConnectionPool
+  - [x] 5.2 Latency benchmark (15s → <100ms target)
+  - [x] 5.3 Concurrency test
 
 ## Dev Notes
 

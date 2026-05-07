@@ -55,7 +55,7 @@ development_status:
   7-5-rewrite-handleconnection: review
   7-6-concurrent-multi-server: review
   8-1-lazy-loading-tool-schemas: ready-for-dev
-  8-2-connection-pooling: ready-for-dev
+  8-2-connection-pooling: review
   8-3-minimal-session-reinit: ready-for-dev
   8-4-cost-attribution: ready-for-dev
   9-1-streamable-http-transport: ready-for-dev
