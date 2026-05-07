@@ -17,103 +17,98 @@ import (
 
 func getBinaryPath() string {
 	if path := os.Getenv("LEANPROXY_BINARY"); path != "" {
-		if _, err := os.Stat(path); err == nil {
-			return path
+		if filepath.IsAbs(path) {
+			if _, err := os.Stat(path); err == nil {
+				return path
+			}
 		}
 	}
-	paths := []string{"./leanproxy-mcp", "leanproxy-mcp", "./leanproxy-mcp.exe", "leanproxy-mcp.exe"}
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
+	
 	wd, _ := os.Getwd()
-	defaultPath := filepath.Join(wd, "leanproxy-mcp")
-	if _, err := os.Stat(defaultPath); err == nil {
-		return defaultPath
+	
+	names := []string{"leanproxy-mcp", "leanproxy-mcp.exe"}
+	for _, name := range names {
+		if _, err := os.Stat(name); err == nil {
+			return name
+		}
+		fullPath := filepath.Join(wd, name)
+		if _, err := os.Stat(fullPath); err == nil {
+			return fullPath
+		}
 	}
-	return "leanproxy-mcp"
+	
+	parentWd := filepath.Dir(wd)
+	for _, name := range names {
+		parentPath := filepath.Join(parentWd, name)
+		if _, err := os.Stat(parentPath); err == nil {
+			return parentPath
+		}
+	}
+	
+	return names[0]
+}
+
+func runBinary(args ...string) (string, string, int) {
+	binaryPath := getBinaryPath()
+	wd, _ := os.Getwd()
+	
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command(binaryPath, args...)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Dir = wd
+
+	err := cmd.Run()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+	
+	return stdout.String(), stderr.String(), exitCode
 }
 
 func TestCLI_HelpCommand(t *testing.T) {
 	binaryPath := getBinaryPath()
-	t.Logf("Using binary path: %s", binaryPath)
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd := exec.Command(binaryPath, "--help")
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
-		}
-	}
+	t.Logf("Using binary: %s", binaryPath)
+	
+	stdout, stderr, exitCode := runBinary("--help")
+	output := stdout + stderr
 
 	if exitCode != 0 {
-		t.Errorf("Expected exit code 0, got %d. Output: %s", exitCode, stdout.String())
+		t.Errorf("Expected exit code 0, got %d. Output: %s", exitCode, output)
 	}
 
-	if !strings.Contains(stdout.String(), "LeanProxy MCP") {
-		t.Errorf("Expected help output to contain 'LeanProxy MCP', got: %s", stdout.String())
+	if !strings.Contains(output, "LeanProxy MCP") {
+		t.Errorf("Expected help output, got: %s", output)
 	}
 }
 
 func TestCLI_VersionCommand(t *testing.T) {
-	binaryPath := getBinaryPath()
-	var stdout bytes.Buffer
-	cmd := exec.Command(binaryPath, "version")
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stdout
-
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
-		}
-	}
+	stdout, stderr, exitCode := runBinary("version")
+	output := stdout + stderr
 
 	if exitCode != 0 {
-		t.Errorf("Expected exit code 0, got %d. Output: %s", exitCode, stdout.String())
+		t.Errorf("Expected exit code 0, got %d. Output: %s", exitCode, output)
 	}
 
-	if !strings.Contains(stdout.String(), ".") && !strings.Contains(stdout.String(), "v") {
-		t.Errorf("Expected version output, got: %s", stdout.String())
+	if !strings.Contains(output, ".") && !strings.Contains(output, "v") {
+		t.Errorf("Expected version output, got: %s", output)
 	}
 }
 
 func TestCLI_InvalidCommand(t *testing.T) {
-	binaryPath := getBinaryPath()
-	var stderr bytes.Buffer
-	cmd := exec.Command(binaryPath, "nonexistent-command")
-	cmd.Stdout = &stderr
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
-		}
-	}
+	_, stderr, exitCode := runBinary("nonexistent-command")
+	output := stderr
 
 	if exitCode == 0 {
 		t.Errorf("Expected non-zero exit code for invalid command")
 	}
 
-	if !strings.Contains(stderr.String(), "unknown command") && !strings.Contains(stderr.String(), "not found") {
-		t.Logf("stderr: %s", stderr.String())
-	}
+	t.Logf("stderr: %s", output)
 }
 
 func TestServer_ListCommand(t *testing.T) {
@@ -122,15 +117,9 @@ func TestServer_ListCommand(t *testing.T) {
 	os.Setenv("LEANPROXY_CONFIG", configPath)
 	defer os.Unsetenv("LEANPROXY_CONFIG")
 
-	binaryPath := getBinaryPath()
-	var stdout bytes.Buffer
-	cmd := exec.Command(binaryPath, "server", "list")
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stdout
-	cmd.Env = append(os.Environ(), "LEANPROXY_CONFIG="+configPath)
-
-	cmd.Run()
-	t.Logf("Server list output: %s", stdout.String())
+	stdout, stderr, _ := runBinary("server", "list")
+	output := stdout + stderr
+	t.Logf("Server list: %s", output)
 }
 
 func TestServer_AddCommand(t *testing.T) {
@@ -139,27 +128,8 @@ func TestServer_AddCommand(t *testing.T) {
 	os.Setenv("LEANPROXY_CONFIG", configPath)
 	defer os.Unsetenv("LEANPROXY_CONFIG")
 
-	binaryPath := getBinaryPath()
-	var stderr bytes.Buffer
-	cmd := exec.Command(binaryPath, "server", "add", "test-server", "echo", "hello", "--transport", "stdio")
-	cmd.Stdout = &stderr
-	cmd.Stderr = &stderr
-	cmd.Env = append(os.Environ(), "LEANPROXY_CONFIG="+configPath)
-
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
-		}
-	}
-
-	if exitCode != 0 {
-		t.Logf("Exit code: %d", exitCode)
-		t.Logf("stderr: %s", stderr.String())
-	}
+	_, stderr, exitCode := runBinary("server", "add", "test-server", "echo", "hello", "--transport", "stdio")
+	t.Logf("Exit code: %d, stderr: %s", exitCode, stderr)
 }
 
 func TestServe_BasicStart(t *testing.T) {
@@ -214,32 +184,19 @@ func createTestConfig(t *testing.T, path string) {
 }
 
 func TestCache_Commands(t *testing.T) {
-	binaryPath := getBinaryPath()
-	var stdout bytes.Buffer
-	cmd := exec.Command(binaryPath, "cache", "--help")
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stdout
-
-	cmd.Run()
-	t.Logf("Cache help output: %s", stdout.String())
+	stdout, stderr, _ := runBinary("cache", "--help")
+	t.Logf("Cache: %s %s", stdout, stderr)
 }
 
 func TestStatus_Commands(t *testing.T) {
-	binaryPath := getBinaryPath()
-	var stdout bytes.Buffer
-	cmd := exec.Command(binaryPath, "status", "--help")
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stdout
-
-	cmd.Run()
-	t.Logf("Status help output: %s", stdout.String())
+	stdout, stderr, _ := runBinary("status", "--help")
+	t.Logf("Status: %s %s", stdout, stderr)
 }
 
 func TestConfig_Validation(t *testing.T) {
 	tests := []struct {
-		name    string
-		config  string
-		wantErr bool
+		name string
+		config string
 	}{
 		{
 			name: "valid config",
@@ -248,7 +205,6 @@ func TestConfig_Validation(t *testing.T) {
     command: echo
     args: [hello]
     transport: stdio`,
-			wantErr: false,
 		},
 		{
 			name: "invalid transport",
@@ -257,7 +213,6 @@ func TestConfig_Validation(t *testing.T) {
     command: echo
     args: [hello]
     transport: invalid`,
-			wantErr: true,
 		},
 	}
 
@@ -269,15 +224,11 @@ func TestConfig_Validation(t *testing.T) {
 				t.Fatalf("Failed to write config: %v", err)
 			}
 
-			binaryPath := getBinaryPath()
-			var stdout bytes.Buffer
-			cmd := exec.Command(binaryPath, "server", "list")
-			cmd.Stdout = &stdout
-			cmd.Stderr = &stdout
-			cmd.Env = append(os.Environ(), "LEANPROXY_CONFIG="+configPath)
+			os.Setenv("LEANPROXY_CONFIG", configPath)
+			defer os.Unsetenv("LEANPROXY_CONFIG")
 
-			cmd.Run()
-			t.Logf("Config validation: %s", stdout.String())
+			stdout, stderr, _ := runBinary("server", "list")
+			t.Logf("Config validation: %s %s", stdout, stderr)
 		})
 	}
 }
@@ -288,28 +239,8 @@ func TestDryRunMode(t *testing.T) {
 	os.Setenv("LEANPROXY_CONFIG", configPath)
 	defer os.Unsetenv("LEANPROXY_CONFIG")
 
-	binaryPath := getBinaryPath()
-	var stderr bytes.Buffer
-	cmd := exec.Command(binaryPath, "--dry-run", "server", "add", "dryrun-test", "echo", "test")
-	cmd.Stdout = &stderr
-	cmd.Stderr = &stderr
-	cmd.Env = append(os.Environ(), "LEANPROXY_CONFIG="+configPath)
-
-	err := cmd.Run()
-	exitCode := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else {
-			exitCode = 1
-		}
-	}
-
-	if exitCode != 0 {
-		t.Logf("Dry-run exit code: %d, stderr: %s", exitCode, stderr.String())
-	}
-
-	t.Logf("Dry-run output: %s", stderr.String())
+	stdout, stderr, exitCode := runBinary("--dry-run", "server", "add", "dryrun-test", "echo", "test")
+	t.Logf("Dry-run exit code: %d, output: %s %s", exitCode, stdout, stderr)
 }
 
 func TestJSONRPC_HealthEndpoint(t *testing.T) {
