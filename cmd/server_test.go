@@ -68,6 +68,7 @@ func TestJoinStringsFromServer(t *testing.T) {
 		{"multiple items", []string{"a", "b", "c"}, "a b c "},
 		{"single item", []string{"a"}, "a "},
 		{"empty", []string{}, ""},
+		{"nil slice", nil, ""},
 	}
 
 	for _, tt := range tests {
@@ -332,6 +333,9 @@ func TestServerCmd_HelpOutput(t *testing.T) {
 }
 
 func TestServeConfig_GetSet(t *testing.T) {
+	original := GetConfig()
+	defer SetConfig(original)
+
 	cfg := &ServeConfig{
 		RequestTimeout: 60 * time.Second,
 		MaxBatchSize:   200,
@@ -350,6 +354,7 @@ func TestServeConfig_GetSet(t *testing.T) {
 
 func TestServeConfig_SetInvalid(t *testing.T) {
 	original := GetConfig()
+	defer SetConfig(original)
 
 	SetConfig(nil)
 

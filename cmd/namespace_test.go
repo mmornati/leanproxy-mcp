@@ -107,3 +107,10 @@ func TestGetChildNames_Empty(t *testing.T) {
 		t.Errorf("expected 0 children, got %d", len(result))
 	}
 }
+
+func TestGetChildNames_NilMap(t *testing.T) {
+	result := getChildNames(nil)
+	if len(result) != 0 {
+		t.Errorf("expected 0 children for nil map, got %d", len(result))
+	}
+}
