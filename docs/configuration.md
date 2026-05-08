@@ -132,6 +132,80 @@ optimization:
       - filesystem_read_file
 ```
 
+### Federation Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `federation.enabled` | bool | `false` | Enable federation with other LeanProxy instances |
+| `federation.peers` | array | `[]` | List of federated peer configurations |
+
+#### Federation Configuration
+
+Federation allows connecting multiple LeanProxy instances across organizations to share and route tool requests.
+
+```yaml
+federation:
+  enabled: true
+  peers:
+    - name: "company-a"
+      url: "https://proxy.company-a.internal:8080"
+      auth_token: "optional-shared-secret"
+    - name: "company-b"
+      url: "https://proxy.company-b.internal:8080"
+```
+
+#### Peer Configuration Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Unique identifier for the peer |
+| `url` | string | yes | HTTP endpoint of the peer |
+| `auth_token` | string | no | Bearer token for authentication |
+
+#### Federation Features
+
+- **Peer Discovery**: Automatically discover available tools from federated peers
+- **Cross-Instance Routing**: Route tool requests to the appropriate peer
+- **Failover Handling**: Automatically switch to backup peers if primary fails
+
+#### Federation API Endpoints
+
+When federation is enabled, the following endpoints are available:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check for peer status |
+| `/federation/list-tools` | POST | List available tools on the peer |
+| `/federation/invoke` | POST | Invoke a tool on the peer |
+
+**list-tools Request:**
+```json
+{}
+```
+
+**list-tools Response:**
+```json
+{
+  "tools": ["github@create_issue", "github@list_repos", "jira@create_ticket"]
+}
+```
+
+**invoke Request:**
+```json
+{
+  "server": "github",
+  "tool": "create_issue",
+  "params": {"title": "Bug report", "body": "..."}
+}
+```
+
+**invoke Response:**
+```json
+{
+  "result": {"id": 123, "url": "https://..."}
+}
+```
+
 ## Built-in Redaction Patterns
 
 LeanProxy-MCP includes these built-in patterns:

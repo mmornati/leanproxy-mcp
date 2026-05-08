@@ -72,13 +72,25 @@ type ServerConfig struct {
 }
 
 type Config struct {
-	Version      string              `yaml:"version"`
+	Version      string               `yaml:"version"`
 	Servers      []*ServerConfig     `yaml:"servers"`
 	Optimization *OptimizationConfig `yaml:"optimization,omitempty"`
+	Federation   *FederationConfig   `yaml:"federation,omitempty"`
 }
 
 type OptimizationConfig struct {
 	LazyLoading *LazyLoadingSettings `yaml:"lazy_loading,omitempty"`
+}
+
+type PeerConfig struct {
+	Name      string `yaml:"name"`
+	URL       string `yaml:"url"`
+	AuthToken string `yaml:"auth_token,omitempty"`
+}
+
+type FederationConfig struct {
+	Enabled bool          `yaml:"enabled"`
+	Peers   []*PeerConfig `yaml:"peers"`
 }
 
 func (c *ServerConfig) Validate() error {
