@@ -124,8 +124,8 @@ func TestPeerManager_IsEnabled(t *testing.T) {
 
 	cfg = &migrate.FederationConfig{Enabled: true, Peers: []*migrate.PeerConfig{}}
 	pm, _ = NewPeerManager(cfg, logger)
-	if pm != nil && !pm.IsEnabled() {
-		t.Error("expected enabled when config enabled is true")
+	if pm == nil || !pm.IsEnabled() {
+		t.Error("expected enabled when config enabled is true with no peers")
 	}
 
 	pm, _ = NewPeerManager(nil, logger)

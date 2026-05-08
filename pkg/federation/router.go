@@ -87,7 +87,7 @@ func (fr *FederationRouter) InvokeWithFailover(ctx context.Context, server, tool
 		result, err := fr.peerManager.Invoke(ctx, p, server, tool, params)
 		if err != nil {
 			fr.logger.Error("invoke failed on peer, trying next", "peer", p, "error", err)
-			fr.peerManager.updatePeerStatusForFailover(p, PeerStatusOffline)
+			fr.markPeerOffline(p)
 			continue
 		}
 
@@ -97,10 +97,16 @@ func (fr *FederationRouter) InvokeWithFailover(ctx context.Context, server, tool
 	return nil, fmt.Errorf("all federated peers failed for tool %q", tool)
 }
 
-func (pm *PeerManager) updatePeerStatusForFailover(peerName string, status PeerStatus) {
+func (fr *FederationRouter) markPeerOffline(peerName string) {
+	if fr.peerManager != nil {
+		fr.peerManager.MarkPeerOffline(peerName)
+	}
+}
+
+func (pm *PeerManager) MarkPeerOffline(peerName string) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	if peer, ok := pm.peers[peerName]; ok {
-		peer.Status = status
+		peer.Status = PeerStatusOffline
 	}
 }

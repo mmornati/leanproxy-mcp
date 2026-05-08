@@ -60,9 +60,9 @@ type Logger interface {
 type PeerManager struct {
 	mu       sync.RWMutex
 	peers    map[string]*Peer
-	client   *http.Client
 	logger   Logger
 	toolIdx  map[string]string
+	enabled  bool
 }
 
 func NewPeerManager(cfg *migrate.FederationConfig, logger Logger) (*PeerManager, error) {
@@ -72,9 +72,9 @@ func NewPeerManager(cfg *migrate.FederationConfig, logger Logger) (*PeerManager,
 
 	pm := &PeerManager{
 		peers:   make(map[string]*Peer),
-		client:  &http.Client{Timeout: 10 * time.Second},
 		logger:  logger,
 		toolIdx: make(map[string]string),
+		enabled: true,
 	}
 
 	for _, peerCfg := range cfg.Peers {
@@ -287,5 +287,5 @@ func (pm *PeerManager) ListPeers() []string {
 }
 
 func (pm *PeerManager) IsEnabled() bool {
-	return pm != nil
+	return pm != nil && pm.enabled
 }
