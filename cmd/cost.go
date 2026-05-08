@@ -21,8 +21,6 @@ var costFlags struct {
 	reset    bool
 }
 
-var globalCostTracker = reporter.NewCostTracker()
-
 func init() {
 	costCmd.Flags().BoolVar(&costFlags.byTool, "by-tool", false, "Show cost breakdown by tool only")
 	costCmd.Flags().BoolVar(&costFlags.byServer, "by-server", false, "Show cost breakdown by server only")
@@ -32,14 +30,16 @@ func init() {
 }
 
 func runCost(cmd *cobra.Command, args []string) {
+	tracker := reporter.GlobalCostTracker()
+
 	if costFlags.reset {
-		globalCostTracker.Reset()
+		tracker.Reset()
 		fmt.Println("Cost counters reset")
 		return
 	}
 
 	if costFlags.jsonOut {
-		output, err := globalCostTracker.FormatJSON()
+		output, err := tracker.FormatJSON()
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			return
@@ -48,6 +48,6 @@ func runCost(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	output := globalCostTracker.FormatCLI(costFlags.byTool, costFlags.byServer)
+	output := tracker.FormatCLI(costFlags.byTool, costFlags.byServer)
 	fmt.Print(output)
 }

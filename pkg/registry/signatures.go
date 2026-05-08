@@ -27,17 +27,17 @@ type ToolSchemaRegistry interface {
 }
 
 type inMemoryToolSchemaRegistry struct {
-	signatures map[string]DiscoverySignature
+	signatures  map[string]DiscoverySignature
 	schemaCache map[string]json.RawMessage
-	byServer   map[string][]string
+	byServer    map[string][]string
 	mu          sync.RWMutex
 }
 
 func NewToolSchemaRegistry() ToolSchemaRegistry {
 	return &inMemoryToolSchemaRegistry{
-		signatures: make(map[string]DiscoverySignature),
+		signatures:  make(map[string]DiscoverySignature),
 		schemaCache: make(map[string]json.RawMessage),
-		byServer:   make(map[string][]string),
+		byServer:    make(map[string][]string),
 	}
 }
 

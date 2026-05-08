@@ -21,9 +21,9 @@ type PatternDef struct {
 }
 
 type LoadedPatterns struct {
-	BuiltIn  []SecretPattern
-	Custom   []SecretPattern
-	All      []*regexp.Regexp
+	BuiltIn []SecretPattern
+	Custom  []SecretPattern
+	All     []*regexp.Regexp
 }
 
 func LoadConfig(r io.Reader) (*Config, error) {

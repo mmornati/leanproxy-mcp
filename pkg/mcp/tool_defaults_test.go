@@ -6,33 +6,33 @@ import (
 
 func TestApplyDefaults(t *testing.T) {
 	tests := []struct {
-		name      string
-		toolName  string
+		name     string
+		toolName string
 		args     map[string]interface{}
 		expected map[string]interface{}
 	}{
 		{
 			name:     "list_tools with no max_description_chars",
 			toolName: "list_tools",
-			args:    map[string]interface{}{"server_name": "github"},
+			args:     map[string]interface{}{"server_name": "github"},
 			expected: map[string]interface{}{"server_name": "github", "max_description_chars": 200},
 		},
 		{
 			name:     "list_tools with existing max_description_chars",
 			toolName: "list_tools",
-			args:    map[string]interface{}{"server_name": "github", "max_description_chars": float64(100)},
+			args:     map[string]interface{}{"server_name": "github", "max_description_chars": float64(100)},
 			expected: map[string]interface{}{"server_name": "github", "max_description_chars": float64(100)},
 		},
 		{
 			name:     "list_tools with nil args",
 			toolName: "list_tools",
-			args:    nil,
+			args:     nil,
 			expected: map[string]interface{}{"max_description_chars": 200},
 		},
 		{
 			name:     "invoke_tool with empty args",
 			toolName: "invoke_tool",
-			args:    map[string]interface{}{},
+			args:     map[string]interface{}{},
 			expected: map[string]interface{}{},
 		},
 	}
@@ -51,60 +51,60 @@ func TestApplyDefaults(t *testing.T) {
 
 func TestValidateParam(t *testing.T) {
 	tests := []struct {
-		name      string
+		name     string
 		toolName string
-		param   string
-		value   interface{}
-		wantOk  bool
+		param    string
+		value    interface{}
+		wantOk   bool
 	}{
 		{
-			name:      "valid max_description_chars",
+			name:     "valid max_description_chars",
 			toolName: "list_tools",
-			param:   "max_description_chars",
-			value:   float64(100),
-			wantOk:  true,
+			param:    "max_description_chars",
+			value:    float64(100),
+			wantOk:   true,
 		},
 		{
-			name:      "max_description_chars below min",
+			name:     "max_description_chars below min",
 			toolName: "list_tools",
-			param:   "max_description_chars",
-			value:   float64(30),
-			wantOk:  false,
+			param:    "max_description_chars",
+			value:    float64(30),
+			wantOk:   false,
 		},
 		{
-			name:      "max_description_chars above max",
+			name:     "max_description_chars above max",
 			toolName: "list_tools",
-			param:   "max_description_chars",
-			value:   float64(600),
-			wantOk:  false,
+			param:    "max_description_chars",
+			value:    float64(600),
+			wantOk:   false,
 		},
 		{
-			name:      "edge case min",
+			name:     "edge case min",
 			toolName: "list_tools",
-			param:   "max_description_chars",
-			value:   float64(50),
-			wantOk:  true,
+			param:    "max_description_chars",
+			value:    float64(50),
+			wantOk:   true,
 		},
 		{
-			name:      "edge case max",
+			name:     "edge case max",
 			toolName: "list_tools",
-			param:   "max_description_chars",
-			value:   float64(500),
-			wantOk:  true,
+			param:    "max_description_chars",
+			value:    float64(500),
+			wantOk:   true,
 		},
 		{
-			name:      "zero value should pass",
+			name:     "zero value should pass",
 			toolName: "list_tools",
-			param:   "max_description_chars",
-			value:   float64(0),
-			wantOk:  true,
+			param:    "max_description_chars",
+			value:    float64(0),
+			wantOk:   true,
 		},
 		{
-			name:      "nil value should pass",
+			name:     "nil value should pass",
 			toolName: "list_tools",
-			param:   "max_description_chars",
-			value:   nil,
-			wantOk:  true,
+			param:    "max_description_chars",
+			value:    nil,
+			wantOk:   true,
 		},
 	}
 

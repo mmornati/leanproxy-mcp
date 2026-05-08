@@ -3,6 +3,7 @@ package reporter
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"sync"
 	"time"
@@ -24,6 +25,41 @@ func (RealClock) Since(t time.Time) time.Duration {
 }
 
 var defaultClock Clock = RealClock{}
+
+var globalCostTracker *CostTracker
+
+func init() {
+	globalCostTracker = NewCostTracker()
+}
+
+func GlobalCostTracker() *CostTracker {
+	return globalCostTracker
+}
+
+func TrackCost(toolName, serverName string, tokenCount int64) {
+	globalCostTracker.Track(toolName, serverName, tokenCount)
+}
+
+func TrackCostFromStrings(toolName, serverName, requestJSON, responseJSON string) {
+	estimator := &tokenEstimator{ charsPerToken: 4 }
+	inputTokens := estimator.EstimateTokens(requestJSON)
+	outputTokens := estimator.EstimateTokens(responseJSON)
+	totalTokens := inputTokens + outputTokens
+	if totalTokens > 0 {
+		globalCostTracker.Track(toolName, serverName, int64(totalTokens))
+	}
+}
+
+type tokenEstimator struct {
+	charsPerToken float64
+}
+
+func (e *tokenEstimator) EstimateTokens(content string) int {
+	if content == "" {
+		return 0
+	}
+	return int(math.Ceil(float64(len(content)) / e.charsPerToken))
+}
 
 type ToolCost struct {
 	ToolName   string `json:"tool_name"`

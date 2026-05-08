@@ -116,7 +116,7 @@ func (m *lifecycleManager) Start(ctx context.Context, config ServerConfig) (Serv
 	entry := &serverEntry{
 		config:    config,
 		handle:    ServerHandle{ID: config.ID, Config: config, PID: cmd.Process.Pid},
-		proc:     cmd,
+		proc:      cmd,
 		startTime: time.Now(),
 		status:    ServerStatus{ID: config.ID, State: StateRunning},
 	}

@@ -8,18 +8,18 @@ import (
 
 var (
 	Version   = "dev"
-	Commit   = ""
+	Commit    = ""
 	BuildTime = "unknown"
-	BuiltBy  = "unknown"
+	BuiltBy   = "unknown"
 )
 
 type Info struct {
 	Version   string `json:"version"`
-	Commit   string `json:"commit"`
+	Commit    string `json:"commit"`
 	BuildTime string `json:"buildTime"`
-	BuiltBy  string `json:"builtBy"`
+	BuiltBy   string `json:"builtBy"`
 	GoVersion string `json:"goVersion"`
-	Platform string `json:"platform"`
+	Platform  string `json:"platform"`
 }
 
 func Get() Info {

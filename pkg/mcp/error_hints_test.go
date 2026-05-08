@@ -6,27 +6,27 @@ import (
 
 func TestEnrichError(t *testing.T) {
 	tests := []struct {
-		name            string
-		original       string
-		wantContains   string
+		name          string
+		original      string
+		wantContains  string
 		wantHintEmoji bool
 	}{
 		{
-			name:            "repository not found",
-			original:        "Could not resolve to a Repository with the name 'anomalyco/leanproxy-mcp'",
-			wantContains:    "Check the owner/repo spelling",
+			name:          "repository not found",
+			original:      "Could not resolve to a Repository with the name 'anomalyco/leanproxy-mcp'",
+			wantContains:  "Check the owner/repo spelling",
 			wantHintEmoji: true,
 		},
 		{
-			name:            "server not running",
-			original:        "server github is not running (state: stopped)",
-			wantContains:   "Run 'leanproxy server start",
+			name:          "server not running",
+			original:      "server github is not running (state: stopped)",
+			wantContains:  "Run 'leanproxy server start",
 			wantHintEmoji: true,
 		},
 		{
-			name:            "no match",
-			original:       "some random error",
-			wantContains:   "some random error",
+			name:          "no match",
+			original:      "some random error",
+			wantContains:  "some random error",
 			wantHintEmoji: false,
 		},
 	}

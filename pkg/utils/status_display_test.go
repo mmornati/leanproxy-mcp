@@ -30,11 +30,11 @@ func TestStatusDisplay_RenderTable_SingleServer(t *testing.T) {
 		Timestamp: time.Now(),
 		Servers: []proxy.ServerStatus{
 			{
-				Name:            "server-1",
-				Status:          proxy.StatusRunning,
-				Uptime:          2*time.Minute + 34*time.Second,
+				Name:             "server-1",
+				Status:           proxy.StatusRunning,
+				Uptime:           2*time.Minute + 34*time.Second,
 				LastResponseTime: time.Now().Add(-120 * time.Millisecond),
-				RestartCount:    0,
+				RestartCount:     0,
 			},
 		},
 	}
@@ -56,25 +56,25 @@ func TestStatusDisplay_RenderTable_MultipleServers(t *testing.T) {
 		Timestamp: time.Now(),
 		Servers: []proxy.ServerStatus{
 			{
-				Name:            "server-1",
-				Status:          proxy.StatusRunning,
-				Uptime:          2 * time.Minute,
+				Name:             "server-1",
+				Status:           proxy.StatusRunning,
+				Uptime:           2 * time.Minute,
 				LastResponseTime: time.Now(),
-				RestartCount:    0,
+				RestartCount:     0,
 			},
 			{
-				Name:            "server-2",
-				Status:          proxy.StatusError,
-				Uptime:          5 * time.Minute,
+				Name:             "server-2",
+				Status:           proxy.StatusError,
+				Uptime:           5 * time.Minute,
 				LastResponseTime: time.Now().Add(-30 * time.Second),
-				RestartCount:    2,
+				RestartCount:     2,
 			},
 			{
-				Name:            "server-3",
-				Status:          proxy.StatusStopped,
-				Uptime:          0,
+				Name:             "server-3",
+				Status:           proxy.StatusStopped,
+				Uptime:           0,
 				LastResponseTime: time.Time{},
-				RestartCount:    0,
+				RestartCount:     0,
 			},
 		},
 	}
@@ -99,11 +99,11 @@ func TestStatusDisplay_RenderTable_LongServerName(t *testing.T) {
 		Timestamp: time.Now(),
 		Servers: []proxy.ServerStatus{
 			{
-				Name:            "very-long-server-name-that-exceeds-limit",
-				Status:          proxy.StatusRunning,
-				Uptime:          2 * time.Minute,
+				Name:             "very-long-server-name-that-exceeds-limit",
+				Status:           proxy.StatusRunning,
+				Uptime:           2 * time.Minute,
 				LastResponseTime: time.Now(),
-				RestartCount:    0,
+				RestartCount:     0,
 			},
 		},
 	}
@@ -140,14 +140,14 @@ func TestStatusDisplay_RenderVerbose_WithMemoryAndRequests(t *testing.T) {
 		Timestamp: time.Now(),
 		Servers: []proxy.ServerStatus{
 			{
-				Name:            "server-1",
-				Status:          proxy.StatusRunning,
-				Uptime:          2 * time.Minute,
+				Name:             "server-1",
+				Status:           proxy.StatusRunning,
+				Uptime:           2 * time.Minute,
 				LastResponseTime: time.Now(),
-				RequestCount:    1234,
-				ErrorRate:       0.1,
-				MemoryMB:        45,
-				RestartCount:    0,
+				RequestCount:     1234,
+				ErrorRate:        0.1,
+				MemoryMB:         45,
+				RestartCount:     0,
 			},
 		},
 	}
@@ -194,11 +194,11 @@ func TestStatusDisplay_RenderJSON(t *testing.T) {
 		Timestamp: time.Now(),
 		Servers: []proxy.ServerStatus{
 			{
-				Name:            "server-1",
-				Status:          proxy.StatusRunning,
-				Uptime:          2 * time.Minute,
+				Name:             "server-1",
+				Status:           proxy.StatusRunning,
+				Uptime:           2 * time.Minute,
 				LastResponseTime: time.Now(),
-				RequestCount:    100,
+				RequestCount:     100,
 			},
 		},
 	}

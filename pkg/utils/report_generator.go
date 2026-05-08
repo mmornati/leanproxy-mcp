@@ -26,19 +26,19 @@ type TokenSavingsSummary struct {
 }
 
 type SecurityEvent struct {
-	Timestamp     time.Time
-	EventType     string
+	Timestamp      time.Time
+	EventType      string
 	PatternMatched string
-	ServerName    string
-	Redacted      bool
+	ServerName     string
+	Redacted       bool
 }
 
 type ServerMetrics struct {
-	ServerName    string
+	ServerName      string
 	RequestsHandled int
-	Uptime        time.Duration
-	Errors        int
-	TokenSavings  ServerTokenSavings
+	Uptime          time.Duration
+	Errors          int
+	TokenSavings    ServerTokenSavings
 }
 
 type ServerTokenSavings struct {
@@ -161,8 +161,8 @@ func (rg *ReportGenerator) GenerateJSONReport(sessionData SessionMetrics) string
 	reportData := map[string]interface{}{
 		"session_id": sessionData.SessionID,
 		"summary": map[string]interface{}{
-			"duration":          time.Since(sessionData.SessionStart).String(),
-			"total_requests":    sessionData.TotalRequests,
+			"duration":           time.Since(sessionData.SessionStart).String(),
+			"total_requests":     sessionData.TotalRequests,
 			"total_tokens_saved": sessionData.TokenSavings.SavedTokens,
 			"savings_percentage": func() float64 {
 				if sessionData.TokenSavings.OriginalTokens > 0 {
@@ -172,10 +172,10 @@ func (rg *ReportGenerator) GenerateJSONReport(sessionData SessionMetrics) string
 			}(),
 			"security_risks_intercepted": len(sessionData.SecurityEvents),
 		},
-		"token_savings": sessionData.TokenSavings,
+		"token_savings":   sessionData.TokenSavings,
 		"security_events": sessionData.SecurityEvents,
-		"server_metrics": sessionData.ServerMetrics,
-		"generated_at": time.Now().Format(time.RFC3339),
+		"server_metrics":  sessionData.ServerMetrics,
+		"generated_at":    time.Now().Format(time.RFC3339),
 	}
 
 	output, err := json.MarshalIndent(reportData, "", "  ")
@@ -205,10 +205,10 @@ func (rg *ReportGenerator) NewSessionMetrics() SessionMetrics {
 
 func (rg *ReportGenerator) NewEmptySessionMetrics() SessionMetrics {
 	return SessionMetrics{
-		SessionID:      "no-session",
-		SessionStart:   time.Now(),
-		SessionEnd:     time.Now(),
-		TotalRequests:  0,
+		SessionID:     "no-session",
+		SessionStart:  time.Now(),
+		SessionEnd:    time.Now(),
+		TotalRequests: 0,
 		TokenSavings: TokenSavingsSummary{
 			OriginalTokens:    0,
 			OptimizedTokens:   0,

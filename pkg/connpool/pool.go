@@ -35,18 +35,18 @@ func DefaultPoolConfig() PoolConfig {
 }
 
 type PoolMetrics struct {
-	TotalRequests     int64
+	TotalRequests    int64
 	ActiveClients    int64
 	AvailableClients int64
-	WaitingClients  int64
-	Timeouts       int64
-	Errors         int64
-	AvgLatencyMs   float64
+	WaitingClients   int64
+	Timeouts         int64
+	Errors           int64
+	AvgLatencyMs     float64
 }
 
 type Response struct {
 	Result json.RawMessage `json:"result,omitempty"`
-	ID     interface{}   `json:"id"`
+	ID     interface{}     `json:"id"`
 }
 
 type ClientConnection struct {
@@ -54,7 +54,7 @@ type ClientConnection struct {
 	server   string
 	lastUsed time.Time
 	mu       sync.Mutex
-	healthy bool
+	healthy  bool
 }
 
 func (c *ClientConnection) IsHealthy() bool {
@@ -75,18 +75,18 @@ func (c *ClientConnection) GetClient() *client.Client {
 
 type ServerPool struct {
 	mu           sync.Mutex
-	available   chan *ClientConnection
-	active      map[*ClientConnection]struct{}
-	maxSize     int
+	available    chan *ClientConnection
+	active       map[*ClientConnection]struct{}
+	maxSize      int
 	waitingQueue chan waitRequest
 	maxQueueSize int
-	config      PoolConfig
-	logger     *slog.Logger
-	metrics   PoolMetrics
+	config       PoolConfig
+	logger       *slog.Logger
+	metrics      PoolMetrics
 }
 
 type waitRequest struct {
-	client   chan *ClientConnection
+	client  chan *ClientConnection
 	timeout <-chan time.Time
 }
 
@@ -102,8 +102,8 @@ func NewServerPool(maxSize int, config PoolConfig, logger *slog.Logger) *ServerP
 		maxSize:      maxSize,
 		waitingQueue: make(chan waitRequest, maxQueueSize),
 		maxQueueSize: maxQueueSize,
-		config:      config,
-		logger:     logger,
+		config:       config,
+		logger:       logger,
 	}
 }
 
@@ -150,7 +150,7 @@ func (sp *ServerPool) createNewClient(ctx context.Context, createFunc func() (*c
 	conn := &ClientConnection{
 		client:   mcpClient,
 		lastUsed: time.Now(),
-		healthy: true,
+		healthy:  true,
 	}
 
 	sp.mu.Lock()
@@ -251,13 +251,13 @@ func (sp *ServerPool) GetMetrics() PoolMetrics {
 
 type ConnectionPool struct {
 	mu         sync.RWMutex
-	pools     map[string]*ServerPool
-	config   PoolConfig
-	logger   *slog.Logger
-	ctx      context.Context
-	cancel   context.CancelFunc
+	pools      map[string]*ServerPool
+	config     PoolConfig
+	logger     *slog.Logger
+	ctx        context.Context
+	cancel     context.CancelFunc
 	serverCfgs map[string]*migrate.ServerConfig
-	stopped  bool
+	stopped    bool
 }
 
 func NewConnectionPool(config PoolConfig, logger *slog.Logger) *ConnectionPool {
@@ -268,11 +268,11 @@ func NewConnectionPool(config PoolConfig, logger *slog.Logger) *ConnectionPool {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &ConnectionPool{
-		pools:       make(map[string]*ServerPool),
+		pools:      make(map[string]*ServerPool),
 		config:     config,
-		logger:    logger,
-		ctx:       ctx,
-		cancel:    cancel,
+		logger:     logger,
+		ctx:        ctx,
+		cancel:     cancel,
 		serverCfgs: make(map[string]*migrate.ServerConfig),
 	}
 }
@@ -351,7 +351,7 @@ func (cp *ConnectionPool) createMCPClient(ctx context.Context, serverName string
 				oauthCfg := transport.OAuthConfig{
 					ClientID:     cfg.HTTP.Auth.ClientID,
 					ClientSecret: cfg.HTTP.Auth.ClientSecret,
-					Scopes:      cfg.HTTP.Auth.Scopes,
+					Scopes:       cfg.HTTP.Auth.Scopes,
 				}
 				opts = append(opts, transport.WithHTTPOAuth(oauthCfg))
 			}
@@ -377,7 +377,7 @@ func (cp *ConnectionPool) createMCPClient(ctx context.Context, serverName string
 	_, err = mcpClient.Initialize(initCtx, mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: "2024-11-05",
-			Capabilities:   mcp.ClientCapabilities{},
+			Capabilities:    mcp.ClientCapabilities{},
 			ClientInfo: mcp.Implementation{
 				Name:    "leanproxy-mcp",
 				Version: "1.0.0",

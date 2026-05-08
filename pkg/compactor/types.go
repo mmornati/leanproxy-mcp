@@ -7,10 +7,10 @@ import (
 )
 
 type RawManifest struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Tools       []RawTool       `json:"tools"`
-	OriginalHash string         `json:"-"`
+	Name         string    `json:"name"`
+	Description  string    `json:"description"`
+	Tools        []RawTool `json:"tools"`
+	OriginalHash string    `json:"-"`
 }
 
 type RawTool struct {
@@ -25,10 +25,10 @@ func (r RawManifest) Hash() string {
 }
 
 type DistilledManifest struct {
-	ServerName    string         `json:"server_name"`
-	Tools         []DistilledTool `json:"tools"`
-	OriginalHash  string         `json:"original_hash"`
-	DistilledAt   time.Time      `json:"distilled_at"`
+	ServerName   string          `json:"server_name"`
+	Tools        []DistilledTool `json:"tools"`
+	OriginalHash string          `json:"original_hash"`
+	DistilledAt  time.Time       `json:"distilled_at"`
 }
 
 type DistilledTool struct {

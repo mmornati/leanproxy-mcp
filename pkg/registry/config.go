@@ -9,8 +9,8 @@ import (
 )
 
 type RegistryConfig struct {
-	CompactByDefault bool `yaml:"compact_by_default"`
-	MaxSignatureBytes int `yaml:"max_signature_bytes"`
+	CompactByDefault  bool `yaml:"compact_by_default"`
+	MaxSignatureBytes int  `yaml:"max_signature_bytes"`
 }
 
 func LoadRegistryConfig(r io.Reader) (*RegistryConfig, error) {

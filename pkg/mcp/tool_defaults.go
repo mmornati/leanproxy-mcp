@@ -2,10 +2,10 @@ package mcp
 
 type ParameterMeta struct {
 	Required        bool
-	Default        interface{}
-	Min            interface{}
-	Max            interface{}
-	Description   string
+	Default         interface{}
+	Min             interface{}
+	Max             interface{}
+	Description     string
 	SuggestedValues []string
 }
 
@@ -15,9 +15,9 @@ var ListToolsParamDefaults = map[string]interface{}{
 
 var ListToolsParamMeta = map[string]ParameterMeta{
 	"server_name": {
-		Required:      true,
-		Default:      nil,
-		Description:  "MCP server name (from list_servers). Required - identifies which server's tools to list.",
+		Required:        true,
+		Default:         nil,
+		Description:     "MCP server name (from list_servers). Required - identifies which server's tools to list.",
 		SuggestedValues: []string{"github", "garmin", "filesystem", "intervals"},
 	},
 	"max_description_chars": {

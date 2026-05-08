@@ -85,7 +85,7 @@ func (c *OpenAIClient) doDistill(ctx context.Context, manifest RawManifest) (*Di
 			{"role": "system", "content": SystemPrompt},
 			{"role": "user", "content": prompt},
 		},
-		"max_tokens": 2000,
+		"max_tokens":  2000,
 		"temperature": 0.3,
 	}
 

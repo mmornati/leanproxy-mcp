@@ -66,10 +66,10 @@ func NewHTTPClientServer(name string, config *migrate.ServerConfig, logger *slog
 	}
 
 	return &HTTPClientServer{
-		name:     name,
-		config:   config,
-		state:   StateStarting,
-		logger:  logger,
+		name:      name,
+		config:    config,
+		state:     StateStarting,
+		logger:    logger,
 		oauthOpts: oauthOpts,
 	}
 }

@@ -17,11 +17,11 @@ func TestRegisterUnregister(t *testing.T) {
 
 	ctx := context.Background()
 	entry := ServerEntry{
-		ID:          "test-server",
-		Address:     "localhost:8080",
-		Transport:   TransportHTTP,
+		ID:           "test-server",
+		Address:      "localhost:8080",
+		Transport:    TransportHTTP,
 		Capabilities: []string{"code-complete", "diagnostics"},
-		Health:      HealthHealthy,
+		Health:       HealthHealthy,
 	}
 
 	err := reg.Register(ctx, entry)
@@ -494,7 +494,7 @@ func TestEmptyCapabilityListQuery(t *testing.T) {
 	ctx := context.Background()
 
 	entry := ServerEntry{
-		ID:          "empty-cap-test",
+		ID:           "empty-cap-test",
 		Capabilities: []string{},
 		Transport:    TransportHTTP,
 	}
@@ -568,7 +568,7 @@ func TestMatchCriteriaMaxLoad(t *testing.T) {
 
 	result, err := reg.FindBest(ctx, MatchCriteria{
 		Transport: TransportHTTP,
-		MaxLoad:    0.5,
+		MaxLoad:   0.5,
 	})
 	if err != nil {
 		t.Fatalf("FindBest() failed: %v", err)
@@ -635,4 +635,3 @@ func TestSaveLoadPathTraversal(t *testing.T) {
 		}
 	})
 }
-

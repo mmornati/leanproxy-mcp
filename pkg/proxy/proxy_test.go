@@ -189,11 +189,11 @@ func TestParseJSONRPCBatchRequest(t *testing.T) {
 
 func TestParseJSONRPCBatchRequestSizeLimit(t *testing.T) {
 	tests := []struct {
-		name        string
-		data        []byte
+		name         string
+		data         []byte
 		maxBatchSize int
-		wantErr     bool
-		errContains string
+		wantErr      bool
+		errContains  string
 	}{
 		{
 			name: "within limit",
@@ -222,26 +222,26 @@ func TestParseJSONRPCBatchRequestSizeLimit(t *testing.T) {
 			]`),
 			maxBatchSize: 2,
 			wantErr:      true,
-			errContains: "batch size 3 exceeds limit 2",
+			errContains:  "batch size 3 exceeds limit 2",
 		},
 		{
-			name:        "zero limit disables check",
-			data:        []byte(`[{"jsonrpc":"2.0","method":"test","id":1},{"jsonrpc":"2.0","method":"test2","id":2},{"jsonrpc":"2.0","method":"test3","id":3}]`),
+			name:         "zero limit disables check",
+			data:         []byte(`[{"jsonrpc":"2.0","method":"test","id":1},{"jsonrpc":"2.0","method":"test2","id":2},{"jsonrpc":"2.0","method":"test3","id":3}]`),
 			maxBatchSize: 0,
 			wantErr:      false,
 		},
 		{
-			name:        "large batch within limit",
-			data:        []byte(`[` + generateLargeBatch(50) + `]`),
+			name:         "large batch within limit",
+			data:         []byte(`[` + generateLargeBatch(50) + `]`),
 			maxBatchSize: 100,
 			wantErr:      false,
 		},
 		{
-			name:        "large batch exceeds limit",
-			data:        []byte(`[` + generateLargeBatch(150) + `]`),
+			name:         "large batch exceeds limit",
+			data:         []byte(`[` + generateLargeBatch(150) + `]`),
 			maxBatchSize: 100,
 			wantErr:      true,
-			errContains: "batch size 150 exceeds limit 100",
+			errContains:  "batch size 150 exceeds limit 100",
 		},
 	}
 

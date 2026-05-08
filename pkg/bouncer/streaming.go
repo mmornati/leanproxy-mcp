@@ -12,9 +12,9 @@ import (
 const defaultBufferSizeStreaming = 4096
 
 type StreamingRedactor struct {
-	patterns      []*regexp.Regexp
+	patterns     []*regexp.Regexp
 	alertManager *AlertManager
-	bufferSize    int
+	bufferSize   int
 }
 
 func NewStreamingRedactor(patterns []*regexp.Regexp) *StreamingRedactor {

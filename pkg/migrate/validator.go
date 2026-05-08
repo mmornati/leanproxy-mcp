@@ -71,7 +71,7 @@ func (v *Validator) validateServer(server DiscoveredServer, result *ValidationRe
 		result.Errors = append(result.Errors, ValidationError{
 			ServerName: server.Name,
 			Message:    "name is required",
-			Field:     "name",
+			Field:      "name",
 		})
 		return
 	}
@@ -80,7 +80,7 @@ func (v *Validator) validateServer(server DiscoveredServer, result *ValidationRe
 		result.Errors = append(result.Errors, ValidationError{
 			ServerName: server.Name,
 			Message:    "transport type is required",
-			Field:     "transport",
+			Field:      "transport",
 		})
 		return
 	}
@@ -94,7 +94,7 @@ func (v *Validator) validateServer(server DiscoveredServer, result *ValidationRe
 		result.Errors = append(result.Errors, ValidationError{
 			ServerName: server.Name,
 			Message:    fmt.Sprintf("invalid transport '%s'. Must be stdio, http, or sse", server.Transport),
-			Field:     "transport",
+			Field:      "transport",
 		})
 	}
 }
@@ -104,7 +104,7 @@ func (v *Validator) validateStdioServer(server DiscoveredServer, result *Validat
 		result.Errors = append(result.Errors, ValidationError{
 			ServerName: server.Name,
 			Message:    "stdio configuration is required for stdio transport",
-			Field:     "stdio",
+			Field:      "stdio",
 		})
 		return
 	}
@@ -113,7 +113,7 @@ func (v *Validator) validateStdioServer(server DiscoveredServer, result *Validat
 		result.Errors = append(result.Errors, ValidationError{
 			ServerName: server.Name,
 			Message:    "command is required for stdio transport",
-			Field:     "command",
+			Field:      "command",
 		})
 		return
 	}
@@ -123,7 +123,7 @@ func (v *Validator) validateStdioServer(server DiscoveredServer, result *Validat
 			result.Errors = append(result.Errors, ValidationError{
 				ServerName: server.Name,
 				Message:    fmt.Sprintf("command '%s' not found in PATH", server.Stdio.Command),
-				Field:     "command",
+				Field:      "command",
 			})
 		}
 	}
@@ -134,7 +134,7 @@ func (v *Validator) validateHTTPSTransport(server DiscoveredServer, result *Vali
 		result.Errors = append(result.Errors, ValidationError{
 			ServerName: server.Name,
 			Message:    fmt.Sprintf("http configuration is required for %s transport", server.Transport),
-			Field:     "http",
+			Field:      "http",
 		})
 		return
 	}
@@ -143,7 +143,7 @@ func (v *Validator) validateHTTPSTransport(server DiscoveredServer, result *Vali
 		result.Errors = append(result.Errors, ValidationError{
 			ServerName: server.Name,
 			Message:    "url is required for http/sse transport",
-			Field:     "url",
+			Field:      "url",
 		})
 		return
 	}
@@ -152,7 +152,7 @@ func (v *Validator) validateHTTPSTransport(server DiscoveredServer, result *Vali
 		result.Errors = append(result.Errors, ValidationError{
 			ServerName: server.Name,
 			Message:    fmt.Sprintf("invalid URL format: '%s'", server.HTTP.URL),
-			Field:     "url",
+			Field:      "url",
 		})
 	}
 }

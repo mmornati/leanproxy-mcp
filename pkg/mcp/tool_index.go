@@ -3,30 +3,30 @@ package mcp
 import "encoding/json"
 
 type ToolDefinition struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Examples    []ToolExample  `json:"examples,omitempty"`
-	Returns     ReturnSchema   `json:"returns,omitempty"`
-	Categories  []string      `json:"categories,omitempty"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Examples    []ToolExample   `json:"examples,omitempty"`
+	Returns     ReturnSchema    `json:"returns,omitempty"`
+	Categories  []string        `json:"categories,omitempty"`
 	InputSchema json.RawMessage `json:"inputSchema"`
 }
 
 type ToolExample struct {
 	Input       map[string]interface{} `json:"input"`
-	Description string                `json:"description"`
+	Description string                 `json:"description"`
 }
 
 type ReturnSchema struct {
-	Type         string            `json:"type"`
-	Description string            `json:"description"`
-	Fields       []FieldDescription `json:"fields,omitempty"`
+	Type        string             `json:"type"`
+	Description string             `json:"description"`
+	Fields      []FieldDescription `json:"fields,omitempty"`
 }
 
 type FieldDescription struct {
-	Name     string `json:"name"`
-	Type    string `json:"type"`
-	Req     bool   `json:"required,omitempty"`
-	Desc    string `json:"description"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+	Req  bool   `json:"required,omitempty"`
+	Desc string `json:"description"`
 }
 
 var LeanproxyTools = []ToolDefinition{
@@ -49,7 +49,7 @@ var LeanproxyTools = []ToolDefinition{
 			},
 			{
 				Input: map[string]interface{}{
-					"server_name":        "github",
+					"server_name":           "github",
 					"max_description_chars": 150,
 				},
 				Description: "List github tools with shorter descriptions",
@@ -88,9 +88,9 @@ var LeanproxyTools = []ToolDefinition{
 					"server": "github",
 					"tool":   "list_issues",
 					"arguments": map[string]interface{}{
-						"owner":  "mmornati",
-						"repo":   "leanproxy-mcp",
-						"state":  "open",
+						"owner":   "mmornati",
+						"repo":    "leanproxy-mcp",
+						"state":   "open",
 						"perPage": 10,
 					},
 				},
@@ -101,9 +101,9 @@ var LeanproxyTools = []ToolDefinition{
 					"server": "github",
 					"tool":   "search_issues",
 					"arguments": map[string]interface{}{
-						"query":  "is:issue is:open label:bug",
-						"owner":  "mmornati",
-						"repo":   "leanproxy-mcp",
+						"query":   "is:issue is:open label:bug",
+						"owner":   "mmornati",
+						"repo":    "leanproxy-mcp",
 						"perPage": 5,
 					},
 				},

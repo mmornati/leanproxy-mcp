@@ -50,9 +50,9 @@ func (r Request) MarshalJSON() ([]byte, error) {
 }
 
 type Response struct {
-	Result json.RawMessage   `json:"result,omitempty"`
+	Result json.RawMessage      `json:"result,omitempty"`
 	Error  *errors.JSONRPCError `json:"error,omitempty"`
-	ID     interface{}       `json:"id"`
+	ID     interface{}          `json:"id"`
 }
 
 type ServerState string

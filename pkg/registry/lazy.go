@@ -13,10 +13,10 @@ type ToolStub struct {
 }
 
 type ToolSchema struct {
-	Name         string          `json:"name"`
-	Description  string          `json:"description"`
-	InputSchema  json.RawMessage `json:"inputSchema"`
-	ServerID     string          `json:"serverId"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+	ServerID    string          `json:"serverId"`
 }
 
 type LazySchemaCache struct {

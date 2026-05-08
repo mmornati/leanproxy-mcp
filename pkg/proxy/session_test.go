@@ -12,12 +12,12 @@ import (
 
 func TestSessionState_Serialize(t *testing.T) {
 	state := &SessionState{
-		ServerName: "test-server",
-		ClientID:   "client-123",
-		Capabilities: []string{"tools", "resources"},
+		ServerName:       "test-server",
+		ClientID:         "client-123",
+		Capabilities:     []string{"tools", "resources"},
 		InitializeParams: json.RawMessage(`{"key":"value"}`),
-		CreatedAt:   time.Now(),
-		LastUsedAt: time.Now(),
+		CreatedAt:        time.Now(),
+		LastUsedAt:       time.Now(),
 	}
 
 	data, err := state.Serialize()
@@ -148,7 +148,7 @@ func TestSessionCache_RestoreSession(t *testing.T) {
 	cache := NewSessionCache(5*time.Minute, 10)
 
 	original := &SessionState{
-		ServerName:  "restored-server",
+		ServerName: "restored-server",
 		ClientID:   "restored-client",
 		CreatedAt:  time.Now().Add(-5 * time.Minute),
 		LastUsedAt: time.Now().Add(-5 * time.Minute),

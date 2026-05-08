@@ -21,17 +21,17 @@ type CacheSettings struct {
 }
 
 type SummarizeSettings struct {
-	Enabled        bool   `yaml:"enabled"`
-	MaxTokens      int    `yaml:"max_tokens"`
-	Strategy       string `yaml:"strategy"`
+	Enabled   bool   `yaml:"enabled"`
+	MaxTokens int    `yaml:"max_tokens"`
+	Strategy  string `yaml:"strategy"`
 }
 
 type LazyLoadingSettings struct {
-	Enabled    bool     `yaml:"enabled"`
-	StubTokens int      `yaml:"stub_tokens"`
-	CacheTTL   string   `yaml:"cache_ttl"`
+	Enabled       bool          `yaml:"enabled"`
+	StubTokens    int           `yaml:"stub_tokens"`
+	CacheTTL      string        `yaml:"cache_ttl"`
 	CacheTTLValue time.Duration `yaml:"-"`
-	Prewarm    []string `yaml:"prewarm"`
+	Prewarm       []string      `yaml:"prewarm"`
 }
 
 type StdioConfig struct {
@@ -44,36 +44,36 @@ type StdioConfig struct {
 type HTTPConfig struct {
 	URL     string            `yaml:"url"`
 	Headers map[string]string `yaml:"headers"`
-	Auth    *AuthConfig      `yaml:"auth,omitempty"`
+	Auth    *AuthConfig       `yaml:"auth,omitempty"`
 }
 
 type AuthConfig struct {
-	Type          string   `yaml:"type"`           // bearer, oauth2
-	ClientID      string   `yaml:"client_id"`
+	Type         string   `yaml:"type"` // bearer, oauth2
+	ClientID     string   `yaml:"client_id"`
 	ClientSecret string   `yaml:"client_secret"`
 	Scopes       []string `yaml:"scopes"`
-	TokenURL     string   `yaml:"token_url"`       // optional, for bearer token exchange
+	TokenURL     string   `yaml:"token_url"` // optional, for bearer token exchange
 }
 
 type ServerConfig struct {
-	Name               string                   `yaml:"name"`
-	Enabled            *bool                    `yaml:"enabled"`
-	Transport          registry.TransportType   `yaml:"transport"`
-	Stdio              *StdioConfig             `yaml:"stdio,omitempty"`
-	HTTP               *HTTPConfig              `yaml:"http,omitempty"`
-	Timeout            string                   `yaml:"timeout"`
-	TimeoutValue       time.Duration            `yaml:"-"`
-	ConnectTimeout     string                   `yaml:"connect_timeout"`
-	ConnectTimeoutValue time.Duration           `yaml:"-"`
-	IdleTimeout        string                   `yaml:"idle_timeout"`
-	IdleTimeoutValue   time.Duration            `yaml:"-"`
-	CacheSettings      *CacheSettings           `yaml:"cache_settings,omitempty"`
-	SummarizeSettings  *SummarizeSettings       `yaml:"summarize_settings,omitempty"`
+	Name                string                 `yaml:"name"`
+	Enabled             *bool                  `yaml:"enabled"`
+	Transport           registry.TransportType `yaml:"transport"`
+	Stdio               *StdioConfig           `yaml:"stdio,omitempty"`
+	HTTP                *HTTPConfig            `yaml:"http,omitempty"`
+	Timeout             string                 `yaml:"timeout"`
+	TimeoutValue        time.Duration          `yaml:"-"`
+	ConnectTimeout      string                 `yaml:"connect_timeout"`
+	ConnectTimeoutValue time.Duration          `yaml:"-"`
+	IdleTimeout         string                 `yaml:"idle_timeout"`
+	IdleTimeoutValue    time.Duration          `yaml:"-"`
+	CacheSettings       *CacheSettings         `yaml:"cache_settings,omitempty"`
+	SummarizeSettings   *SummarizeSettings     `yaml:"summarize_settings,omitempty"`
 }
 
 type Config struct {
-	Version       string             `yaml:"version"`
-	Servers       []*ServerConfig    `yaml:"servers"`
+	Version      string              `yaml:"version"`
+	Servers      []*ServerConfig     `yaml:"servers"`
 	Optimization *OptimizationConfig `yaml:"optimization,omitempty"`
 }
 

@@ -19,17 +19,17 @@ import (
 )
 
 type jsonRPCRequest struct {
-	JSONRPC  string          `json:"jsonrpc"`
-	Method   string          `json:"method"`
-	Params   json.RawMessage `json:"params,omitempty"`
-	ID       interface{}     `json:"id"`
-	AuthToken string         `json:"auth_token,omitempty"`
+	JSONRPC   string          `json:"jsonrpc"`
+	Method    string          `json:"method"`
+	Params    json.RawMessage `json:"params,omitempty"`
+	ID        interface{}     `json:"id"`
+	AuthToken string          `json:"auth_token,omitempty"`
 }
 
 type jsonRPCResponse struct {
-	JSONRPC string                `json:"jsonrpc"`
-	Result  json.RawMessage       `json:"result,omitempty"`
-	Error   *errors.JSONRPCError  `json:"error,omitempty"`
+	JSONRPC string               `json:"jsonrpc"`
+	Result  json.RawMessage      `json:"result,omitempty"`
+	Error   *errors.JSONRPCError `json:"error,omitempty"`
 	ID      interface{}          `json:"id"`
 }
 

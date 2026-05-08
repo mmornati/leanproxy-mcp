@@ -147,10 +147,10 @@ func (m *Migrator) Import(ctx context.Context, servers []DiscoveredServer, targe
 		existingNames[name] = true
 
 		sc := &ServerConfig{
-			Name:     name,
+			Name:      name,
 			Transport: srv.Transport,
-			Stdio:    srv.Stdio,
-			HTTP:    srv.HTTP,
+			Stdio:     srv.Stdio,
+			HTTP:      srv.HTTP,
 		}
 		if sc.Timeout == "" {
 			sc.Timeout = "30s"

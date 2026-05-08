@@ -35,16 +35,16 @@ type CumulativeSavings struct {
 	TotalOriginal     int64
 	TotalOptimized    int64
 	TotalSaved        int64
-	SessionDuration    time.Duration
+	SessionDuration   time.Duration
 	RequestsProcessed int
 }
 
 type SavingsTracker struct {
-	sessionStart    time.Time
-	totalOriginal   int64
-	totalOptimized   int64
-	serverSavings    map[string]*ServerSavings
-	mu               sync.Mutex
+	sessionStart   time.Time
+	totalOriginal  int64
+	totalOptimized int64
+	serverSavings  map[string]*ServerSavings
+	mu             sync.Mutex
 	clock          Clock
 }
 
@@ -54,9 +54,9 @@ func NewSavingsTracker() *SavingsTracker {
 
 func newSavingsTracker(clock Clock) *SavingsTracker {
 	return &SavingsTracker{
-		sessionStart: clock.Now(),
+		sessionStart:  clock.Now(),
 		serverSavings: make(map[string]*ServerSavings),
-		clock:       clock,
+		clock:         clock,
 	}
 }
 

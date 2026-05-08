@@ -60,7 +60,7 @@ var listServersTool = Tool{
 	Name:        "list_servers",
 	Description: "List all MCP servers configured in this gateway",
 	InputSchema: map[string]interface{}{
-		"type": "object",
+		"type":       "object",
 		"properties": map[string]interface{}{},
 	},
 }

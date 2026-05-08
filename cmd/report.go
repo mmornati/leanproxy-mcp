@@ -26,10 +26,10 @@ Output is written to stdout by default. Use --output to write to a file.`,
 }
 
 var reportFlags struct {
-	sessionID   string
-	outputPath  string
-	jsonOutput  bool
-	noSecurity  bool
+	sessionID  string
+	outputPath string
+	jsonOutput bool
+	noSecurity bool
 }
 
 func init() {

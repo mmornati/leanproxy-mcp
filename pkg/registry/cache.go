@@ -16,12 +16,12 @@ type SchemaCache interface {
 }
 
 type lruSchemaCache struct {
-	mu       sync.Mutex
-	maxSize  int
-	maxAge   time.Duration
-	cache    map[string]*list.Element
-	lru      *list.List
-	onEvict  func(key string, schema json.RawMessage)
+	mu      sync.Mutex
+	maxSize int
+	maxAge  time.Duration
+	cache   map[string]*list.Element
+	lru     *list.List
+	onEvict func(key string, schema json.RawMessage)
 }
 
 type cacheEntry struct {

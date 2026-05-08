@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
+	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
-	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 )
 
 type ParamInfo struct {
@@ -29,16 +29,16 @@ type ToolCache struct {
 }
 
 type Handler struct {
-	pool             pool.ServerSource
-	logger           *slog.Logger
-	timeout          time.Duration
-	toolCache        *ToolCache
-	toolStore        toolstore.Cache
-	manifest         *AggregatedManifest
-	cacheRefreshes   atomic.Uint64
-	cacheFailures    atomic.Uint64
-	lazyLoading      bool
-	lazySchemaCache  *registry.LazySchemaCache
+	pool            pool.ServerSource
+	logger          *slog.Logger
+	timeout         time.Duration
+	toolCache       *ToolCache
+	toolStore       toolstore.Cache
+	manifest        *AggregatedManifest
+	cacheRefreshes  atomic.Uint64
+	cacheFailures   atomic.Uint64
+	lazyLoading     bool
+	lazySchemaCache *registry.LazySchemaCache
 }
 
 type AggregatedManifest struct {
@@ -66,9 +66,9 @@ func NewHandlerWithToolStore(p pool.ServerSource, logger *slog.Logger, store too
 		logger = slog.Default()
 	}
 	return &Handler{
-		pool:      p,
-		logger:    logger,
-		timeout:  30 * time.Second,
+		pool:    p,
+		logger:  logger,
+		timeout: 30 * time.Second,
 		toolCache: &ToolCache{
 			tools: make(map[string][]Tool),
 		},
@@ -191,10 +191,10 @@ func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response,
 					Description: tool.Description,
 				}
 				h.lazySchemaCache.SetFullSchema(stub.Name, registry.ToolSchema{
-					Name:         tool.Name,
-					Description:  tool.Description,
-					InputSchema:  tool.InputSchema,
-					ServerID:     serverName,
+					Name:        tool.Name,
+					Description: tool.Description,
+					InputSchema: tool.InputSchema,
+					ServerID:    serverName,
 				})
 				gatewayTools = append(gatewayTools, Tool{
 					Name:        stub.Name,
@@ -502,12 +502,12 @@ func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
 	}
 
 	type serverToolResult struct {
-		name        string
-		tools       []Tool
-		err         error
-		initErr    error
-		respError  string
-		hasResult  bool
+		name      string
+		tools     []Tool
+		err       error
+		initErr   error
+		respError string
+		hasResult bool
 	}
 
 	var wg sync.WaitGroup
@@ -844,10 +844,10 @@ func (h *Handler) handleGetToolSchema(ctx context.Context, req *Request) (*Respo
 	for _, tool := range toolsResult.Tools {
 		if tool.Name == toolName {
 			fullSchema = registry.ToolSchema{
-				Name:         tool.Name,
-				Description:  tool.Description,
-				InputSchema:  tool.InputSchema,
-				ServerID:     serverName,
+				Name:        tool.Name,
+				Description: tool.Description,
+				InputSchema: tool.InputSchema,
+				ServerID:    serverName,
 			}
 			break
 		}

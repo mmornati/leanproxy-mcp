@@ -38,19 +38,19 @@ var serveCmd = &cobra.Command{
 }
 
 var serveFlags struct {
-	listenAddr string
+	listenAddr  string
 	upstreamURL string
 }
 
 var (
-	serverReg     registry.Registry
-	toolReg       router.ToolRegistry
-	gatewayTools  gateway.GatewayTools
-	stdioPool     *pool.StdioPool
-	httpPool      *pool.HTTPClientPool
-	ssePool       *pool.SSEPool
-	unifiedPool   *pool.UnifiedPool
-	statusStore   *statusfile.FileStatusStore
+	serverReg    registry.Registry
+	toolReg      router.ToolRegistry
+	gatewayTools gateway.GatewayTools
+	stdioPool    *pool.StdioPool
+	httpPool     *pool.HTTPClientPool
+	ssePool      *pool.SSEPool
+	unifiedPool  *pool.UnifiedPool
+	statusStore  *statusfile.FileStatusStore
 )
 
 type Router interface {
@@ -75,10 +75,10 @@ func runServe(cmd *cobra.Command, args []string) {
 	dr := dryrun.NewDryRunner(DryRunEnabled)
 	if dr.ShouldSkip() {
 		dr.Preview("serve_start", map[string]interface{}{
-			"listen":    serveFlags.listenAddr,
-			"upstream":  serveFlags.upstreamURL,
-			"config":    GlobalConfigPath,
-			"message":   "Would start leanproxy server",
+			"listen":   serveFlags.listenAddr,
+			"upstream": serveFlags.upstreamURL,
+			"config":   GlobalConfigPath,
+			"message":  "Would start leanproxy server",
 		})
 		fmt.Println("Dry-run mode: server start skipped")
 		return
@@ -486,7 +486,7 @@ func writeError(writer *bufio.Writer, code int, message string) {
 
 type ServeConfig struct {
 	RequestTimeout time.Duration
-	MaxBatchSize  int
+	MaxBatchSize   int
 }
 
 var serveConfig = &ServeConfig{
