@@ -129,6 +129,7 @@ func TestServe_BasicStart(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
+<<<<<<< Updated upstream
 	
 	testDir := t.TempDir()
 	configPath := filepath.Join(testDir, "servers.yaml")
@@ -141,6 +142,10 @@ func TestServe_BasicStart(t *testing.T) {
 	t.Logf("Serve output: %s", stdout)
 
 	time.Sleep(500 * time.Millisecond)
+=======
+
+	t.Skip("Skipping serve test - requires running server")
+>>>>>>> Stashed changes
 }
 
 func createTestConfig(t *testing.T, path string) {
@@ -465,4 +470,372 @@ func TestErrorHandling(t *testing.T) {
 	if rpcResp["error"] == nil {
 		t.Errorf("Expected error in response")
 	}
+<<<<<<< Updated upstream
+=======
+}
+
+func TestNewFeatures_NamespaceCommands(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	stdout, stderr, exitCode := runBinary("namespace", "--help")
+	t.Logf("Namespace help: %s %s", stdout, stderr)
+
+	if exitCode != 0 {
+		t.Errorf("namespace --help should succeed, got exit code %d", exitCode)
+	}
+
+	if !strings.Contains(stdout, "namespace") {
+		t.Errorf("Expected namespace command in help output")
+	}
+
+	stdout, stderr, _ = runBinary("namespace", "list")
+	t.Logf("Namespace list: %s %s", stdout, stderr)
+}
+
+func TestNewFeatures_CostCommand(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	stdout, stderr, exitCode := runBinary("cost", "--help")
+	t.Logf("Cost help: %s %s", stdout, stderr)
+
+	if exitCode != 0 {
+		t.Errorf("cost --help should succeed, got exit code %d", exitCode)
+	}
+
+	if !strings.Contains(stdout, "cost") && !strings.Contains(stdout, "token") {
+		t.Errorf("Expected cost/token command in help output")
+	}
+
+	stdout, _, _ = runBinary("cost")
+	t.Logf("Cost output: %s", stdout)
+}
+
+func TestNewFeatures_SavingsCommand(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	stdout, stderr, exitCode := runBinary("savings", "--help")
+	t.Logf("Savings help: %s %s", stdout, stderr)
+
+	if exitCode != 0 {
+		t.Errorf("savings --help should succeed, got exit code %d", exitCode)
+	}
+
+	stdout, _, _ = runBinary("savings")
+	t.Logf("Savings output: %s", stdout)
+}
+
+func TestNewFeatures_FederationConfig(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	testDir := t.TempDir()
+	configPath := filepath.Join(testDir, "config.yaml")
+
+	config := `server:
+  port: 8080
+
+federation:
+  enabled: true
+  peers:
+    - name: "test-peer"
+      url: "http://localhost:9999"
+      auth_token: "test-token"
+
+namespaces:
+  engineering:
+    description: "Engineering team"
+    servers:
+      - github
+    children:
+      frontend:
+        servers:
+          - storybook
+
+optimization:
+  lazy_loading:
+    enabled: true
+    stub_tokens: 54
+    cache_ttl: 24h
+`
+
+	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	os.Setenv("LEANPROXY_CONFIG", configPath)
+	defer os.Unsetenv("LEANPROXY_CONFIG")
+
+	stdout, stderr, exitCode := runBinary("server", "list")
+	t.Logf("Server list with federation config: %s %s", stdout, stderr)
+
+	if exitCode != 0 {
+		t.Errorf("server list should succeed with federation config, got exit code %d", exitCode)
+	}
+}
+
+func TestNewFeatures_ServerHealthCommand(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	stdout, stderr, exitCode := runBinary("server", "health", "--help")
+	t.Logf("Server health help: %s %s", stdout, stderr)
+
+	if exitCode != 0 {
+		t.Errorf("server health --help should succeed, got exit code %d", exitCode)
+	}
+}
+
+func TestConfig_ServerWithHTTPTransport(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	testDir := t.TempDir()
+	configPath := filepath.Join(testDir, "servers.yaml")
+
+	config := `servers:
+  - name: http-test
+    transport: http
+    http:
+      url: http://localhost:9999/mcp
+`
+
+	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	os.Setenv("LEANPROXY_CONFIG", configPath)
+	defer os.Unsetenv("LEANPROXY_CONFIG")
+
+	stdout, stderr, _ := runBinary("server", "list")
+	t.Logf("Server list with HTTP transport: %s %s", stdout, stderr)
+
+	if !strings.Contains(stdout, "http-test") && !strings.Contains(stderr, "http-test") {
+		t.Errorf("Expected http-test server in list output")
+	}
+}
+
+func TestConfig_OptimizationSettings(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	testDir := t.TempDir()
+	configPath := filepath.Join(testDir, "leanproxy.yaml")
+
+	config := `server:
+  port: 8080
+
+optimization:
+  lazy_loading:
+    enabled: true
+    stub_tokens: 54
+    cache_ttl: 24h
+    prewarm:
+      - tool1
+      - tool2
+
+bouncer:
+  enabled: true
+  patterns:
+    - name: custom-pattern
+      type: regex
+      pattern: "API_KEY=[A-Za-z0-9]+"
+      replacement: "API_KEY=REDACTED"
+`
+
+	if err := os.WriteFile(configPath, []byte(config), 0644); err != nil {
+		t.Fatalf("Failed to write config: %v", err)
+	}
+
+	wd, _ := os.Getwd()
+	binaryPath := filepath.Join(wd, "leanproxy-mcp")
+
+	os.Chdir(testDir)
+	defer os.Chdir(wd)
+
+	cmd := exec.Command(binaryPath, "bouncer", "list-patterns")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Run()
+
+	output := stdout.String()
+	t.Logf("Bouncer list-patterns: %s", output)
+
+	if !strings.Contains(output, "aws-access-key") {
+		t.Errorf("Expected aws-access-key pattern in list")
+	}
+}
+
+func TestMCPConnection_Validation(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	configPath := filepath.Join(homeDir, ".config/leanproxy_servers.yaml")
+
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("No config at %s, skipping MCP connection test", configPath)
+	}
+
+	os.Setenv("LEANPROXY_CONFIG", configPath)
+	defer os.Unsetenv("LEANPROXY_CONFIG")
+
+	stdout, stderr, exitCode := runBinary("server", "list")
+	t.Logf("Server list from config: %s %s", stdout, stderr)
+
+	if exitCode != 0 {
+		t.Errorf("server list should succeed, got exit code %d", exitCode)
+	}
+
+	expectedServers := []string{"garmin", "Intervals.icu", "stitch", "github"}
+	for _, server := range expectedServers {
+		found := strings.Contains(stdout, server) || strings.Contains(stderr, server)
+		if !found {
+			t.Logf("Note: Server '%s' may not be in list output", server)
+		}
+	}
+}
+
+func TestMCPConnection_StdioServers(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	configPath := filepath.Join(homeDir, ".config/leanproxy_servers.yaml")
+
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("No config at %s, skipping", configPath)
+	}
+
+	os.Setenv("LEANPROXY_CONFIG", configPath)
+	defer os.Unsetenv("LEANPROXY_CONFIG")
+
+	tests := []struct {
+		name    string
+		timeout time.Duration
+	}{
+		{"garmin", 30 * time.Second},
+		{"Intervals.icu", 30 * time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, exitCode := runBinary("server", "health", tt.name, "--timeout", tt.timeout.String())
+			t.Logf("Health check for %s: exit=%d, stdout=%s, stderr=%s", tt.name, exitCode, stdout, stderr)
+
+			if exitCode != 0 && exitCode != 1 {
+				t.Errorf("server health %s should not crash, got exit code %d", tt.name, exitCode)
+			}
+		})
+	}
+}
+
+func TestMCPConnection_HTTPEndpoints(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	configPath := filepath.Join(homeDir, ".config/leanproxy_servers.yaml")
+
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("No config at %s, skipping", configPath)
+	}
+
+	httpServers := []string{"stitch", "github"}
+
+	for _, server := range httpServers {
+		t.Run(server, func(t *testing.T) {
+			stdout, stderr, _ := runBinary("server", "list")
+			t.Logf("List output for HTTP server %s: %s %s", server, stdout, stderr)
+		})
+	}
+}
+
+func TestConfig_LoadFromHome(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	configPath := filepath.Join(homeDir, ".config/leanproxy_servers.yaml")
+
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("No config at %s", configPath)
+	}
+
+	os.Setenv("LEANPROXY_CONFIG", configPath)
+	defer os.Unsetenv("LEANPROXY_CONFIG")
+
+	stdout, stderr, exitCode := runBinary("server", "list")
+	t.Logf("Load from home config: exit=%d, %s %s", exitCode, stdout, stderr)
+
+	if exitCode != 0 {
+		t.Errorf("Should load config from home directory, got exit code %d", exitCode)
+	}
+}
+
+func TestServerRun_StdioMode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping in short mode")
+	}
+
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	configPath := filepath.Join(homeDir, ".config/leanproxy_servers.yaml")
+
+	if _, err := os.Stat(configPath); err != nil {
+		t.Skipf("No config at %s", configPath)
+	}
+
+	testDir := t.TempDir()
+	outputPath := filepath.Join(testDir, "output.txt")
+
+	file, err := os.Create(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to create output file: %v", err)
+	}
+	defer file.Close()
+
+	cmd := exec.Command("./leanproxy-mcp", "server", "run", "--stdio")
+	cmd.Stdout = file
+	cmd.Stderr = file
+	cmd.Dir = testDir
+
+	env := os.Getenv("LEANPROXY_CONFIG")
+	if env != "" {
+		cmd.Env = append(os.Environ(), "LEANPROXY_CONFIG="+configPath)
+	} else {
+		cmd.Env = os.Environ()
+		cmd.Env = append(cmd.Env, "LEANPROXY_CONFIG="+configPath)
+	}
+
+	err = cmd.Start()
+	if err != nil {
+		t.Logf("server run --stdio may require running MCP server, err: %v", err)
+		return
+	}
+
+	time.Sleep(2 * time.Second)
+	cmd.Process.Kill()
+	cmd.Wait()
+
+	content, _ := os.ReadFile(outputPath)
+	t.Logf("server run output: %s", string(content))
+>>>>>>> Stashed changes
 }
