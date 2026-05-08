@@ -38,28 +38,23 @@ func NewSessionCache(ttl time.Duration, maxSize int) *SessionCache {
 }
 
 func (sc *SessionCache) GetOrCreateSession(serverName string) (*SessionState, error) {
-	sc.mu.RLock()
-	session, exists := sc.sessions[serverName]
-	sc.mu.RUnlock()
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
 
-	if exists && sc.isValid(session) {
-		sc.mu.Lock()
+	session, exists := sc.sessions[serverName]
+
+	if exists && sc.isValidLocked(session) {
 		session.LastUsedAt = time.Now()
-		sc.mu.Unlock()
 		return session, nil
 	}
 
 	if exists {
-		sc.mu.Lock()
 		delete(sc.sessions, serverName)
-		sc.mu.Unlock()
 	}
 
-	sc.mu.Lock()
 	if len(sc.sessions) >= sc.maxSize {
-		sc.evictOldest()
+		sc.evictOldestLocked()
 	}
-	sc.mu.Unlock()
 
 	newSession := &SessionState{
 		ServerName:  serverName,
@@ -68,21 +63,19 @@ func (sc *SessionCache) GetOrCreateSession(serverName string) (*SessionState, er
 		LastUsedAt: time.Now(),
 	}
 
-	sc.mu.Lock()
 	sc.sessions[serverName] = newSession
-	sc.mu.Unlock()
 
 	return newSession, nil
 }
 
-func (sc *SessionCache) isValid(session *SessionState) bool {
+func (sc *SessionCache) isValidLocked(session *SessionState) bool {
 	if session == nil {
 		return false
 	}
 	return time.Since(session.LastUsedAt) < sc.ttl
 }
 
-func (sc *SessionCache) evictOldest() {
+func (sc *SessionCache) evictOldestLocked() {
 	var oldestKey string
 	var oldestTime time.Time
 
@@ -107,7 +100,7 @@ func (sc *SessionCache) RestoreSession(state *SessionState) error {
 	defer sc.mu.Unlock()
 
 	if len(sc.sessions) >= sc.maxSize {
-		sc.evictOldest()
+		sc.evictOldestLocked()
 	}
 
 	state.LastUsedAt = time.Now()
@@ -139,7 +132,10 @@ func (sc *SessionCache) GetSession(serverName string) (*SessionState, bool) {
 	defer sc.mu.RUnlock()
 
 	session, exists := sc.sessions[serverName]
-	if !exists || !sc.isValid(session) {
+	if !exists {
+		return nil, false
+	}
+	if time.Since(session.LastUsedAt) >= sc.ttl {
 		return nil, false
 	}
 	return session, true

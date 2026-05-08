@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -183,7 +184,7 @@ func BenchmarkSessionCache_GetOrCreateSession_Multiple(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		serverName := "server-" + string(rune(i%10+'0'))
+		serverName := fmt.Sprintf("server-%d", i%10)
 		cache.GetOrCreateSession(serverName)
 	}
 }
