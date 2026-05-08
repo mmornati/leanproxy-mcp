@@ -353,16 +353,16 @@ namespaces:
 
 ```bash
 # List all namespaces
-leanproxy namespace list
+leanproxy-mcp namespace list
 
 # List tools in a namespace
-leanproxy namespace list engineering --tools
+leanproxy-mcp namespace list engineering --tools
 
 # Add a new namespace (generates config example)
-leanproxy namespace add frontend --servers=storybook,figma
+leanproxy-mcp namespace add frontend --servers=storybook,figma
 
 # Assign server to namespace (generates config example)
-leanproxy namespace assign engineering github
+leanproxy-mcp namespace assign engineering github
 ```
 
 ## Environment Variables

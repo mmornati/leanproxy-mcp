@@ -1260,10 +1260,16 @@ leanproxy-mcp namespace list [namespace] [flags]
 # List all namespaces
 leanproxy-mcp namespace list
 
-# Show details of a specific namespace
-leanproxy-mcp namespace list engineering
-
 # List tools in a namespace
+leanproxy-mcp namespace list engineering --tools
+
+# Add a new namespace
+leanproxy-mcp namespace add engineering --servers=github,jira --description="Engineering team"
+
+# Assign a server to a namespace
+leanproxy-mcp namespace assign engineering github
+
+# List tools in a specific namespace
 leanproxy-mcp namespace list engineering --tools
 ```
 
