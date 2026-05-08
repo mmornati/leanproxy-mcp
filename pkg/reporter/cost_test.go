@@ -3,24 +3,7 @@ package reporter
 import (
 	"sync"
 	"testing"
-	"time"
 )
-
-type fakeClock struct {
-	currentTime time.Time
-}
-
-func (f *fakeClock) Now() time.Time {
-	return f.currentTime
-}
-
-func (f *fakeClock) Since(t time.Time) time.Duration {
-	return f.currentTime.Sub(t)
-}
-
-func (f *fakeClock) add(d time.Duration) {
-	f.currentTime = f.currentTime.Add(d)
-}
 
 func TestCostTrackerTrack(t *testing.T) {
 	tracker := NewCostTracker()
