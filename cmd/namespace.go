@@ -27,16 +27,16 @@ by grouping them under logical organizational units.
 
 Examples:
   # List all namespaces
-  leanproxy namespace list
+  leanproxy-mcp namespace list
 
   # Add a new namespace
-  leanproxy namespace add engineering --servers=github,jira --description="Engineering team"
+  leanproxy-mcp namespace add engineering --servers=github,jira --description="Engineering team"
 
   # Assign a server to a namespace
-  leanproxy namespace assign engineering github
+  leanproxy-mcp namespace assign engineering github
 
   # List tools in a specific namespace
-  leanproxy namespace list engineering --tools
+  leanproxy-mcp namespace list engineering --tools
 `,
 	SilenceUsage: true,
 }

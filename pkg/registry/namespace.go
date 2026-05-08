@@ -100,8 +100,26 @@ func (m *inMemoryNamespaceManager) GetNamespace(ctx context.Context, name string
 		return nil, fmt.Errorf("namespace not found: %s", name)
 	}
 
-	result := *ns
-	return &result, nil
+	return m.deepCopyNamespace(ns), nil
+}
+
+func (m *inMemoryNamespaceManager) deepCopyNamespace(ns *Namespace) *Namespace {
+	if ns == nil {
+		return nil
+	}
+	result := &Namespace{
+		Name:           ns.Name,
+		Description:    ns.Description,
+		Servers:        make([]string, len(ns.Servers)),
+		Children:       make(map[string]*Namespace),
+		AllowedClients: make([]string, len(ns.AllowedClients)),
+	}
+	copy(result.Servers, ns.Servers)
+	copy(result.AllowedClients, ns.AllowedClients)
+	for k, v := range ns.Children {
+		result.Children[k] = m.deepCopyNamespace(v)
+	}
+	return result
 }
 
 func (m *inMemoryNamespaceManager) GetToolsForNamespace(ctx context.Context, nsName string) ([]string, error) {
@@ -116,14 +134,9 @@ func (m *inMemoryNamespaceManager) GetToolsForNamespace(ctx context.Context, nsN
 	var serverIDs []string
 	m.collectServers(ns, &serverIDs)
 
-	var tools []string
-	for serverID := range m.serverNS {
-		for _, sid := range serverIDs {
-			if sid == serverID {
-				tools = append(tools, nsName+"."+serverID+"/*")
-				break
-			}
-		}
+	tools := make([]string, 0, len(serverIDs))
+	for _, sid := range serverIDs {
+		tools = append(tools, nsName+"."+sid)
 	}
 
 	return tools, nil
