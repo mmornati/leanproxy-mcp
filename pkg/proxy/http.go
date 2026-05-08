@@ -246,7 +246,11 @@ func (h *streamableHTTPHandler) handlePost(w http.ResponseWriter, r *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	if resp != nil {
+		json.NewEncoder(w).Encode(resp)
+	} else {
+		json.NewEncoder(w).Encode(JSONRPCResponse{JSONRPC: "2.0", ID: req.ID})
+	}
 }
 
 func (h *streamableHTTPHandler) handleStreamableGet(w http.ResponseWriter, r *http.Request, ctx context.Context) {
@@ -286,21 +290,14 @@ func (h *streamableHTTPHandler) handleSSE(w http.ResponseWriter, r *http.Request
 	}
 	r.Body.Close()
 
-	notify := ctx.Done()
-	notifyChan := make(chan struct{})
-	close(notifyChan)
+	writeSSEEvent(w, flusher, "connected", `{"status":"connected"}`)
 
-	done := make(chan struct{})
-	go func() {
-		select {
-		case <-done:
-		case <-notify:
-		}
-	}()
-
-	flusher.Flush()
-
-	h.logger.Debug("http transport: SSE connection established")
+	select {
+	case <-ctx.Done():
+		h.logger.Debug("http transport: SSE connection closed")
+	case <-r.Context().Done():
+		h.logger.Debug("http transport: SSE client disconnected")
+	}
 }
 
 func (h *streamableHTTPHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -310,5 +307,10 @@ func (h *streamableHTTPHandler) handleHealth(w http.ResponseWriter, r *http.Requ
 		"status": "healthy",
 		"service": "leanproxy-mcp",
 	})
+}
+
+func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, data string) {
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
+	flusher.Flush()
 }
 
