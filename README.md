@@ -27,27 +27,37 @@
 
 Every MCP server you connect injects **thousands of tokens** into every LLM request — even when you never use it. This is the "Schema Tax":
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        NATIVE MCP REQUEST FLOW                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   Your IDE                                                                   │
-│      │                                                                         │
-│      ▼                                                                         │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │  MCP Server 1 (GitHub)     → 41 tools  = ~4,100 tokens            │   │
-│   │  MCP Server 2 (Garmin)     → 55 tools  = ~5,500 tokens            │   │
-│   │  MCP Server 3 (Intervals)   → 67 tools  = ~6,700 tokens            │   │
-│   │  MCP Server 4 (Stitch)      → 22 tools  = ~2,200 tokens           │   │
-│   │                                                                            │   │
-│   │  TOTAL SCHEMA OVERHEAD: ~18,500 tokens per request                 │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
-│      │                                                                         │
-│      ▼                                                                         │
-│   LLM Provider ◄── You're paying for ALL these tool schemas EVERY time     │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    IDE["Your IDE"] --> MCP["MCP Gateway"]
+
+    subgraph MCP["MCP Gateway"]
+        S1["GitHub (41 tools)"]
+        S2["Garmin (55 tools)"]
+        S3["Intervals (67 tools)"]
+        S4["Stitch (22 tools)"]
+    end
+
+    MCP --> LLM["LLM Provider"]
+
+    note1["~4,100 tokens"]
+    note2["~5,500 tokens"]
+    note3["~6,700 tokens"]
+    note4["~2,200 tokens"]
+    total["TOTAL: ~18,500 tokens"]
+
+    S1 -.-> note1
+    S2 -.-> note2
+    S3 -.-> note3
+    S4 -.-> note4
+    note1 --- total
+    note2 --- total
+    note3 --- total
+    note4 --- total
+    total -.-> LLM
+
+    style MCP fill:#ff6b6b,color:#fff
+    style LLM fill:#ee5a5a,color:#fff
 ```
 
 **The result?** You're burning tokens on tool definitions you'll never use in that session.
@@ -58,29 +68,37 @@ Every MCP server you connect injects **thousands of tokens** into every LLM requ
 
 LeanProxy sits between your IDE and MCP servers as a smart gateway. It loads tool schemas **only when needed** — reducing 18,500 tokens to ~110.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        LEANPROXY GATEWAY FLOW                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   Your IDE                                                                   │
-│      │                                                                         │
-│      ▼                                                                         │
-│   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │  GATEWAY TOOLS (2): invoke_tool, list_tools = ~110 tokens          │   │
-│   │                                                                            │   │
-│   │  ✓ On-demand tool loading (JIT)                                      │   │
-│   │  ✓ Automatic schema caching                                          │   │
-│   │  ✓ Secret redaction before data leaves your machine                 │   │
-│   │  ✓ Connection pooling & circuit breakers                            │   │
-│   └─────────────────────────────────────────────────────────────────────┘   │
-│      │                                                                         │
-│      ├──────────────────────┬──────────────────────┬────────────────────┐   │
-│      ▼                      ▼                      ▼                    ▼   │
-│   GitHub Server    Garmin Server       Intervals Server      Stitch Server │
-│   (loads on call)  (loads on call)     (loads on call)       (loads on call)│
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    IDE["Your IDE"] --> Gateway["LeanProxy Gateway"]
+
+    subgraph Gateway["LeanProxy Gateway"]
+        Router["Router: invoke_tool + list_tools (~110 tokens)"]
+        JIT["JIT Schema Loading"]
+        Cache["Automatic Caching"]
+        Firewall["Token Firewall"]
+        Pool["Connection Pooling"]
+    end
+
+    Gateway -.->|"loads on demand"| GH["GitHub"]
+    Gateway -.->|"loads on demand"| Garmin["Garmin"]
+    Gateway -.->|"loads on demand"| Intervals["Intervals.icu"]
+    Gateway -.->|"loads on demand"| Stitch["Stitch"]
+
+    Router --> Firewall --> Pool --> GH
+    Router --> Firewall --> Pool --> Garmin
+    Router --> Firewall --> Pool --> Intervals
+    Router --> Firewall --> Pool --> Stitch
+
+    Router --> JIT
+    JIT --> Cache
+
+    style Gateway fill:#1a1a2e,color:#fff
+    style Router fill:#00ADD8,color:#fff
+    style JIT fill:#00ADD8,color:#fff
+    style Cache fill:#00ADD8,color:#fff
+    style Firewall fill:#00ADD8,color:#fff
+    style Pool fill:#00ADD8,color:#fff
 ```
 
 ---
