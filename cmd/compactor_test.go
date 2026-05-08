@@ -60,6 +60,7 @@ func TestRebuildFlags_AllFlag(t *testing.T) {
 
 func TestRebuildFlags_AllFlagSet(t *testing.T) {
 	cmd := rebuildCmd
+
 	if err := cmd.Flags().Set("all", "true"); err != nil {
 		t.Fatalf("set --all flag: %v", err)
 	}
@@ -71,6 +72,8 @@ func TestRebuildFlags_AllFlagSet(t *testing.T) {
 	if !all {
 		t.Error("--all should be true after setting")
 	}
+
+	cmd.Flags().Set("all", "false")
 }
 
 func TestBuildRawManifest(t *testing.T) {
