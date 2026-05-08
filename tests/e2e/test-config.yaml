@@ -1,0 +1,90 @@
+# LeanProxy-MCP E2E Test Configuration
+# Tests features from Epic 8 (Performance) and Epic 9 (Federation)
+# Latest release: v0.6.1 | Main branch includes all new features
+
+server:
+  host: "127.0.0.1"
+  port: 8080
+  timeout: 30s
+  max_batch_size: 100
+
+# Epic 8.1: Lazy Loading (optimization)
+optimization:
+  lazy_loading:
+    enabled: true
+    stub_tokens: 54
+    cache_ttl: 24h
+    prewarm:
+      - github_search_code
+      - filesystem_read_file
+
+# Socket configuration
+socket:
+  path: "~/.leanproxy/leanproxy.sock"
+  perm: 0700
+  max_msg_size: 1048576
+  rate_limit: 100
+  auth_token: ""
+
+# Bouncer (redaction) - existing feature
+bouncer:
+  enabled: true
+  patterns: []
+
+# Logging
+logging:
+  level: "info"
+  file: ""
+
+# Watch mode
+watch:
+  interval: "1s"
+
+# Epic 9.1: Hierarchical Namespaces
+namespaces:
+  engineering:
+    description: "Engineering team tools"
+    servers:
+      - github
+      - jira
+    children:
+      frontend:
+        servers:
+          - storybook
+  ops:
+    description: "Operations infrastructure"
+    servers:
+      - aws
+      - kubernetes
+    allowed_clients:
+      - "ops-team"
+      - "*"
+
+# Epic 9.2: Federation (multi-org tool sharing)
+federation:
+  enabled: true
+  peers:
+    - name: "company-a"
+      url: "https://proxy.company-a.internal:8080"
+      auth_token: "optional-shared-secret"
+    - name: "company-b"
+      url: "https://proxy.company-b.internal:8080"
+
+# MCP Servers Configuration
+# Includes HTTP transport with OAuth2 (new feature)
+servers:
+  # Stdio server (traditional)
+  - name: "filesystem"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "./"]
+    transport: "stdio"
+
+  # HTTP transport server (new in Epic 8)
+  - name: "http-echo"
+    url: "http://localhost:8081"
+    transport: "http"
+
+  # SSE transport (new)
+  - name: "sse-server"
+    url: "http://localhost:8083"
+    transport: "sse"
