@@ -230,7 +230,9 @@ func (h *streamableHTTPHandler) handlePost(w http.ResponseWriter, r *http.Reques
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			h.logger.Warn("http transport: failed to encode error response", "error", err)
+		}
 		return
 	}
 
@@ -247,9 +249,13 @@ func (h *streamableHTTPHandler) handlePost(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if resp != nil {
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			h.logger.Warn("http transport: failed to encode response", "error", err)
+		}
 	} else {
-		json.NewEncoder(w).Encode(JSONRPCResponse{JSONRPC: "2.0", ID: req.ID})
+		if err := json.NewEncoder(w).Encode(JSONRPCResponse{JSONRPC: "2.0", ID: req.ID}); err != nil {
+			h.logger.Warn("http transport: failed to encode response", "error", err)
+		}
 	}
 }
 
@@ -264,10 +270,12 @@ func (h *streamableHTTPHandler) handleStreamableGet(w http.ResponseWriter, r *ht
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Accept", "application/json, text/event-stream")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"jsonrpc": "2.0",
 		"result":  "Streamable HTTP endpoint ready",
-	})
+	}); err != nil {
+		h.logger.Warn("http transport: failed to encode response", "error", err)
+	}
 }
 
 func (h *streamableHTTPHandler) handleSSE(w http.ResponseWriter, r *http.Request, ctx context.Context) {
@@ -303,10 +311,12 @@ func (h *streamableHTTPHandler) handleSSE(w http.ResponseWriter, r *http.Request
 func (h *streamableHTTPHandler) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	if err := json.NewEncoder(w).Encode(map[string]string{
 		"status": "healthy",
 		"service": "leanproxy-mcp",
-	})
+	}); err != nil {
+		h.logger.Warn("http transport: failed to encode health response", "error", err)
+	}
 }
 
 func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, eventType string, data string) {
