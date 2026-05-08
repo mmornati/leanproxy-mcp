@@ -381,7 +381,16 @@ func TestUpdateStdioServerStatusOnce_NilInputs(t *testing.T) {
 }
 
 func TestUpdateServerStatus_NilInputs(t *testing.T) {
-	updateServerStatus(nil, nil, nil)
+	done := make(chan struct{})
+	go func() {
+		updateServerStatus(nil, nil, nil)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+	}
 }
 
 func TestCalculateErrorRate(t *testing.T) {
@@ -417,15 +426,13 @@ func TestGetLastError(t *testing.T) {
 		{"error state", pool.StateError, pool.ServerStats{}, "server in error state"},
 		{"stopped state", pool.StateStopped, pool.ServerStats{}, "server stopped"},
 		{"stopping state", pool.StateStopping, pool.ServerStats{}, "server stopping"},
-		{"with backoff", pool.StateRunning, pool.ServerStats{RestartCount: 1, CurrentBackoff: time.Second}, ""},
+		{"running with backoff", pool.StateRunning, pool.ServerStats{RestartCount: 1, CurrentBackoff: time.Second}, "restart count: 1, backoff: 1s"},
+		{"running no backoff", pool.StateRunning, pool.ServerStats{}, ""},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := getLastError(tt.state, tt.stats)
-			if tt.state == pool.StateRunning && result == "" {
-				return
-			}
 			if result != tt.expected {
 				t.Errorf("getLastError() = %v, want %v", result, tt.expected)
 			}
