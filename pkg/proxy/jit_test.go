@@ -76,8 +76,8 @@ func (f *mockForwarder) ForwardRequest(ctx context.Context, req JSONRPCRequest) 
 
 func TestIsGetToolSchemaRequest(t *testing.T) {
 	tests := []struct {
-		method  string
-		isJIT   bool
+		method string
+		isJIT  bool
 	}{
 		{"get_tool_schema", true},
 		{"Get_Tool_Schema", true},
@@ -347,9 +347,9 @@ func TestLRUCache(t *testing.T) {
 func TestJITConfig(t *testing.T) {
 	t.Run("default values", func(t *testing.T) {
 		cfg := JITConfig{
-			Enabled:  true,
+			Enabled:   true,
 			CacheSize: 100,
-			CacheTTL: "1h",
+			CacheTTL:  "1h",
 		}
 
 		if !cfg.Enabled {

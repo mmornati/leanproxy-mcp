@@ -29,7 +29,7 @@ func (t *UnixTransport) Listen() (net.Listener, error) {
 		return nil, fmt.Errorf("create socket directory: %w", err)
 	}
 
-listener, err := net.Listen("unix", t.path)
+	listener, err := net.Listen("unix", t.path)
 	if err != nil {
 		return nil, fmt.Errorf("listen unix: %w", err)
 	}

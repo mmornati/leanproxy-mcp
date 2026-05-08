@@ -19,36 +19,36 @@ const (
 )
 
 type ServerStatus struct {
-	Name            string            `json:"name"`
-	Status          ServerHealthStatus `json:"status"`
-	Uptime          time.Duration     `json:"uptime"`
-	LastResponseTime time.Time         `json:"last_response_time"`
-	LastError       string            `json:"last_error,omitempty"`
-	RestartCount    int               `json:"restart_count"`
-	RequestCount    int64             `json:"request_count"`
-	ErrorRate       float64           `json:"error_rate"`
-	MemoryMB        int64             `json:"memory_mb,omitempty"`
-	CPUPercent      float64           `json:"cpu_percent,omitempty"`
+	Name             string             `json:"name"`
+	Status           ServerHealthStatus `json:"status"`
+	Uptime           time.Duration      `json:"uptime"`
+	LastResponseTime time.Time          `json:"last_response_time"`
+	LastError        string             `json:"last_error,omitempty"`
+	RestartCount     int                `json:"restart_count"`
+	RequestCount     int64              `json:"request_count"`
+	ErrorRate        float64            `json:"error_rate"`
+	MemoryMB         int64              `json:"memory_mb,omitempty"`
+	CPUPercent       float64            `json:"cpu_percent,omitempty"`
 }
 
 type ServerStatusList struct {
-	Timestamp time.Time     `json:"timestamp"`
+	Timestamp time.Time      `json:"timestamp"`
 	Servers   []ServerStatus `json:"servers"`
 }
 
 type HealthConfig struct {
-	CheckInterval     time.Duration
-	ResponseTimeout   time.Duration
+	CheckInterval      time.Duration
+	ResponseTimeout    time.Duration
 	MaxRestartAttempts int
-	RestartBackoff    time.Duration
+	RestartBackoff     time.Duration
 }
 
 func DefaultHealthConfig() *HealthConfig {
 	return &HealthConfig{
-		CheckInterval:     1 * time.Second,
-		ResponseTimeout:   30 * time.Second,
+		CheckInterval:      1 * time.Second,
+		ResponseTimeout:    30 * time.Second,
 		MaxRestartAttempts: 3,
-		RestartBackoff:    5 * time.Second,
+		RestartBackoff:     5 * time.Second,
 	}
 }
 
@@ -65,15 +65,15 @@ type ManagedServer interface {
 }
 
 type HealthMonitor struct {
-	config     *HealthConfig
-	logger     *slog.Logger
-	servers    map[string]ManagedServer
-	mu         sync.RWMutex
-	stopChan   chan struct{}
-	wg         sync.WaitGroup
-	statusChan chan ServerStatusList
+	config         *HealthConfig
+	logger         *slog.Logger
+	servers        map[string]ManagedServer
+	mu             sync.RWMutex
+	stopChan       chan struct{}
+	wg             sync.WaitGroup
+	statusChan     chan ServerStatusList
 	processChecker *ProcessHealthChecker
-	ticker     *time.Ticker
+	ticker         *time.Ticker
 }
 
 func NewHealthMonitor(config *HealthConfig, logger *slog.Logger) *HealthMonitor {
@@ -81,11 +81,11 @@ func NewHealthMonitor(config *HealthConfig, logger *slog.Logger) *HealthMonitor 
 		config = DefaultHealthConfig()
 	}
 	return &HealthMonitor{
-		config:    config,
-		logger:   logger,
-		servers:  make(map[string]ManagedServer),
-		stopChan: make(chan struct{}),
-		statusChan: make(chan ServerStatusList, 1),
+		config:         config,
+		logger:         logger,
+		servers:        make(map[string]ManagedServer),
+		stopChan:       make(chan struct{}),
+		statusChan:     make(chan ServerStatusList, 1),
 		processChecker: NewProcessHealthChecker(),
 	}
 }
@@ -176,10 +176,10 @@ func (hm *HealthMonitor) checkAllServers() ServerStatusList {
 
 func (hm *HealthMonitor) checkServer(server ManagedServer, now time.Time) ServerStatus {
 	status := ServerStatus{
-		Name:            server.Name(),
-		Uptime:          now.Sub(server.StartTime()),
+		Name:             server.Name(),
+		Uptime:           now.Sub(server.StartTime()),
 		LastResponseTime: server.LastResponseTime(),
-		RequestCount:    server.RequestCount(),
+		RequestCount:     server.RequestCount(),
 	}
 
 	if !server.IsRunning() {

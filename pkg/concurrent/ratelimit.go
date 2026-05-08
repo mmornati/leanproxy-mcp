@@ -34,7 +34,7 @@ func newRateLimiter(max int, window time.Duration, clock Clock) *RateLimiter {
 		window:   window,
 		requests: make([]time.Time, 0, max),
 		stopCh:   make(chan struct{}),
-		clock:   clock,
+		clock:    clock,
 	}
 
 	rl.wg.Add(1)
@@ -118,7 +118,7 @@ func (rl *RateLimiter) Reset() {
 
 type RateLimiterConfig struct {
 	MaxRequests int
-	Window     time.Duration
+	Window      time.Duration
 }
 
 type MultiServerRateLimiter struct {
@@ -207,10 +207,10 @@ func (m *MultiServerRateLimiter) GetStats(serverName string) RateLimiterStats {
 
 	current, max := limiter.GetUsage()
 	return RateLimiterStats{
-		ServerName:     serverName,
+		ServerName:      serverName,
 		CurrentRequests: current,
-		MaxRequests:    max,
-		BlockedCount:   limiter.GetBlockedCount(),
+		MaxRequests:     max,
+		BlockedCount:    limiter.GetBlockedCount(),
 	}
 }
 
@@ -222,21 +222,21 @@ type RateLimiterStats struct {
 }
 
 type QueueManager struct {
-	queues    map[string]*RequestQueue
-	mu        sync.RWMutex
-	maxSize   int
-	timeout   time.Duration
-	overflow  int64
+	queues     map[string]*RequestQueue
+	mu         sync.RWMutex
+	maxSize    int
+	timeout    time.Duration
+	overflow   int64
 	overflowMu sync.RWMutex
 }
 
 type RequestQueue struct {
-	items    []QueuedRequest
-	mu       sync.RWMutex
-	maxSize  int
-	timeout  time.Duration
-	enqueued int64
-	dequeued int64
+	items     []QueuedRequest
+	mu        sync.RWMutex
+	maxSize   int
+	timeout   time.Duration
+	enqueued  int64
+	dequeued  int64
 	timeouted int64
 }
 

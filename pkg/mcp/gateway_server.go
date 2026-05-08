@@ -10,8 +10,8 @@ import (
 )
 
 type MCPServerInstance struct {
-	server *server.MCPServer
-	logger *slog.Logger
+	server  *server.MCPServer
+	logger  *slog.Logger
 	mcpPool *pool.StdioPool
 }
 

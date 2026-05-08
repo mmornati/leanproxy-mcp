@@ -10,7 +10,7 @@ import (
 var (
 	ErrCodeContextNil     = -32010
 	ErrCodeContextTimeout = -32011
-	ErrCodeContextCancel = -32012
+	ErrCodeContextCancel  = -32012
 
 	DefaultMinTimeout = 100 * time.Millisecond
 	DefaultMaxTimeout = 5 * time.Minute
@@ -94,8 +94,8 @@ const (
 	ErrCodeInvalidRequest = -32600
 	ErrCodeMethodNotFound = -32601
 	ErrCodeInvalidParams  = -32602
-	ErrCodeInternalError = -32603
-	ErrCodeServerError   = -32000
-	ErrCodeTimeout       = -32001
-	ErrCodeUnauthorized  = -32604
+	ErrCodeInternalError  = -32603
+	ErrCodeServerError    = -32000
+	ErrCodeTimeout        = -32001
+	ErrCodeUnauthorized   = -32604
 )

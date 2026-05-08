@@ -94,11 +94,11 @@ func (am *AlertManager) EmitSummary(messageID string, method string) {
 
 func (am *AlertManager) emitVerboseSummary(messageID, method string) {
 	summary := map[string]interface{}{
-		"event":       "redaction_summary",
-		"message_id":  messageID,
-		"method":      method,
-		"patterns":    am.currentCounts,
-		"has_secrets": true,
+		"event":         "redaction_summary",
+		"message_id":    messageID,
+		"method":        method,
+		"patterns":      am.currentCounts,
+		"has_secrets":   true,
 		"secret_fields": detectSecretFields(method),
 	}
 
@@ -108,8 +108,8 @@ func (am *AlertManager) emitVerboseSummary(messageID, method string) {
 
 func detectSecretFields(method string) []string {
 	knownMethods := map[string][]string{
-		"tools/call":       {"arguments", "input"},
-		"resources/read":  {"uri", "contents"},
+		"tools/call":     {"arguments", "input"},
+		"resources/read": {"uri", "contents"},
 	}
 	if fields, ok := knownMethods[method]; ok {
 		return fields

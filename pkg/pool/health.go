@@ -207,9 +207,9 @@ type PingRequest struct {
 }
 
 type PingResponse struct {
-	ID      interface{}         `json:"id"`
-	JSONRPC string              `json:"jsonrpc"`
-	Result  json.RawMessage     `json:"result,omitempty"`
+	ID      interface{}          `json:"id"`
+	JSONRPC string               `json:"jsonrpc"`
+	Result  json.RawMessage      `json:"result,omitempty"`
 	Error   *errors.JSONRPCError `json:"error,omitempty"`
 }
 

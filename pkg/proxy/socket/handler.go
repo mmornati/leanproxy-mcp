@@ -74,7 +74,7 @@ func (h *Handler) handleTokenResolve(ctx context.Context, params json.RawMessage
 }
 
 type tokenValidateParams struct {
-	Token string `json:"token"`
+	Token  string `json:"token"`
 	Policy string `json:"policy"`
 }
 
@@ -85,9 +85,9 @@ func (h *Handler) handleTokenValidate(ctx context.Context, params json.RawMessag
 	}
 
 	return map[string]interface{}{
-		"valid":   true,
-		"token":   p.Token,
-		"policy":  p.Policy,
+		"valid":  true,
+		"token":  p.Token,
+		"policy": p.Policy,
 	}, nil
 }
 

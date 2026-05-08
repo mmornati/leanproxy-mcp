@@ -8,22 +8,22 @@ func TestGetToolDefinition(t *testing.T) {
 	tests := []struct {
 		name       string
 		searchName string
-		wantNil   bool
+		wantNil    bool
 	}{
 		{
 			name:       "list_tools exists",
 			searchName: "list_tools",
-			wantNil:   false,
+			wantNil:    false,
 		},
 		{
 			name:       "invoke_tool exists",
 			searchName: "invoke_tool",
-			wantNil:   false,
+			wantNil:    false,
 		},
 		{
 			name:       "non_existent tool",
 			searchName: "fake_tool",
-			wantNil:   true,
+			wantNil:    true,
 		},
 	}
 

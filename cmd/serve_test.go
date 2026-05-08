@@ -36,10 +36,10 @@ func (m *mockRouter) RouteBatch(ctx context.Context, methods []string) ([]*regis
 }
 
 type mockGatewayTools struct {
-	listServersFunc  func(ctx context.Context) ([]gateway.ServerInfo, error)
-	invokeToolFunc   func(ctx context.Context, params gateway.InvokeToolParams) (interface{}, error)
-	searchToolsFunc  func(ctx context.Context, query string) ([]gateway.ToolSearchResult, error)
-	listToolsFunc    func() []gateway.Tool
+	listServersFunc func(ctx context.Context) ([]gateway.ServerInfo, error)
+	invokeToolFunc  func(ctx context.Context, params gateway.InvokeToolParams) (interface{}, error)
+	searchToolsFunc func(ctx context.Context, query string) ([]gateway.ToolSearchResult, error)
+	listToolsFunc   func() []gateway.Tool
 }
 
 func (m *mockGatewayTools) ListTools() []gateway.Tool {

@@ -12,13 +12,13 @@ import (
 )
 
 type Config struct {
-	Version  string          `json:"version" yaml:"version"`
-	Name     string          `json:"name" yaml:"name"`
-	Servers  []ServerConfig  `json:"servers" yaml:"servers"`
-	Auth     *AuthConfig     `json:"auth,omitempty" yaml:"auth,omitempty"`
-	Limits   *LimitsConfig   `json:"limits,omitempty" yaml:"limits,omitempty"`
-	Logging  *LoggingConfig  `json:"logging,omitempty" yaml:"logging,omitempty"`
-	Meta     Metadata        `json:"_meta,omitempty" yaml:"_meta,omitempty"`
+	Version string         `json:"version" yaml:"version"`
+	Name    string         `json:"name" yaml:"name"`
+	Servers []ServerConfig `json:"servers" yaml:"servers"`
+	Auth    *AuthConfig    `json:"auth,omitempty" yaml:"auth,omitempty"`
+	Limits  *LimitsConfig  `json:"limits,omitempty" yaml:"limits,omitempty"`
+	Logging *LoggingConfig `json:"logging,omitempty" yaml:"logging,omitempty"`
+	Meta    Metadata       `json:"_meta,omitempty" yaml:"_meta,omitempty"`
 }
 
 type ServerConfig struct {
@@ -30,11 +30,11 @@ type ServerConfig struct {
 }
 
 type AuthConfig struct {
-	Token   string            `json:"token" yaml:"token"`
-	Header  string            `json:"header" yaml:"header"`
-	Expiry  time.Time         `json:"expiry" yaml:"expiry"`
-	Scopes  []string          `json:"scopes" yaml:"scopes"`
-	Meta    Metadata          `json:"_meta,omitempty" yaml:"_meta,omitempty"`
+	Token  string    `json:"token" yaml:"token"`
+	Header string    `json:"header" yaml:"header"`
+	Expiry time.Time `json:"expiry" yaml:"expiry"`
+	Scopes []string  `json:"scopes" yaml:"scopes"`
+	Meta   Metadata  `json:"_meta,omitempty" yaml:"_meta,omitempty"`
 }
 
 type LimitsConfig struct {
@@ -62,9 +62,9 @@ type Layer struct {
 }
 
 type MergedConfig struct {
-	Config    *Config          `json:"config"`
+	Config    *Config             `json:"config"`
 	Sources   map[string][]string `json:"sources"`
-	Timestamp time.Time        `json:"timestamp"`
+	Timestamp time.Time           `json:"timestamp"`
 }
 
 type ManifestMerger struct {

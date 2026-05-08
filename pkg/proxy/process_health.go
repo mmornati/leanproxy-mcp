@@ -11,11 +11,11 @@ import (
 )
 
 type ProcessHealth struct {
-	PID         int
-	MemoryMB    int64
-	CPUPercent  float64
-	Status      string
-	IsAlive     bool
+	PID        int
+	MemoryMB   int64
+	CPUPercent float64
+	Status     string
+	IsAlive    bool
 }
 
 type ProcessHealthChecker struct {
@@ -154,8 +154,6 @@ func processExists(pid int) bool {
 
 	return errno != syscall.ESRCH && errno != syscall.EPERM
 }
-
-
 
 func splitLines(s string) []string {
 	result := make([]string, 0)

@@ -17,7 +17,7 @@ import (
 
 func runBinary(args ...string) (string, string, int) {
 	wd, _ := os.Getwd()
-	
+
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command("./leanproxy-mcp", args...)
 	cmd.Stdout = &stdout
@@ -33,7 +33,7 @@ func runBinary(args ...string) (string, string, int) {
 			exitCode = 1
 		}
 	}
-	
+
 	return stdout.String(), stderr.String(), exitCode
 }
 
@@ -49,7 +49,7 @@ func TestCLI_HelpCommand(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	stdout, stderr, exitCode := runBinary("--help")
 	output := stdout + stderr
 
@@ -66,7 +66,7 @@ func TestCLI_VersionCommand(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	stdout, stderr, exitCode := runBinary("version")
 	output := stdout + stderr
 
@@ -83,7 +83,7 @@ func TestCLI_InvalidCommand(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	_, stderr, exitCode := runBinary("nonexistent-command")
 
 	if exitCode == 0 {
@@ -97,7 +97,7 @@ func TestServer_ListCommand(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	testDir := t.TempDir()
 	configPath := filepath.Join(testDir, "servers.yaml")
 	os.Setenv("LEANPROXY_CONFIG", configPath)
@@ -111,7 +111,7 @@ func TestServer_AddCommand(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	testDir := t.TempDir()
 	configPath := filepath.Join(testDir, "servers.yaml")
 	os.Setenv("LEANPROXY_CONFIG", configPath)
@@ -125,11 +125,11 @@ func TestServe_BasicStart(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping in short mode")
 	}
-	
+
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	testDir := t.TempDir()
 	configPath := filepath.Join(testDir, "servers.yaml")
 	createTestConfig(t, configPath)
@@ -169,7 +169,7 @@ func TestCache_Commands(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	stdout, stderr, _ := runBinary("cache", "--help")
 	t.Logf("Cache: %s %s", stdout, stderr)
 }
@@ -178,7 +178,7 @@ func TestStatus_Commands(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	stdout, stderr, _ := runBinary("status", "--help")
 	t.Logf("Status: %s %s", stdout, stderr)
 }
@@ -187,7 +187,7 @@ func TestConfig_Validation(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	tests := []struct {
 		name   string
 		config string
@@ -231,7 +231,7 @@ func TestDryRunMode(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
-	
+
 	testDir := t.TempDir()
 	configPath := filepath.Join(testDir, "servers.yaml")
 	os.Setenv("LEANPROXY_CONFIG", configPath)
@@ -295,7 +295,7 @@ func TestJSONRPC_Initialize(t *testing.T) {
 		if req["method"] == "initialize" {
 			resp := map[string]interface{}{
 				"jsonrpc": "2.0",
-				"id":     req["id"],
+				"id":      req["id"],
 				"result": map[string]interface{}{
 					"protocolVersion": "1.0",
 					"serverInfo": map[string]string{
@@ -314,8 +314,8 @@ func TestJSONRPC_Initialize(t *testing.T) {
 
 	requestBody := map[string]interface{}{
 		"jsonrpc": "2.0",
-		"method": "initialize",
-		"id":     1,
+		"method":  "initialize",
+		"id":      1,
 	}
 	body, _ := json.Marshal(requestBody)
 
@@ -348,7 +348,7 @@ func TestJSONRPC_InvalidMethod(t *testing.T) {
 		if req["method"] == "invalid_method" {
 			errResp := map[string]interface{}{
 				"jsonrpc": "2.0",
-				"id":     req["id"],
+				"id":      req["id"],
 				"error": map[string]interface{}{
 					"code":    -32601,
 					"message": "Method not found",
@@ -365,8 +365,8 @@ func TestJSONRPC_InvalidMethod(t *testing.T) {
 
 	requestBody := map[string]interface{}{
 		"jsonrpc": "2.0",
-		"method": "invalid_method",
-		"id":     1,
+		"method":  "invalid_method",
+		"id":      1,
 	}
 	body, _ := json.Marshal(requestBody)
 
@@ -399,8 +399,8 @@ func TestJSONRPC_BatchRequest(t *testing.T) {
 			json.Unmarshal(reqRaw, &req)
 			responses = append(responses, map[string]interface{}{
 				"jsonrpc": "2.0",
-				"id":     req["id"],
-				"result": map[string]interface{}{},
+				"id":      req["id"],
+				"result":  map[string]interface{}{},
 			})
 		}
 
@@ -433,7 +433,7 @@ func TestErrorHandling(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		errResp := map[string]interface{}{
 			"jsonrpc": "2.0",
-			"id":     1,
+			"id":      1,
 			"error": map[string]interface{}{
 				"code":    -32600,
 				"message": "Invalid Request",

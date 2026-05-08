@@ -35,13 +35,13 @@ func TestCalculateSavings(t *testing.T) {
 	te := NewTokenEstimator()
 
 	tests := []struct {
-		name             string
-		original         string
-		optimized        string
-		wantOriginal     int
-		wantOptimized    int
-		wantSaved        int
-		wantSavingsPct   float64
+		name           string
+		original       string
+		optimized      string
+		wantOriginal   int
+		wantOptimized  int
+		wantSaved      int
+		wantSavingsPct float64
 	}{
 		{
 			name:           "both empty",
@@ -142,10 +142,10 @@ func TestEstimateNativeMCPOverhead(t *testing.T) {
 	te := NewTokenEstimator()
 
 	tests := []struct {
-		name       string
-		toolCount  int
-		minTokens  int
-		maxTokens  int
+		name      string
+		toolCount int
+		minTokens int
+		maxTokens int
 	}{
 		{"small server", 10, 500, 1000},
 		{"medium server", 35, 1500, 3500},

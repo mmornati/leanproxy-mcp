@@ -52,9 +52,9 @@ var addCmd = &cobra.Command{
 }
 
 var addFlags struct {
-	env        []string
-	cwd        string
-	transport  string
+	env       []string
+	cwd       string
+	transport string
 }
 
 func init() {
@@ -110,11 +110,11 @@ func runServerAdd(cmd *cobra.Command, args []string) error {
 
 	enabled := true
 	newServer := &migrate.ServerConfig{
-		Name:      name,
-		Transport: transport,
-		Stdio:     stdio,
-		Enabled:   &enabled,
-		Timeout:   "30s",
+		Name:           name,
+		Transport:      transport,
+		Stdio:          stdio,
+		Enabled:        &enabled,
+		Timeout:        "30s",
 		ConnectTimeout: "10s",
 	}
 
@@ -308,11 +308,11 @@ Example:
 }
 
 var runFlags struct {
-	stdio     bool
-	config    string
-	logFile   string
-	logLevel  string
-	verbose   bool
+	stdio    bool
+	config   string
+	logFile  string
+	logLevel string
+	verbose  bool
 }
 
 func init() {

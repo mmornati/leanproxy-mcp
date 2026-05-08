@@ -37,14 +37,14 @@ type CircuitBreaker struct {
 	state           CircuitState
 	lastFailure     time.Time
 	successes       int32
-	totalSuccesses   int32
-	totalFailures    int32
-	clock          Clock
+	totalSuccesses  int32
+	totalFailures   int32
+	clock           Clock
 }
 
 type CircuitBreakerConfig struct {
-	Threshold        int
-	Cooldown         time.Duration
+	Threshold          int
+	Cooldown           time.Duration
 	HalfOpenMaxSuccess int
 }
 
@@ -59,14 +59,14 @@ func NewCircuitBreaker(threshold int, cooldown time.Duration, halfOpenCooldown t
 
 func newCircuitBreaker(threshold int, cooldown time.Duration, halfOpenMax int, clock Clock) *CircuitBreaker {
 	return &CircuitBreaker{
-		threshold:       threshold,
-		cooldown:        cooldown,
-		halfOpenMax:     halfOpenMax,
-		state:           StateClosed,
-		lastFailure:     time.Time{},
-		successes:       0,
-		totalSuccesses:  0,
-		totalFailures:   0,
+		threshold:      threshold,
+		cooldown:       cooldown,
+		halfOpenMax:    halfOpenMax,
+		state:          StateClosed,
+		lastFailure:    time.Time{},
+		successes:      0,
+		totalSuccesses: 0,
+		totalFailures:  0,
 		clock:          clock,
 	}
 }
@@ -153,7 +153,7 @@ func (cb *CircuitBreaker) GetMetrics() CircuitBreakerMetrics {
 		Threshold:      cb.threshold,
 		TotalSuccesses: atomic.LoadInt32(&cb.totalSuccesses),
 		TotalFailures:  atomic.LoadInt32(&cb.totalFailures),
-		LastFailure:   cb.lastFailure,
+		LastFailure:    cb.lastFailure,
 	}
 }
 
@@ -177,14 +177,14 @@ func (cb *CircuitBreaker) Reset() {
 }
 
 type CircuitBreakerGroup struct {
-	breakers map[string]*CircuitBreaker
-	mu       sync.RWMutex
+	breakers  map[string]*CircuitBreaker
+	mu        sync.RWMutex
 	defaultCB *CircuitBreaker
 }
 
 func NewCircuitBreakerGroup() *CircuitBreakerGroup {
 	return &CircuitBreakerGroup{
-		breakers: make(map[string]*CircuitBreaker),
+		breakers:  make(map[string]*CircuitBreaker),
 		defaultCB: newCircuitBreaker(5, 50*time.Second, 3, defaultClock),
 	}
 }

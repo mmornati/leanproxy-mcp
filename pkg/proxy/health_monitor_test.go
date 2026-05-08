@@ -26,14 +26,14 @@ func TestServerHealthStatus_Values(t *testing.T) {
 
 func TestServerStatus_Structure(t *testing.T) {
 	status := ServerStatus{
-		Name:            "test-server",
-		Status:          StatusRunning,
-		Uptime:          5 * time.Minute,
+		Name:             "test-server",
+		Status:           StatusRunning,
+		Uptime:           5 * time.Minute,
 		LastResponseTime: time.Now(),
-		RequestCount:    100,
-		ErrorRate:       0.5,
-		MemoryMB:        128,
-		CPUPercent:      25.5,
+		RequestCount:     100,
+		ErrorRate:        0.5,
+		MemoryMB:         128,
+		CPUPercent:       25.5,
 	}
 
 	if status.Name != "test-server" {
@@ -83,25 +83,27 @@ func TestDefaultHealthConfig(t *testing.T) {
 }
 
 type mockServer struct {
-	nameVal         string
-	pidVal          int
-	runningVal      bool
-	startTimeVal    time.Time
-	requestCountVal int64
-	errorCountVal   int64
-	crashCallbacks []func()
+	nameVal          string
+	pidVal           int
+	runningVal       bool
+	startTimeVal     time.Time
+	requestCountVal  int64
+	errorCountVal    int64
+	crashCallbacks   []func()
 	restartCallbacks []func()
 }
 
-func (m *mockServer) Name() string                 { return m.nameVal }
-func (m *mockServer) PID() int                      { return m.pidVal }
-func (m *mockServer) IsRunning() bool               { return m.runningVal }
-func (m *mockServer) StartTime() time.Time          { return m.startTimeVal }
-func (m *mockServer) LastResponseTime() time.Time   { return time.Now() }
-func (m *mockServer) RequestCount() int64           { return m.requestCountVal }
-func (m *mockServer) ErrorCount() int64             { return m.errorCountVal }
-func (m *mockServer) OnCrash(callback func())       { m.crashCallbacks = append(m.crashCallbacks, callback) }
-func (m *mockServer) OnRestart(callback func())    { m.restartCallbacks = append(m.restartCallbacks, callback) }
+func (m *mockServer) Name() string                { return m.nameVal }
+func (m *mockServer) PID() int                    { return m.pidVal }
+func (m *mockServer) IsRunning() bool             { return m.runningVal }
+func (m *mockServer) StartTime() time.Time        { return m.startTimeVal }
+func (m *mockServer) LastResponseTime() time.Time { return time.Now() }
+func (m *mockServer) RequestCount() int64         { return m.requestCountVal }
+func (m *mockServer) ErrorCount() int64           { return m.errorCountVal }
+func (m *mockServer) OnCrash(callback func())     { m.crashCallbacks = append(m.crashCallbacks, callback) }
+func (m *mockServer) OnRestart(callback func()) {
+	m.restartCallbacks = append(m.restartCallbacks, callback)
+}
 
 func TestHealthMonitor_RegisterServer(t *testing.T) {
 	monitor := NewHealthMonitor(nil, nil)
@@ -138,21 +140,21 @@ func TestHealthMonitor_GetStatus(t *testing.T) {
 	monitor := NewHealthMonitor(nil, nil)
 
 	server1 := &mockServer{
-		nameVal:    "server-1",
-		pidVal:     12345,
-		runningVal: true,
-		startTimeVal: time.Now().Add(-5 * time.Minute),
+		nameVal:         "server-1",
+		pidVal:          12345,
+		runningVal:      true,
+		startTimeVal:    time.Now().Add(-5 * time.Minute),
 		requestCountVal: 100,
-		errorCountVal: 1,
+		errorCountVal:   1,
 	}
 
 	server2 := &mockServer{
-		nameVal:    "server-2",
-		pidVal:     12346,
-		runningVal: false,
-		startTimeVal: time.Now().Add(-10 * time.Minute),
+		nameVal:         "server-2",
+		pidVal:          12346,
+		runningVal:      false,
+		startTimeVal:    time.Now().Add(-10 * time.Minute),
 		requestCountVal: 50,
-		errorCountVal: 5,
+		errorCountVal:   5,
 	}
 
 	monitor.RegisterServer(server1)
@@ -169,12 +171,12 @@ func TestHealthMonitor_WatchStatus(t *testing.T) {
 	monitor := NewHealthMonitor(nil, nil)
 
 	server := &mockServer{
-		nameVal:    "server-1",
-		pidVal:     12345,
-		runningVal: true,
-		startTimeVal: time.Now().Add(-5 * time.Minute),
+		nameVal:         "server-1",
+		pidVal:          12345,
+		runningVal:      true,
+		startTimeVal:    time.Now().Add(-5 * time.Minute),
 		requestCountVal: 100,
-		errorCountVal: 1,
+		errorCountVal:   1,
 	}
 
 	monitor.RegisterServer(server)

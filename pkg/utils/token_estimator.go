@@ -31,20 +31,20 @@ type MCPServerAnalysis struct {
 }
 
 type ComparisonResult struct {
-	NativeMCPTokens    int                      `json:"native_mcp_tokens"`
-	LeanProxyTokens    int                      `json:"leanproxy_tokens"`
-	SavedTokens        int                      `json:"saved_tokens"`
-	SavingsPercent     float64                  `json:"savings_percent"`
-	ServerBreakdown    []MCPServerAnalysis      `json:"server_breakdown"`
-	MonthlySavings     map[string]MonthlySaving `json:"monthly_savings"`
+	NativeMCPTokens int                      `json:"native_mcp_tokens"`
+	LeanProxyTokens int                      `json:"leanproxy_tokens"`
+	SavedTokens     int                      `json:"saved_tokens"`
+	SavingsPercent  float64                  `json:"savings_percent"`
+	ServerBreakdown []MCPServerAnalysis      `json:"server_breakdown"`
+	MonthlySavings  map[string]MonthlySaving `json:"monthly_savings"`
 }
 
 type MonthlySaving struct {
-	Model       string  `json:"model"`
-	Sessions    int     `json:"sessions"`
-	SavingsUSD  float64 `json:"savings_usd"`
-	InputRate   float64 `json:"input_rate"`
-	OutputRate  float64 `json:"output_rate"`
+	Model      string  `json:"model"`
+	Sessions   int     `json:"sessions"`
+	SavingsUSD float64 `json:"savings_usd"`
+	InputRate  float64 `json:"input_rate"`
+	OutputRate float64 `json:"output_rate"`
 }
 
 type TokenEstimator struct{}
@@ -102,7 +102,7 @@ func (t *TokenEstimator) EstimateLeanProxySchemaTokens() int {
 			"name":        "invoke_tool",
 			"description": "Invoke a tool on a specific MCP server",
 			"inputSchema": map[string]interface{}{
-				"type":       "object",
+				"type": "object",
 				"properties": map[string]interface{}{
 					"server_name": map[string]interface{}{"type": "string"},
 					"tool_name":   map[string]interface{}{"type": "string"},
@@ -117,7 +117,7 @@ func (t *TokenEstimator) EstimateLeanProxySchemaTokens() int {
 			"inputSchema": map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
-					"server_name":         map[string]interface{}{"type": "string"},
+					"server_name":           map[string]interface{}{"type": "string"},
 					"max_description_chars": map[string]interface{}{"type": "number"},
 				},
 				"required": []string{"server_name"},
@@ -181,11 +181,11 @@ func (t *TokenEstimator) calculateMonthlySavings(savedTokensPerSession int, sess
 		outputRate float64
 		model      string
 	}{
-		"OpenAI GPT-4o":     {inputRate: 2.50, outputRate: 10.00, model: "gpt-4o"},
-		"OpenAI GPT-5.4":    {inputRate: 2.50, outputRate: 15.00, model: "gpt-5.4"},
-		"Anthropic Sonnet":  {inputRate: 3.00, outputRate: 15.00, model: "claude-sonnet-4-6"},
-		"Anthropic Opus":    {inputRate: 5.00, outputRate: 25.00, model: "claude-opus-4-7"},
-		"Anthropic Haiku":   {inputRate: 1.00, outputRate: 5.00, model: "claude-haiku-4-5"},
+		"OpenAI GPT-4o":    {inputRate: 2.50, outputRate: 10.00, model: "gpt-4o"},
+		"OpenAI GPT-5.4":   {inputRate: 2.50, outputRate: 15.00, model: "gpt-5.4"},
+		"Anthropic Sonnet": {inputRate: 3.00, outputRate: 15.00, model: "claude-sonnet-4-6"},
+		"Anthropic Opus":   {inputRate: 5.00, outputRate: 25.00, model: "claude-opus-4-7"},
+		"Anthropic Haiku":  {inputRate: 1.00, outputRate: 5.00, model: "claude-haiku-4-5"},
 	}
 
 	monthlySavings := make(map[string]MonthlySaving)
@@ -193,11 +193,11 @@ func (t *TokenEstimator) calculateMonthlySavings(savedTokensPerSession int, sess
 		inputCost := (float64(inputTokens) / 1_000_000) * pricing.inputRate
 		outputCost := (float64(outputTokens) / 1_000_000) * pricing.outputRate
 		monthlySavings[name] = MonthlySaving{
-			Model:       pricing.model,
-			Sessions:    sessionsPerMonth,
-			SavingsUSD:  inputCost + outputCost,
-			InputRate:   pricing.inputRate,
-			OutputRate:  pricing.outputRate,
+			Model:      pricing.model,
+			Sessions:   sessionsPerMonth,
+			SavingsUSD: inputCost + outputCost,
+			InputRate:  pricing.inputRate,
+			OutputRate: pricing.outputRate,
 		}
 	}
 

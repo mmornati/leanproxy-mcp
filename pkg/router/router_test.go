@@ -62,7 +62,7 @@ func TestParseMethod(t *testing.T) {
 }
 
 type mockLogger struct {
-	mu    sync.Mutex
+	mu     sync.Mutex
 	debugs []string
 }
 

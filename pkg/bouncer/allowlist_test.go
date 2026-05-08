@@ -47,9 +47,9 @@ func TestGitHubClassicPATPattern(t *testing.T) {
 		"ghp_123456789012345678901234567890123456",   // 40 chars
 	}
 	invalid := []string{
-		"ghx_abcdefghijklmnopqrstuvwxyz1234567890abcd",  // wrong prefix
-		"GHP_abcdefghijklmnopqrstuvwxyz1234567890abcd",  // uppercase prefix
-		"ghp abcdefghijklmnopqrstuvwxyz1234567890abcd",  // space in prefix
+		"ghx_abcdefghijklmnopqrstuvwxyz1234567890abcd", // wrong prefix
+		"GHP_abcdefghijklmnopqrstuvwxyz1234567890abcd", // uppercase prefix
+		"ghp abcdefghijklmnopqrstuvwxyz1234567890abcd", // space in prefix
 	}
 
 	for _, v := range valid {
@@ -153,10 +153,10 @@ func TestGenericAPIKeyPattern(t *testing.T) {
 		"APIKEY=abcdefghijklmnopqrstuvwx", // 16 chars after KEY
 	}
 	invalid := []string{
-		"api_key=short",                    // only 5 chars
-		"api_key=abc",                      // only 3 chars
-		"APIKEY=abcdefgh",                  // only 8 chars
-		"APIKEYabcdefgh",                   // only 8 chars
+		"api_key=short",   // only 5 chars
+		"api_key=abc",     // only 3 chars
+		"APIKEY=abcdefgh", // only 8 chars
+		"APIKEYabcdefgh",  // only 8 chars
 		"apikey",
 		"key=abcdefghijklmnop",
 		"secret_token",

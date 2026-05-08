@@ -104,12 +104,12 @@ func getRunningStatusList() proxy.ServerStatusList {
 		}
 
 		status := proxy.ServerStatus{
-			Name:            s.Name,
-			Status:          healthStatus,
-			RequestCount:    s.RequestCount,
-			ErrorRate:       float64(s.ErrorCount),
-			RestartCount:    s.RestartCount,
-			Uptime:          uptime,
+			Name:         s.Name,
+			Status:       healthStatus,
+			RequestCount: s.RequestCount,
+			ErrorRate:    float64(s.ErrorCount),
+			RestartCount: s.RestartCount,
+			Uptime:       uptime,
 		}
 		statusList = append(statusList, status)
 	}
@@ -171,11 +171,11 @@ func getRealStatusList() proxy.ServerStatusList {
 		}
 
 		status := proxy.ServerStatus{
-			Name:            serverName,
-			RequestCount:    stats.RequestCount,
-			ErrorRate:       calculateErrorRate(stats.ErrorCount, stats.RequestCount),
-			RestartCount:    stats.RestartCount,
-			LastError:       getLastError(state, stats),
+			Name:         serverName,
+			RequestCount: stats.RequestCount,
+			ErrorRate:    calculateErrorRate(stats.ErrorCount, stats.RequestCount),
+			RestartCount: stats.RestartCount,
+			LastError:    getLastError(state, stats),
 		}
 
 		switch state {

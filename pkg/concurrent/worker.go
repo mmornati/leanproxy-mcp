@@ -9,16 +9,16 @@ import (
 )
 
 type WorkerPool struct {
-	workers    int
-	queueSize  int
-	logger     *slog.Logger
-	workCh     chan workItem
-	wg         sync.WaitGroup
-	ctx        context.Context
-	cancel     context.CancelFunc
-	shutdown   atomic.Bool
-	metrics    WorkerPoolMetrics
-	metricsMu  sync.RWMutex
+	workers   int
+	queueSize int
+	logger    *slog.Logger
+	workCh    chan workItem
+	wg        sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+	shutdown  atomic.Bool
+	metrics   WorkerPoolMetrics
+	metricsMu sync.RWMutex
 }
 
 type workItem struct {

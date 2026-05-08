@@ -9,16 +9,16 @@ import (
 
 type SessionState struct {
 	ServerName       string          `json:"server_name"`
-	ClientID        string          `json:"client_id"`
-	Capabilities   []string       `json:"capabilities,omitempty"`
+	ClientID         string          `json:"client_id"`
+	Capabilities     []string        `json:"capabilities,omitempty"`
 	InitializeParams json.RawMessage `json:"init_params,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
-	LastUsedAt     time.Time      `json:"last_used_at"`
+	CreatedAt        time.Time       `json:"created_at"`
+	LastUsedAt       time.Time       `json:"last_used_at"`
 }
 
 type SessionCache struct {
-	mu        sync.RWMutex
-	sessions  map[string]*SessionState
+	mu       sync.RWMutex
+	sessions map[string]*SessionState
 	ttl      time.Duration
 	maxSize  int
 }
@@ -57,7 +57,7 @@ func (sc *SessionCache) GetOrCreateSession(serverName string) (*SessionState, er
 	}
 
 	newSession := &SessionState{
-		ServerName:  serverName,
+		ServerName: serverName,
 		ClientID:   fmt.Sprintf("%s-%d", serverName, time.Now().UnixNano()),
 		CreatedAt:  time.Now(),
 		LastUsedAt: time.Now(),

@@ -26,7 +26,7 @@ type HealthStatus string
 
 const (
 	HealthUnknown   HealthStatus = "unknown"
-	HealthHealthy  HealthStatus = "healthy"
+	HealthHealthy   HealthStatus = "healthy"
 	HealthUnhealthy HealthStatus = "unhealthy"
 )
 
@@ -91,14 +91,14 @@ type Registry interface {
 }
 
 type inMemoryRegistry struct {
-	servers  map[string]*ServerEntry
-	byCap    map[string][]string
-	byTrans  map[TransportType][]string
-	mu       sync.RWMutex
-	logger   *slog.Logger
-	subMu    sync.RWMutex
-	subs     []chan<- RegistryEvent
-	persist  string
+	servers map[string]*ServerEntry
+	byCap   map[string][]string
+	byTrans map[TransportType][]string
+	mu      sync.RWMutex
+	logger  *slog.Logger
+	subMu   sync.RWMutex
+	subs    []chan<- RegistryEvent
+	persist string
 }
 
 func NewRegistry(logger *slog.Logger, persistPath string) Registry {

@@ -11,9 +11,9 @@ import (
 )
 
 type JITConfig struct {
-	Enabled  bool
+	Enabled   bool
 	CacheSize int
-	CacheTTL string
+	CacheTTL  string
 }
 
 type JITHandler struct {

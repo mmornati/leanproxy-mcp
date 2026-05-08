@@ -5,15 +5,15 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils/dryrun"
+	"github.com/spf13/cobra"
 )
 
 var (
-	migrateYes        bool
-	migrateDryRun     bool
-	migrateTarget     string
+	migrateYes          bool
+	migrateDryRun       bool
+	migrateTarget       string
 	migrateValidateOnly bool
 )
 

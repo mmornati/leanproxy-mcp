@@ -29,6 +29,7 @@ leanproxy-mcp [command] [flags]
 | `cache` | Inspect persisted tool cache |
 | `status` | Display real-time server status |
 | `savings` | Display token savings statistics |
+| `cost` | Display token cost attribution statistics |
 | `report` | Generate token savings report |
 | `migrate` | Import MCP configs from other tools |
 | `completion` | Generate shell completions |
@@ -926,6 +927,147 @@ By server:
   }
 }
 ```
+
+---
+
+## `cost` - Token Cost Attribution
+
+Display token usage broken down by tool and server for the current session. This allows you to see which tools consume the most tokens.
+
+### Usage
+
+```bash
+leanproxy-mcp cost [flags]
+```
+
+### Flags
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--by-tool` | bool | Show cost breakdown by tool only |
+| `--by-server` | bool | Show cost breakdown by server only |
+| `--json` | bool | Output in JSON format |
+| `--reset` | bool | Reset cost counters |
+
+#### Examples
+
+```bash
+# Show full cost breakdown
+leanproxy-mcp cost
+
+# Show cost by tool only
+leanproxy-mcp cost --by-tool
+
+# Show cost by server only
+leanproxy-mcp cost --by-server
+
+# JSON output
+leanproxy-mcp cost --json
+
+# Reset counters
+leanproxy-mcp cost --reset
+```
+
+#### Output (full breakdown)
+
+```
+=== Token Cost Summary ===
+Total Session Tokens: 1234
+Session Duration:     5m30s
+
+=== Token Cost by Tool ===
+github.create_issue: 450 tokens
+github.list_issues: 350 tokens
+filesystem.read_file: 280 tokens
+filesystem.list_directory: 154 tokens
+
+=== Token Cost by Server ===
+github: 800 tokens
+filesystem: 434 tokens
+```
+
+#### Output (--by-tool)
+
+```
+=== Token Cost Summary ===
+Total Session Tokens: 1234
+Session Duration:     5m30s
+
+=== Token Cost by Tool ===
+github.create_issue: 450 tokens
+github.list_issues: 350 tokens
+filesystem.read_file: 280 tokens
+filesystem.list_directory: 154 tokens
+```
+
+#### Output (--by-server)
+
+```
+=== Token Cost Summary ===
+Total Session Tokens: 1234
+Session Duration:     5m30s
+
+=== Token Cost by Server ===
+github: 800 tokens
+filesystem: 434 tokens
+```
+
+#### Output (JSON)
+
+```json
+{
+  "by_tool": [
+    {"tool_name": "github.create_issue", "token_count": 450},
+    {"tool_name": "github.list_issues", "token_count": 350},
+    {"tool_name": "filesystem.read_file", "token_count": 280},
+    {"tool_name": "filesystem.list_directory", "token_count": 154}
+  ],
+  "by_server": [
+    {"server_name": "github", "token_count": 800},
+    {"server_name": "filesystem", "token_count": 434}
+  ],
+  "total": 1234,
+  "duration": "5m30s"
+}
+```
+
+### How It Works
+
+The cost tracking system monitors token usage during tool invocations:
+
+1. **Token Estimation**: When a tool is called, the system estimates token count from request/response size (using ~4 characters per token)
+2. **Per-Tool Tracking**: Tokens are attributed to the specific tool that was invoked
+3. **Per-Server Tracking**: Tokens are also aggregated by the MCP server that handled the request
+4. **Session Duration**: The time since the session started is tracked
+
+### Status File Integration
+
+Cost tracking data is also available via the status file at:
+```
+~/.config/leanproxy/status/current.json
+```
+
+The status file includes a `cost_tracking` section when enabled:
+```json
+{
+  "pid": 12345,
+  "started_at": "2026-05-08T10:00:00+02:00",
+  "listen_addr": "stdio",
+  "servers": [...],
+  "cost_tracking": {
+    "by_tool": {"github.create_issue": 450, "github.list_issues": 350},
+    "by_server": {"github": 800},
+    "total": 1234,
+    "enabled": true
+  }
+}
+```
+
+### Use Cases
+
+- **Identify expensive tools**: Find which tools consume the most tokens
+- **Cost allocation**: Understand which MCP servers are driving costs
+- **Optimization insights**: Identify opportunities to optimize tool usage
 
 ---
 
