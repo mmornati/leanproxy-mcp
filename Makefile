@@ -30,6 +30,61 @@ test: ## Run tests
 	@echo "Running tests..."
 	$(GO) test -v -race -coverprofile=coverage.out ./...
 
+.PHONY: test-coverage
+test-coverage: test ## Run tests with coverage report
+	@echo "Generating coverage report..."
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+
+.PHONY: build
+build: tidy ## Build all platform binaries to dist/
+	@echo "Building for all platforms..."
+	@mkdir -p $(DIST_DIR)
+	GOOS=darwin GOARCH=amd64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 .
+	GOOS=darwin GOARCH=arm64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 .
+	GOOS=linux GOARCH=amd64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 .
+	GOOS=linux GOARCH=arm64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 .
+	GOOS=windows GOARCH=amd64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe .
+	@echo "Builds available in $(DIST_DIR)/"
+
+.PHONY: build-local
+build-local: tidy ## Build for current platform only
+	@echo "Building for $(shell go env GOOS)/$(shell go env GOARCH)..."
+	@mkdir -p $(DIST_DIR)
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME) .
+
+.PHONY: build-version
+build-version: tidy ## Build with custom version (overrides git tag)
+	@echo "Building version $(VERSION)..."
+	@mkdir -p $(DIST_DIR)
+	GOOS=darwin GOARCH=amd64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-darwin-amd64 .
+	GOOS=darwin GOARCH=arm64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-darwin-arm64 .
+	GOOS=linux GOARCH=amd64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-linux-amd64 .
+	GOOS=linux GOARCH=arm64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-linux-arm64 .
+	GOOS=windows GOARCH=amd64 VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) build -ldflags="$(LDFLAGS)" -trimpath -o $(DIST_DIR)/$(BINARY_NAME)-windows-amd64.exe .
+	@echo "Version $(VERSION) builds available in $(DIST_DIR)/"
+
+.PHONY: clean
+clean: ## Remove build artifacts
+	@echo "Cleaning..."
+	@rm -rf $(DIST_DIR)
+	@rm -f coverage.out coverage.html
+
+.PHONY: install
+install: tidy ## Build and install to GOPATH/bin
+	@echo "Installing to $(GOPATH)/bin..."
+	VERSION=$(VERSION) COMMIT=$(COMMIT) BUILD_TIME=$(BUILD_TIME) $(GO) install -ldflags="$(LDFLAGS)" -trimpath .
+
+.PHONY: run
+run: ## Run the application (ARGS='serve --help')
+	@echo "Running..."
+	$(GO) run . $(ARGS)
+
+.PHONY: dev
+dev: tidy ## Run with file watcher (requires entr)
+	@echo "Watching for changes..."
+	@find . -name "*.go" -not -path "./vendor/*" | entr -r $(GO) run .
+
 .PHONY: test-e2e
 test-e2e: ## Run E2E tests (requires built binary)
 	@echo "Building binary for E2E tests..."
