@@ -22,11 +22,19 @@ type ServerStatus struct {
 	LastActivity time.Time `json:"last_activity"`
 }
 
+type CostTracking struct {
+	ByTool   map[string]int64 `json:"by_tool"`
+	ByServer map[string]int64 `json:"by_server"`
+	Total    int64            `json:"total"`
+	Enabled  bool             `json:"enabled"`
+}
+
 type StatusInfo struct {
-	PID        int            `json:"pid"`
-	StartedAt  time.Time      `json:"started_at"`
-	ListenAddr string         `json:"listen_addr"`
-	Servers    []ServerStatus `json:"servers"`
+	PID          int            `json:"pid"`
+	StartedAt    time.Time      `json:"started_at"`
+	ListenAddr   string         `json:"listen_addr"`
+	Servers      []ServerStatus `json:"servers"`
+	CostTracking *CostTracking  `json:"cost_tracking,omitempty"`
 }
 
 type FileStatusStore struct {
@@ -94,6 +102,19 @@ func (s *FileStatusStore) UpdateServers(servers []ServerStatus) {
 	defer s.mu.Unlock()
 	s.info.Servers = servers
 	s.writeLocked()
+}
+
+func (s *FileStatusStore) UpdateCostTracking(costTracking *CostTracking) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.info.CostTracking = costTracking
+	s.writeLocked()
+}
+
+func (s *FileStatusStore) GetCostTracking() *CostTracking {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.info.CostTracking
 }
 
 func (s *FileStatusStore) GetFilePath() string {

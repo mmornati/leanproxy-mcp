@@ -29,9 +29,11 @@ leanproxy-mcp [command] [flags]
 | `cache` | Inspect persisted tool cache |
 | `status` | Display real-time server status |
 | `savings` | Display token savings statistics |
+| `cost` | Display token cost attribution statistics |
 | `report` | Generate token savings report |
 | `migrate` | Import MCP configs from other tools |
 | `completion` | Generate shell completions |
+| `namespace` | Manage hierarchical namespaces |
 | `version` | Print version information |
 
 ## `serve` - Start Proxy Server
@@ -929,6 +931,147 @@ By server:
 
 ---
 
+## `cost` - Token Cost Attribution
+
+Display token usage broken down by tool and server for the current session. This allows you to see which tools consume the most tokens.
+
+### Usage
+
+```bash
+leanproxy-mcp cost [flags]
+```
+
+### Flags
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--by-tool` | bool | Show cost breakdown by tool only |
+| `--by-server` | bool | Show cost breakdown by server only |
+| `--json` | bool | Output in JSON format |
+| `--reset` | bool | Reset cost counters |
+
+#### Examples
+
+```bash
+# Show full cost breakdown
+leanproxy-mcp cost
+
+# Show cost by tool only
+leanproxy-mcp cost --by-tool
+
+# Show cost by server only
+leanproxy-mcp cost --by-server
+
+# JSON output
+leanproxy-mcp cost --json
+
+# Reset counters
+leanproxy-mcp cost --reset
+```
+
+#### Output (full breakdown)
+
+```
+=== Token Cost Summary ===
+Total Session Tokens: 1234
+Session Duration:     5m30s
+
+=== Token Cost by Tool ===
+github.create_issue: 450 tokens
+github.list_issues: 350 tokens
+filesystem.read_file: 280 tokens
+filesystem.list_directory: 154 tokens
+
+=== Token Cost by Server ===
+github: 800 tokens
+filesystem: 434 tokens
+```
+
+#### Output (--by-tool)
+
+```
+=== Token Cost Summary ===
+Total Session Tokens: 1234
+Session Duration:     5m30s
+
+=== Token Cost by Tool ===
+github.create_issue: 450 tokens
+github.list_issues: 350 tokens
+filesystem.read_file: 280 tokens
+filesystem.list_directory: 154 tokens
+```
+
+#### Output (--by-server)
+
+```
+=== Token Cost Summary ===
+Total Session Tokens: 1234
+Session Duration:     5m30s
+
+=== Token Cost by Server ===
+github: 800 tokens
+filesystem: 434 tokens
+```
+
+#### Output (JSON)
+
+```json
+{
+  "by_tool": [
+    {"tool_name": "github.create_issue", "token_count": 450},
+    {"tool_name": "github.list_issues", "token_count": 350},
+    {"tool_name": "filesystem.read_file", "token_count": 280},
+    {"tool_name": "filesystem.list_directory", "token_count": 154}
+  ],
+  "by_server": [
+    {"server_name": "github", "token_count": 800},
+    {"server_name": "filesystem", "token_count": 434}
+  ],
+  "total": 1234,
+  "duration": "5m30s"
+}
+```
+
+### How It Works
+
+The cost tracking system monitors token usage during tool invocations:
+
+1. **Token Estimation**: When a tool is called, the system estimates token count from request/response size (using ~4 characters per token)
+2. **Per-Tool Tracking**: Tokens are attributed to the specific tool that was invoked
+3. **Per-Server Tracking**: Tokens are also aggregated by the MCP server that handled the request
+4. **Session Duration**: The time since the session started is tracked
+
+### Status File Integration
+
+Cost tracking data is also available via the status file at:
+```
+~/.config/leanproxy/status/current.json
+```
+
+The status file includes a `cost_tracking` section when enabled:
+```json
+{
+  "pid": 12345,
+  "started_at": "2026-05-08T10:00:00+02:00",
+  "listen_addr": "stdio",
+  "servers": [...],
+  "cost_tracking": {
+    "by_tool": {"github.create_issue": 450, "github.list_issues": 350},
+    "by_server": {"github": 800},
+    "total": 1234,
+    "enabled": true
+  }
+}
+```
+
+### Use Cases
+
+- **Identify expensive tools**: Find which tools consume the most tokens
+- **Cost allocation**: Understand which MCP servers are driving costs
+- **Optimization insights**: Identify opportunities to optimize tool usage
+
+---
+
 ## `report` - Generate Report
 
 Generate a Markdown-formatted report on token savings and security risks.
@@ -1071,6 +1214,213 @@ leanproxy-mcp completion zsh > ~/.zsh/completions/_leanproxy-mcp
 
 # Fish
 leanproxy-mcp completion fish > ~/.config/fish/completions/leanproxy-mcp.fish
+```
+
+---
+
+## `namespace` - Hierarchical Namespace Management
+
+Manage hierarchical namespaces for organizing MCP servers. Namespaces allow multi-team organizations to manage access to MCP servers by grouping them under logical organizational units.
+
+### Usage
+
+```bash
+leanproxy-mcp namespace [command]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all namespaces or tools in a namespace |
+| `add` | Add a new namespace |
+| `assign` | Assign a server to a namespace |
+
+---
+
+### `namespace list` - List Namespaces
+
+List all configured namespaces or show details about a specific namespace.
+
+#### Usage
+
+```bash
+leanproxy-mcp namespace list [namespace] [flags]
+```
+
+#### Flags
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--tools` | bool | List tools in the namespace |
+
+#### Examples
+
+```bash
+# List all namespaces
+leanproxy-mcp namespace list
+
+# List tools in a namespace
+leanproxy-mcp namespace list engineering --tools
+
+# Add a new namespace
+leanproxy-mcp namespace add engineering --servers=github,jira --description="Engineering team"
+
+# Assign a server to a namespace
+leanproxy-mcp namespace assign engineering github
+
+# List tools in a specific namespace
+leanproxy-mcp namespace list engineering --tools
+```
+
+#### Output (all namespaces)
+
+```
+Configured namespaces:
+  - engineering: Engineering team tools [2 servers]
+  - ops: Operations infrastructure [2 servers]
+  - engineering.frontend: Frontend team [1 servers]
+```
+
+#### Output (specific namespace)
+
+```
+Namespace: engineering
+Description: Engineering team tools
+Servers: [github jira]
+Children: [frontend]
+```
+
+#### Output (tools in namespace)
+
+```
+Tools in namespace 'engineering':
+  - engineering.github (server: github)
+  - engineering.jira (server: jira)
+```
+
+---
+
+### `namespace add` - Add Namespace
+
+Generate example configuration for a new namespace.
+
+#### Usage
+
+```bash
+leanproxy-mcp namespace add <namespace> [flags]
+```
+
+#### Flags
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--servers` | string | Comma-separated list of servers |
+| `--description` | string | Namespace description |
+
+#### Examples
+
+```bash
+# Add a new namespace
+leanproxy-mcp namespace add engineering --servers=github,jira --description="Engineering team"
+
+# Add with description
+leanproxy-mcp namespace add frontend --description="Frontend team tools"
+```
+
+#### Output
+
+```
+Adding namespace 'engineering'
+  Servers: github,jira
+  Description: Engineering team
+
+Note: Namespace configuration should be added to leanproxy.yaml
+Example configuration:
+  namespaces:
+    engineering:
+      servers:
+        - github
+        - jira
+      description: "Engineering team"
+```
+
+---
+
+### `namespace assign` - Assign Server
+
+Generate example configuration for assigning a server to a namespace.
+
+#### Usage
+
+```bash
+leanproxy-mcp namespace assign <namespace> <server>
+```
+
+#### Examples
+
+```bash
+# Assign a server to a namespace
+leanproxy-mcp namespace assign engineering github
+```
+
+#### Output
+
+```
+Assigning server 'github' to namespace 'engineering'
+
+Note: This operation requires updating leanproxy.yaml
+Add 'github' to the 'engineering' namespace servers list.
+```
+
+---
+
+### Configuration
+
+Namespaces are configured in `leanproxy.yaml` under the `namespaces` key:
+
+```yaml
+namespaces:
+  engineering:
+    description: "Engineering team tools"
+    servers:
+      - github
+      - jira
+    children:
+      frontend:
+        servers:
+          - storybook
+  ops:
+    servers:
+      - aws
+      - kubernetes
+```
+
+#### Namespace Options
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | string | Human-readable description of the namespace |
+| `servers` | []string | List of server IDs in this namespace |
+| `children` | map | Nested namespaces (parent includes children) |
+| `allowed_clients` | []string | Clients allowed to access this namespace (supports `*` for wildcard) |
+
+#### Access Control Example
+
+```yaml
+namespaces:
+  restricted:
+    description: "Restricted access namespace"
+    allowed_clients:
+      - "client1"
+      - "client2"
+      - "*"  # Wildcard allows any client
+    servers:
+      - secure-server
+  public:
+    description: "Public namespace (no access restrictions)"
+    servers:
+      - public-server
 ```
 
 ---

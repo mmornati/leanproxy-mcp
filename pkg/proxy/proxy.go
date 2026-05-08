@@ -216,8 +216,8 @@ type JSONRPCRequest struct {
 }
 
 type JSONRPCResponse struct {
-	JSONRPC string              `json:"jsonrpc"`
-	Result  json.RawMessage     `json:"result,omitempty"`
+	JSONRPC string               `json:"jsonrpc"`
+	Result  json.RawMessage      `json:"result,omitempty"`
 	Error   *errors.JSONRPCError `json:"error,omitempty"`
-	ID      interface{}         `json:"id"`
+	ID      interface{}          `json:"id"`
 }

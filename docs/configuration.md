@@ -101,6 +101,111 @@ watch:
 |--------|------|---------|-------------|
 | `watch.interval` | string | `"1s"` | Status refresh interval |
 
+### Optimization Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `optimization.lazy_loading.enabled` | bool | `true` | Enable lazy-loading tool schemas |
+| `optimization.lazy_loading.stub_tokens` | int | `54` | Expected token count per stub |
+| `optimization.lazy_loading.cache_ttl` | duration | `24h` | Cache validity duration |
+| `optimization.lazy_loading.prewarm` | []string | `[]` | Tools to pre-load on startup |
+
+#### Lazy Loading
+
+Lazy-loading reduces initial context overhead by sending only compact tool stubs (~54 tokens each) at startup instead of full schemas. Full schemas are loaded on-demand when a tool is first invoked.
+
+**Benefits:**
+- 6-7x token reduction at startup
+- Only loads full schemas for tools that are actually used
+- In-memory caching with TTL for frequently accessed schemas
+
+**Example:**
+
+```yaml
+optimization:
+  lazy_loading:
+    enabled: true
+    stub_tokens: 54
+    cache_ttl: 24h
+    prewarm:
+      - github_search_code
+      - filesystem_read_file
+```
+
+### Federation Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `federation.enabled` | bool | `false` | Enable federation with other LeanProxy instances |
+| `federation.peers` | array | `[]` | List of federated peer configurations |
+
+#### Federation Configuration
+
+Federation allows connecting multiple LeanProxy instances across organizations to share and route tool requests.
+
+```yaml
+federation:
+  enabled: true
+  peers:
+    - name: "company-a"
+      url: "https://proxy.company-a.internal:8080"
+      auth_token: "optional-shared-secret"
+    - name: "company-b"
+      url: "https://proxy.company-b.internal:8080"
+```
+
+#### Peer Configuration Fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Unique identifier for the peer |
+| `url` | string | yes | HTTP endpoint of the peer |
+| `auth_token` | string | no | Bearer token for authentication |
+
+#### Federation Features
+
+- **Peer Discovery**: Automatically discover available tools from federated peers
+- **Cross-Instance Routing**: Route tool requests to the appropriate peer
+- **Failover Handling**: Automatically switch to backup peers if primary fails
+
+#### Federation API Endpoints
+
+When federation is enabled, the following endpoints are available:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check for peer status |
+| `/federation/list-tools` | POST | List available tools on the peer |
+| `/federation/invoke` | POST | Invoke a tool on the peer |
+
+**list-tools Request:**
+```json
+{}
+```
+
+**list-tools Response:**
+```json
+{
+  "tools": ["github@create_issue", "github@list_repos", "jira@create_ticket"]
+}
+```
+
+**invoke Request:**
+```json
+{
+  "server": "github",
+  "tool": "create_issue",
+  "params": {"title": "Bug report", "body": "..."}
+}
+```
+
+**invoke Response:**
+```json
+{
+  "result": {"id": 123, "url": "https://..."}
+}
+```
+
 ## Built-in Redaction Patterns
 
 LeanProxy-MCP includes these built-in patterns:
@@ -266,6 +371,72 @@ LeanProxy-MCP validates all file paths to prevent path traversal attacks. This p
 ../../../etc/passwd        -> BLOCKED
 ..%2F..%2F..%2Fetc/passwd  -> BLOCKED
 config.yaml\x00           -> BLOCKED
+```
+
+## Hierarchical Namespaces
+
+Namespaces allow organizing MCP servers into hierarchical groups for multi-team organizations.
+
+### Configuration
+
+```yaml
+namespaces:
+  engineering:
+    description: "Engineering team tools"
+    servers:
+      - github
+      - jira
+    children:
+      frontend:
+        servers:
+          - storybook
+  ops:
+    servers:
+      - aws
+      - kubernetes
+    allowed_clients:
+      - "ops-team"
+      - "*"
+```
+
+### Namespace Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | string | Human-readable description |
+| `servers` | []string | Server IDs in this namespace |
+| `children` | map | Nested namespace definitions |
+| `allowed_clients` | []string | Allowed clients (supports `*` wildcard) |
+
+### Access Control
+
+Namespaces support client-level access control:
+
+```yaml
+namespaces:
+  restricted:
+    allowed_clients:
+      - "team-alpha"
+      - "team-beta"
+      - "*"  # Allow any authenticated client
+    servers:
+      - secure-server
+```
+
+### CLI Commands
+
+```bash
+# List all namespaces
+leanproxy-mcp namespace list
+
+# List tools in a namespace
+leanproxy-mcp namespace list engineering --tools
+
+# Add a new namespace (generates config example)
+leanproxy-mcp namespace add frontend --servers=storybook,figma
+
+# Assign server to namespace (generates config example)
+leanproxy-mcp namespace assign engineering github
 ```
 
 ## Environment Variables

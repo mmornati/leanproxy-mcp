@@ -22,13 +22,13 @@ type BatchRequest struct {
 }
 
 type Batcher struct {
-	config    BatchConfig
-	logger    *slog.Logger
-	batches   map[string][]BatchRequest
-	batchMu   sync.RWMutex
-	flushCh   chan string
-	doneCh    chan struct{}
-	window    time.Duration
+	config  BatchConfig
+	logger  *slog.Logger
+	batches map[string][]BatchRequest
+	batchMu sync.RWMutex
+	flushCh chan string
+	doneCh  chan struct{}
+	window  time.Duration
 }
 
 func NewBatcher(config BatchConfig, logger *slog.Logger) *Batcher {
@@ -49,12 +49,12 @@ func NewBatcher(config BatchConfig, logger *slog.Logger) *Batcher {
 	}
 
 	batcher := &Batcher{
-		config:    config,
-		logger:    logger,
-		batches:   make(map[string][]BatchRequest),
-		flushCh:   make(chan string, 100),
-		doneCh:    make(chan struct{}),
-		window:    time.Duration(config.WindowMs) * time.Millisecond,
+		config:  config,
+		logger:  logger,
+		batches: make(map[string][]BatchRequest),
+		flushCh: make(chan string, 100),
+		doneCh:  make(chan struct{}),
+		window:  time.Duration(config.WindowMs) * time.Millisecond,
 	}
 
 	if config.EnableBatching {

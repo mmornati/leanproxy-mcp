@@ -68,18 +68,18 @@ type PoolConfig struct {
 }
 
 type StdioPool struct {
-	servers        map[string]*ServerHandle
-	mu             sync.RWMutex
-	config         PoolConfig
-	logger         *slog.Logger
-	ctx            context.Context
-	cancel         context.CancelFunc
-	workerPool     *WorkerPool
+	servers         map[string]*ServerHandle
+	mu              sync.RWMutex
+	config          PoolConfig
+	logger          *slog.Logger
+	ctx             context.Context
+	cancel          context.CancelFunc
+	workerPool      *WorkerPool
 	circuitBreakers map[string]*CircuitBreaker
-	rateLimiters   map[string]*RateLimiter
-	serverStates   map[string]ServerState
-	stats          PoolStats
-	statsMu        sync.RWMutex
+	rateLimiters    map[string]*RateLimiter
+	serverStates    map[string]ServerState
+	stats           PoolStats
+	statsMu         sync.RWMutex
 }
 
 type ServerHandle struct {
@@ -92,7 +92,7 @@ type ServerHandle struct {
 	AvgLatencyMs   float64
 	LastRequestAt  time.Time
 	RestartCount   int
-	CurrentBackoff  time.Duration
+	CurrentBackoff time.Duration
 }
 
 type PoolStats struct {

@@ -3,13 +3,13 @@ package mcp
 import "encoding/json"
 
 const (
-	MethodInitialize      = "initialize"
-	MethodInitialized    = "notifications/initialized"
-	MethodToolsList      = "tools/list"
+	MethodInitialize    = "initialize"
+	MethodInitialized   = "notifications/initialized"
+	MethodToolsList     = "tools/list"
 	MethodToolsCall     = "tools/call"
-	MethodResourcesList  = "resources/list"
+	MethodResourcesList = "resources/list"
 	MethodResourcesRead = "resources/read"
-	MethodPromptsList    = "prompts/list"
+	MethodPromptsList   = "prompts/list"
 	MethodPromptsGet    = "prompts/get"
 	MethodPing          = "ping"
 	MethodShutdown      = "shutdown"
@@ -46,13 +46,13 @@ func (e *Error) Error() string {
 }
 
 type InitializeParams struct {
-	ProtocolVersion string           `json:"protocolVersion"`
+	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    ClientCapabilities `json:"capabilities"`
-	ClientInfo      ClientInfo       `json:"clientInfo"`
+	ClientInfo      ClientInfo         `json:"clientInfo"`
 }
 
 type ClientCapabilities struct {
-	Roots    *RootsCapability      `json:"roots,omitempty"`
+	Roots    *RootsCapability          `json:"roots,omitempty"`
 	Sampling *ClientSamplingCapability `json:"sampling,omitempty"`
 }
 
@@ -68,17 +68,17 @@ type ClientInfo struct {
 }
 
 type InitializeResult struct {
-	ProtocolVersion string           `json:"protocolVersion"`
+	ProtocolVersion string             `json:"protocolVersion"`
 	Capabilities    ServerCapabilities `json:"capabilities"`
-	ServerInfo      ServerInfo       `json:"serverInfo"`
+	ServerInfo      ServerInfo         `json:"serverInfo"`
 }
 
 type ServerCapabilities struct {
-	Tools     *ToolsCapability        `json:"tools,omitempty"`
-	Resources *ResourcesCapability    `json:"resources,omitempty"`
-	Prompts   *PromptsCapability      `json:"prompts,omitempty"`
+	Tools     *ToolsCapability          `json:"tools,omitempty"`
+	Resources *ResourcesCapability      `json:"resources,omitempty"`
+	Prompts   *PromptsCapability        `json:"prompts,omitempty"`
 	Sampling  *ServerSamplingCapability `json:"sampling,omitempty"`
-	Health    *HealthcheckCapability  `json:"healthcheck,omitempty"`
+	Health    *HealthcheckCapability    `json:"healthcheck,omitempty"`
 }
 
 type ToolsCapability struct {
@@ -108,8 +108,8 @@ type ToolsListParams struct {
 }
 
 type ToolsListResult struct {
-	Tools      []Tool  `json:"tools"`
-	NextCursor string  `json:"nextCursor,omitempty"`
+	Tools      []Tool `json:"tools"`
+	NextCursor string `json:"nextCursor,omitempty"`
 }
 
 type Tool struct {
@@ -138,8 +138,8 @@ type ResourcesListParams struct {
 }
 
 type ResourcesListResult struct {
-	Resources   []Resource `json:"resources"`
-	NextCursor  string     `json:"nextCursor,omitempty"`
+	Resources  []Resource `json:"resources"`
+	NextCursor string     `json:"nextCursor,omitempty"`
 }
 
 type Resource struct {
@@ -154,8 +154,8 @@ type PromptsListParams struct {
 }
 
 type PromptsListResult struct {
-	Prompts     []Prompt `json:"prompts"`
-	NextCursor  string   `json:"nextCursor,omitempty"`
+	Prompts    []Prompt `json:"prompts"`
+	NextCursor string   `json:"nextCursor,omitempty"`
 }
 
 type Prompt struct {

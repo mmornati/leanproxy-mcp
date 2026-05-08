@@ -157,12 +157,12 @@ func TestNewHandlerWithToolStoreNilLogger(t *testing.T) {
 
 func TestHandleInitialize(t *testing.T) {
 	tests := []struct {
-		name           string
-		params         *InitializeParams
-		expectError    bool
-		expectedProto  string
-		expectedName   string
-		expectedVer    string
+		name          string
+		params        *InitializeParams
+		expectError   bool
+		expectedProto string
+		expectedName  string
+		expectedVer   string
 	}{
 		{
 			name: "basic initialize",
@@ -179,9 +179,9 @@ func TestHandleInitialize(t *testing.T) {
 			expectedVer:   "1.0.0",
 		},
 		{
-			name:           "nil params",
-			params:         nil,
-			expectError:    false,
+			name:          "nil params",
+			params:        nil,
+			expectError:   false,
 			expectedProto: "2024-11-05",
 			expectedName:  "leanproxy-mcp",
 			expectedVer:   "1.0.0",
@@ -395,7 +395,7 @@ func TestHandleToolsCall(t *testing.T) {
 		{
 			name: "builtin list_tools",
 			params: ToolsCallParams{
-				Name: "list_tools",
+				Name:      "list_tools",
 				Arguments: json.RawMessage(`{"server_name": "github"}`),
 			},
 			poolSetup: func(mp *mockPool) {
@@ -409,7 +409,7 @@ func TestHandleToolsCall(t *testing.T) {
 		{
 			name: "builtin invoke_tool",
 			params: ToolsCallParams{
-				Name: "invoke_tool",
+				Name:      "invoke_tool",
 				Arguments: json.RawMessage(`{"server": "github", "tool": "list_issues"}`),
 			},
 			poolSetup: func(mp *mockPool) {
@@ -495,8 +495,8 @@ func TestHandleListTools(t *testing.T) {
 		expectEmpty bool
 	}{
 		{
-			name:        "empty server_name",
-			serverName:  "",
+			name:       "empty server_name",
+			serverName: "",
 			poolSetup: func(mp *mockPool) {
 				mp.SetServerState("github", pool.StateIdle)
 				mp.SetTools("github", []Tool{
@@ -831,43 +831,43 @@ func TestFormatToolSearchResult(t *testing.T) {
 		expectedParts []string
 	}{
 		{
-			name:         "basic tool",
-			serverName:   "github",
-			toolName:     "list_issues",
-			description:  "List issues",
-			required:     nil,
-			Optional:     nil,
-			maxDescChars: 200,
+			name:          "basic tool",
+			serverName:    "github",
+			toolName:      "list_issues",
+			description:   "List issues",
+			required:      nil,
+			Optional:      nil,
+			maxDescChars:  200,
 			expectedParts: []string{"github_list_issues:", "List issues"},
 		},
 		{
-			name:         "tool with required params",
-			serverName:   "github",
-			toolName:     "list_issues",
-			description:  "List issues",
-			required:     []ParamInfo{{Name: "owner", Type: "string"}, {Name: "repo", Type: "string"}},
-			Optional:     nil,
-			maxDescChars: 200,
+			name:          "tool with required params",
+			serverName:    "github",
+			toolName:      "list_issues",
+			description:   "List issues",
+			required:      []ParamInfo{{Name: "owner", Type: "string"}, {Name: "repo", Type: "string"}},
+			Optional:      nil,
+			maxDescChars:  200,
 			expectedParts: []string{"github_list_issues:", "[owner: string, repo: string]"},
 		},
 		{
-			name:         "tool with optional params",
-			serverName:   "github",
-			toolName:     "list_issues",
-			description:  "List issues",
-			required:     nil,
-			Optional:     []ParamInfo{{Name: "per_page", Type: "number"}},
-			maxDescChars: 200,
+			name:          "tool with optional params",
+			serverName:    "github",
+			toolName:      "list_issues",
+			description:   "List issues",
+			required:      nil,
+			Optional:      []ParamInfo{{Name: "per_page", Type: "number"}},
+			maxDescChars:  200,
 			expectedParts: []string{"github_list_issues:", "{per_page: number}"},
 		},
 		{
-			name:         "truncated description",
-			serverName:   "github",
-			toolName:     "list_issues",
-			description:  "List all issues from repository with pagination",
-			required:     nil,
-			Optional:     nil,
-			maxDescChars: 20,
+			name:          "truncated description",
+			serverName:    "github",
+			toolName:      "list_issues",
+			description:   "List all issues from repository with pagination",
+			required:      nil,
+			Optional:      nil,
+			maxDescChars:  20,
 			expectedParts: []string{"github_list_issues:", "github_list_issues: List all issues f..."},
 		},
 	}
@@ -980,11 +980,11 @@ func TestCollectTools(t *testing.T) {
 
 func TestParseToolName(t *testing.T) {
 	tests := []struct {
-		name          string
-		fullName      string
-		expectedSrv   string
-		expectedTool  string
-		expectError   bool
+		name         string
+		fullName     string
+		expectedSrv  string
+		expectedTool string
+		expectError  bool
 	}{
 		{
 			name:         "valid tool name",

@@ -200,14 +200,14 @@ func TestGenerateMarkdownReport_ServerBreakdownFormatting(t *testing.T) {
 				"server-a": {
 					ServerName:      "server-a",
 					OriginalTokens:  1000,
-					OptimizedTokens:  600,
-					SavedTokens:      400,
+					OptimizedTokens: 600,
+					SavedTokens:     400,
 				},
 				"server-b": {
 					ServerName:      "server-b",
 					OriginalTokens:  2000,
 					OptimizedTokens: 1400,
-					SavedTokens:      600,
+					SavedTokens:     600,
 				},
 			},
 		},

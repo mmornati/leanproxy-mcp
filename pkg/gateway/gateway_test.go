@@ -28,7 +28,7 @@ func TestListTools(t *testing.T) {
 	expectedTools := map[string]bool{
 		"list_servers": false,
 		"invoke_tool":  false,
-		"list_tools":  false,
+		"list_tools":   false,
 	}
 
 	for _, tool := range tools {

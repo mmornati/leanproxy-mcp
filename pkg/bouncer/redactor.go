@@ -19,9 +19,9 @@ type RedactionMeta struct {
 }
 
 type Redactor struct {
-	patterns      []*regexp.Regexp
-	alertManager  *AlertManager
-	bufferSize    int
+	patterns     []*regexp.Regexp
+	alertManager *AlertManager
+	bufferSize   int
 }
 
 func NewRedactor(patterns []*regexp.Regexp) *Redactor {
@@ -46,7 +46,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 
 	var totalRead, totalWritten int64
 	matchCount := 0
-	
+
 	const maxOverlap = 128
 	var overlap []byte
 
@@ -56,7 +56,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 		n, err := readerBuf.Read(buf)
 		if n > 0 {
 			chunk := append(overlap, buf[:n]...)
-			
+
 			var toRedact []byte
 			if err == io.EOF || len(chunk) <= maxOverlap {
 				toRedact = chunk
@@ -80,7 +80,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 			matchCount += count
 			slog.Debug("processing chunk", "size", len(toRedact))
 		}
-		
+
 		ReturnBuffer(buf)
 
 		if err == io.EOF {

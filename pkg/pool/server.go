@@ -30,13 +30,13 @@ const (
 
 type StdioServerConfig struct {
 	Name            string
-	Command        string
-	Args           []string
-	Env            []string
-	CWD            string
-	MaxConcurrent  int
-	IdleTimeout    time.Duration
-	RequestTimeout time.Duration
+	Command         string
+	Args            []string
+	Env             []string
+	CWD             string
+	MaxConcurrent   int
+	IdleTimeout     time.Duration
+	RequestTimeout  time.Duration
 	MaxResponseSize int
 }
 
@@ -59,31 +59,31 @@ type ServerStats struct {
 
 type StdioServerV2 struct {
 	name            string
-	config         StdioServerConfig
-	process        *exec.Cmd
-	pgid           int
-	stdin          io.WriteCloser
-	stdout         io.Reader
-	mu             sync.Mutex
-	requestCh      chan Request
-	responseCh     chan Response
-	state          int32
-	stats          ServerStats
-	restartCount   int
-	maxRestarts    int
-	backoff        time.Duration
-	lastRequestAt  time.Time
-	idleTimeout    time.Duration
-	requestTimeout time.Duration
-	maxConcurrent  int
+	config          StdioServerConfig
+	process         *exec.Cmd
+	pgid            int
+	stdin           io.WriteCloser
+	stdout          io.Reader
+	mu              sync.Mutex
+	requestCh       chan Request
+	responseCh      chan Response
+	state           int32
+	stats           ServerStats
+	restartCount    int
+	maxRestarts     int
+	backoff         time.Duration
+	lastRequestAt   time.Time
+	idleTimeout     time.Duration
+	requestTimeout  time.Duration
+	maxConcurrent   int
 	maxResponseSize int
-	currentLoad    int
-	healthTicker   *time.Ticker
-	stopCh         chan struct{}
-	stopped        bool
-	logger         *slog.Logger
-	stopChOnce     sync.Once
-	wg             sync.WaitGroup
+	currentLoad     int
+	healthTicker    *time.Ticker
+	stopCh          chan struct{}
+	stopped         bool
+	logger          *slog.Logger
+	stopChOnce      sync.Once
+	wg              sync.WaitGroup
 }
 
 func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *StdioServerV2 {
@@ -112,19 +112,19 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 	}
 
 	return &StdioServerV2{
-		name:             name,
-		config:           config,
-		requestCh:        make(chan Request, maxConcurrent),
+		name:            name,
+		config:          config,
+		requestCh:       make(chan Request, maxConcurrent),
 		responseCh:      make(chan Response, maxConcurrent),
 		state:           stateIdle,
 		stats:           ServerStats{},
-		maxRestarts:    5,
-		backoff:        time.Second,
-		idleTimeout:    idleTimeout,
-		requestTimeout: requestTimeout,
-		maxConcurrent:  maxConcurrent,
+		maxRestarts:     5,
+		backoff:         time.Second,
+		idleTimeout:     idleTimeout,
+		requestTimeout:  requestTimeout,
+		maxConcurrent:   maxConcurrent,
 		maxResponseSize: maxResponseSize,
-		healthTicker:   time.NewTicker(30 * time.Second),
+		healthTicker:    time.NewTicker(30 * time.Second),
 		stopCh:          make(chan struct{}),
 		logger:          logger,
 	}

@@ -11,11 +11,11 @@ func TestValidatePath(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	tests := []struct {
-		name      string
-		path      string
-		baseDir   string
-		wantErr   bool
-		errMsg    string
+		name    string
+		path    string
+		baseDir string
+		wantErr bool
+		errMsg  string
 	}{
 		{
 			name:    "valid path within base",

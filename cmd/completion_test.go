@@ -15,12 +15,12 @@ func TestGenerateBashCompletion(t *testing.T) {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "serve",
 		Short: "Start the proxy server",
-		Run: func(cmd *cobra.Command, args []string) {},
+		Run:   func(cmd *cobra.Command, args []string) {},
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version",
-		Run: func(cmd *cobra.Command, args []string) {},
+		Run:   func(cmd *cobra.Command, args []string) {},
 	})
 
 	buf := new(bytes.Buffer)
@@ -46,12 +46,12 @@ func TestGenerateZshCompletion(t *testing.T) {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "serve",
 		Short: "Start the proxy server",
-		Run: func(cmd *cobra.Command, args []string) {},
+		Run:   func(cmd *cobra.Command, args []string) {},
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version",
-		Run: func(cmd *cobra.Command, args []string) {},
+		Run:   func(cmd *cobra.Command, args []string) {},
 	})
 
 	buf := new(bytes.Buffer)
@@ -77,12 +77,12 @@ func TestGenerateFishCompletion(t *testing.T) {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "serve",
 		Short: "Start the proxy server",
-		Run: func(cmd *cobra.Command, args []string) {},
+		Run:   func(cmd *cobra.Command, args []string) {},
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version",
-		Run: func(cmd *cobra.Command, args []string) {},
+		Run:   func(cmd *cobra.Command, args []string) {},
 	})
 
 	buf := new(bytes.Buffer)
@@ -108,12 +108,12 @@ func TestGeneratePowerShellCompletion(t *testing.T) {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "serve",
 		Short: "Start the proxy server",
-		Run: func(cmd *cobra.Command, args []string) {},
+		Run:   func(cmd *cobra.Command, args []string) {},
 	})
 	cmd.AddCommand(&cobra.Command{
 		Use:   "version",
 		Short: "Print version",
-		Run: func(cmd *cobra.Command, args []string) {},
+		Run:   func(cmd *cobra.Command, args []string) {},
 	})
 
 	buf := new(bytes.Buffer)

@@ -14,9 +14,9 @@ type ToolEntry struct {
 }
 
 type ToolMatch struct {
-	Tool     ToolEntry
-	Score    float64
-	MatchOn  string
+	Tool    ToolEntry
+	Score   float64
+	MatchOn string
 }
 
 type ToolRegistry interface {

@@ -59,8 +59,8 @@ func TestWorkerPoolQueueFull(t *testing.T) {
 		ServerName: "test_server",
 		ID:         0,
 		Timeout:    5 * time.Second,
-		ResultCh:  resultCh,
-		ErrorCh:   errorCh,
+		ResultCh:   resultCh,
+		ErrorCh:    errorCh,
 	}
 
 	err := pool.Submit(req, resultCh, errorCh)
@@ -74,7 +74,7 @@ func TestWorkerPoolQueueFull(t *testing.T) {
 		t.Fatalf("Second submit should succeed: %v", err)
 	}
 
-req.ID = 2
+	req.ID = 2
 	err = pool.Submit(req, resultCh, errorCh)
 	if err == nil {
 		t.Error("Expected error when queue is full")

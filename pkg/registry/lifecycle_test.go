@@ -173,12 +173,12 @@ func TestListServers(t *testing.T) {
 	config1 := ServerConfig{
 		ID:      "list-test-1",
 		Name:    "List Test 1",
-		Command: []string{"echo", "server1"},
+		Command: []string{"sleep", "60"},
 	}
 	config2 := ServerConfig{
 		ID:      "list-test-2",
 		Name:    "List Test 2",
-		Command: []string{"echo", "server2"},
+		Command: []string{"sleep", "60"},
 	}
 
 	_, err := manager.Start(context.Background(), config1)
@@ -196,6 +196,13 @@ func TestListServers(t *testing.T) {
 	}
 	if len(list) < 2 {
 		t.Errorf("List() returned %d servers, want at least 2", len(list))
+	}
+
+	if err := manager.Stop(context.Background(), config1.ID); err != nil {
+		t.Logf("Stop() server1 failed: %v", err)
+	}
+	if err := manager.Stop(context.Background(), config2.ID); err != nil {
+		t.Logf("Stop() server2 failed: %v", err)
 	}
 }
 
