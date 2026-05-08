@@ -100,14 +100,14 @@ leanproxy namespace assign <namespace> <server>
 
 ## Implementation Tasks
 
-- [ ] 1. Create `pkg/registry/namespace.go`
-  - [ ] 1.1 Define Namespace and NamespaceManager
-  - [ ] 1.2 Implement Load() from config
-  - [ ] 1.3 Implement GetToolsForNamespace()
-  - [ ] 1.4 Implement CheckAccess()
-- [ ] 2. Modify config parsing
-- [ ] 3. Add CLI commands
-- [ ] 4. Testing
+- [x] 1. Create `pkg/registry/namespace.go`
+  - [x] 1.1 Define Namespace and NamespaceManager
+  - [x] 1.2 Implement Load() from config
+  - [x] 1.3 Implement GetToolsForNamespace()
+  - [x] 1.4 Implement CheckAccess()
+- [x] 2. Modify config parsing
+- [x] 3. Add CLI commands
+- [x] 4. Testing
 
 ## Dev Notes
 
@@ -121,6 +121,38 @@ No tool fully satisfies hierarchical namespaces + 1:many endpoint mapping.
 - Access control: ✓ Per-namespace
 - Filtering: ✓ Tool name prefixed
 
+## Dev Agent Record
+
+### Implementation Plan
+
+Implemented hierarchical namespace support for multi-team organizations:
+- `Namespace` struct with support for nested children, server lists, and access control
+- `NamespaceManager` interface for managing namespace hierarchy
+- `Load()` method parses YAML configuration for namespace definitions
+- `CheckAccess()` validates client access to specific namespaces
+- `GetChildNamespaces()` traverses hierarchical structure
+- CLI commands for namespace list/add/assign operations
+
+### Completion Notes
+
+✅ Implemented hierarchical namespaces feature supporting:
+- Namespace configuration via YAML (leanproxy.yaml)
+- Nested namespace hierarchy (parent/child relationships)
+- Per-namespace access control (allowed_clients list with wildcard support)
+- Server-to-namespace mapping
+- CLI commands: `leanproxy namespace list`, `leanproxy namespace add`, `leanproxy namespace assign`
+- Comprehensive unit tests covering all ACs
+
+## File List
+
+- pkg/registry/namespace.go (NEW)
+- pkg/registry/namespace_test.go (NEW)
+- cmd/namespace.go (NEW)
+
+## Change Log
+
+- 2026-05-08: Implement hierarchical namespaces feature (9.2) - Added NamespaceManager with hierarchical support, access control, and CLI commands
+
 ## References
 
 - [Source: /planning-artifacts/epics.md#Epic-9-Story-9.2]
@@ -128,4 +160,4 @@ No tool fully satisfies hierarchical namespaces + 1:many endpoint mapping.
 
 ---
 
-**Status:** ready-for-dev
+**Status:** review
