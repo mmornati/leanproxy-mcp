@@ -56,7 +56,7 @@ development_status:
   7-6-concurrent-multi-server: review
   8-1-lazy-loading-tool-schemas: ready-for-dev
   8-2-connection-pooling: review
-  8-3-minimal-session-reinit: ready-for-dev
+  8-3-minimal-session-reinit: review
   8-4-cost-attribution: ready-for-dev
   9-1-streamable-http-transport: ready-for-dev
   9-2-hierarchical-namespaces: ready-for-dev
