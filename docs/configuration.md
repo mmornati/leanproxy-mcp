@@ -299,6 +299,72 @@ LeanProxy-MCP validates all file paths to prevent path traversal attacks. This p
 config.yaml\x00           -> BLOCKED
 ```
 
+## Hierarchical Namespaces
+
+Namespaces allow organizing MCP servers into hierarchical groups for multi-team organizations.
+
+### Configuration
+
+```yaml
+namespaces:
+  engineering:
+    description: "Engineering team tools"
+    servers:
+      - github
+      - jira
+    children:
+      frontend:
+        servers:
+          - storybook
+  ops:
+    servers:
+      - aws
+      - kubernetes
+    allowed_clients:
+      - "ops-team"
+      - "*"
+```
+
+### Namespace Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `description` | string | Human-readable description |
+| `servers` | []string | Server IDs in this namespace |
+| `children` | map | Nested namespace definitions |
+| `allowed_clients` | []string | Allowed clients (supports `*` wildcard) |
+
+### Access Control
+
+Namespaces support client-level access control:
+
+```yaml
+namespaces:
+  restricted:
+    allowed_clients:
+      - "team-alpha"
+      - "team-beta"
+      - "*"  # Allow any authenticated client
+    servers:
+      - secure-server
+```
+
+### CLI Commands
+
+```bash
+# List all namespaces
+leanproxy namespace list
+
+# List tools in a namespace
+leanproxy namespace list engineering --tools
+
+# Add a new namespace (generates config example)
+leanproxy namespace add frontend --servers=storybook,figma
+
+# Assign server to namespace (generates config example)
+leanproxy namespace assign engineering github
+```
+
 ## Environment Variables
 
 | Variable | Description |
