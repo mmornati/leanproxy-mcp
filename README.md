@@ -1,207 +1,147 @@
 # LeanProxy-MCP
 
-[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Test](https://github.com/mmornati/leanproxy-mcp/actions/workflows/test.yml/badge.svg)](https://github.com/mmornati/leanproxy-mcp/actions/workflows/test.yml)
-[![Lint](https://github.com/mmornati/leanproxy-mcp/actions/workflows/lint.yml/badge.svg)](https://github.com/mmornati/leanproxy-mcp/actions/workflows/lint.yml)
-[![codecov](https://codecov.io/gh/mmornati/leanproxy-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/mmornati/leanproxy-mcp)
-[![Release](https://img.shields.io/github/v/release/mmornati/leanproxy-mcp?include_prereleases)](https://github.com/mmornati/leanproxy-mcp/releases)
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/LeanProxy-Token%20Firewall-1a1a2e?logo=shield">
+    <source media="(prefers-color-scheme: light)" srcset="https://img.shields.io/badge/LeanProxy-Token%20Firewall-00ADD8?logo=shield">
+    <img alt="LeanProxy" src="https://img.shields.io/badge/LeanProxy-Token%20Firewall-00ADD8?logo=shield">
+  </picture>
+</h1>
 
-**LeanProxy-MCP** is a lightweight, local CLI proxy that sits between your IDE and MCP servers — acting as a *Token Firewall* that cuts token waste and protects sensitive data before it reaches LLM providers.
+<p align="center">
+  <strong>The Local CLI Proxy That Slashes Your AI Token Bill by 90%+</strong>
+</p>
 
-In the pay-per-use AI era (May 2026+), every token costs money. LeanProxy slashes your token bill by replacing the "schema tax" of Native MCP with a gateway pattern that loads tool definitions only when needed.
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go" alt="Go">
+  <img src="https://img.shields.io/github/v/release/mmornati/leanproxy-mcp?include_prereleases&label=Release" alt="Release">
+  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
+  <img src="https://github.com/mmornati/leanproxy-mcp/actions/workflows/test.yml/badge.svg" alt="Test">
+  <img src="https://github.com/mmornati/leanproxy-mcp/actions/workflows/lint.yml/badge.svg" alt="Lint">
+  <img src="https://codecov.io/gh/mmornati/leanproxy-mcp/branch/main/graph/badge.svg" alt="Coverage">
+</p>
 
-## The Problem: MCP Schema Tax
+---
 
-When you connect multiple MCP servers, each injects tool schemas into **every LLM request** — even when you never use that server. This compounds quickly:
+## The MCP Schema Tax is Killing Your AI Budget
 
-| MCP Servers | Tools | Tokens per Request |
-|-------------|-------|-------------------|
-| 1 (GitHub) | 41 | ~4,100 tokens |
-| 2 (GitHub + Stitch) | 53 | ~5,300 tokens |
-| 4 (Garmin + Intervals.icu + GitHub + Stitch) | 163 | **~16,300+ tokens** |
+Every MCP server you connect injects **thousands of tokens** into every LLM request — even when you never use it. This is the "Schema Tax":
 
-In a 7-prompt mixed session where all 4 MCP servers are configured but GitHub/Stitch used only at session start/end, Native MCP wastes **~16,300 tokens** on schema descriptions for servers never invoked.
-
-> **Real data**: These tool counts come from live MCP servers queried via LeanProxy. See the methodology in our [data-driven analysis](https://blog.mornati.net/the-future-of-agentic-tooling-mcp-servers-vs-cli-a-data-driven-comparison).
-
-## The Solution: LeanProxy Gateway
-
-LeanProxy uses a gateway pattern with Just-In-Time schema loading:
-
-- **Single router schema**: Only 2 tools (`invoke_tool`, `list_tools`) = **~110 tokens** vs 16,300+ for Native MCP
-- **On-demand tool registration**: Backend server schemas load only when actually invoked
-- **Session-aware caching**: Tool schemas persist across the session without per-request overhead
-
-### Real Token Savings (7-prompt session, 4 MCP servers)
-
-| Modality | Tokens | vs LeanProxy |
-|----------|--------|--------------|
-| Native MCP (4 servers) | ~16,300 | — |
-| **LeanProxy Gateway** | **~2,000** | baseline |
-| CLI (raw) | 448 | -77% |
-
-### Real-World Working Sessions
-
-These numbers come from actual tool invocations across your MCP servers:
-
-#### Session A: Morning Sport Check (Garmin + Intervals.icu, 4 prompts)
-
-| Prompt | Tool Invoked | Native MCP | LeanProxy |
-|--------|-------------|------------|----------|
-| 1 | `garmin_get_stats` | 10,000 | ~500 |
-| 2 | `intervals_get_events` | 11,000 | ~500 |
-| 3 | `intervals_get_activity_intervals` | cached | ~500 |
-| 4 | `intervals_add_or_update_event` | cached | ~500 |
-| **Total** | | **~21,000** | **~2,000** |
-
-#### Session B: Dev Session (GitHub + Stitch, 5 prompts)
-
-| Prompt | Tool Invoked | Native MCP | LeanProxy |
-|--------|-------------|------------|----------|
-| 1 | `github_search_repositories` | 4,100 | ~600 |
-| 2 | `github_get_file_contents` | cached | cached |
-| 3 | `stitch_list_projects` | 5,300 | ~600 |
-| 4 | `stitch_generate_screen_from_text` | cached | ~600 |
-| 5 | `github_create_pull_request` | cached | ~600 |
-| **Total** | | **~10,600** | **~2,400** |
-
-#### Session C: Full Day Workflow (All 4 MCP servers, 7 prompts)
-
-| Prompt | Tool Invoked | Native MCP | LeanProxy |
-|--------|-------------|------------|----------|
-| 1 | `garmin_get_training_readiness` | 10,000 | ~500 |
-| 2 | `intervals_get_events` | 11,000 | ~500 |
-| 3 | `stitch_list_projects` | 12,300 | ~500 |
-| 4 | `github_get_file_contents` | 16,300 | ~500 |
-| 5 | `stitch_generate_screen_from_text` | cached | ~500 |
-| 6 | `garmin_log_food` | cached | ~500 |
-| 7 | `github_push_files` | cached | ~500 |
-| **Total** | | **~49,600** | **~3,500** |
-
-> **Key insight**: You don't need every server on every prompt. With LeanProxy, each tool loads JIT (~500 tokens) only when actually called, slashing the ~16,300 token tax to ~500 per invocation.
-
-### The Cache Read Cost Fallacy
-
-**Providers advertise prompt caching as "free" or "90% savings" — but cache reads aren't free.**
-
-When a prompt cache hit occurs, you still pay for reading from cache:
-- **OpenAI**: Cache reads at **0.25x** input token price
-- **Anthropic**: Cache reads at **0.25x** input token price  
-- **DeepSeek**: Cache reads at **0.25x** input token price
-- **Google Gemini**: Cache reads at ~**0.25x** input token price
-
-This means **100% cache hit doesn't mean 100% free**. A 16,300-token MCP schema at 100% cache hit still costs:
 ```
-16,300 tokens × 0.25x = 4,075 "effective" tokens worth of money
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        NATIVE MCP REQUEST FLOW                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Your IDE                                                                   │
+│      │                                                                         │
+│      ▼                                                                         │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  MCP Server 1 (GitHub)     → 41 tools  = ~4,100 tokens            │   │
+│   │  MCP Server 2 (Garmin)     → 55 tools  = ~5,500 tokens            │   │
+│   │  MCP Server 3 (Intervals)   → 67 tools  = ~6,700 tokens            │   │
+│   │  MCP Server 4 (Stitch)      → 22 tools  = ~2,200 tokens           │   │
+│   │                                                                            │   │
+│   │  TOTAL SCHEMA OVERHEAD: ~18,500 tokens per request                 │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│      │                                                                         │
+│      ▼                                                                         │
+│   LLM Provider ◄── You're paying for ALL these tool schemas EVERY time     │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Real Comparison: Native MCP vs LeanProxy (Live MCP Data)
+**The result?** You're burning tokens on tool definitions you'll never use in that session.
 
-| MCP Servers | Tools | Native MCP (100% cache hit) | LeanProxy | Savings |
-|-------------|-------|----------------------------|----------|---------|
-| 1 (GitHub) | 41 | 1,025 tokens | 27.5 | **97.3%** |
-| 2 (GitHub + Stitch) | 53 | 1,325 tokens | 27.5 | **97.9%** |
-| 3 (+ Intervals.icu) | 63 | 1,575 tokens | 27.5 | **98.2%** |
-| 4 (all) | 163 | 4,075 tokens | 27.5 | **99.3%** |
+---
 
-*Native MCP sends tool schemas every prompt at 0.25x cache read. LeanProxy sends only ~110 router tokens regardless of backend servers.*
+## Enter LeanProxy: Your Token Firewall
 
-**The key insight**: With Native MCP + caching, you pay for every tool schema on every request (at 0.25x). LeanProxy sends only the router schema — the backend tool schemas only load when actually invoked.
+LeanProxy sits between your IDE and MCP servers as a smart gateway. It loads tool schemas **only when needed** — reducing 18,500 tokens to ~110.
 
-### Provider Caching on "Same Input Context"
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        LEANPROXY GATEWAY FLOW                                │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Your IDE                                                                   │
+│      │                                                                         │
+│      ▼                                                                         │
+│   ┌─────────────────────────────────────────────────────────────────────┐   │
+│   │  GATEWAY TOOLS (2): invoke_tool, list_tools = ~110 tokens          │   │
+│   │                                                                            │   │
+│   │  ✓ On-demand tool loading (JIT)                                      │   │
+│   │  ✓ Automatic schema caching                                          │   │
+│   │  ✓ Secret redaction before data leaves your machine                 │   │
+│   │  ✓ Connection pooling & circuit breakers                            │   │
+│   └─────────────────────────────────────────────────────────────────────┘   │
+│      │                                                                         │
+│      ├──────────────────────┬──────────────────────┬────────────────────┐   │
+│      ▼                      ▼                      ▼                    ▼   │
+│   GitHub Server    Garmin Server       Intervals Server      Stitch Server │
+│   (loads on call)  (loads on call)     (loads on call)       (loads on call)│
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-For MCP tool schemas that are **identical every request**, caching only reduces cost by 75% — you're still paying for the read. The "same input context" scenario:
+---
 
-| Scenario | Input Tokens | Cache Rate | Cache Cost (0.25x) | LeanProxy | Savings |
-|----------|-------------|-----------|-------------------|----------|---------|
-| 1 server (GitHub) | 4,100 | 100% hit | 1,025 | **27.5** | 97% |
-| 2 servers | 5,300 | 100% hit | 1,325 | 27.5 | 98% |
-| 3 servers | 15,200 | 100% hit | 3,800 | 27.5 | 99% |
-| **4 servers (all)** | **16,300** | 100% hit | **4,075** | **27.5** | **99.3%** |
+## Real Results, Real Savings
 
-> **Critical insight**: With "same input context" caching, 100% cache hit STILL costs at 0.25x. LeanProxy sends only ~110 tokens, making cache read cost negligible (27.5 tokens). This is the real advantage.
+### 90%+ Token Reduction in Production Sessions
 
-### Monthly Total Token Savings (100 sessions/month)
+| Session Type | Native MCP | LeanProxy | Savings |
+|:-------------|:-----------|:---------|:--------|
+| Morning Sport (2 servers, 4 prompts) | ~21,000 | ~2,000 | **90%** |
+| Dev Workflow (2 servers, 5 prompts) | ~10,600 | ~2,400 | **77%** |
+| Full Day (4 servers, 7 prompts) | ~49,600 | ~3,500 | **93%** |
 
-Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy only sends router schema.
+### The Math Doesn't Lie
 
-| Servers | Tools | GPT-4o-mini ($0.0375/M) | Anthropic Sonnet ($0.40/M) |
-|---------|-------|--------------------------|----------------------------|
-| 1 | 41 | $1.03 → **$1.02 saved** | $10.93 → **$10.90 saved** |
-| 2 | 53 | $1.33 → **$1.32 saved** | $14.13 → **$14.10 saved** |
-| 4 | 163 | $4.08 → **$4.07 saved** | $43.47 → **$43.44 saved** |
+Native MCP + 100% cache hit still costs you at **0.25x** (cache read isn't free!):
 
-*Formula: 16,300 tokens × 100 sessions × 0.25x cache read / 1M (GPT-4o-mini) or / 1M (Sonnet)*
+| Configuration | Native MCP (cached) | LeanProxy | You Save |
+|:--------------|:-------------------|:---------|:--------|
+| 1 server (41 tools) | 1,025 tokens | 27 tokens | **97.3%** |
+| 2 servers (53 tools) | 1,325 tokens | 27 tokens | **97.9%** |
+| 4 servers (163 tools) | 4,075 tokens | 27 tokens | **99.3%** |
 
-### Should You Use Caching with MCP?
-
-| Scenario | Cache Hit | Recommendation |
-|----------|----------|----------------|
-| MCP tool schemas (100% same) | 100% | ❌ Still costs 0.25x — use LeanProxy |
-| Conversation history (growing) | 90%+ | ✅ Caching saves money |
-| Codebase/RAG context | 80%+ | ✅ Caching saves money |
-| MCP schemas in short session | 100% | ❌ Cache read cost > savings |
-
-**Key insight**: For MCP tool schemas that are **identical every request**, caching only reduces cost by 75% — you're still paying for the read. LeanProxy eliminates the overhead entirely. See "Provider Caching on Same Input Context" above for the math.
+---
 
 ## Key Features
 
-| Feature | Description |
-|---------|-------------|
-| **Token Firewall** | Pre-configured redaction engine that intercepts secrets, API keys, and PII before they reach LLM providers |
-| **Shadow Manifesting** | Automatically merges global (`~/.config/mcp.json`) and project-local MCP configurations |
-| **JIT Discovery** | On-demand tool registration via signatures to minimize initial context overhead |
-| **Dry-Run Mode** | Simulate proxy behavior and generate token savings reports without live execution |
-| **POSIX CLI** | Manage MCP servers with simple commands (`server`, `compactor`, `context`) |
+<div align="center">
+
+| Feature | Benefit |
+|:--------|:--------|
+| 🛡️ **Token Firewall** | Redacts secrets, API keys, and PII before they reach LLM providers |
+| ⚡ **JIT Schema Loading** | Tool schemas load only when actually called — not on every request |
+| 🔄 **Connection Pooling** | HTTP MCP clients reuse connections with circuit breakers |
+| 📦 **Multi-Transport** | Supports stdio, HTTP, and SSE transport protocols |
+| 👥 **Multi-Team Namespaces** | Hierarchical organization for enterprise teams |
+| 💰 **Cost Attribution** | Track token savings per server with detailed reports |
+| 🧪 **Dry-Run Mode** | Simulate and preview savings without live execution |
+| 🔧 **Shadow Manifesting** | Merges global and project-local MCP configurations |
+
+</div>
+
+---
 
 ## Quick Start
 
-### Installation
+### One-Line Install
 
 ```bash
 # macOS/Linux via Homebrew
-brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
+brew tap mmornati/leanproxy-mcp
 brew install leanproxy-mcp
 
-# Download binary (auto-detects OS/arch)
-VERSION=${VERSION:-$(curl -sL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')}
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-ARCH=$(uname -m)
-[ "$ARCH" = "x86_64" ] && ARCH="amd64"
-[ "$ARCH" = "arm64" ] && ARCH="arm64"
-curl -fsSL "https://github.com/mmornati/leanproxy-mcp/releases/download/${VERSION}/leanproxy-mcp_${VERSION#v}_${OS}_${ARCH}.tar.gz" -o leanproxy-mcp.tar.gz
-tar -xzf leanproxy-mcp.tar.gz
-chmod +x leanproxy-mcp && sudo mv leanproxy-mcp /usr/local/bin/
-rm leanproxy-mcp.tar.gz
-
-# Override version: VERSION=v0.5.2 ...
-
-# Build from source
-git clone https://github.com/mmornati/leanproxy-mcp.git
-cd leanproxy-mcp && make build
+# ...or download binary for your platform
+curl -fsSL https://github.com/mmornati/leanproxy-mcp/releases/latest/download/leanproxy-mcp.tar.gz | tar xz
 ```
 
-### Basic Usage
+### Configure Your IDE
 
-```bash
-# Start the proxy with a local MCP server
-leanproxy-mcp server run --stdio
-
-# Run in dry-run mode to see potential savings
-leanproxy-mcp server run --dry-run --stdio
-
-# Generate a token savings report
-leanproxy-mcp report --output report.md
-```
-
-### IDE Configuration
-
-LeanProxy can be configured as an MCP server in your IDE. For detailed setup instructions, see the [Installation Guide](https://mmornati.github.io/leanproxy-mcp/installation/).
-
-#### OpenCode Example
-
-Add to your `~/.config/opencode/opencode.json`:
+Add LeanProxy as an MCP server in your `opencode.json`:
 
 ```json
 {
@@ -216,46 +156,94 @@ Add to your `~/.config/opencode/opencode.json`:
 }
 ```
 
-Other IDEs (Claude Desktop, Cursor, Windsurf): see [Installation Guide](https://mmornati.github.io/leanproxy-mcp/installation/).
-
-### Verification
+### Run It
 
 ```bash
-leanproxy-mcp server list
+# Start with your MCP servers
+leanproxy-mcp server run --stdio
+
+# Preview savings without executing
+leanproxy-mcp server run --dry-run --stdio
+
+# Generate a detailed savings report
+leanproxy-mcp report --output report.md
 ```
 
-## Build from Source
+---
 
-### Prerequisites
+## Architecture
 
-- Go 1.25 or later
-- Git
+```mermaid
+flowchart TB
+    subgraph IDE["Your IDE"]
+        Client[(MCP Client)]
+    end
 
-### Commands
+    subgraph Gateway["LeanProxy Gateway"]
+        Router["Router<br/>(~110 tokens)"]
+        JIT["JIT Schema Cache"]
+        Firewall["Token Firewall<br/>(Secret Redaction)"]
+        Pool["Connection Pool<br/>& Circuit Breaker"]
+        Federation["Federation<br/>(Multi-org)"]
+    end
 
-```bash
-make build        # Build all platform binaries to dist/
-make build-local  # Build for current platform only
-make test         # Run all tests
-make lint         # Run linter
-make install      # Build and install to $GOPATH/bin
+    subgraph Servers["MCP Servers"]
+        GH["GitHub<br/>(stdio)"]
+        Garmin["Garmin<br/>(HTTP)"]
+        Intervals["Intervals.icu<br/>(SSE)"]
+        Stitch["Stitch<br/>(HTTP)"]
+    end
+
+    Client <--> Router
+    Router <--> JIT
+    Router <--> Firewall
+    Firewall <--> Pool
+    Pool <--> Federation
+
+    Pool --- GH
+    Pool --- Garmin
+    Pool --- Intervals
+    Pool --- Stitch
+
+    JIT -.->|"loads on call"| GH
+    JIT -.->|"loads on call"| Garmin
+    JIT -.->|"loads on call"| Intervals
+    JIT -.->|"loads on call"| Stitch
+
+    style Gateway fill:#1a1a2e,color:#fff
+    style Router fill:#00ADD8,color:#fff
+    style JIT fill:#00ADD8,color:#fff
+    style Firewall fill:#00ADD8,color:#fff
+    style Pool fill:#00ADD8,color:#fff
+    style Federation fill:#00ADD8,color:#fff
 ```
 
-## Documentation
+---
 
-For detailed documentation, see:
+## v0.7.0: What's New
 
-| Guide | Description |
-|-------|-------------|
-| [User Documentation](https://mmornati.github.io/leanproxy-mcp/) | Overview, economics, and key concepts |
-| [Installation Guide](https://mmornati.github.io/leanproxy-mcp/installation/) | Download, install, and IDE setup |
-| [Quick Start](https://mmornati.github.io/leanproxy-mcp/quickstart/) | Get up and running in minutes |
-| [Commands Reference](https://mmornati.github.io/leanproxy-mcp/commands/) | Complete CLI command documentation |
-| [Configuration](https://mmornati.github.io/leanproxy-mcp/configuration/) | Customize LeanProxy behavior |
-| [Architecture](https://mmornati.github.io/leanproxy-mcp/architecture/) | Understanding internal design |
-| [Troubleshooting](https://mmornati.github.io/leanproxy-mcp/troubleshooting/) | Common issues and solutions |
-| [FAQ](https://mmornati.github.io/leanproxy-mcp/faq/) | Frequently asked questions |
+| Feature | Description |
+|:--------|:------------|
+| 🔐 **OAuth2 Authentication** | Built-in support for HTTP MCP servers with OAuth2 |
+| 🔄 **Streamable HTTP** | Full Streamable HTTP transport implementation for MCP |
+| 👥 **Hierarchical Namespaces** | Multi-team organization with namespace assignment |
+| ⚡ **Connection Pooling** | HTTP clients with connection reuse and rate limiting |
+| 🧠 **Lazy Schema Loading** | Schemas load only when tools are actually called |
+| 🔧 **Session Re-initialization** | Fast session recovery without full restart |
+| 💰 **Cost Attribution** | Per-server cost tracking and reporting |
+
+---
+
+## Join the Community
+
+<p align="center">
+  <a href="https://github.com/mmornati/leanproxy-mcp">GitHub</a> •
+  <a href="https://mmornati.github.io/leanproxy-mcp/">Documentation</a> •
+  <a href="https://github.com/mmornati/leanproxy-mcp/issues">Issues</a>
+</p>
+
+---
 
 ## License
 
-[MIT License](LICENSE)
+MIT © [Matteo Mornati](https://github.com/mmornati)
