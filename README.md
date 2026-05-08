@@ -150,7 +150,7 @@ Native MCP + 100% cache hit still costs you at **0.25x** (cache read isn't free!
 
 ```bash
 # macOS/Linux via Homebrew
-brew tap mmornati/leanproxy-mcp
+brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
 brew install leanproxy-mcp
 
 # ...or download binary for your platform
