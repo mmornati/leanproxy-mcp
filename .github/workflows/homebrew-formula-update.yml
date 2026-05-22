@@ -44,7 +44,7 @@ jobs:
 
           for arch in amd64 arm64; do
             for os in darwin linux; do
-              url="https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_${os}_${arch}.tar.gz"
+              url="https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_${VERSION}_${os}_${arch}.tar.gz"
               echo "Downloading $url..."
               curl -sL "$url" -o /tmp/archive.tar.gz
               sha=$(sha256sum /tmp/archive.tar.gz | cut -d' ' -f1)
@@ -72,22 +72,22 @@ jobs:
 
             on_macos do
               on_arm do
-                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_darwin_arm64.tar.gz"
+                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_${VERSION}_darwin_arm64.tar.gz"
                 sha256 "${SHA_DARWIN_ARM64}"
               end
               on_intel do
-                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_darwin_amd64.tar.gz"
+                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_${VERSION}_darwin_amd64.tar.gz"
                 sha256 "${SHA_DARWIN_AMD64}"
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_linux_arm64.tar.gz"
+                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_${VERSION}_linux_arm64.tar.gz"
                 sha256 "${SHA_LINUX_ARM64}"
               end
               on_intel do
-                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_v${VERSION}_linux_amd64.tar.gz"
+                url "https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_${VERSION}_linux_amd64.tar.gz"
                 sha256 "${SHA_LINUX_AMD64}"
               end
             end
