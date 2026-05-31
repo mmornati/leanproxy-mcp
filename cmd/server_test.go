@@ -239,8 +239,6 @@ func TestRunCmd_Flags(t *testing.T) {
 	}
 }
 
-
-
 func TestRunServerList_EmptyConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "servers.yaml")

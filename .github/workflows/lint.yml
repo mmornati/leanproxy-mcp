@@ -24,3 +24,12 @@ jobs:
 
       - name: Run golangci-lint
         run: $(go env GOPATH)/bin/golangci-lint run ./...
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: Run gosec security scan
+        run: $(go env GOPATH)/bin/gosec -quiet -exclude-generated -confidence medium ./...

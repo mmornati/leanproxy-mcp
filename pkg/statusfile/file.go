@@ -132,7 +132,7 @@ func (s *FileStatusStore) writeLocked() {
 		return
 	}
 
-	if err := os.WriteFile(s.statusFile, data, 0644); err != nil {
+	if err := os.WriteFile(s.statusFile, data, 0600); err != nil {
 		s.logger.Warn("failed to write status file", "error", err)
 	}
 }

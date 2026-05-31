@@ -170,7 +170,7 @@ func runServerRemove(cmd *cobra.Command, args []string) error {
 	var response string
 	fmt.Scanln(&response)
 	if response != "y" && response != "Y" {
-		fmt.Println("Cancelled.")
+		fmt.Println("Canceled.")
 		return nil
 	}
 
@@ -562,7 +562,7 @@ func saveConfig(path string, cfg *migrate.Config) error {
 		return err
 	}
 
-	return os.WriteFile(path, data, 0644)
+	return os.WriteFile(path, data, 0600)
 }
 
 func joinStrings(strs []string) string {

@@ -14,29 +14,29 @@ import (
 )
 
 type HTTPTransportConfig struct {
-	Port          string
-	ReadTimeout   time.Duration
-	WriteTimeout  time.Duration
+	Port           string
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
 	MaxHeaderBytes int
 }
 
 func DefaultHTTPTransportConfig() HTTPTransportConfig {
 	return HTTPTransportConfig{
-		Port:          "8080",
-		ReadTimeout:   30 * time.Second,
-		WriteTimeout:  30 * time.Second,
+		Port:           "8080",
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   30 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
 }
 
 type HTTPTransport struct {
-	addr     string
-	handler  http.Handler
-	server   *http.Server
-	config   HTTPTransportConfig
-	logger   *slog.Logger
-	mu       sync.Mutex
-	running  bool
+	addr    string
+	handler http.Handler
+	server  *http.Server
+	config  HTTPTransportConfig
+	logger  *slog.Logger
+	mu      sync.Mutex
+	running bool
 }
 
 type HTTPTransportOption func(*HTTPTransport)
@@ -312,7 +312,7 @@ func (h *streamableHTTPHandler) handleHealth(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(map[string]string{
-		"status": "healthy",
+		"status":  "healthy",
 		"service": "leanproxy-mcp",
 	}); err != nil {
 		h.logger.Warn("http transport: failed to encode health response", "error", err)
@@ -323,4 +323,3 @@ func writeSSEEvent(w http.ResponseWriter, flusher http.Flusher, eventType string
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, data)
 	flusher.Flush()
 }
-

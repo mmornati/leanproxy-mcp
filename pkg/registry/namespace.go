@@ -12,11 +12,11 @@ import (
 )
 
 type Namespace struct {
-	Name           string               `yaml:"name"`
-	Description    string               `yaml:"description,omitempty"`
-	Servers        []string             `yaml:"servers"`
+	Name           string                `yaml:"name"`
+	Description    string                `yaml:"description,omitempty"`
+	Servers        []string              `yaml:"servers"`
 	Children       map[string]*Namespace `yaml:"children,omitempty"`
-	AllowedClients []string             `yaml:"allowed_clients,omitempty"`
+	AllowedClients []string              `yaml:"allowed_clients,omitempty"`
 }
 
 type NamespaceConfig struct {
@@ -35,11 +35,11 @@ type NamespaceManager interface {
 }
 
 type inMemoryNamespaceManager struct {
-	mu           sync.RWMutex
-	namespaces   map[string]*Namespace
-	toolNS       map[string]string
-	serverNS     map[string]string
-	logger       *slog.Logger
+	mu         sync.RWMutex
+	namespaces map[string]*Namespace
+	toolNS     map[string]string
+	serverNS   map[string]string
+	logger     *slog.Logger
 }
 
 func NewNamespaceManager(logger *slog.Logger) NamespaceManager {
@@ -223,7 +223,7 @@ func (m *inMemoryNamespaceManager) ListToolsInNamespace(ctx context.Context, nsN
 		toolSet[sid] = true
 	}
 
-	var results []ToolEntry
+	results := make([]ToolEntry, 0, len(toolSet))
 	for serverID := range toolSet {
 		results = append(results, ToolEntry{
 			Name:      nsName + "." + serverID,

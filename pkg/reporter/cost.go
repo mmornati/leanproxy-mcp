@@ -41,7 +41,7 @@ func TrackCost(toolName, serverName string, tokenCount int64) {
 }
 
 func TrackCostFromStrings(toolName, serverName, requestJSON, responseJSON string) {
-	estimator := &tokenEstimator{ charsPerToken: 4 }
+	estimator := &tokenEstimator{charsPerToken: 4}
 	inputTokens := estimator.EstimateTokens(requestJSON)
 	outputTokens := estimator.EstimateTokens(responseJSON)
 	totalTokens := inputTokens + outputTokens

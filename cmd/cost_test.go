@@ -8,10 +8,10 @@ import (
 
 func TestCostCmd_Flags(t *testing.T) {
 	tests := []struct {
-		name  string
-		flag  string
-		set   string
-		get   interface{}
+		name string
+		flag string
+		set  string
+		get  interface{}
 	}{
 		{"by-tool", "by-tool", "true", true},
 		{"by-server", "by-server", "true", true},
@@ -68,8 +68,6 @@ func TestCostCmd_JsonFlag(t *testing.T) {
 		t.Errorf("json flag should not error: %v", err)
 	}
 }
-
-
 
 func TestGlobalCostTracker(t *testing.T) {
 	tracker := reporter.GlobalCostTracker()

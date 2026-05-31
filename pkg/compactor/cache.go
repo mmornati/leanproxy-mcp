@@ -104,7 +104,7 @@ func (c *FileCache) Set(ctx context.Context, serverName string, manifest *Distil
 		return fmt.Errorf("compactor: marshal manifest for cache: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
+	if err := os.WriteFile(filePath, data, 0600); err != nil {
 		return fmt.Errorf("compactor: write cache file: %w", err)
 	}
 

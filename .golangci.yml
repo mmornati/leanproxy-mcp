@@ -8,9 +8,29 @@ linters:
     - govet
     - staticcheck
     - unused
+    - gofmt
+    - goimports
+    - misspell
+    - prealloc
+    - gosec
+
+linters-settings:
+  gofmt:
+    simplify: true
+  misspell:
+    locale: US
+    ignore-rules:
+      - "importas"
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: true
+  staticcheck:
+    checks: ["all"]
 
 issues:
   max-same-issues: 0
+  max-issues-per-linter: 0
   exclude-rules:
     - path: _test\.go
       linters:
@@ -18,6 +38,7 @@ issues:
         - gosimple
         - staticcheck
         - ineffassign
+        - gosec
     - path: cmd/completion\.go
       linters:
         - errcheck
@@ -95,3 +116,39 @@ issues:
       linters:
         - errcheck
         - unused
+    - path: pkg/bouncer/allowlist\.go
+      linters:
+        - gosec
+    - path: pkg/bouncer/safe_pattern\.go
+      linters:
+        - gosec
+    - path: pkg/bouncer/boilerplate\.go
+      linters:
+        - gosec
+    - path: pkg/proxy/socket/
+      linters:
+        - gosec
+    - path: pkg/utils/
+      linters:
+        - gosec
+    - path: pkg/concurrent/circuit\.go
+      linters:
+        - gosec
+    - path: pkg/proxy/process_health\.go
+      linters:
+        - gosec
+    - path: pkg/registry/lifecycle\.go
+      linters:
+        - gosec
+    - path: pkg/statusfile/file\.go
+      linters:
+        - prealloc
+    - path: pkg/pool/server\.go
+      linters:
+        - gosec
+    - path: pkg/migrate/
+      linters:
+        - prealloc
+    - path: pkg/mcp/handlers_test\.go
+      linters:
+        - prealloc

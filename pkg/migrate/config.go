@@ -72,7 +72,7 @@ type ServerConfig struct {
 }
 
 type Config struct {
-	Version      string               `yaml:"version"`
+	Version      string              `yaml:"version"`
 	Servers      []*ServerConfig     `yaml:"servers"`
 	Optimization *OptimizationConfig `yaml:"optimization,omitempty"`
 	Federation   *FederationConfig   `yaml:"federation,omitempty"`

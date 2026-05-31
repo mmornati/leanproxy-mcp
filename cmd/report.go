@@ -57,7 +57,7 @@ func runReport(cmd *cobra.Command, args []string) {
 	}
 
 	if reportFlags.outputPath != "" {
-		err := os.WriteFile(reportFlags.outputPath, []byte(output), 0644)
+		err := os.WriteFile(reportFlags.outputPath, []byte(output), 0600)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error writing report: %v\n", fmt.Errorf("report output: context: %w", err))
 			os.Exit(1)

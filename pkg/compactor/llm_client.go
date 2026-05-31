@@ -60,7 +60,7 @@ func (c *OpenAIClient) Distill(ctx context.Context, manifest RawManifest) (*Dist
 
 			select {
 			case <-ctx.Done():
-				return nil, fmt.Errorf("compactor: context cancelled during retry: %w", ctx.Err())
+				return nil, fmt.Errorf("compactor: context canceled during retry: %w", ctx.Err())
 			case <-time.After(backoff):
 			}
 		}

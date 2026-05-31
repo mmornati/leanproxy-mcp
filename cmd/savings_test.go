@@ -6,10 +6,10 @@ import (
 
 func TestSavingsCmd_Flags(t *testing.T) {
 	tests := []struct {
-		name  string
-		flag  string
-		set   string
-		get   interface{}
+		name string
+		flag string
+		set  string
+		get  interface{}
 	}{
 		{"reset", "reset", "true", true},
 		{"server", "server", "testserver", "testserver"},
@@ -63,8 +63,6 @@ func TestSavingsCmd_ResetFlag(t *testing.T) {
 		t.Errorf("reset flag should not error: %v", err)
 	}
 }
-
-
 
 func TestGlobalSavingsTracker(t *testing.T) {
 	if globalSavingsTracker == nil {
