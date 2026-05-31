@@ -332,6 +332,13 @@ func (p *SSEPool) RestartServer(ctx context.Context, name string) error {
 	return nil
 }
 
+func (p *SSEPool) IsServerMCPInitialized(name string) bool {
+	return true
+}
+
+func (p *SSEPool) MarkServerMCPInitialized(name string) {
+}
+
 func (p *SSEPool) Close() error {
 	p.cancel()
 
