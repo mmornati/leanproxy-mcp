@@ -94,6 +94,13 @@ func (m *mockPool) Close() error {
 	return nil
 }
 
+func (m *mockPool) IsServerMCPInitialized(name string) bool {
+	return false
+}
+
+func (m *mockPool) MarkServerMCPInitialized(name string) {
+}
+
 func (m *mockPool) SetServerState(name string, state pool.ServerState) {
 	m.servers[name] = string(state)
 }

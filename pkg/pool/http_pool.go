@@ -370,6 +370,13 @@ func (p *HTTPClientPool) RestartServer(ctx context.Context, name string) error {
 	return nil
 }
 
+func (p *HTTPClientPool) IsServerMCPInitialized(name string) bool {
+	return true
+}
+
+func (p *HTTPClientPool) MarkServerMCPInitialized(name string) {
+}
+
 func (p *HTTPClientPool) Close() error {
 	p.cancel()
 
@@ -471,6 +478,31 @@ func (p *UnifiedPool) RestartServer(ctx context.Context, name string) error {
 		return p.ssePool.RestartServer(ctx, name)
 	}
 	return fmt.Errorf("server %s not found", name)
+}
+
+func (p *UnifiedPool) IsServerMCPInitialized(name string) bool {
+	if p.stdioPool.HasServer(name) {
+		return p.stdioPool.IsServerMCPInitialized(name)
+	}
+	if p.httpPool.HasServer(name) {
+		return p.httpPool.IsServerMCPInitialized(name)
+	}
+	if p.ssePool != nil {
+		return p.ssePool.IsServerMCPInitialized(name)
+	}
+	return false
+}
+
+func (p *UnifiedPool) MarkServerMCPInitialized(name string) {
+	if p.stdioPool.HasServer(name) {
+		p.stdioPool.MarkServerMCPInitialized(name)
+	}
+	if p.httpPool.HasServer(name) {
+		p.httpPool.MarkServerMCPInitialized(name)
+	}
+	if p.ssePool != nil {
+		p.ssePool.MarkServerMCPInitialized(name)
+	}
 }
 
 func (p *UnifiedPool) SendRequestToServerWithID(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration, id int) (*Response, error) {

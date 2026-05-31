@@ -84,6 +84,7 @@ type StdioServerV2 struct {
 	logger          *slog.Logger
 	stopChOnce      sync.Once
 	wg              sync.WaitGroup
+	mcpInitialized  atomic.Bool
 }
 
 func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *StdioServerV2 {
@@ -163,6 +164,14 @@ func toServerState(state int32) ServerState {
 	}
 }
 
+func (s *StdioServerV2) IsMCPInitialized() bool {
+	return s.mcpInitialized.Load()
+}
+
+func (s *StdioServerV2) SetMCPInitialized() {
+	s.mcpInitialized.Store(true)
+}
+
 func (s *StdioServerV2) spawn(ctx context.Context) error {
 	s.mu.Lock()
 
@@ -219,6 +228,7 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	atomic.StoreInt32(&s.state, stateIdle)
 	s.restartCount = 0
 	s.backoff = time.Second
+	s.mcpInitialized.Store(false)
 	s.stats.RestartCount++
 	s.stats.CurrentBackoff = s.backoff
 

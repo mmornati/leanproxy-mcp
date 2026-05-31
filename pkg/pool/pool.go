@@ -24,6 +24,8 @@ type ServerSource interface {
 	ListServers() []string
 	GetServerState(name string) (ServerState, error)
 	RestartServer(ctx context.Context, name string) error
+	IsServerMCPInitialized(name string) bool
+	MarkServerMCPInitialized(name string)
 	Close() error
 }
 
@@ -213,6 +215,22 @@ func (p *StdioPool) GetOrStartServer(ctx context.Context, name string) (*StdioSe
 
 	p.logger.Info("server restarted and ready", "name", name)
 	return server, nil
+}
+
+func (p *StdioPool) IsServerMCPInitialized(name string) bool {
+	server, err := p.GetServer(name)
+	if err != nil {
+		return false
+	}
+	return server.IsMCPInitialized()
+}
+
+func (p *StdioPool) MarkServerMCPInitialized(name string) {
+	server, err := p.GetServer(name)
+	if err != nil {
+		return
+	}
+	server.SetMCPInitialized()
 }
 
 func (p *StdioPool) waitForServerReady(ctx context.Context, name string, timeout time.Duration) error {

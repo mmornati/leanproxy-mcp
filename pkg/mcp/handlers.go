@@ -243,7 +243,7 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 
 	h.logger.Debug("sending initialize request", "name", serverName, "params", string(paramsBytes))
 
-	resp, err := h.pool.SendRequestToServerWithID(ctx, serverName, MethodInitialize, paramsBytes, 10*time.Second, 1)
+	resp, err := h.pool.SendRequestToServerWithID(ctx, serverName, MethodInitialize, paramsBytes, 120*time.Second, 1)
 	if err != nil {
 		h.logger.Error("initialize request failed", "name", serverName, "error", err)
 		return fmt.Errorf("initialize request failed: %w", err)
@@ -303,6 +303,19 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 			Error:   NewError(ErrCodeInvalidParams, err.Error()),
 			ID:      req.ID,
 		}, nil
+	}
+
+	// Perform MCP initialize handshake if not yet done for this server instance.
+	if !h.pool.IsServerMCPInitialized(serverName) {
+		h.logger.Debug("initializing MCP session with server", "name", serverName)
+		if err := h.initializeServer(ctx, serverName); err != nil {
+			return &Response{
+				JSONRPC: JSONRPCVersion,
+				Error:   NewError(ErrCodeServerError, fmt.Sprintf("server initialization failed: %v", err)),
+				ID:      req.ID,
+			}, nil
+		}
+		h.pool.MarkServerMCPInitialized(serverName)
 	}
 
 	newParams := ToolsCallParams{
@@ -706,6 +719,31 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		time.Sleep(500 * time.Millisecond)
 	}
 
+	// Perform MCP initialize handshake if not yet done for this server instance.
+	// The MCP protocol requires initialize + notifications/initialized before any tool call.
+	if !h.pool.IsServerMCPInitialized(serverName) {
+		h.logger.Debug("initializing MCP session with server", "name", serverName)
+		if err := h.initializeServer(ctx, serverName); err != nil {
+			h.logger.Error("invoke_tool: server initialization failed", "server", serverName, "error", err)
+			schema := h.lookupToolSchema(serverName, toolName)
+			enrichedError := FormatErrorWithHint(fmt.Sprintf("server initialization failed: %v", err), serverName, toolName)
+			errResp := NewError(ErrCodeServerError, enrichedError)
+			if schema != nil {
+				dataBytes, _ := json.Marshal(map[string]interface{}{
+					"tool":   toolName,
+					"schema": json.RawMessage(schema),
+				})
+				errResp.Data = dataBytes
+			}
+			return &Response{
+				JSONRPC: JSONRPCVersion,
+				Error:   errResp,
+				ID:      req.ID,
+			}, nil
+		}
+		h.pool.MarkServerMCPInitialized(serverName)
+	}
+
 	newParams := ToolsCallParams{
 		Name:      toolName,
 		Arguments: arguments,
@@ -717,25 +755,6 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		h.logger.Error("invoke_tool failed", "server", serverName, "tool", toolName, "error", err)
 		schema := h.lookupToolSchema(serverName, toolName)
 		enrichedError := FormatErrorWithHint(fmt.Sprintf("tool invocation failed: %v", err), serverName, toolName)
-		errResp := NewError(ErrCodeServerError, enrichedError)
-		if schema != nil {
-			dataBytes, _ := json.Marshal(map[string]interface{}{
-				"tool":   toolName,
-				"schema": json.RawMessage(schema),
-			})
-			errResp.Data = dataBytes
-		}
-		return &Response{
-			JSONRPC: JSONRPCVersion,
-			Error:   errResp,
-			ID:      req.ID,
-		}, nil
-	}
-
-	if resp.Error != nil {
-		h.logger.Error("invoke_tool received error from server", "server", serverName, "tool", toolName, "error", resp.Error.Message)
-		schema := h.lookupToolSchema(serverName, toolName)
-		enrichedError := FormatErrorWithHint(fmt.Sprintf("tool invocation failed: %s", resp.Error.Message), serverName, toolName)
 		errResp := NewError(ErrCodeServerError, enrichedError)
 		if schema != nil {
 			dataBytes, _ := json.Marshal(map[string]interface{}{
