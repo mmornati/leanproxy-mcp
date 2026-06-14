@@ -19,14 +19,10 @@ linters-settings:
     simplify: true
   misspell:
     locale: US
-    ignore-rules:
-      - "importas"
   prealloc:
     simple: true
     range-loops: true
     for-loops: true
-  staticcheck:
-    checks: ["all"]
 
 issues:
   max-same-issues: 0

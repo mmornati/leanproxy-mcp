@@ -118,6 +118,7 @@ const (
 	// ErrCodeServerError indicates a generic server error (-32000).
 	ErrCodeServerError = -32000
 	// ErrCodeTimeout indicates the request timed out (-32001).
-	ErrCodeTimeout      = -32001
+	ErrCodeTimeout = -32001
+	// ErrCodeUnauthorized indicates the request was unauthorized (-32604).
 	ErrCodeUnauthorized = -32604
 )
