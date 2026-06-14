@@ -71,7 +71,7 @@ func (c *FileCache) Get(ctx context.Context, serverName string, originalHash str
 	c.mu.RUnlock()
 
 	filePath := c.filePath(serverName, originalHash)
-	data, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(filePath) // #nosec G304 -- internal cache path derived from server name
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.logger.Debug("cache miss", "server", serverName)

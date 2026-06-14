@@ -75,7 +75,7 @@ func (c *Config) CompilePatterns() (*LoadedPatterns, error) {
 
 // LoadConfigFile reads and parses a bouncer YAML configuration from the given file path.
 func LoadConfigFile(path string) (*Config, error) {
-	r, err := os.Open(path)
+	r, err := os.Open(path) // #nosec G304 -- config path provided by user
 	if err != nil {
 		return nil, fmt.Errorf("bouncer config file: %w", err)
 	}

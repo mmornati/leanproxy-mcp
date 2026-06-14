@@ -133,7 +133,7 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 		return nil, fmt.Errorf("path validation: %w", err)
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path validated via ValidatePath above
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

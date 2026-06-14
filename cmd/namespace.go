@@ -87,7 +87,7 @@ func runNamespaceList(cmd *cobra.Command, args []string) error {
 	mgr := registry.NewNamespaceManager(logger)
 
 	if cfgPath != "" {
-		file, err := os.Open(cfgPath)
+		file, err := os.Open(cfgPath) // #nosec G304 -- config path from CLI flag
 		if err != nil {
 			return fmt.Errorf("open config: %w", err)
 		}
