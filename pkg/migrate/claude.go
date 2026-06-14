@@ -32,7 +32,7 @@ func (s *ClaudeScanner) Scan(ctx context.Context) ([]DiscoveredServer, error) {
 	}
 
 	for _, path := range paths {
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) // #nosec G304 -- reading from known config paths
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue

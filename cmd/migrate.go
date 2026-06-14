@@ -122,7 +122,7 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		var response string
 		fmt.Scanln(&response)
 		if response != "y" && response != "Y" {
-			fmt.Println("Import cancelled.")
+			fmt.Println("Import canceled.")
 			return nil
 		}
 	}

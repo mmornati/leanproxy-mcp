@@ -181,7 +181,7 @@ func (m *Migrator) Import(ctx context.Context, servers []DiscoveredServer, targe
 		return nil, fmt.Errorf("marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(configPath, data, 0644); err != nil {
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
 		return nil, fmt.Errorf("write config: %w", err)
 	}
 

@@ -25,7 +25,7 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("compactor: path validation: %w", err)
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- path validated via ValidatePath above
 	if err != nil {
 		return nil, fmt.Errorf("compactor: read config: %w", err)
 	}

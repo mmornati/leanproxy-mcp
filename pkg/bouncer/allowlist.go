@@ -101,7 +101,7 @@ func GetBuiltInPatterns() []SecretPattern {
 }
 
 func CompileCustomPatterns(configs []PatternConfig) ([]*regexp.Regexp, error) {
-	var patterns []*regexp.Regexp
+	patterns := make([]*regexp.Regexp, 0, len(configs))
 	for _, c := range configs {
 		if c.Name == "" || c.Pattern == "" {
 			continue
@@ -116,7 +116,7 @@ func CompileCustomPatterns(configs []PatternConfig) ([]*regexp.Regexp, error) {
 }
 
 func CompileCustomPatternsWithTimeout(configs []PatternConfig, timeout time.Duration) ([]*regexp.Regexp, error) {
-	var patterns []*regexp.Regexp
+	patterns := make([]*regexp.Regexp, 0, len(configs))
 	for _, c := range configs {
 		if c.Name == "" || c.Pattern == "" {
 			continue
@@ -244,7 +244,7 @@ func RedactWithPatterns(input string, patterns []*regexp.Regexp) string {
 }
 
 func FormatPatternList() string {
-	var lines []string
+	lines := make([]string, 0, len(BuiltInPatterns))
 	for _, p := range BuiltInPatterns {
 		lines = append(lines, fmt.Sprintf("- %s: %s (%s)", p.Name, p.Description, p.Example))
 	}

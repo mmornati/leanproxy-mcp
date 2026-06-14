@@ -442,7 +442,7 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 		}, nil
 	}
 
-	var formattedTools []string
+	formattedTools := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		formatted := formatTool(tool, serverName, maxDescChars)
 		formattedTools = append(formattedTools, formatted)

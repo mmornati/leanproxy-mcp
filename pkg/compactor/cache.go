@@ -71,7 +71,7 @@ func (c *FileCache) Get(ctx context.Context, serverName string, originalHash str
 	c.mu.RUnlock()
 
 	filePath := c.filePath(serverName, originalHash)
-	data, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(filePath) // #nosec G304 -- internal cache path derived from server name
 	if err != nil {
 		if os.IsNotExist(err) {
 			c.logger.Debug("cache miss", "server", serverName)
@@ -104,7 +104,7 @@ func (c *FileCache) Set(ctx context.Context, serverName string, manifest *Distil
 		return fmt.Errorf("compactor: marshal manifest for cache: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
+	if err := os.WriteFile(filePath, data, 0600); err != nil {
 		return fmt.Errorf("compactor: write cache file: %w", err)
 	}
 

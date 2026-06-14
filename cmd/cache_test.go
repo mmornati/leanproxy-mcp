@@ -6,9 +6,9 @@ import (
 
 func TestCacheCmd_Flags(t *testing.T) {
 	tests := []struct {
-		name  string
-		flag  string
-		set   string
+		name   string
+		flag   string
+		set    string
 		isBool bool
 	}{
 		{"list", "list", "true", true},

@@ -24,3 +24,9 @@ jobs:
 
       - name: Run golangci-lint
         run: $(go env GOPATH)/bin/golangci-lint run ./...
+
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1
+
+      - name: Run gosec security scan
+        run: $(go env GOPATH)/bin/gosec -quiet -exclude-generated -exclude=G104,G204,G304,G115,G703 -confidence medium ./...

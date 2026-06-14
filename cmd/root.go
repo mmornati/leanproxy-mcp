@@ -67,10 +67,10 @@ func initLogger(cmd *cobra.Command) {
 
 	if logFile != "" {
 		dir := filepath.Dir(logFile)
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0750); err != nil {
 			slog.Warn("failed to create log directory", "path", dir, "error", err)
 		}
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304 -- log file path from CLI flag
 		if err != nil {
 			slog.Warn("failed to open log file", "path", logFile, "error", err)
 			handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})

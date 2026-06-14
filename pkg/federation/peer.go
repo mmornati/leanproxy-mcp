@@ -58,11 +58,11 @@ type Logger interface {
 }
 
 type PeerManager struct {
-	mu       sync.RWMutex
-	peers    map[string]*Peer
-	logger   Logger
-	toolIdx  map[string]string
-	enabled  bool
+	mu      sync.RWMutex
+	peers   map[string]*Peer
+	logger  Logger
+	toolIdx map[string]string
+	enabled bool
 }
 
 func NewPeerManager(cfg *migrate.FederationConfig, logger Logger) (*PeerManager, error) {

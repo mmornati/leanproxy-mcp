@@ -330,7 +330,7 @@ func TestProxyForwardLoopContextCancellation(t *testing.T) {
 
 	err = proxy.ForwardLoop(ctx, rClient)
 	if err == nil {
-		t.Error("expected error from cancelled context")
+		t.Error("expected error from canceled context")
 	}
 }
 

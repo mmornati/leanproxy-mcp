@@ -127,8 +127,6 @@ func TestVerboseEnabled_FlagError(t *testing.T) {
 	}
 }
 
-
-
 func TestUserConfigPath_EnvVar(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "test.yaml")

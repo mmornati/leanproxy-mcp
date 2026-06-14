@@ -17,6 +17,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 )
 
+// ServerSource is the interface for sending requests to MCP servers.
 type ServerSource interface {
 	SendRequestToServer(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration) (*Response, error)
 	SendRequestToServerWithID(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration, id int) (*Response, error)
@@ -29,6 +30,7 @@ type ServerSource interface {
 	Close() error
 }
 
+// Request represents a JSON-RPC request for an MCP server.
 type Request struct {
 	Method   string          `json:"method"`
 	Params   json.RawMessage `json:"params,omitempty"`
@@ -38,6 +40,7 @@ type Request struct {
 	ErrorCh  chan error      `json:"-"`
 }
 
+// MarshalJSON serializes the Request to JSON with JSON-RPC 2.0 formatting.
 func (r Request) MarshalJSON() ([]byte, error) {
 	type Alias Request
 	return json.Marshal(&struct {
@@ -51,12 +54,14 @@ func (r Request) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// Response represents a JSON-RPC response from an MCP server.
 type Response struct {
 	Result json.RawMessage      `json:"result,omitempty"`
 	Error  *errors.JSONRPCError `json:"error,omitempty"`
 	ID     interface{}          `json:"id"`
 }
 
+// ServerState represents the current state of an MCP server.
 type ServerState string
 
 const (
@@ -70,6 +75,7 @@ const (
 	StateUnknown  ServerState = "unknown"
 )
 
+// StdioPool manages multiple stdio-based MCP server subprocesses.
 type StdioPool struct {
 	servers         map[string]*StdioServerV2
 	mu              sync.RWMutex
@@ -86,6 +92,7 @@ type StdioPool struct {
 	workerPool      *concurrent.WorkerPool
 }
 
+// NewStdioPool creates a new StdioPool with the specified maximum servers per name and idle timeout.
 func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logger) *StdioPool {
 	if logger == nil {
 		logger = slog.Default()

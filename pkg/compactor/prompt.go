@@ -1,7 +1,9 @@
 package compactor
 
-import "encoding/json"
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 const SystemPrompt = `You are a token optimization assistant. Reduce tool descriptions to minimum necessary characters while preserving all technical accuracy. Output valid JSON only. Preserve parameter names, types, and required flags exactly. Keep descriptions under 50 characters when possible.`
 

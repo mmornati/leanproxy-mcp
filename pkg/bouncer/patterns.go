@@ -6,7 +6,7 @@ import (
 )
 
 func CompilePatterns(configs []PatternConfig) ([]*regexp.Regexp, error) {
-	var patterns []*regexp.Regexp
+	patterns := make([]*regexp.Regexp, 0, len(configs))
 	for _, c := range configs {
 		re, err := SafeCompile(c.Pattern)
 		if err != nil {
