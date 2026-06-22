@@ -5,6 +5,7 @@ inputDocuments:
   - _bmad-output/planning-artifacts/architecture.md
   - code-analysis-2026-05-02.md
   - _bmad-output/planning-artifacts/research/market-mcp-proxy-server-features-token-savings-latency-2026-research-2026-05-07.md
+  - _bmad-output/brainstorming/brainstorming-session-2026-05-01.md
 notes: |
   2026-05-02: Added Epic 7: Multi-Server Gateway Mode based on code analysis finding
   that FR5 (multi-server routing) was not implemented. Current proxy only supports
@@ -14,6 +15,20 @@ notes: |
   - Epic 8: Token Optimization & Performance (lazy-loading, connection pooling, cost attribution)
   - Epic 9: Enterprise Transport & Architecture (Streamable HTTP, namespaces, federation)
   
+  2026-06-22: Added Epics 10-18 from brainstorming session (Top 10 of 102 market-trend ideas):
+  - Epic 10: Anthropic Prompt Caching Bridge
+  - Epic 11: MCP Registry Mirror & Discovery
+  - Epic 12: Semantic Prompt Cache
+  - Epic 13: AI Safety — Prompt-Injection Firewall v2
+  - Epic 14: IDE Plugin (VS Code / JetBrains) + Live Cost Sidebar
+  - Epic 15: Per-Tool Model Router & Local LLM Sidecar
+  - Epic 16: First-Party MCP Servers (GitHub / FS / DB)
+  - Epic 17: Token Budget Governor
+  - Epic 18: Cost Attribution Web Dashboard
+  
+  18 new functional requirements (FR40-FR49) and 3 new non-functional requirements (NFR11-NFR13) added.
+  Total document: 9 original epics + 9 new epics = 18 epics, ~50 stories.
+  
   Stories created (implementation-artifacts):
   - 8-1-lazy-loading-tool-schemas.md (CRITICAL)
   - 8-2-connection-pooling.md (CRITICAL)
@@ -22,12 +37,41 @@ notes: |
   - 9-1-streamable-http-transport.md (HIGH)
   - 9-2-hierarchical-namespaces.md (MEDIUM)
   - 9-3-simple-federation.md (MEDIUM)
+  
+  Pending implementation-artifact files (for new epics 10-18):
+  - 10-1-detect-anthropic-calls.md
+  - 10-2-inject-cache-breakpoints.md
+  - 10-3-cache-hit-rate-report.md
+  - 11-1-registry-sync.md
+  - 11-2-one-click-install.md
+  - 11-3-trust-scoring.md
+  - 12-1-embed-payloads.md
+  - 12-2-vector-store-pluggable.md
+  - 12-3-cache-ttl-dashboard.md
+  - 13-1-injection-classifier.md
+  - 13-2-configurable-actions.md
+  - 13-3-red-team-corpus.md
+  - 14-1-metrics-endpoint.md
+  - 14-2-vscode-extension.md
+  - 14-3-jetbrains-plugin.md
+  - 15-1-per-tool-model-routing.md
+  - 15-2-ollama-sidecar.md
+  - 15-3-mlx-apple-silicon.md
+  - 16-1-first-party-github.md
+  - 16-2-first-party-filesystem.md
+  - 16-3-first-party-db-servers.md
+  - 17-1-budget-config.md
+  - 17-2-auto-throttle-downgrade.md
+  - 18-1-web-dashboard.md
+  - 18-2-drill-down.md
+  - 18-3-csv-json-export.md
 ---
   
   Market Research Key Findings:
   - 72% context consumed by tool schemas (token bloat)
   - 187x latency in naive proxy implementations (15s vs 80ms)
   - Open design space: no tool fully satisfies hierarchy + federation + lightweight
+  - 2026 emerging trends: MCP Registry, prompt caching, semantic caching, AI safety guardrails
 ---
 
 # LeanProxy-MCP - Epic Breakdown
@@ -1288,3 +1332,778 @@ FR39: Epic 9.3 - Simple federation
 | HIGH | Epic 8.4 | Cost attribution | Differentiation |
 | MEDIUM | Epic 9.2 | Hierarchical namespaces | Enterprise |
 | MEDIUM | Epic 9.3 | Simple federation | Multi-org |
+---
+
+# NEW EPICS ADDED FROM BRAINSTORMING SESSION (June 2026)
+
+These epics were added based on the 2026-06-22 brainstorming session that generated 102 market-trend-aligned feature ideas. The Top 10 RICE-prioritized ideas are decomposed into Epics 10-18 with full story breakdowns.
+
+## Source
+
+- **Brainstorming session:** `_bmad-output/brainstorming/brainstorming-session-2026-05-01.md` (extension section, 2026-06-22)
+- **Ideas covered:** Top 10 of 102 generated (Anthropic Cache Bridge, MCP Registry Mirror, Semantic Cache, Injection Firewall v2, IDE Plugin, Model Router, Local LLM Sidecar, Cost Dashboard, First-Party Servers, Budget Governor)
+
+## New Functional Requirements (FR40-FR49)
+
+FR40: The system can auto-inject `cache_control: ephemeral` breakpoints into Anthropic API calls so the upstream prompt cache hits ≥70% of the time.
+FR41: The system can mirror the official MCP Registry, allow one-click install of trusted servers, and surface trust/rating signals.
+FR42: The system can cache tool-call payloads by semantic similarity (not exact match) and reuse responses across sessions.
+FR43: The system can scan tool *results* for indirect prompt-injection patterns and quarantine, redact, block, or log based on policy.
+FR44: The system can publish a `/metrics` JSON endpoint that exposes real-time token spend per server/tool/team for IDE plugin consumption.
+FR45: The system can route individual tool calls to different LLM providers based on a per-tool "complexity tier" declared in the manifest.
+FR46: The system can delegate redaction, summarization, and discovery to a local LLM (Ollama/MLX) to keep sensitive data on-device.
+FR47: The system can ship first-party MCP servers (GitHub, Filesystem, Postgres, Redis) with secure defaults and built-in connection pooling.
+FR48: The system can enforce per-team/per-project daily token budgets at the gateway, with auto-throttle or downgrade behavior.
+FR49: The system can serve a web UI (TUI or HTTP) showing real-time cost dashboards with per-server/per-tool drill-down.
+
+## New Non-Functional Requirements (NFR11-NFR13)
+
+NFR11: All new caching features must add <10ms p95 overhead to the existing <50ms p95 proxy budget (NFR1).
+NFR12: Any feature that calls an external LLM provider must be disable-able via config and fall back to a local or no-op mode.
+NFR13: All new UI surfaces (web dashboard, IDE plugin) must respect LeanProxy's "local-only, no telemetry" principle (NFR4).
+
+## Epic List (Updated)
+
+| Epic | Title | FRs | Priority |
+|:-----|:------|:----|:---------|
+| 1 | Core Proxy Infrastructure | FR1-FR5 | CRITICAL |
+| 2 | Security & Data Governance (The Bouncer) | FR11-FR15 | CRITICAL |
+| 3 | Context Optimization (JIT Discovery & Compactor) | FR6-FR10 | HIGH |
+| 4 | Developer Experience & CLI Interface | FR16-FR20 | HIGH |
+| 5 | Reporting & Insights | FR21-FR23 | HIGH |
+| 6 | Server Configuration & Migration | FR24-FR28 | HIGH |
+| 7 | Multi-Server Gateway Mode | FR5, FR29-FR32 | CRITICAL |
+| 8 | Token Optimization & Performance (lazy/pool/cost) | FR33-FR34, FR36-FR37 | CRITICAL |
+| 9 | Enterprise Transport & Architecture | FR35, FR38-FR39 | MEDIUM |
+| **10** | **Anthropic Prompt Caching Bridge** | **FR40** | **HIGH** |
+| **11** | **MCP Registry Mirror & Discovery** | **FR41** | **HIGH** |
+| **12** | **Semantic Prompt Cache** | **FR42** | **HIGH** |
+| **13** | **AI Safety: Prompt-Injection Firewall v2** | **FR43** | **HIGH** |
+| **14** | **IDE Plugin (VS Code / JetBrains) + Live Cost Sidebar** | **FR44** | **MEDIUM** |
+| **15** | **Per-Tool Model Router & Local LLM Sidecar** | **FR45, FR46** | **MEDIUM** |
+| **16** | **First-Party MCP Servers (GitHub / FS / DB)** | **FR47** | **MEDIUM** |
+| **17** | **Token Budget Governor** | **FR48** | **HIGH** |
+| **18** | **Cost Attribution Web Dashboard** | **FR49** | **MEDIUM** |
+
+## FR Coverage Map (Updated)
+
+| FR | Epic / Story |
+|:---|:-------------|
+| FR40 | Epic 10.1-10.3 |
+| FR41 | Epic 11.1-11.3 |
+| FR42 | Epic 12.1-12.3 |
+| FR43 | Epic 13.1-13.3 |
+| FR44 | Epic 14.1-14.3 |
+| FR45 | Epic 15.1 |
+| FR46 | Epic 15.2-15.3 |
+| FR47 | Epic 16.1-16.3 |
+| FR48 | Epic 17.1-17.2 |
+| FR49 | Epic 18.1-18.3 |
+
+---
+
+## Epic 10: Anthropic Prompt Caching Bridge
+
+**Goal:** Users automatically benefit from Anthropic's 90%-cheaper prompt cache without any config — LeanProxy transparently inserts `cache_control: ephemeral` breakpoints into stable tool-definition segments.
+
+### Story 10.1: Detect Anthropic API calls in the proxy stream
+
+**As a** developer,
+**I want** LeanProxy to detect when an outgoing request is bound for the Anthropic API,
+**So that** caching logic is only applied where it is supported.
+
+**Acceptance Criteria:**
+
+**Given** an outbound request whose URL matches an Anthropic endpoint pattern
+**When** the proxy intercepts the request
+**Then** it tags the request with `provider=anthropic` in the in-flight context
+**And** logs a debug message to stderr (NFR9)
+
+**Given** an outbound request whose URL is *not* Anthropic
+**When** the proxy intercepts the request
+**Then** it tags `provider=other` and skips caching logic
+**And** no overhead is added beyond the existing proxy hop (NFR11)
+
+**Given** the user has multiple providers configured
+**When** the proxy starts
+**Then** it loads the provider list from `leanproxy.yaml` and builds the matcher
+**And** matcher reloads on SIGHUP without restart
+
+### Story 10.2: Auto-inject `cache_control: ephemeral` breakpoints
+
+**As a** developer,
+**I want** LeanProxy to identify stable segments of the request (system prompt, tool definitions) and inject Anthropic cache breakpoints,
+**So that** the upstream cache hits on subsequent requests.
+
+**Acceptance Criteria:**
+
+**Given** an Anthropic request containing a system block and a `tools` array
+**When** the proxy processes the request
+**Then** it appends `"cache_control": {"type": "ephemeral"}` to the last tool definition
+**And** it appends the same to the last system block (if multiple)
+**And** it leaves all other content unchanged
+
+**Given** the request already contains a `cache_control` block
+**When** the proxy processes it
+**Then** it does NOT overwrite or duplicate the user's block
+**And** it logs a debug message "cache_control: user-supplied, skipping"
+
+**Given** caching strategy is set to `off` in config
+**When** the proxy processes an Anthropic request
+**Then** no cache breakpoints are injected
+**And** the request is forwarded unchanged
+
+**Given** caching strategy is set to `aggressive` (default)
+**When** the proxy processes an Anthropic request
+**Then** breakpoints are added to both system and tools
+**And** if `balanced` is set, breakpoints are added only to the largest stable block
+
+**Acceptance Criterion (NFR11):** Injection adds <1ms p95 to the existing proxy hop.
+
+### Story 10.3: Report cache hit-rate via `leanproxy cache` command
+
+**As a** user,
+**I want** a CLI command that shows Anthropic cache hit rate, tokens saved, and dollar savings,
+**So that** I can verify the feature is working and quantify the impact.
+
+**Acceptance Criteria:**
+
+**Given** at least one Anthropic request has been processed
+**When** the user runs `leanproxy cache`
+**Then** a Markdown table is printed to stdout showing: total requests, cache hits, hit rate %, tokens saved, estimated $ saved (using current Anthropic pricing)
+
+**Given** no Anthropic requests have been processed
+**When** the user runs `leanproxy cache`
+**Then** a message "No Anthropic traffic observed" is printed and exit code is 0
+
+**Given** the user runs `leanproxy cache --json`
+**When** the command executes
+**Then** the same data is emitted as a JSON object to stdout for piping
+
+---
+
+## Epic 11: MCP Registry Mirror & Discovery
+
+**Goal:** Users can browse, install, and trust MCP servers from the emerging official registry in a single command, with curated ratings and token-cost previews.
+
+### Story 11.1: Subscribe to the MCP Registry feed
+
+**As a** developer,
+**I want** LeanProxy to fetch the public MCP Registry index and cache it locally,
+**So that** the user has an up-to-date catalog of available servers offline.
+
+**Acceptance Criteria:**
+
+**Given** the MCP Registry publishes an index (JSON or NDJSON) at a known URL
+**When** the user runs `leanproxy marketplace sync`
+**Then** the index is downloaded to `~/.leanproxy/registry/index.json`
+**And** the timestamp of the last sync is recorded
+
+**Given** the registry URL is unreachable
+**When** the sync command runs
+**Then** the existing cached index is preserved
+**And** an error explains the network issue with retry guidance
+
+**Given** the cache is older than 24 hours
+**When** the proxy starts
+**Then** it logs a notice that the registry cache is stale
+**And** offers (via stderr) to run `leanproxy marketplace sync`
+
+**Acceptance Criterion (NFR11):** Sync runs asynchronously; proxy startup is not blocked.
+
+### Story 11.2: Implement `leanproxy add <server-id>` one-click install
+
+**As a** user,
+**I want** a single command to install and configure an MCP server from the registry,
+**So that** I can add a tool to my workflow without writing YAML.
+
+**Acceptance Criteria:**
+
+**Given** the registry is synced
+**When** the user runs `leanproxy add github`
+**Then** the server definition is downloaded
+**And** merged into `leanproxy_servers.yaml` under a unique name
+**And** the server process is started (or scheduled for next session)
+**And** a success message includes the server's tool count and a token-cost preview
+
+**Given** the requested server does not exist
+**When** the command runs
+**Then** an error lists up to 5 similar server names
+**And** exit code is non-zero
+
+**Given** a server with the same name already exists locally
+**When** the command runs
+**Then** it prompts (or `--force` flag) before overwriting
+**And** the existing process is gracefully stopped first
+
+### Story 11.3: Surface trust score and maintenance status
+
+**As a** user,
+**I want** to see a trust score, last-updated date, and open-issue count for each registry server,
+**So that** I can avoid installing abandoned or malicious tools.
+
+**Acceptance Criteria:**
+
+**Given** the user runs `leanproxy marketplace search <query>`
+**When** the command executes
+**Then** a table is displayed with columns: name, trust score (0-100), last release, open issues, downloads, estimated tokens/turn
+
+**Given** a server has a trust score below 40
+**When** the user runs `leanproxy add <low-trust-server>`
+**Then** a warning is shown requiring `--i-understand-the-risks` flag to proceed
+**And** the install is blocked by default
+
+**Given** the trust score data is unavailable
+**When** the command runs
+**Then** a "—" placeholder is shown and no warning is raised
+
+---
+
+## Epic 12: Semantic Prompt Cache
+
+**Goal:** Users get 60-80% additional token savings on repeated tool calls — beyond exact-string caches — by matching tool-call payloads by semantic similarity.
+
+### Story 12.1: Embed tool-call payloads via local or remote model
+
+**As a** developer,
+**I want** LeanProxy to compute a semantic embedding of every tool-call payload,
+**So that** semantically similar calls can be matched even when not textually identical.
+
+**Acceptance Criteria:**
+
+**Given** the semantic cache is enabled in config
+**When** a tool call is processed
+**Then** its structured payload (tool name + arguments) is embedded using the configured embedder
+**And** the embedding is stored in the cache alongside the response
+
+**Given** the embedder is configured as `local:ollama`
+**When** a payload needs embedding
+**Then** the request is made to the configured Ollama endpoint
+**And** if Ollama is unreachable, the cache falls back to exact-match only and a warning is logged
+
+**Given** the embedder is configured as `remote:openai`
+**When** a payload needs embedding
+**Then** the embedder API is called and the API key is read from the env (NFR12)
+**And** if the API key is missing, startup fails with a clear message
+
+**Acceptance Criterion (NFR11):** Embedding adds <5ms p95 to the request path.
+
+### Story 12.2: Vector-store integration (pluggable backends)
+
+**As a** developer,
+**I want** the semantic cache to support multiple vector-store backends (SQLite-vec default; Qdrant/Pinecone optional),
+**So that** the user can pick the right trade-off between simplicity and scale.
+
+**Acceptance Criteria:**
+
+**Given** config specifies `cache.vector_store: sqlite-vec` (default)
+**When** the proxy starts
+**Then** a SQLite database is created at `~/.leanproxy/cache/vectors.db`
+**And** the `vec0` extension is loaded if available; otherwise a warning is logged
+
+**Given** config specifies `cache.vector_store: qdrant`
+**When** the proxy starts
+**Then** a Qdrant client is initialized with the configured URL + API key
+**And** connection failures cause startup to abort with a clear message
+
+**Given** config specifies `cache.vector_store: pinecone`
+**When** the proxy starts
+**Then** the Pinecone client is initialized using the API key from env
+**And** the index name from config is validated to exist
+
+### Story 12.3: TTL, invalidation, and hit/miss dashboard
+
+**As a** user,
+**I want** cache entries to expire, schema changes to invalidate affected entries, and a hit-rate dashboard,
+**So that** the cache is correct and observable.
+
+**Acceptance Criteria:**
+
+**Given** a cache entry older than the configured TTL (default: 24h)
+**When** the cache is queried
+**Then** the entry is treated as a miss
+**And** a new entry is written after the response arrives
+
+**Given** a tool's schema changes (via registry refresh)
+**When** the change is detected
+**Then** all cache entries for that tool are purged
+**And** a log message records the invalidation count
+
+**Given** the user runs `leanproxy cache --semantic`
+**When** the command executes
+**Then** a table is shown: total queries, exact hits, semantic hits, misses, hit rate %, avg similarity score
+
+**Given** a cache hit occurs
+**When** the proxy serves the cached response
+**Then** a debug log records `cache=semantic similarity=0.92` to stderr
+**And** a counter is incremented for the dashboard
+
+---
+
+## Epic 13: AI Safety — Prompt-Injection Firewall v2
+
+**Goal:** Users are protected from indirect prompt injection — the top 2026 AI security threat — by scanning tool *results* (not just outgoing requests) and applying configurable actions.
+
+### Story 13.1: Build a local prompt-injection classifier
+
+**As a** developer,
+**I want** a regex + heuristic-based local classifier for known injection patterns,
+**So that** poisoned tool results are caught without calling a remote model.
+
+**Acceptance Criteria:**
+
+**Given** a tool result containing strings like "ignore previous instructions" or "you are now..."
+**When** the classifier scans it
+**Then** a `risk_score` (0-100) is computed based on the number and weight of matches
+**And** the original payload is preserved alongside the score
+
+**Given** the classifier detects no patterns
+**When** the scan completes
+**Then** the result is forwarded with `risk_score=0`
+**And** no overhead is added (NFR11)
+
+**Given** the classifier's pattern list is configurable
+**When** a user adds a custom pattern in `leanproxy.yaml`
+**Then** it is loaded on startup
+**And** patterns can be enabled/disabled individually
+
+**Acceptance Criterion:** Catches ≥95% of patterns in a red-team corpus of 200 known injection payloads.
+
+### Story 13.2: Configurable actions (quarantine / redact / block / log)
+
+**As a** user,
+**I want** to choose what happens when a high-risk result is detected,
+**So that** the policy matches my security posture.
+
+**Acceptance Criteria:**
+
+**Given** a tool result with `risk_score ≥ 80`
+**When** the action policy is `block`
+**Then** the result is dropped and an error returned to the LLM
+**And** a critical alert is logged to stderr
+
+**Given** a tool result with `risk_score ≥ 50` and `< 80`
+**When** the action policy is `quarantine`
+**Then** the result is moved to a side-channel (`~/.leanproxy/quarantine/<id>.json`)
+**And** a stub `[CONTENT_QUARANTINED — review at ~/.leanproxy/quarantine/<id>.json]` is returned to the LLM
+**And** a warning is logged
+
+**Given** a tool result with `risk_score > 0` and `< 50`
+**When** the action policy is `log`
+**Then** the result is forwarded unchanged
+**And** a debug entry is recorded
+
+**Given** the user runs `leanproxy doctor --security`
+**When** the command executes
+**Then** a summary of recent injection attempts is shown with counts by action taken
+
+### Story 13.3: Red-team corpus + continuous regression test
+
+**As a** developer,
+**I want** a red-team corpus of known injection payloads shipped with the binary,
+**So that** the classifier is regression-tested on every release.
+
+**Acceptance Criteria:**
+
+**Given** a corpus of 200 known injection payloads at `tests/security/injection_corpus.json`
+**When** `go test ./pkg/bouncer/...` runs
+**Then** the classifier is run against every payload
+**And** the test fails if recall drops below 95%
+
+**Given** a new injection pattern is discovered
+**When** the developer adds it to the corpus
+**Then** the test reruns and the pattern is added to the default classifier list
+**And** the changelog mentions the new pattern
+
+---
+
+## Epic 14: IDE Plugin (VS Code / JetBrains) + Live Cost Sidebar
+
+**Goal:** Developers see the cost of every tool call in their IDE in real time, turning cost into a visceral feedback loop and a habit-forming adoption mechanism.
+
+### Story 14.1: Publish `/metrics` JSON endpoint
+
+**As a** developer,
+**I want** LeanProxy to expose a real-time JSON metrics endpoint,
+**So that** IDE plugins (and other consumers) can read spend data without parsing logs.
+
+**Acceptance Criteria:**
+
+**Given** the proxy is running with the metrics endpoint enabled (default: on)
+**When** an HTTP client GETs `http://localhost:<port>/metrics`
+**Then** a JSON object is returned with: per-server token counts, per-tool token counts, total session spend, top 5 most expensive tools
+
+**Given** the metrics endpoint is disabled in config
+**When** the proxy starts
+**Then** the listener is not bound
+**And** no port is occupied
+
+**Given** the user sets `metrics.bind: 0.0.0.0:9090`
+**When** the proxy starts
+**Then** the endpoint is bound to all interfaces
+**And** a warning is logged if the bind is non-loopback (security notice)
+
+**Acceptance Criterion (NFR13):** The endpoint exposes only aggregated counts — no PII or prompt content.
+
+### Story 14.2: VS Code extension (TypeScript) with status bar + webview
+
+**As a** VS Code user,
+**I want** a status-bar item showing the current session token cost, and a webview panel with a per-tool breakdown,
+**So that** I can see the cost of my AI usage as I work.
+
+**Acceptance Criteria:**
+
+**Given** the VS Code extension is installed
+**When** LeanProxy is running and reachable
+**Then** the status bar shows `$0.00` initially
+**And** updates within 1 second of each tool call
+
+**Given** the user clicks the status bar item
+**When** the webview opens
+**Then** a table is displayed with: server, tool, calls, tokens, estimated cost
+**And** the table refreshes every 2 seconds via a poll of `/metrics`
+
+**Given** LeanProxy is not running
+**When** the extension starts
+**Then** the status bar shows "disconnected" with a tooltip explaining how to start the proxy
+**And** the webview shows a "proxy offline" empty state
+
+**Acceptance Criterion:** Extension installs from VS Code marketplace; first-run experience <60s.
+
+### Story 14.3: JetBrains plugin (Kotlin) — parity with VS Code
+
+**As a** JetBrains user (IntelliJ, PyCharm, GoLand),
+**I want** the same live-cost experience as VS Code,
+**So that** my team has consistent observability across IDEs.
+
+**Acceptance Criteria:**
+
+**Given** the JetBrains plugin is installed
+**When** the IDE is open and LeanProxy is running
+**Then** a status-bar widget shows the current session cost
+**And** a tool window ("LeanProxy") displays the per-tool breakdown table
+
+**Given** the user opens the tool window
+**When** the view renders
+**Then** data is polled from the same `/metrics` endpoint
+**And** the refresh interval is configurable in plugin settings
+
+**Acceptance Criterion:** Plugin published on JetBrains Marketplace with ≥4.5★ rating in first 90 days.
+
+---
+
+## Epic 15: Per-Tool Model Router & Local LLM Sidecar
+
+**Goal:** Users route cheap tasks (list_tools, redaction) to local or cheap models, and premium reasoning to premium models, with zero config per call.
+
+### Story 15.1: Per-tool model assignment via manifest
+
+**As a** user,
+**I want** to declare a `complexity_tier` per tool in `leanproxy_servers.yaml`,
+**So that** LeanProxy automatically routes the call to the right model.
+
+**Acceptance Criteria:**
+
+**Given** a tool entry with `complexity_tier: low`
+**When** the IDE invokes the tool
+**Then** LeanProxy routes the call to the configured "cheap" provider (e.g., Haiku, GPT-4o-mini)
+**And** the response is returned to the IDE unchanged
+
+**Given** a tool entry with `complexity_tier: high`
+**When** the IDE invokes the tool
+**Then** LeanProxy routes the call to the configured "premium" provider
+**And** the response is returned unchanged
+
+**Given** the tool has no `complexity_tier`
+**When** the call is processed
+**Then** it defaults to `medium` (configurable global default)
+**And** a debug log records the defaulting
+
+**Acceptance Criterion (NFR12):** All routing logic is disable-able; disabled mode uses a single provider and behaves identically to the current proxy.
+
+### Story 15.2: Ollama sidecar integration (re-routing to local LLM)
+
+**As a** user,
+**I want** redaction, summarization, and discovery to run on a local Ollama model,
+**So that** sensitive data never leaves my machine for those tasks.
+
+**Acceptance Criteria:**
+
+**Given** config specifies `sidecar.provider: ollama` and `sidecar.model: llama3.1:8b`
+**When** the Bouncer needs to redact a value (FR12) and the regex doesn't match
+**Then** it sends the value to the local Ollama model for classification
+**And** the redacted output is used
+
+**Given** Ollama is unreachable
+**When** the sidecar is needed
+**Then** the Bouncer falls back to a "redact aggressively" mode (replace unknown values with `[VALUE_REDACTED]`)
+**And** a stderr warning explains the fallback
+
+**Given** the user has not configured a sidecar
+**When** the proxy starts
+**Then** the sidecar is disabled
+**And** Bouncer uses regex-only mode (current behavior)
+
+**Acceptance Criterion (NFR4):** When the sidecar is enabled, no payload is ever sent to a remote endpoint for redaction/discovery/summarization.
+
+### Story 15.3: MLX / Apple Silicon support (experimental)
+
+**As a** Apple Silicon user,
+**I want** LeanProxy to use MLX-based local models for the sidecar,
+**So that** I get faster inference on M-series Macs without Ollama.
+
+**Acceptance Criteria:**
+
+**Given** `sidecar.provider: mlx` is configured on macOS arm64
+**When** the proxy starts
+**Then** the MLX runtime is detected and loaded
+**And** a model from `~/Library/Application Support/leanproxy/models/` is loaded
+
+**Given** the configured model file is missing
+**When** the proxy starts
+**Then** a helpful error suggests `ollama pull <model>` or downloading from a provided URL
+**And** startup is aborted
+
+**Acceptance Criterion (NFR12):** MLX support is opt-in via build tag; absent the tag, the binary behaves identically.
+
+---
+
+## Epic 16: First-Party MCP Servers (GitHub / Filesystem / DB)
+
+**Goal:** Users get battle-tested, security-hardened first-party MCP servers shipped with LeanProxy — removing third-party quality risk and creating a "batteries-included" experience.
+
+### Story 16.1: First-party GitHub MCP server
+
+**As a** user,
+**I want** a LeanProxy-bundled GitHub MCP server with secure defaults,
+**So that** I don't have to vet and install a third-party option.
+
+**Acceptance Criteria:**
+
+**Given** LeanProxy is installed
+**When** the user runs `leanproxy add github` (or it's bundled by default)
+**Then** the `leanproxy-mcp-github` server is registered
+**And** it reads `GITHUB_TOKEN` from the environment (NFR4)
+**And** rate limiting is enforced (5000 req/hour, GitHub's documented limit)
+
+**Given** a GitHub API rate-limit error
+**When** the server encounters it
+**Then** it returns a structured error to the LLM with the reset time
+**And** a warning is logged to stderr
+
+**Given** the `GITHUB_TOKEN` is missing
+**When** the server starts
+**Then** it starts in "read-only public" mode with reduced tool set
+**And** a notice is shown
+
+**Acceptance Criterion:** Server passes an integration test that calls `list_repos`, `get_issue`, `create_pr` against the GitHub API.
+
+### Story 16.2: First-party Filesystem MCP server with safe defaults
+
+**As a** user,
+**I want** a Filesystem MCP server that is restricted to a workspace root by default,
+**So that** accidental `rm -rf` or path traversal is impossible.
+
+**Acceptance Criteria:**
+
+**Given** LeanProxy starts with a `filesystem.allowed_roots` config
+**When** the Filesystem server is initialized
+**Then** it only accepts paths under those roots
+**And** path-traversal attempts (`../etc/passwd`) return a permission error
+
+**Given** no `allowed_roots` are configured
+**When** the server starts
+**Then** it refuses to start with a clear error
+**And** the user is directed to configure `filesystem.allowed_roots: ["/path/to/project"]`
+
+**Given** a read of a 50MB file
+**When** the server handles it
+**Then** the response is streamed (NFR2)
+**And** memory usage stays bounded
+
+**Acceptance Criterion:** Server has zero CVEs in `gosec` static analysis on every release.
+
+### Story 16.3: First-party Postgres / Redis servers with pooling
+
+**As a** user,
+**I want** first-party DB servers that use connection pooling by default,
+**So that** I get high throughput without leaking connections.
+
+**Acceptance Criteria:**
+
+**Given** a Postgres MCP server is configured with `pool_size: 10`
+**When** 50 concurrent tool calls arrive
+**Then** no more than 10 database connections are opened
+**And** the 11th-50th calls queue (per FR31/Epic 7 patterns)
+
+**Given** the database becomes unreachable
+**When** a query is in flight
+**Then** the connection pool detects the failure within 1 second (NFR8)
+**And** retries up to 3 times with exponential backoff
+
+**Given** a long-running query exceeds the configured `statement_timeout`
+**When** the timeout fires
+**Then** the connection is released back to the pool
+**And** a structured error is returned to the LLM
+
+**Acceptance Criterion:** Throughput is ≥500 queries/sec on a 10-connection pool against a local Postgres.
+
+---
+
+## Epic 17: Token Budget Governor
+
+**Goal:** Users enforce per-team/per-project daily token budgets at the gateway — not in every client — with auto-throttle or model downgrade when limits are approached.
+
+### Story 17.1: Per-team and per-project budget configuration
+
+**As a** user,
+**I want** to set daily/monthly token budgets for teams and projects in config,
+**So that** spend is governed centrally.
+
+**Acceptance Criteria:**
+
+**Given** config defines `budgets.teams.<team>.daily: 100000`
+**When** the proxy processes a request from that team
+**Then** the request's tokens are deducted from the team's daily budget
+**And** cumulative spend is updated in an in-memory store
+
+**Given** the team has a project sub-budget `budgets.teams.<team>.projects.<project>.monthly: 1000000`
+**When** the project's monthly spend exceeds 80% of the limit
+**Then** a warning is logged to stderr
+**And** a webhook is fired (if configured)
+
+**Given** no budget is configured
+**When** the proxy runs
+**Then** the governor is disabled
+**And** no overhead is added (NFR11)
+
+### Story 17.2: Auto-throttle and downgrade at threshold
+
+**As a** user,
+**I want** the governor to throttle or downgrade to a cheaper model when the budget is hit,
+**So that** I never go over budget without explicit consent.
+
+**Acceptance Criteria:**
+
+**Given** a team's daily budget is 100% consumed
+**When** the next request arrives
+**Then** the request is rejected with a structured `budget_exceeded` error
+**And** exit code 1 is returned for CLI use; JSON-RPC error is returned for gateway use
+
+**Given** a team's daily budget is 90% consumed
+**When** the next request arrives
+**Then** the request is allowed but routed to the configured "budget" provider (e.g., local model or cheapest tier)
+**And** a stderr notice explains the downgrade
+
+**Given** a hard cap is configured (e.g., `hard_cap: true`)
+**When** the budget is exceeded
+**Then** requests are rejected regardless of model choice
+
+**Given** a soft cap is configured (default)
+**When** the budget is exceeded
+**Then** requests are downgraded but allowed
+**And** the user can override per-call with `--ignore-budget` (CLI) or `X-Ignore-Budget: true` (HTTP header)
+
+**Acceptance Criterion (NFR13):** Budget state is in-memory only; not persisted to disk.
+
+---
+
+## Epic 18: Cost Attribution Web Dashboard
+
+**Goal:** Users (and finance teams) see real-time and historical token spend per server, per tool, per team, with drill-down and export.
+
+### Story 18.1: Web dashboard served from LeanProxy
+
+**As a** user,
+**I want** to open `http://localhost:9090` and see a real-time cost dashboard,
+**So that** I don't need a separate tool to visualize spend.
+
+**Acceptance Criteria:**
+
+**Given** the dashboard is enabled in config (default: on)
+**When** the user opens the dashboard URL
+**Then** an HTML page loads within 500ms
+**And** a summary card shows: today's spend, week-to-date, top server, top tool
+
+**Given** the dashboard is accessed from a non-loopback address
+**When** the request arrives
+**Then** the dashboard requires a bearer token (configured in `dashboard.token`)
+**And** 401 is returned without it
+
+**Given** the dashboard is disabled in config
+**When** the proxy starts
+**Then** no HTTP listener is bound for the dashboard
+
+**Acceptance Criterion (NFR13):** Dashboard reads only aggregated metrics from the in-memory store; no prompt content is ever rendered.
+
+### Story 18.2: Per-server / per-tool drill-down
+
+**As a** user,
+**I want** to click a server in the dashboard and see its tool-level breakdown,
+**So that** I can identify which tools drive the most cost.
+
+**Acceptance Criteria:**
+
+**Given** the dashboard is loaded
+**When** the user clicks a server row
+**Then** a drill-down view shows: tool name, call count, token count, avg tokens/call, last invoked
+**And** the view sorts by token count descending by default
+
+**Given** the user applies a date filter (e.g., "last 7 days")
+**When** the filter is applied
+**Then** all charts and tables update to reflect the date range
+**And** the URL updates with the filter as a query param (for sharing)
+
+**Given** the user wants to see per-prompt breakdown
+**When** they click "Show prompts" (opt-in)
+**Then** a list of prompt hashes is shown with their cost
+**And** no prompt content is displayed (only hashes for privacy)
+
+### Story 18.3: CSV/JSON export for finance
+
+**As a** user,
+**I want** to export cost data as CSV or JSON,
+**So that** my finance team can include it in monthly reports.
+
+**Acceptance Criteria:**
+
+**Given** the user runs `leanproxy report --export csv --since 2026-01-01`
+**When** the command executes
+**Then** a CSV file is written to `leanproxy-report-<date>.csv` with columns: timestamp, team, project, server, tool, tokens, estimated_cost
+
+**Given** the user passes `--export json`
+**When** the command executes
+**Then** a JSON file is written with the same data structured as an array of objects
+
+**Given** the export covers a large range (e.g., 90 days, 1M+ rows)
+**When** the export runs
+**Then** it streams the output without buffering all rows in memory (NFR2)
+**And** a progress indicator is shown
+
+**Acceptance Criterion (NFR4):** Export contains only aggregated metrics; no PII, secrets, or prompt content is included.
+
+---
+
+## Implementation Priority (Updated — Top 10 from Brainstorming)
+
+| Priority | Epic | Story | Source Idea | Expected KPI Impact |
+|:---------|:-----|:------|:------------|:--------------------|
+| 🥇 CRITICAL | Epic 10 | 10.1-10.3 | #3 Anthropic Cache Bridge | 90% cache-read discount |
+| 🥇 CRITICAL | Epic 11 | 11.1-11.3 | #1 MCP Registry Mirror | First-mover advantage |
+| 🥇 CRITICAL | Epic 12 | 12.1-12.3 | #2 Semantic Cache | 60-80% repeat-call savings |
+| 🥇 CRITICAL | Epic 13 | 13.1-13.3 | #35 Injection Firewall v2 | 95%+ injection recall |
+| HIGH | Epic 17 | 17.1-17.2 | #13 Budget Governor | Prevents bill shock |
+| HIGH | Epic 14 | 14.1-14.3 | #17 IDE Plugin | Adoption flywheel |
+| MEDIUM | Epic 15 | 15.1-15.3 | #4 Model Router + #7 Local LLM | Cost/privacy flex |
+| MEDIUM | Epic 18 | 18.1-18.3 | #11 Cost Dashboard | Enterprise sales |
+| MEDIUM | Epic 16 | 16.1-16.3 | #77-79 First-Party Servers | Quality + lock-in prevention |
+
+## Roadmap Mapping (Cross-Reference to Brainstorming Roadmap)
+
+| Brainstorming Phase | This Doc Epics |
+|:--------------------|:---------------|
+| Phase 1 — Q3 2026 Quick Wins | Epic 10, 11, 12, 17 (4 epics) |
+| Phase 2 — Q4 2026 Trust & Safety | Epic 13, 15 (2 epics) |
+| Phase 3 — Q1 2027 DX & Adoption | Epic 14, 18 (2 epics) |
+| Phase 4 — Q2-Q3 2027 Platform | Epic 15, 16 (continued) |
+| Phase 5 — Wildcards | Deferred — see brainstorming doc |
