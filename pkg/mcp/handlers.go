@@ -547,14 +547,29 @@ func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
 			h.logger.Debug("server state", "name", name, "state", state)
 
 			if state != "idle" && state != "running" && state != "busy" {
-				h.logger.Warn("server not running, attempting restart", "name", name, "state", state)
-				if err := h.pool.RestartServer(serverCtx, name); err != nil {
-					h.logger.Error("failed to restart server for cache", "name", name, "error", err)
+				h.logger.Warn("server not running, attempting restart for cache refresh", "name", name, "state", state)
+
+				var restartErr error
+				for attempt := 0; attempt < 3; attempt++ {
+					if attempt > 0 {
+						h.logger.Info("retrying server restart for cache", "name", name, "attempt", attempt+1)
+						time.Sleep(time.Duration(attempt) * time.Second)
+					}
+
+					if err := h.pool.RestartServer(serverCtx, name); err != nil {
+						restartErr = err
+						continue
+					}
+					restartErr = nil
+					break
+				}
+
+				if restartErr != nil {
+					h.logger.Error("failed to restart server for cache after retries", "name", name, "error", restartErr)
 					h.cacheFailures.Add(1)
-					results <- serverToolResult{name: name, err: err}
+					results <- serverToolResult{name: name, err: restartErr}
 					return
 				}
-				time.Sleep(500 * time.Millisecond)
 			}
 
 			initErr := h.initializeServer(serverCtx, name)
@@ -703,10 +718,26 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 
 	if state != "idle" && state != "running" && state != "busy" {
 		h.logger.Warn("server not running, attempting to restart", "name", serverName, "state", state)
-		if err := h.pool.RestartServer(ctx, serverName); err != nil {
-			h.logger.Error("failed to restart server", "name", serverName, "error", err)
+
+		var restartErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				h.logger.Info("retrying server restart", "name", serverName, "attempt", attempt+1)
+				time.Sleep(time.Duration(attempt) * time.Second)
+			}
+
+			if err := h.pool.RestartServer(ctx, serverName); err != nil {
+				restartErr = err
+				continue
+			}
+			restartErr = nil
+			break
+		}
+
+		if restartErr != nil {
+			h.logger.Error("failed to restart server after retries", "name", serverName, "error", restartErr)
 			enrichedError := FormatErrorWithHint(
-				fmt.Sprintf("server %s is not running (state: %s) and failed to restart: %v", serverName, state, err),
+				fmt.Sprintf("server %s is not running (state: %s) and failed to restart after retries: %v", serverName, state, restartErr),
 				serverName, toolName,
 			)
 			return &Response{
@@ -716,7 +747,6 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 			}, nil
 		}
 		h.logger.Info("server restarted successfully", "name", serverName)
-		time.Sleep(500 * time.Millisecond)
 	}
 
 	// Perform MCP initialize handshake if not yet done for this server instance.

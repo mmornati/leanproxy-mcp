@@ -98,7 +98,9 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 	}
 
 	idleTimeout := config.IdleTimeout
-	if idleTimeout == 0 {
+	// idleTimeout == 0 means disabled (no idle timeout); set idle_timeout: "0" in config
+	// idleTimeout < 0 falls back to 30m default (should not happen in practice)
+	if idleTimeout < 0 {
 		idleTimeout = 30 * time.Minute
 	}
 
@@ -600,6 +602,10 @@ func (s *StdioServerV2) sendNotification(ctx context.Context, method string, par
 }
 
 func (s *StdioServerV2) checkIdleTimeout(ctx context.Context) {
+	if s.idleTimeout <= 0 {
+		return
+	}
+
 	s.mu.Lock()
 	idleDuration := time.Since(s.lastRequestAt)
 	currentState := atomic.LoadInt32(&s.state)
