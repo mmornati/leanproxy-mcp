@@ -399,14 +399,29 @@ func (p *StdioPool) RestartServer(ctx context.Context, name string) error {
 		return err
 	}
 
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	currentState := atomic.LoadInt32(&server.state)
 	if currentState == stateStopping {
 		atomic.StoreInt32(&server.state, stateStopped)
 	}
 
-	return server.spawn(ctx)
+	if err := server.spawn(ctx); err != nil {
+		return err
+	}
+
+	// Wait for server process to be healthy (up to 15s)
+	if err := p.waitForServerReady(ctx, name, 15*time.Second); err != nil {
+		p.logger.Warn("server restarted but not ready yet, proceeding anyway", "name", name, "error", err)
+	}
+
+	// Reset circuit breaker on successful restart to avoid cascading failures
+	if cb, exists := p.circuitBreakers[name]; exists {
+		cb.Reset()
+		p.logger.Info("circuit breaker reset after restart", "name", name)
+	}
+
+	return nil
 }
 
 func (p *StdioPool) SendRequest(ctx context.Context, serverName string, req *proxy.JSONRPCRequest, timeout time.Duration) (*proxy.JSONRPCResponse, error) {
