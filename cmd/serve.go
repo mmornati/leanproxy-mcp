@@ -77,7 +77,7 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.listenAddr, "listen", "127.0.0.1:8080", "Address to listen on")
 	serveCmd.Flags().StringVar(&serveFlags.upstreamURL, "upstream", "http://localhost:8081", "Upstream JSON-RPC server URL")
 	serveCmd.Flags().StringVar(&serveFlags.providersConfig, "providers-config", "", "Path to providers config file for provider detection")
-	serveCmd.Flags().StringVar(&serveFlags.cacheStrategy, "cache-strategy", "aggressive", "Cache breakpoint injection strategy (off, aggressive, balanced)")
+	serveCmd.Flags().StringVar(&serveFlags.cacheStrategy, "cache-strategy", "off", "Cache breakpoint injection strategy for Anthropic requests: off (default, no injection), aggressive (last system + last tool), balanced (largest block only)")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -174,8 +174,8 @@ func runServe(cmd *cobra.Command, args []string) {
 		switch strategy {
 		case cache.StrategyOff, cache.StrategyAggressive, cache.StrategyBalanced:
 		default:
-			slog.Warn("invalid cache-strategy, falling back to aggressive", "value", serveFlags.cacheStrategy)
-			strategy = cache.StrategyAggressive
+			slog.Warn("invalid cache-strategy, falling back to off", "value", serveFlags.cacheStrategy)
+			strategy = cache.StrategyOff
 		}
 		breakpointInjector.Store(cache.NewBreakpointInjector(
 			cache.WithInjectLogger(slog.Default()),
@@ -550,15 +550,18 @@ func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) 
 	if server == nil || server.Address == "" || req == nil || len(req.Params) == 0 {
 		return
 	}
+	inj := breakpointInjector.Load()
+	if inj == nil {
+		return
+	}
+	if inj.Strategy() == cache.StrategyOff {
+		return
+	}
 	det := providerDetector.Load()
 	if det == nil {
 		return
 	}
 	if det.Detect(server.Address) != cache.ProviderAnthropic {
-		return
-	}
-	inj := breakpointInjector.Load()
-	if inj == nil {
 		return
 	}
 	modified, err := inj.Inject(req.Params)

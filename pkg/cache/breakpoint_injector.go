@@ -46,9 +46,13 @@ func NewBreakpointInjector(opts ...BreakpointInjectorOption) *BreakpointInjector
 	return inj
 }
 
+func (b *BreakpointInjector) Strategy() InjectStrategy {
+	return b.strategy
+}
+
 func (b *BreakpointInjector) Inject(body []byte) ([]byte, error) {
 	if len(body) == 0 {
-		return nil, fmt.Errorf("breakpoint injector: empty body")
+		return body, nil
 	}
 
 	if b.strategy == StrategyOff {
@@ -70,6 +74,9 @@ func (b *BreakpointInjector) Inject(body []byte) ([]byte, error) {
 		b.injectTools(req)
 	case StrategyBalanced:
 		b.injectBalanced(req)
+	default:
+		b.logger.Warn("breakpoint injector: unknown strategy, skipping injection", "strategy", b.strategy)
+		return body, nil
 	}
 
 	result, err := json.Marshal(req)
@@ -88,9 +95,12 @@ func (b *BreakpointInjector) injectSystem(req map[string]interface{}) {
 	if !ok || len(system) == 0 {
 		return
 	}
-	last := system[len(system)-1].(map[string]interface{})
-	if b.hasCacheControl(last) {
+	if b.anyHasCacheControl(system) {
 		b.logger.Debug("cache_control: user-supplied, skipping system")
+		return
+	}
+	last, ok := system[len(system)-1].(map[string]interface{})
+	if !ok {
 		return
 	}
 	last["cache_control"] = map[string]interface{}{"type": "ephemeral"}
@@ -105,9 +115,12 @@ func (b *BreakpointInjector) injectTools(req map[string]interface{}) {
 	if !ok || len(tools) == 0 {
 		return
 	}
-	last := tools[len(tools)-1].(map[string]interface{})
-	if b.hasCacheControl(last) {
+	if b.anyHasCacheControl(tools) {
 		b.logger.Debug("cache_control: user-supplied, skipping tools")
+		return
+	}
+	last, ok := tools[len(tools)-1].(map[string]interface{})
+	if !ok {
 		return
 	}
 	last["cache_control"] = map[string]interface{}{"type": "ephemeral"}
@@ -130,14 +143,12 @@ func (b *BreakpointInjector) injectBalanced(req map[string]interface{}) {
 	}
 
 	systemRaw, _ := req["system"]
-	system := systemRaw.([]interface{})
-	lastSys := system[len(system)-1].(map[string]interface{})
-	sysHasCC := b.hasCacheControl(lastSys)
+	system, _ := systemRaw.([]interface{})
+	sysHasCC := b.anyHasCacheControl(system)
 
 	toolsRaw, _ := req["tools"]
-	tools := toolsRaw.([]interface{})
-	lastTool := tools[len(tools)-1].(map[string]interface{})
-	toolsHasCC := b.hasCacheControl(lastTool)
+	tools, _ := toolsRaw.([]interface{})
+	toolsHasCC := b.anyHasCacheControl(tools)
 
 	if sysHasCC && toolsHasCC {
 		return
@@ -152,8 +163,16 @@ func (b *BreakpointInjector) injectBalanced(req map[string]interface{}) {
 	}
 
 	if systemSize >= toolsSize {
+		lastSys, ok := system[len(system)-1].(map[string]interface{})
+		if !ok {
+			return
+		}
 		lastSys["cache_control"] = map[string]interface{}{"type": "ephemeral"}
 	} else {
+		lastTool, ok := tools[len(tools)-1].(map[string]interface{})
+		if !ok {
+			return
+		}
 		lastTool["cache_control"] = map[string]interface{}{"type": "ephemeral"}
 	}
 }
@@ -177,4 +196,17 @@ func (b *BreakpointInjector) blockSize(req map[string]interface{}, key string) i
 func (b *BreakpointInjector) hasCacheControl(item map[string]interface{}) bool {
 	_, ok := item["cache_control"]
 	return ok
+}
+
+func (b *BreakpointInjector) anyHasCacheControl(items []interface{}) bool {
+	for _, item := range items {
+		m, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if b.hasCacheControl(m) {
+			return true
+		}
+	}
+	return false
 }

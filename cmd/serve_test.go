@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
@@ -414,5 +415,143 @@ func TestHandleGatewayToolSync(t *testing.T) {
 
 	if resp.ID != 1 {
 		t.Errorf("expected ID 1, got %v", resp.ID)
+	}
+}
+
+// TestInjectBreakpointsAnthropicAggressive verifies that when the injector is
+// aggressive and the provider detector identifies an Anthropic URL,
+// injectBreakpoints mutates req.Params with cache_control on the last system and tool blocks.
+func TestInjectBreakpointsAnthropicAggressive(t *testing.T) {
+	prevDetector := providerDetector.Load()
+	prevInjector := breakpointInjector.Load()
+	t.Cleanup(func() {
+		providerDetector.Store(prevDetector)
+		breakpointInjector.Store(prevInjector)
+	})
+
+	providerDetector.Store(cache.NewProviderDetector())
+	breakpointInjector.Store(cache.NewBreakpointInjector(cache.WithStrategy(cache.StrategyAggressive)))
+
+	server := &registry.ServerEntry{
+		ID:      "anthropic-1",
+		Address: "https://api.anthropic.com/v1/messages",
+	}
+	params := json.RawMessage(`{
+		"model": "claude-3-5-sonnet-20241022",
+		"system": [{"type":"text","text":"sys"}],
+		"tools": [{"name":"t1","input_schema":{"type":"object"}}]
+	}`)
+	req := &proxy.JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "messages",
+		ID:      1,
+		Params:  params,
+	}
+
+	injectBreakpoints(server, req)
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(req.Params, &parsed); err != nil {
+		t.Fatalf("req.Params is not valid JSON: %v", err)
+	}
+	system := parsed["system"].([]interface{})
+	lastSys := system[len(system)-1].(map[string]interface{})
+	if _, has := lastSys["cache_control"]; !has {
+		t.Error("system last block should have cache_control after injection")
+	}
+	tools := parsed["tools"].([]interface{})
+	lastTool := tools[len(tools)-1].(map[string]interface{})
+	if _, has := lastTool["cache_control"]; !has {
+		t.Error("tools last block should have cache_control after injection")
+	}
+}
+
+// TestInjectBreakpointsNonAnthropicUnchanged verifies that injectBreakpoints
+// does NOT mutate req.Params when the server URL is not an Anthropic endpoint.
+func TestInjectBreakpointsNonAnthropicUnchanged(t *testing.T) {
+	prevDetector := providerDetector.Load()
+	prevInjector := breakpointInjector.Load()
+	t.Cleanup(func() {
+		providerDetector.Store(prevDetector)
+		breakpointInjector.Store(prevInjector)
+	})
+
+	providerDetector.Store(cache.NewProviderDetector())
+	breakpointInjector.Store(cache.NewBreakpointInjector(cache.WithStrategy(cache.StrategyAggressive)))
+
+	server := &registry.ServerEntry{
+		ID:      "openai-1",
+		Address: "https://api.openai.com/v1/chat/completions",
+	}
+	originalParams := json.RawMessage(`{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}`)
+	req := &proxy.JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "chat/completions",
+		ID:      1,
+		Params:  originalParams,
+	}
+
+	injectBreakpoints(server, req)
+
+	if !bytes.Equal(req.Params, originalParams) {
+		t.Errorf("non-Anthropic request should be unchanged.\noriginal: %s\nafter:    %s", originalParams, req.Params)
+	}
+}
+
+// TestInjectBreakpointsStrategyOffSkipsDetection verifies that with strategy=off,
+// injectBreakpoints short-circuits without calling Detect (which would normally
+// run for every request even for non-Anthropic traffic).
+func TestInjectBreakpointsStrategyOffSkipsDetection(t *testing.T) {
+	prevDetector := providerDetector.Load()
+	prevInjector := breakpointInjector.Load()
+	t.Cleanup(func() {
+		providerDetector.Store(prevDetector)
+		breakpointInjector.Store(prevInjector)
+	})
+
+	// Use a ProviderDetector that would PANIC if called — strategy=off must
+	// short-circuit before any Detect call.
+	providerDetector.Store(nil)
+	breakpointInjector.Store(cache.NewBreakpointInjector(cache.WithStrategy(cache.StrategyOff)))
+
+	server := &registry.ServerEntry{
+		ID:      "any",
+		Address: "https://api.anthropic.com/v1/messages",
+	}
+	originalParams := json.RawMessage(`{"system":[{"type":"text","text":"x"}],"tools":[{"name":"t1","input_schema":{"type":"object"}}]}`)
+	req := &proxy.JSONRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "messages",
+		ID:      1,
+		Params:  originalParams,
+	}
+
+	injectBreakpoints(server, req)
+
+	if !bytes.Equal(req.Params, originalParams) {
+		t.Error("strategy=off should leave params byte-identical")
+	}
+}
+
+// TestInjectBreakpointsEmptyParams verifies injectBreakpoints is a safe no-op
+// when req.Params is empty/nil — no panic, no mutation.
+func TestInjectBreakpointsEmptyParams(t *testing.T) {
+	prevDetector := providerDetector.Load()
+	prevInjector := breakpointInjector.Load()
+	t.Cleanup(func() {
+		providerDetector.Store(prevDetector)
+		breakpointInjector.Store(prevInjector)
+	})
+
+	providerDetector.Store(cache.NewProviderDetector())
+	breakpointInjector.Store(cache.NewBreakpointInjector(cache.WithStrategy(cache.StrategyAggressive)))
+
+	server := &registry.ServerEntry{ID: "x", Address: "https://api.anthropic.com/v1/messages"}
+	req := &proxy.JSONRPCRequest{JSONRPC: "2.0", Method: "messages", ID: 1}
+
+	injectBreakpoints(server, req)
+
+	if req.Params != nil {
+		t.Errorf("empty-params request should not gain Params, got: %s", req.Params)
 	}
 }

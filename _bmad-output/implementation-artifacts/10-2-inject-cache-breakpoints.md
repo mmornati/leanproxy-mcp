@@ -105,3 +105,34 @@ New files listed in technical notes; modify existing files only where required.
 ## Status
 
 Status: review
+
+### Review Findings (2026-06-23)
+
+Adversarial review across 3 parallel layers (Blind Hunter, Edge Case Hunter, Acceptance Auditor). All findings resolved.
+
+**Patches applied:**
+- [x] [Review][Patch] Add comma-ok guards on all `.(map[string]interface{})` assertions in `pkg/cache/breakpoint_injector.go` (lines 91, 108, 134, 139) — unguarded assertions would panic on any trailing non-object element in `system`/`tools`.
+- [x] [Review][Patch] Scan entire `system` and `tools` arrays for user-supplied `cache_control` (not just last block) — Anthropic allows up to 4 breakpoints, so injecting on top of a non-last user breakpoint produces invalid duplicate-block requests.
+- [x] [Review][Patch] Change `--cache-strategy` default from `aggressive` to `off` — silent contract change for existing deployments (silent cache billing/semantic change on upgrade).
+- [x] [Review][Patch] Change invalid `--cache-strategy` value fallback from `aggressive` to `off` (fail-closed) — typo `agressive` was falling back to most invasive strategy.
+- [x] [Review][Patch] Add `default` branch in `Inject` switch — unknown strategy silently no-op'd without warning.
+- [x] [Review][Patch] Early-exit `injectBreakpoints` on `StrategyOff` before `Detect` call — was running provider detection per request even when strategy disabled.
+- [x] [Review][Patch] `Inject` empty/nil body now returns body unchanged instead of error — caller footgun (nil-slice-with-error) removed.
+- [x] [Review][Patch] Add 16 new edge-case tests (non-object trailing elements, null values, empty arrays, null body, non-last cache_control detection, balanced-mode user-supplied combinations, unknown strategy, concurrent safe access, strategy accessor).
+- [x] [Review][Patch] Add 4 wire-level integration tests for `injectBreakpoints` in `cmd/serve_test.go` (Anthropic aggressive, non-Anthropic unchanged, strategy-off short-circuits before Detect, empty params no-op).
+
+**Deferred:**
+- [x] [Review][Defer] Malformed JSON only logged at Debug — pre-existing convention in this codebase; operators can set log level to Debug for diagnostics. Not actionable in this scope.
+- [x] [Review][Defer] Global mutable `atomic.Pointer[cache.BreakpointInjector]` — matches existing `providerDetector` pattern in same file; refactoring out of scope.
+
+**Dismissed:**
+- Global mutable injector pattern (matches codebase convention).
+- `cache_control: null` considered user-supplied (correct opt-out semantic).
+- `server.Address == ""` redundant check (defense-in-depth, leave as-is).
+- Key-order re-marshal not tested (Go's encoding/json sorts map keys; locking in semantics would be noise).
+
+**Verification post-patches:**
+- Full regression suite: 1138 tests pass, 0 failures (1134 + 4 new integration tests + 16 new unit tests)
+- `go vet`: clean
+- `go test -race`: clean
+- Benchmarks: aggressive ~8µs, balanced ~3.4µs, off ~1.2ns, user-supplied ~3µs, large payload ~120µs — all well under 1ms p95 (NFR11 ✅)

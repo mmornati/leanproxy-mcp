@@ -426,17 +426,25 @@ func TestInjectStrategyBalancedOnlyOneBlock(t *testing.T) {
 
 func TestInjectEmptyBody(t *testing.T) {
 	inj := NewBreakpointInjector()
-	_, err := inj.Inject([]byte{})
-	if err == nil {
-		t.Error("expected error for empty body")
+	body := []byte{}
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Errorf("empty body should not error (no-op), got: %v", err)
+	}
+	if !bytes.Equal(result, body) {
+		t.Error("empty body should be returned unchanged")
 	}
 }
 
 func TestInjectNilBody(t *testing.T) {
 	inj := NewBreakpointInjector()
-	_, err := inj.Inject(nil)
-	if err == nil {
-		t.Error("expected error for nil body")
+	body := []byte(nil)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Errorf("nil body should not error (no-op), got: %v", err)
+	}
+	if len(result) != 0 {
+		t.Error("nil body should be returned unchanged (zero length)")
 	}
 }
 
@@ -656,5 +664,383 @@ func BenchmarkInjectLargePayload(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = inj.Inject(body)
+	}
+}
+
+func TestInjectSystemNonObjectLastElement(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`{"system": [{"type":"text","text":"a"}, "trailing-string"], "tools": [{"name":"t1","input_schema":{"type":"object"}}]}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject should not panic or error on non-object trailing element, got: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	system := parsed["system"].([]interface{})
+	last := system[len(system)-1]
+	if _, isMap := last.(map[string]interface{}); isMap {
+		t.Error("last system element should remain a string, not a map")
+	}
+	tools := parsed["tools"].([]interface{})
+	lastTool := tools[len(tools)-1].(map[string]interface{})
+	if _, has := lastTool["cache_control"]; !has {
+		t.Error("tools last (valid) item should still receive cache_control")
+	}
+}
+
+func TestInjectToolsNonObjectLastElement(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`{"system": [{"type":"text","text":"a"}], "tools": [{"name":"t1","input_schema":{"type":"object"}}, null]}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject should not panic or error on null trailing tool, got: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	tools := parsed["tools"].([]interface{})
+	last := tools[len(tools)-1]
+	if last != nil {
+		t.Errorf("last tool should remain null, got: %v", last)
+	}
+	system := parsed["system"].([]interface{})
+	lastSys := system[len(system)-1].(map[string]interface{})
+	if _, has := lastSys["cache_control"]; !has {
+		t.Error("system last item should still receive cache_control")
+	}
+}
+
+func TestInjectSystemNullValue(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`{"system": null, "tools": [{"name":"t1","input_schema":{"type":"object"}}]}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	if parsed["system"] != nil {
+		t.Errorf("system=null should be preserved, got: %v", parsed["system"])
+	}
+}
+
+func TestInjectToolsNullValue(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`{"system": [{"type":"text","text":"a"}], "tools": null}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	if parsed["tools"] != nil {
+		t.Errorf("tools=null should be preserved, got: %v", parsed["tools"])
+	}
+}
+
+func TestInjectEmptySystemArray(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`{"system": [], "tools": [{"name":"t1","input_schema":{"type":"object"}}]}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	system := parsed["system"].([]interface{})
+	if len(system) != 0 {
+		t.Errorf("empty system should remain empty, got: %v", system)
+	}
+	tools := parsed["tools"].([]interface{})
+	lastTool := tools[len(tools)-1].(map[string]interface{})
+	if _, has := lastTool["cache_control"]; !has {
+		t.Error("tools should still receive cache_control when system is empty")
+	}
+}
+
+func TestInjectEmptyToolsArray(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`{"system": [{"type":"text","text":"a"}], "tools": []}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	tools := parsed["tools"].([]interface{})
+	if len(tools) != 0 {
+		t.Errorf("empty tools should remain empty, got: %v", tools)
+	}
+	system := parsed["system"].([]interface{})
+	lastSys := system[len(system)-1].(map[string]interface{})
+	if _, has := lastSys["cache_control"]; !has {
+		t.Error("system should still receive cache_control when tools is empty")
+	}
+}
+
+func TestInjectNullBody(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`null`)
+	_, err := inj.Inject(body)
+	if err == nil {
+		t.Error("null body should error (not a JSON object)")
+	}
+}
+
+func TestInjectUserSuppliedCacheControlNonLastSystem(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`{
+		"system": [
+			{"type": "text", "text": "first", "cache_control": {"type": "ephemeral"}},
+			{"type": "text", "text": "last"}
+		],
+		"tools": [{"name": "t1", "input_schema": {"type": "object"}}]
+	}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	system := parsed["system"].([]interface{})
+	for i, item := range system {
+		m := item.(map[string]interface{})
+		if _, has := m["cache_control"]; has && i == len(system)-1 {
+			t.Errorf("system last item must NOT receive cache_control when earlier block already has one (would create duplicate blocks)")
+		}
+	}
+	ccCount := 0
+	for _, item := range system {
+		m := item.(map[string]interface{})
+		if _, has := m["cache_control"]; has {
+			ccCount++
+		}
+	}
+	if ccCount != 1 {
+		t.Errorf("expected exactly 1 cache_control in system array, got %d", ccCount)
+	}
+	tools := parsed["tools"].([]interface{})
+	lastTool := tools[len(tools)-1].(map[string]interface{})
+	if _, has := lastTool["cache_control"]; !has {
+		t.Error("tools should still receive cache_control when user only marked a non-last system block")
+	}
+}
+
+func TestInjectUserSuppliedCacheControlNonLastTools(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`{
+		"system": [{"type": "text", "text": "x"}],
+		"tools": [
+			{"name": "t1", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral"}},
+			{"name": "t2", "input_schema": {"type": "object"}}
+		]
+	}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	tools := parsed["tools"].([]interface{})
+	ccCount := 0
+	for _, item := range tools {
+		m := item.(map[string]interface{})
+		if _, has := m["cache_control"]; has {
+			ccCount++
+		}
+	}
+	if ccCount != 1 {
+		t.Errorf("expected exactly 1 cache_control in tools array, got %d", ccCount)
+	}
+	system := parsed["system"].([]interface{})
+	lastSys := system[len(system)-1].(map[string]interface{})
+	if _, has := lastSys["cache_control"]; !has {
+		t.Error("system should still receive cache_control when user only marked a non-last tool")
+	}
+}
+
+func TestInjectBalancedBothAbsent(t *testing.T) {
+	inj := NewBreakpointInjector(WithStrategy(StrategyBalanced))
+	body := []byte(`{"model": "claude-3-5-sonnet-20241022", "max_tokens": 1024, "messages": [{"role":"user","content":"hi"}]}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	if _, has := parsed["system"]; has {
+		t.Error("balanced with neither system nor tools should not add a system field")
+	}
+	if _, has := parsed["tools"]; has {
+		t.Error("balanced with neither system nor tools should not add a tools field")
+	}
+}
+
+func TestInjectBalancedUserCCOnSystemOnly(t *testing.T) {
+	inj := NewBreakpointInjector(WithStrategy(StrategyBalanced))
+	body := []byte(`{
+		"system": [{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}],
+		"tools": [{"name": "t1", "input_schema": {"type": "object"}}]
+	}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	system := parsed["system"].([]interface{})
+	sysCC := 0
+	for _, item := range system {
+		m := item.(map[string]interface{})
+		if _, has := m["cache_control"]; has {
+			sysCC++
+		}
+	}
+	if sysCC != 1 {
+		t.Errorf("system should preserve its 1 user-supplied cache_control, got %d", sysCC)
+	}
+	tools := parsed["tools"].([]interface{})
+	lastTool := tools[len(tools)-1].(map[string]interface{})
+	if _, has := lastTool["cache_control"]; !has {
+		t.Error("balanced should inject into tools when system has user-supplied cache_control")
+	}
+}
+
+func TestInjectBalancedUserCCOnToolsOnly(t *testing.T) {
+	inj := NewBreakpointInjector(WithStrategy(StrategyBalanced))
+	body := []byte(`{
+		"system": [{"type": "text", "text": "x"}],
+		"tools": [{"name": "t1", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral"}}]
+	}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	tools := parsed["tools"].([]interface{})
+	toolCC := 0
+	for _, item := range tools {
+		m := item.(map[string]interface{})
+		if _, has := m["cache_control"]; has {
+			toolCC++
+		}
+	}
+	if toolCC != 1 {
+		t.Errorf("tools should preserve its 1 user-supplied cache_control, got %d", toolCC)
+	}
+	system := parsed["system"].([]interface{})
+	lastSys := system[len(system)-1].(map[string]interface{})
+	if _, has := lastSys["cache_control"]; !has {
+		t.Error("balanced should inject into system when tools has user-supplied cache_control")
+	}
+}
+
+func TestInjectBalancedBothUserSupplied(t *testing.T) {
+	inj := NewBreakpointInjector(WithStrategy(StrategyBalanced))
+	body := []byte(`{
+		"system": [{"type": "text", "text": "x", "cache_control": {"type": "ephemeral"}}],
+		"tools": [{"name": "t1", "input_schema": {"type": "object"}, "cache_control": {"type": "ephemeral"}}]
+	}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	system := parsed["system"].([]interface{})
+	sysCC := 0
+	for _, item := range system {
+		if m, ok := item.(map[string]interface{}); ok {
+			if _, has := m["cache_control"]; has {
+				sysCC++
+			}
+		}
+	}
+	if sysCC != 1 {
+		t.Errorf("system cache_control count = %d, want 1 (no new injection)", sysCC)
+	}
+	tools := parsed["tools"].([]interface{})
+	toolCC := 0
+	for _, item := range tools {
+		if m, ok := item.(map[string]interface{}); ok {
+			if _, has := m["cache_control"]; has {
+				toolCC++
+			}
+		}
+	}
+	if toolCC != 1 {
+		t.Errorf("tools cache_control count = %d, want 1 (no new injection)", toolCC)
+	}
+}
+
+func TestInjectUnknownStrategy(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	inj := NewBreakpointInjector(WithInjectLogger(logger), WithStrategy(InjectStrategy("weird-strategy")))
+	body := []byte(`{"system": [{"type":"text","text":"x"}], "tools": [{"name":"t1","input_schema":{"type":"object"}}]}`)
+	result, err := inj.Inject(body)
+	if err != nil {
+		t.Fatalf("Inject failed: %v", err)
+	}
+	if !bytes.Equal(result, body) {
+		t.Error("unknown strategy should pass body through unchanged")
+	}
+	if !strings.Contains(buf.String(), "unknown strategy") {
+		t.Errorf("expected warning log about unknown strategy, got: %q", buf.String())
+	}
+}
+
+func TestInjectStrategyAccessor(t *testing.T) {
+	inj := NewBreakpointInjector(WithStrategy(StrategyBalanced))
+	if got := inj.Strategy(); got != StrategyBalanced {
+		t.Errorf("Strategy() = %q, want %q", got, StrategyBalanced)
+	}
+}
+
+func TestInjectConcurrentSafe(t *testing.T) {
+	inj := NewBreakpointInjector()
+	body := []byte(`{"system": [{"type":"text","text":"x"}], "tools": [{"name":"t1","input_schema":{"type":"object"}}]}`)
+	const goroutines = 50
+	const iterations = 100
+	done := make(chan error, goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			for i := 0; i < iterations; i++ {
+				if _, err := inj.Inject(body); err != nil {
+					done <- err
+					return
+				}
+			}
+			done <- nil
+		}()
+	}
+	for g := 0; g < goroutines; g++ {
+		if err := <-done; err != nil {
+			t.Errorf("concurrent Inject failed: %v", err)
+		}
 	}
 }
