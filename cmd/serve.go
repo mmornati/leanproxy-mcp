@@ -347,6 +347,8 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
+	cache.ProcessResponse(resp.Result)
+
 	writeResponse(writer, resp)
 }
 
@@ -384,6 +386,8 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		writeErrorAsync(writer, writerMu, errors.ErrCodeInternalError, err.Error())
 		return
 	}
+
+	cache.ProcessResponse(resp.Result)
 
 	writeResponseAsync(writer, writerMu, resp)
 }

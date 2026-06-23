@@ -15,8 +15,7 @@ type CacheStats struct {
 	CacheMisses        int64   `json:"cache_misses"`
 	InputTokens        int64   `json:"input_tokens"`
 	CachedInputTokens  int64   `json:"cached_input_tokens"`
-	TokensSaved int64  `json:"tokens_saved"`
-	ModelName   string `json:"model_name,omitempty"`
+	TokensSaved int64 `json:"tokens_saved"`
 }
 
 func (s *CacheStats) HitRate() float64 {
@@ -61,7 +60,8 @@ func (s *CacheStats) FormatMarkdown(model string) string {
 func (s *CacheStats) FormatJSON() string {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
-		return fmt.Sprintf(`{"error": %q}`, err.Error())
+		errData, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return string(errData)
 	}
 	return string(data)
 }
@@ -136,6 +136,30 @@ func (t *CacheStatsTracker) GetStats() CacheStats {
 		InputTokens:       t.inputTokens,
 		CachedInputTokens: t.cachedInputTokens,
 		TokensSaved:       t.tokensSaved,
+	}
+}
+
+type anthropicUsage struct {
+	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+}
+
+type anthropicResponseMeta struct {
+	Usage *anthropicUsage `json:"usage"`
+}
+
+func ProcessResponse(result json.RawMessage) {
+	if len(result) == 0 {
+		return
+	}
+	var meta anthropicResponseMeta
+	if err := json.Unmarshal(result, &meta); err != nil || meta.Usage == nil {
+		return
+	}
+	if meta.Usage.CacheReadInputTokens > 0 {
+		GlobalCacheStatsTracker().RecordCacheHit(meta.Usage.CacheReadInputTokens)
+	} else if meta.Usage.CacheCreationInputTokens > 0 {
+		GlobalCacheStatsTracker().RecordCacheMiss()
 	}
 }
 

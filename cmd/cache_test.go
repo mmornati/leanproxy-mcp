@@ -1,8 +1,31 @@
 package cmd
 
 import (
+	"bytes"
+	"io"
+	"os"
+	"strings"
 	"testing"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 )
+
+func captureStdout(f func()) string {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	out := make(chan string)
+	go func() {
+		var buf bytes.Buffer
+		io.Copy(&buf, r)
+		out <- buf.String()
+	}()
+	f()
+	w.Close()
+	result := <-out
+	os.Stdout = old
+	return result
+}
 
 func TestCacheCmd_Flags(t *testing.T) {
 	tests := []struct {
@@ -77,16 +100,24 @@ func TestCacheCmd_LocationFlag(t *testing.T) {
 }
 
 func TestCacheStatsCmd_HelpOutput(t *testing.T) {
+	cache.GlobalCacheStatsTracker().Reset()
 	cmd := cacheStatsCmd
 	cmd.SetArgs([]string{"--help"})
 
-	err := cmd.Execute()
-	if err != nil {
-		t.Errorf("help should not error: %v", err)
+	output := captureStdout(func() {
+		err := cmd.Execute()
+		if err != nil {
+			t.Errorf("help should not error: %v", err)
+		}
+	})
+
+	if !strings.Contains(output, "cache") {
+		t.Errorf("help output should contain 'cache', got: %s", output)
 	}
 }
 
 func TestCacheStatsCmd_NoTraffic(t *testing.T) {
+	cache.GlobalCacheStatsTracker().Reset()
 	cmd := cacheStatsCmd
 	cmd.SetArgs([]string{})
 
@@ -97,6 +128,7 @@ func TestCacheStatsCmd_NoTraffic(t *testing.T) {
 }
 
 func TestCacheStatsCmd_JsonFlag(t *testing.T) {
+	cache.GlobalCacheStatsTracker().Reset()
 	cmd := cacheStatsCmd
 	cmd.SetArgs([]string{"--json"})
 
@@ -107,6 +139,7 @@ func TestCacheStatsCmd_JsonFlag(t *testing.T) {
 }
 
 func TestCacheStatsCmd_ModelFlag(t *testing.T) {
+	cache.GlobalCacheStatsTracker().Reset()
 	cmd := cacheStatsCmd
 	cmd.SetArgs([]string{"--model", "claude-3-5-sonnet-20241022"})
 
@@ -117,6 +150,7 @@ func TestCacheStatsCmd_ModelFlag(t *testing.T) {
 }
 
 func TestCacheStatsCmd_JsonAndModelFlags(t *testing.T) {
+	cache.GlobalCacheStatsTracker().Reset()
 	cmd := cacheStatsCmd
 	cmd.SetArgs([]string{"--json", "--model", "claude-3-5-haiku-20241022"})
 

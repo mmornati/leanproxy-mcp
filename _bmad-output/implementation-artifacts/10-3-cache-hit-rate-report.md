@@ -1,6 +1,6 @@
 # Story 10.3: Report cache hit-rate via 'leanproxy cache' command
 
-Status: review
+Status: done
 
 ## Story Header
 
@@ -104,6 +104,26 @@ New files listed in technical notes; modify existing files only where required.
 - `cmd/cache.go` (MODIFIED) — Added stats subcommand
 - `cmd/serve.go` (MODIFIED) — Wired up stats tracking
 - `cmd/cache_test.go` (MODIFIED) — Added stats subcommand tests
+
+## Review Findings
+
+### decision-needed
+
+- [x] [Review][Decision] Command name: `stats` subcommand vs spec — resolved: keep `leanproxy cache stats` subcommand
+- [x] [Review][Decision] tokensSaved design — resolved: response-based only (optimistic would double-count with RecordCacheHit; response `usage` parsing is accurate source)
+
+### patch
+
+- [x] [Review][Patch] RecordCacheHit/RecordCacheMiss now wired from response handling [cmd/serve.go:549-579, pkg/cache/stats.go:147-167] — `ProcessResponse()` parses Anthropic response `usage` data; called from `handleSingleRequest` and `handleSingleRequestAsync` — `injectBreakpoints()` only calls `RecordRequest`. Cache hit/miss tracking must be wired into the response handler to parse Anthropic `usage` fields (`cache_read_input_tokens` / `cache_creation_input_tokens`) from the response.
+- [x] [Review][Patch] FormatJSON uses proper JSON error encoding [pkg/cache/stats.go:63-64] — replaced `%q` with `json.Marshal` for valid JSON output
+- [x] [Review][Patch] Removed unused ModelName from CacheStats struct [pkg/cache/stats.go:19] — field was never populated (always `omitempty`'d); model is a CLI flag parameter
+- [x] [Review][Patch] CLI tests reset global tracker before each run [cmd/cache_test.go:79-127] — each TestCacheStatsCmd_* calls `GlobalCacheStatsTracker().Reset()` first
+- [x] [Review][Patch] Help output test captures and verifies stdout [cmd/cache_test.go:79-87] — added `captureStdout` helper and content assertion
+
+### defer
+
+- [x] [Review][Defer] Hardcoded pricing values with no update mechanism [pkg/cache/pricing.go] — deferred, pre-existing: prices change over time; acceptable for initial release
+- [x] [Review][Defer] float64 used for financial calculations [pkg/cache/pricing.go:64] — deferred, pre-existing: acceptable for display purposes
 
 ## Change Log
 

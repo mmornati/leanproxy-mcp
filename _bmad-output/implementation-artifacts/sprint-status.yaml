@@ -65,7 +65,7 @@ development_status:
   9-3-simple-federation: ready-for-dev
   10-1-detect-anthropic-calls: ready-for-dev
   10-2-inject-cache-breakpoints: ready-for-dev
-  10-3-cache-hit-rate-report: review
+  10-3-cache-hit-rate-report: done
 
 last_updated: 2026-06-23
 sprint_goal: Implement all stories across epics (including Epics 10-18)
