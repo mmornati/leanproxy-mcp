@@ -134,15 +134,24 @@ func TestServe_BasicStart(t *testing.T) {
 	configPath := filepath.Join(testDir, "servers.yaml")
 	createTestConfig(t, configPath)
 
-	os.Setenv("LEANPROXY_CONFIG", configPath)
-	defer os.Unsetenv("LEANPROXY_CONFIG")
+	var stdout, stderr bytes.Buffer
+	wd, _ := os.Getwd()
+	cmd := exec.Command(filepath.Join(wd, "leanproxy-mcp"), "serve", "--listen", "127.0.0.1:18082")
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Dir = testDir
+	cmd.Env = append(os.Environ(), "LEANPROXY_CONFIG="+configPath)
 
-	stdout, _, _ := runBinary("serve", "--listen", "127.0.0.1:18082")
-	t.Logf("Serve output: %s", stdout)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
 
 	time.Sleep(500 * time.Millisecond)
+	cmd.Process.Kill()
+	cmd.Wait()
 
-	t.Skip("Skipping serve test - requires running server")
+	t.Logf("Serve stdout: %s", stdout.String())
+	t.Logf("Serve stderr: %s", stderr.String())
 }
 
 func createTestConfig(t *testing.T, path string) {
