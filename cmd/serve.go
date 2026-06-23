@@ -13,9 +13,11 @@ import (
 	"os/user"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
@@ -38,8 +40,15 @@ var serveCmd = &cobra.Command{
 }
 
 var serveFlags struct {
-	listenAddr  string
-	upstreamURL string
+	listenAddr      string
+	upstreamURL     string
+	providersConfig string
+}
+
+var providerDetector atomic.Pointer[cache.ProviderDetector]
+
+func init() {
+	providerDetector.Store(cache.NewProviderDetector())
 }
 
 var (
@@ -65,6 +74,7 @@ type Pool interface {
 func init() {
 	serveCmd.Flags().StringVar(&serveFlags.listenAddr, "listen", "127.0.0.1:8080", "Address to listen on")
 	serveCmd.Flags().StringVar(&serveFlags.upstreamURL, "upstream", "http://localhost:8081", "Upstream JSON-RPC server URL")
+	serveCmd.Flags().StringVar(&serveFlags.providersConfig, "providers-config", "", "Path to providers config file for provider detection")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -75,10 +85,11 @@ func runServe(cmd *cobra.Command, args []string) {
 	dr := dryrun.NewDryRunner(DryRunEnabled)
 	if dr.ShouldSkip() {
 		dr.Preview("serve_start", map[string]interface{}{
-			"listen":   serveFlags.listenAddr,
-			"upstream": serveFlags.upstreamURL,
-			"config":   GlobalConfigPath,
-			"message":  "Would start leanproxy server",
+			"listen":           serveFlags.listenAddr,
+			"upstream":         serveFlags.upstreamURL,
+			"config":           GlobalConfigPath,
+			"providers_config": serveFlags.providersConfig,
+			"message":          "Would start leanproxy server",
 		})
 		fmt.Println("Dry-run mode: server start skipped")
 		return
@@ -146,6 +157,15 @@ func runServe(cmd *cobra.Command, args []string) {
 		slog.Info("tool cache enabled", "path", fileCache.GetCacheDir())
 	}
 
+	if serveFlags.providersConfig != "" {
+		providerDetector.Store(cache.NewProviderDetector(
+			cache.WithLogger(slog.Default()),
+			cache.WithConfigPath(serveFlags.providersConfig),
+		))
+	} else {
+		providerDetector.Store(cache.NewProviderDetector(cache.WithLogger(slog.Default())))
+	}
+
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), toolStore)
 
 	cacheCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -167,26 +187,53 @@ func runServe(cmd *cobra.Command, args []string) {
 		go updateServerStatusPeriodically()
 	}
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	sigChan := make(chan os.Signal, 4)
+	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
+	var shuttingDown atomic.Bool
 	go func() {
-		<-sigChan
-		slog.Info("shutting down server")
-		if statusStore != nil {
-			statusStore.RemoveFile()
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in signal handler", "panic", r)
+			}
+		}()
+		for sig := range sigChan {
+			switch sig {
+			case syscall.SIGHUP:
+				if shuttingDown.Load() {
+					slog.Info("ignoring SIGHUP during shutdown")
+					continue
+				}
+				slog.Info("reloading provider config on SIGHUP")
+				det := providerDetector.Load()
+				if det == nil {
+					continue
+				}
+				if err := det.Reload(); err != nil {
+					slog.Warn("provider reload reported error", "error", err)
+				}
+			case syscall.SIGINT, syscall.SIGTERM:
+				if !shuttingDown.CompareAndSwap(false, true) {
+					continue
+				}
+				slog.Info("shutting down server")
+				signal.Stop(sigChan)
+				if statusStore != nil {
+					statusStore.RemoveFile()
+				}
+				ln.Close()
+				if stdioPool != nil {
+					stdioPool.Close()
+				}
+				if httpPool != nil {
+					httpPool.Close()
+				}
+				if ssePool != nil {
+					ssePool.Close()
+				}
+				os.Exit(0)
+			}
 		}
-		ln.Close()
-		if stdioPool != nil {
-			stdioPool.Close()
-		}
-		if httpPool != nil {
-			httpPool.Close()
-		}
-		if ssePool != nil {
-			ssePool.Close()
-		}
-		os.Exit(0)
 	}()
 
 	slog.Info("server ready", "address", ln.Addr().String())
@@ -269,6 +316,8 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
+	recordProvider(server)
+
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -303,6 +352,8 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		writeErrorAsync(writer, writerMu, errors.ErrCodeMethodNotFound, "Method not found")
 		return
 	}
+
+	recordProvider(server)
 
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
@@ -354,6 +405,8 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 			})
 			continue
 		}
+
+		recordProvider(server)
 
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
@@ -459,6 +512,18 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 
 func isBatchRequest(data []byte) bool {
 	return proxy.IsBatchRequest(data)
+}
+
+func recordProvider(server *registry.ServerEntry) {
+	if server == nil || server.Address == "" {
+		return
+	}
+	det := providerDetector.Load()
+	if det == nil {
+		return
+	}
+	provider := det.Detect(server.Address)
+	slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", server.Address)
 }
 
 func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {
@@ -572,6 +637,8 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 			})
 			continue
 		}
+
+		recordProvider(server)
 
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
