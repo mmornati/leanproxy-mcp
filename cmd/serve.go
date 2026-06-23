@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
@@ -38,9 +39,12 @@ var serveCmd = &cobra.Command{
 }
 
 var serveFlags struct {
-	listenAddr  string
-	upstreamURL string
+	listenAddr      string
+	upstreamURL     string
+	providersConfig string
 }
+
+var providerDetector = cache.NewProviderDetector()
 
 var (
 	serverReg    registry.Registry
@@ -65,6 +69,7 @@ type Pool interface {
 func init() {
 	serveCmd.Flags().StringVar(&serveFlags.listenAddr, "listen", "127.0.0.1:8080", "Address to listen on")
 	serveCmd.Flags().StringVar(&serveFlags.upstreamURL, "upstream", "http://localhost:8081", "Upstream JSON-RPC server URL")
+	serveCmd.Flags().StringVar(&serveFlags.providersConfig, "providers-config", "", "Path to providers config file for provider detection")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -146,6 +151,15 @@ func runServe(cmd *cobra.Command, args []string) {
 		slog.Info("tool cache enabled", "path", fileCache.GetCacheDir())
 	}
 
+	if serveFlags.providersConfig != "" {
+		providerDetector = cache.NewProviderDetector(
+			cache.WithLogger(slog.Default()),
+			cache.WithConfigPath(serveFlags.providersConfig),
+		)
+	} else {
+		providerDetector = cache.NewProviderDetector(cache.WithLogger(slog.Default()))
+	}
+
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), toolStore)
 
 	cacheCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -168,25 +182,32 @@ func runServe(cmd *cobra.Command, args []string) {
 	}
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		<-sigChan
-		slog.Info("shutting down server")
-		if statusStore != nil {
-			statusStore.RemoveFile()
+		for sig := range sigChan {
+			switch sig {
+			case syscall.SIGHUP:
+				slog.Info("reloading provider config on SIGHUP")
+				providerDetector.Reload()
+			case syscall.SIGINT, syscall.SIGTERM:
+				slog.Info("shutting down server")
+				if statusStore != nil {
+					statusStore.RemoveFile()
+				}
+				ln.Close()
+				if stdioPool != nil {
+					stdioPool.Close()
+				}
+				if httpPool != nil {
+					httpPool.Close()
+				}
+				if ssePool != nil {
+					ssePool.Close()
+				}
+				os.Exit(0)
+			}
 		}
-		ln.Close()
-		if stdioPool != nil {
-			stdioPool.Close()
-		}
-		if httpPool != nil {
-			httpPool.Close()
-		}
-		if ssePool != nil {
-			ssePool.Close()
-		}
-		os.Exit(0)
 	}()
 
 	slog.Info("server ready", "address", ln.Addr().String())
@@ -269,6 +290,12 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
+	targetURL := server.Address
+	if targetURL != "" {
+		provider := providerDetector.Detect(targetURL)
+		slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", targetURL)
+	}
+
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -302,6 +329,12 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 	if err != nil {
 		writeErrorAsync(writer, writerMu, errors.ErrCodeMethodNotFound, "Method not found")
 		return
+	}
+
+	targetURL := server.Address
+	if targetURL != "" {
+		provider := providerDetector.Detect(targetURL)
+		slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", targetURL)
 	}
 
 	timeout := GetConfig().RequestTimeout
@@ -353,6 +386,13 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 				ID:      req.ID,
 			})
 			continue
+		}
+
+		targetURL := server.Address
+
+		if targetURL != "" {
+			provider := providerDetector.Detect(targetURL)
+			slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", targetURL)
 		}
 
 		timeout := GetConfig().RequestTimeout
@@ -571,6 +611,13 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 				ID:      req.ID,
 			})
 			continue
+		}
+
+		targetURL := server.Address
+
+		if targetURL != "" {
+			provider := providerDetector.Detect(targetURL)
+			slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", targetURL)
 		}
 
 		timeout := GetConfig().RequestTimeout
