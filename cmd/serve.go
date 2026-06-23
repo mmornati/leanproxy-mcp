@@ -13,6 +13,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -44,7 +45,11 @@ var serveFlags struct {
 	providersConfig string
 }
 
-var providerDetector = cache.NewProviderDetector()
+var providerDetector atomic.Pointer[cache.ProviderDetector]
+
+func init() {
+	providerDetector.Store(cache.NewProviderDetector())
+}
 
 var (
 	serverReg    registry.Registry
@@ -80,10 +85,11 @@ func runServe(cmd *cobra.Command, args []string) {
 	dr := dryrun.NewDryRunner(DryRunEnabled)
 	if dr.ShouldSkip() {
 		dr.Preview("serve_start", map[string]interface{}{
-			"listen":   serveFlags.listenAddr,
-			"upstream": serveFlags.upstreamURL,
-			"config":   GlobalConfigPath,
-			"message":  "Would start leanproxy server",
+			"listen":           serveFlags.listenAddr,
+			"upstream":         serveFlags.upstreamURL,
+			"config":           GlobalConfigPath,
+			"providers_config": serveFlags.providersConfig,
+			"message":          "Would start leanproxy server",
 		})
 		fmt.Println("Dry-run mode: server start skipped")
 		return
@@ -152,12 +158,12 @@ func runServe(cmd *cobra.Command, args []string) {
 	}
 
 	if serveFlags.providersConfig != "" {
-		providerDetector = cache.NewProviderDetector(
+		providerDetector.Store(cache.NewProviderDetector(
 			cache.WithLogger(slog.Default()),
 			cache.WithConfigPath(serveFlags.providersConfig),
-		)
+		))
 	} else {
-		providerDetector = cache.NewProviderDetector(cache.WithLogger(slog.Default()))
+		providerDetector.Store(cache.NewProviderDetector(cache.WithLogger(slog.Default())))
 	}
 
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), toolStore)
@@ -181,17 +187,37 @@ func runServe(cmd *cobra.Command, args []string) {
 		go updateServerStatusPeriodically()
 	}
 
-	sigChan := make(chan os.Signal, 1)
+	sigChan := make(chan os.Signal, 4)
 	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
+	var shuttingDown atomic.Bool
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("panic in signal handler", "panic", r)
+			}
+		}()
 		for sig := range sigChan {
 			switch sig {
 			case syscall.SIGHUP:
+				if shuttingDown.Load() {
+					slog.Info("ignoring SIGHUP during shutdown")
+					continue
+				}
 				slog.Info("reloading provider config on SIGHUP")
-				providerDetector.Reload()
+				det := providerDetector.Load()
+				if det == nil {
+					continue
+				}
+				if err := det.Reload(); err != nil {
+					slog.Warn("provider reload reported error", "error", err)
+				}
 			case syscall.SIGINT, syscall.SIGTERM:
+				if !shuttingDown.CompareAndSwap(false, true) {
+					continue
+				}
 				slog.Info("shutting down server")
+				signal.Stop(sigChan)
 				if statusStore != nil {
 					statusStore.RemoveFile()
 				}
@@ -290,11 +316,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
-	targetURL := server.Address
-	if targetURL != "" {
-		provider := providerDetector.Detect(targetURL)
-		slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", targetURL)
-	}
+	recordProvider(server)
 
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
@@ -331,11 +353,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		return
 	}
 
-	targetURL := server.Address
-	if targetURL != "" {
-		provider := providerDetector.Detect(targetURL)
-		slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", targetURL)
-	}
+	recordProvider(server)
 
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
@@ -388,12 +406,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 			continue
 		}
 
-		targetURL := server.Address
-
-		if targetURL != "" {
-			provider := providerDetector.Detect(targetURL)
-			slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", targetURL)
-		}
+		recordProvider(server)
 
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
@@ -499,6 +512,18 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 
 func isBatchRequest(data []byte) bool {
 	return proxy.IsBatchRequest(data)
+}
+
+func recordProvider(server *registry.ServerEntry) {
+	if server == nil || server.Address == "" {
+		return
+	}
+	det := providerDetector.Load()
+	if det == nil {
+		return
+	}
+	provider := det.Detect(server.Address)
+	slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", server.Address)
 }
 
 func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {
@@ -613,12 +638,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 			continue
 		}
 
-		targetURL := server.Address
-
-		if targetURL != "" {
-			provider := providerDetector.Detect(targetURL)
-			slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", targetURL)
-		}
+		recordProvider(server)
 
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
