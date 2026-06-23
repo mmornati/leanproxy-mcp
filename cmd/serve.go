@@ -40,10 +40,10 @@ var serveCmd = &cobra.Command{
 }
 
 var serveFlags struct {
-	listenAddr       string
-	upstreamURL      string
-	providersConfig  string
-	cacheStrategy    string
+	listenAddr      string
+	upstreamURL     string
+	providersConfig string
+	cacheStrategy   string
 }
 
 var providerDetector atomic.Pointer[cache.ProviderDetector]

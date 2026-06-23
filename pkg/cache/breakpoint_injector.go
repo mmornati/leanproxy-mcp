@@ -142,12 +142,12 @@ func (b *BreakpointInjector) injectBalanced(req map[string]interface{}) {
 		return
 	}
 
-	systemRaw, _ := req["system"]
-	system, _ := systemRaw.([]interface{})
+	systemRaw := req["system"]
+	system := systemRaw.([]interface{})
 	sysHasCC := b.anyHasCacheControl(system)
 
-	toolsRaw, _ := req["tools"]
-	tools, _ := toolsRaw.([]interface{})
+	toolsRaw := req["tools"]
+	tools := toolsRaw.([]interface{})
 	toolsHasCC := b.anyHasCacheControl(tools)
 
 	if sysHasCC && toolsHasCC {
