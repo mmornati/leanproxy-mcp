@@ -43,9 +43,11 @@ var serveFlags struct {
 	listenAddr      string
 	upstreamURL     string
 	providersConfig string
+	cacheStrategy   string
 }
 
 var providerDetector atomic.Pointer[cache.ProviderDetector]
+var breakpointInjector atomic.Pointer[cache.BreakpointInjector]
 
 func init() {
 	providerDetector.Store(cache.NewProviderDetector())
@@ -75,6 +77,7 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.listenAddr, "listen", "127.0.0.1:8080", "Address to listen on")
 	serveCmd.Flags().StringVar(&serveFlags.upstreamURL, "upstream", "http://localhost:8081", "Upstream JSON-RPC server URL")
 	serveCmd.Flags().StringVar(&serveFlags.providersConfig, "providers-config", "", "Path to providers config file for provider detection")
+	serveCmd.Flags().StringVar(&serveFlags.cacheStrategy, "cache-strategy", "off", "Cache breakpoint injection strategy for Anthropic requests: off (default, no injection), aggressive (last system + last tool), balanced (largest block only)")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -164,6 +167,20 @@ func runServe(cmd *cobra.Command, args []string) {
 		))
 	} else {
 		providerDetector.Store(cache.NewProviderDetector(cache.WithLogger(slog.Default())))
+	}
+
+	{
+		strategy := cache.InjectStrategy(serveFlags.cacheStrategy)
+		switch strategy {
+		case cache.StrategyOff, cache.StrategyAggressive, cache.StrategyBalanced:
+		default:
+			slog.Warn("invalid cache-strategy, falling back to off", "value", serveFlags.cacheStrategy)
+			strategy = cache.StrategyOff
+		}
+		breakpointInjector.Store(cache.NewBreakpointInjector(
+			cache.WithInjectLogger(slog.Default()),
+			cache.WithStrategy(strategy),
+		))
 	}
 
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), toolStore)
@@ -317,6 +334,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 	}
 
 	recordProvider(server)
+	injectBreakpoints(server, req)
 
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
@@ -354,6 +372,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 	}
 
 	recordProvider(server)
+	injectBreakpoints(server, req)
 
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
@@ -407,6 +426,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 		}
 
 		recordProvider(server)
+		injectBreakpoints(server, req)
 
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
@@ -526,6 +546,33 @@ func recordProvider(server *registry.ServerEntry) {
 	slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", server.Address)
 }
 
+func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) {
+	if server == nil || server.Address == "" || req == nil || len(req.Params) == 0 {
+		return
+	}
+	inj := breakpointInjector.Load()
+	if inj == nil {
+		return
+	}
+	if inj.Strategy() == cache.StrategyOff {
+		return
+	}
+	det := providerDetector.Load()
+	if det == nil {
+		return
+	}
+	if det.Detect(server.Address) != cache.ProviderAnthropic {
+		return
+	}
+	modified, err := inj.Inject(req.Params)
+	if err != nil {
+		slog.Debug("breakpoint injection skipped", "error", err)
+		return
+	}
+	req.Params = modified
+	slog.Debug("cache breakpoints injected", "server", server.ID)
+}
+
 func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {
 	data, err := json.Marshal(resp)
 	if err != nil {
@@ -639,6 +686,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 		}
 
 		recordProvider(server)
+		injectBreakpoints(server, req)
 
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
