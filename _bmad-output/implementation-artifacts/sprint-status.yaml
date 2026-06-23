@@ -21,6 +21,8 @@ development_status:
   epic-8-retrospective: backlog
   epic-9: in-progress
   epic-9-retrospective: backlog
+  epic-10: in-progress
+  epic-10-retrospective: backlog
   1-1-initialize-go-project: ready-for-dev
   1-2-json-rpc-streaming-proxy: review
   1-3-server-lifecycle-management: review
@@ -61,6 +63,9 @@ development_status:
   9-1-streamable-http-transport: ready-for-dev
   9-2-hierarchical-namespaces: review
   9-3-simple-federation: ready-for-dev
+  10-1-detect-anthropic-calls: ready-for-dev
+  10-2-inject-cache-breakpoints: ready-for-dev
+  10-3-cache-hit-rate-report: review
 
-last_updated: 2026-05-07
-sprint_goal: Implement all 39 stories across 9 epics (including Epics 8-9 from market research)
+last_updated: 2026-06-23
+sprint_goal: Implement all stories across epics (including Epics 10-18)

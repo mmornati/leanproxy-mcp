@@ -75,3 +75,53 @@ func TestCacheCmd_LocationFlag(t *testing.T) {
 		t.Errorf("location flag should not error: %v", err)
 	}
 }
+
+func TestCacheStatsCmd_HelpOutput(t *testing.T) {
+	cmd := cacheStatsCmd
+	cmd.SetArgs([]string{"--help"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Errorf("help should not error: %v", err)
+	}
+}
+
+func TestCacheStatsCmd_NoTraffic(t *testing.T) {
+	cmd := cacheStatsCmd
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Errorf("stats with no traffic should not error: %v", err)
+	}
+}
+
+func TestCacheStatsCmd_JsonFlag(t *testing.T) {
+	cmd := cacheStatsCmd
+	cmd.SetArgs([]string{"--json"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Errorf("stats --json should not error: %v", err)
+	}
+}
+
+func TestCacheStatsCmd_ModelFlag(t *testing.T) {
+	cmd := cacheStatsCmd
+	cmd.SetArgs([]string{"--model", "claude-3-5-sonnet-20241022"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Errorf("stats --model should not error: %v", err)
+	}
+}
+
+func TestCacheStatsCmd_JsonAndModelFlags(t *testing.T) {
+	cmd := cacheStatsCmd
+	cmd.SetArgs([]string{"--json", "--model", "claude-3-5-haiku-20241022"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Errorf("stats --json --model should not error: %v", err)
+	}
+}

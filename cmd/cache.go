@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/spf13/cobra"
 )
@@ -25,6 +26,20 @@ var cacheFlags struct {
 	location bool
 }
 
+var cacheStatsCmd = &cobra.Command{
+	Use:   "stats",
+	Short: "Show Anthropic prompt cache hit rate statistics",
+	Long: `Display the Anthropic prompt caching hit rate report including
+total requests, cache hits, hit rate percentage, tokens saved, and
+estimated dollar savings based on Anthropic's prompt caching pricing.`,
+	Run: runCacheStats,
+}
+
+var cacheStatsFlags struct {
+	jsonOut bool
+	model   string
+}
+
 func init() {
 	cacheCmd.Flags().BoolVar(&cacheFlags.list, "list", false, "List all servers with cached tools")
 	cacheCmd.Flags().StringVar(&cacheFlags.server, "server", "", "Show cached tools for a specific server")
@@ -33,6 +48,31 @@ func init() {
 	cacheCmd.Flags().BoolVar(&cacheFlags.clear, "clear", false, "Clear cache for specified server (use --server)")
 	cacheCmd.Flags().BoolVar(&cacheFlags.location, "location", false, "Show the cache directory location")
 	RootCmd.AddCommand(cacheCmd)
+
+	cacheStatsCmd.Flags().BoolVar(&cacheStatsFlags.jsonOut, "json", false, "Output in JSON format")
+	cacheStatsCmd.Flags().StringVar(&cacheStatsFlags.model, "model", "", "Anthropic model for cost estimation (default: claude-sonnet-4-20250514)")
+	cacheCmd.AddCommand(cacheStatsCmd)
+}
+
+func runCacheStats(cmd *cobra.Command, args []string) {
+	model := cacheStatsFlags.model
+	if model == "" {
+		model = "claude-sonnet-4-20250514"
+	}
+
+	tracker := cache.GlobalCacheStatsTracker()
+	stats := tracker.GetStats()
+
+	if !stats.HasTraffic() {
+		fmt.Println("No Anthropic traffic observed")
+		return
+	}
+
+	if cacheStatsFlags.jsonOut {
+		fmt.Println(stats.FormatJSON())
+	} else {
+		fmt.Print(stats.FormatMarkdown(model))
+	}
 }
 
 func runCache(cmd *cobra.Command, args []string) {

@@ -1,6 +1,6 @@
 # Story 10.3: Report cache hit-rate via 'leanproxy cache' command
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -52,6 +52,61 @@ New files listed in technical notes; modify existing files only where required.
 - [Source: _bmad-output/brainstorming/brainstorming-session-2026-05-01.md] (original market-trend idea)
 - Related epic: Anthropic Prompt Caching Bridge
 
+## Tasks / Subtasks
+
+- [x] Implement in-memory cache stats tracker (`pkg/cache/stats.go`)
+- [x] Implement Anthropic pricing table (`pkg/cache/pricing.go`)
+- [x] Add `leanproxy cache stats` CLI subcommand
+- [x] Wire up stats tracking in proxy request flow
+- [x] Write unit tests for stats tracker
+- [x] Write unit tests for pricing table
+- [x] Write CLI tests for `cache stats` subcommand
+- [x] Verify all tests pass with no regressions
+
+## Dev Agent Record
+
+### Implementation Plan
+
+**Architecture:**
+- `pkg/cache/stats.go`: Thread-safe `CacheStatsTracker` with global singleton (parallels `pkg/reporter/cost.go` pattern)
+- `pkg/cache/pricing.go`: Anthropic model pricing table with `ModelCost()` and `CalculateTokenSavingsCost()` 
+- `cmd/cache.go`: Added `stats` subcommand with `--json` and `--model` flags
+- `cmd/serve.go`: Wired `GlobalCacheStatsTracker().RecordRequest()` into `injectBreakpoints()` flow
+
+**Key Decisions:**
+- Stats stored in-memory (no persistence), matching NFR4 (in-memory only)
+- Pricing: 5 Anthropic models with $/Mtok pricing; default is claude-sonnet-4-20250514
+- Cache hit tracking: `RecordRequest()` captures all Anthropic requests with breakpoint status; `RecordCacheHit()` separately tracks known hits
+- Hit rate formula: CacheHits / AnthropicRequests (clamped to 1.0)
+- Token estimation: len(params) / 4 (1 token ≈ 4 chars heuristic)
+
+### Acceptance Criteria Coverage
+
+| AC | Status | Evidence |
+|----|--------|----------|
+| `leanproxy cache stats`→Markdown table with requests/hits/rate/tokens/$ | ✅ | `FormatMarkdown()` in stats.go with full metrics table |
+| No Anthropic traffic→"No Anthropic traffic observed", exit 0 | ✅ | `HasTraffic()` check in `runCacheStats()` |
+| `--json`→JSON to stdout | ✅ | `FormatJSON()` and `--json` flag in stats subcommand |
+
+### Completion Notes
+
+- 29 new tests added across `pkg/cache/` and `cmd/` packages
+- All 1200 tests pass (1171 prior + 29 new)
+- Backward compatible: existing `leanproxy cache` commands (--list, --server, etc.) unchanged
+- New usage: `leanproxy cache stats`, `leanproxy cache stats --json`, `leanproxy cache stats --model claude-3-5-sonnet-20241022`
+
 ## File List
 
-- See Technical Notes above
+- `pkg/cache/stats.go` (NEW) — CacheStatsTracker
+- `pkg/cache/pricing.go` (NEW) — Anthropic pricing table
+- `pkg/cache/stats_test.go` (NEW) — Stats tracker tests
+- `pkg/cache/pricing_test.go` (NEW) — Pricing tests
+- `cmd/cache.go` (MODIFIED) — Added stats subcommand
+- `cmd/serve.go` (MODIFIED) — Wired up stats tracking
+- `cmd/cache_test.go` (MODIFIED) — Added stats subcommand tests
+
+## Change Log
+
+| Date | Change |
+|------|--------|
+| 2026-06-23 | Initial implementation: stats tracker, pricing, CLI command, serve integration
