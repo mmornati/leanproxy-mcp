@@ -1,42 +1,42 @@
 package cache
 
 type ModelPricing struct {
-	ModelName             string
-	InputCostPerMTok      float64
+	ModelName              string
+	InputCostPerMTok       float64
 	CachedInputCostPerMTok float64
-	OutputCostPerMTok     float64
+	OutputCostPerMTok      float64
 }
 
 var pricingTable = []ModelPricing{
 	{
-		ModelName:             "claude-sonnet-4-20250514",
-		InputCostPerMTok:      3.0,
+		ModelName:              "claude-sonnet-4-20250514",
+		InputCostPerMTok:       3.0,
 		CachedInputCostPerMTok: 0.30,
-		OutputCostPerMTok:     15.0,
+		OutputCostPerMTok:      15.0,
 	},
 	{
-		ModelName:             "claude-3-5-sonnet-20241022",
-		InputCostPerMTok:      3.0,
+		ModelName:              "claude-3-5-sonnet-20241022",
+		InputCostPerMTok:       3.0,
 		CachedInputCostPerMTok: 0.30,
-		OutputCostPerMTok:     15.0,
+		OutputCostPerMTok:      15.0,
 	},
 	{
-		ModelName:             "claude-3-5-haiku-20241022",
-		InputCostPerMTok:      0.80,
+		ModelName:              "claude-3-5-haiku-20241022",
+		InputCostPerMTok:       0.80,
 		CachedInputCostPerMTok: 0.08,
-		OutputCostPerMTok:     4.0,
+		OutputCostPerMTok:      4.0,
 	},
 	{
-		ModelName:             "claude-3-opus-20240229",
-		InputCostPerMTok:      15.0,
+		ModelName:              "claude-3-opus-20240229",
+		InputCostPerMTok:       15.0,
 		CachedInputCostPerMTok: 1.50,
-		OutputCostPerMTok:     75.0,
+		OutputCostPerMTok:      75.0,
 	},
 	{
-		ModelName:             "claude-3-haiku-20240307",
-		InputCostPerMTok:      0.25,
+		ModelName:              "claude-3-haiku-20240307",
+		InputCostPerMTok:       0.25,
 		CachedInputCostPerMTok: 0.03,
-		OutputCostPerMTok:     1.25,
+		OutputCostPerMTok:      1.25,
 	},
 }
 

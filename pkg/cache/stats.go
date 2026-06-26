@@ -8,14 +8,14 @@ import (
 )
 
 type CacheStats struct {
-	TotalRequests      int64   `json:"total_requests"`
-	AnthropicRequests  int64   `json:"anthropic_requests"`
-	CacheableRequests  int64   `json:"cacheable_requests"`
-	CacheHits          int64   `json:"cache_hits"`
-	CacheMisses        int64   `json:"cache_misses"`
-	InputTokens        int64   `json:"input_tokens"`
-	CachedInputTokens  int64   `json:"cached_input_tokens"`
-	TokensSaved int64 `json:"tokens_saved"`
+	TotalRequests     int64 `json:"total_requests"`
+	AnthropicRequests int64 `json:"anthropic_requests"`
+	CacheableRequests int64 `json:"cacheable_requests"`
+	CacheHits         int64 `json:"cache_hits"`
+	CacheMisses       int64 `json:"cache_misses"`
+	InputTokens       int64 `json:"input_tokens"`
+	CachedInputTokens int64 `json:"cached_input_tokens"`
+	TokensSaved       int64 `json:"tokens_saved"`
 }
 
 func (s *CacheStats) HitRate() float64 {
