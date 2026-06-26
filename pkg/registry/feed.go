@@ -110,7 +110,7 @@ func (f *FeedFetcher) Sync(ctx context.Context) error {
 		return fmt.Errorf("registry feed: registry returned HTTP %d\nHint: the registry may be temporarily unavailable; try again later with `leanproxy marketplace sync`", resp.StatusCode)
 	}
 
-	var entries []RegistryFeedEntry
+	entries := make([]RegistryFeedEntry, 0, 256)
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 	for scanner.Scan() {
