@@ -204,6 +204,8 @@ func runServe(cmd *cobra.Command, args []string) {
 		go updateServerStatusPeriodically()
 	}
 
+	go checkRegistryCacheStale()
+
 	sigChan := make(chan os.Signal, 4)
 	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
@@ -734,6 +736,20 @@ func trimNewline(data []byte) []byte {
 		data = data[:len(data)-1]
 	}
 	return data
+}
+
+func checkRegistryCacheStale() {
+	usr, err := user.Current()
+	if err != nil {
+		slog.Warn("registry feed: unable to determine home dir", "error", err)
+		return
+	}
+	cacheDir := filepath.Join(usr.HomeDir, ".leanproxy")
+	fetcher := registry.NewFeedFetcher(slog.Default(), cacheDir)
+	notice := fetcher.CacheStaleInfo()
+	if notice != "" {
+		slog.Warn(notice)
+	}
 }
 
 func updateServerStatusPeriodically() {
