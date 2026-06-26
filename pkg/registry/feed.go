@@ -48,8 +48,12 @@ type FeedFetcher struct {
 	logger      *slog.Logger
 	client      *http.Client
 	interval    time.Duration
-	mu          sync.RWMutex
-	cached      *FeedIndex
+
+	loadOnce sync.Once
+	loadErr  error
+	cached   *FeedIndex
+
+	refreshWG sync.WaitGroup
 }
 
 func NewFeedFetcher(logger *slog.Logger, cacheDir string) *FeedFetcher {
@@ -134,9 +138,10 @@ func (f *FeedFetcher) Sync(ctx context.Context) error {
 		return fmt.Errorf("registry feed: store cache: %w", err)
 	}
 
-	f.mu.Lock()
+	// Reset singleflight so subsequent reads observe the freshly written index.
+	f.loadOnce = sync.Once{}
+	f.loadErr = nil
 	f.cached = &index
-	f.mu.Unlock()
 
 	f.logger.Info("registry feed synced",
 		"entries", len(entries),
@@ -162,21 +167,30 @@ func (f *FeedFetcher) store(index FeedIndex) error {
 		return fmt.Errorf("marshal index: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return fmt.Errorf("write index: %w", err)
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return fmt.Errorf("write temp index: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("atomic rename: %w", err)
 	}
 
 	return nil
 }
 
 func (f *FeedFetcher) LoadCache() (*FeedIndex, error) {
-	f.mu.RLock()
-	if f.cached != nil {
-		defer f.mu.RUnlock()
-		return f.cached, nil
+	f.loadOnce.Do(func() {
+		f.cached, f.loadErr = f.readCacheFromDisk()
+	})
+	if f.loadErr != nil {
+		// Allow re-attempt on next call after a transient failure (e.g. corrupt file).
+		f.loadOnce = sync.Once{}
 	}
-	f.mu.RUnlock()
+	return f.cached, f.loadErr
+}
 
+func (f *FeedFetcher) readCacheFromDisk() (*FeedIndex, error) {
 	path := f.IndexPath()
 	baseDir := filepath.Dir(filepath.Clean(path))
 	if err := utils.ValidatePath(path, baseDir); err != nil {
@@ -196,10 +210,6 @@ func (f *FeedFetcher) LoadCache() (*FeedIndex, error) {
 		return nil, fmt.Errorf("parse cache: %w", err)
 	}
 
-	f.mu.Lock()
-	f.cached = &index
-	f.mu.Unlock()
-
 	return &index, nil
 }
 
@@ -208,7 +218,7 @@ func (f *FeedFetcher) CacheAge() (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
-	if index == nil {
+	if index == nil || index.SyncedAt.IsZero() {
 		return 0, nil
 	}
 	return time.Since(index.SyncedAt), nil
@@ -218,7 +228,11 @@ func (f *FeedFetcher) CacheStaleInfo() string {
 	age, err := f.CacheAge()
 	if err != nil {
 		f.logger.Warn("registry feed: failed to check cache age", "error", err)
-		return ""
+		return "registry cache is unreadable. Run `leanproxy marketplace sync` to rebuild."
+	}
+	if age < 0 {
+		f.logger.Warn("registry feed: cache timestamp is in the future; treating as unreadable")
+		return "registry cache timestamp is invalid. Run `leanproxy marketplace sync` to rebuild."
 	}
 	if age == 0 {
 		return ""
@@ -230,7 +244,9 @@ func (f *FeedFetcher) CacheStaleInfo() string {
 }
 
 func (f *FeedFetcher) StartPeriodicRefresh(ctx context.Context) {
+	f.refreshWG.Add(1)
 	go func() {
+		defer f.refreshWG.Done()
 		f.logger.Debug("starting periodic registry feed refresh", "interval", f.interval)
 		ticker := time.NewTicker(f.interval)
 		defer ticker.Stop()
@@ -248,6 +264,10 @@ func (f *FeedFetcher) StartPeriodicRefresh(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+func (f *FeedFetcher) WaitRefreshDone() {
+	f.refreshWG.Wait()
 }
 
 func LeanProxyDir() (string, error) {

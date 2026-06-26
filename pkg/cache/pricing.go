@@ -1,5 +1,7 @@
 package cache
 
+import "strings"
+
 type ModelPricing struct {
 	ModelName              string
 	InputCostPerMTok       float64
@@ -41,6 +43,14 @@ var pricingTable = []ModelPricing{
 }
 
 var defaultModel = "claude-sonnet-4-20250514"
+
+func SupportedModelList() string {
+	names := make([]string, 0, len(pricingTable))
+	for _, p := range pricingTable {
+		names = append(names, p.ModelName)
+	}
+	return strings.Join(names, ", ")
+}
 
 func ModelCost(model string) (ModelPricing, bool) {
 	if model == "" {

@@ -256,9 +256,47 @@ func TestGlobalCacheStatsTracker(t *testing.T) {
 	if tr == nil {
 		t.Fatal("expected non-nil global tracker")
 	}
-	// Should be the same instance
 	tr2 := GlobalCacheStatsTracker()
 	if tr != tr2 {
 		t.Error("GlobalCacheStatsTracker should return the same instance")
+	}
+}
+
+func TestProcessResponseFor_OnlyAnthropic(t *testing.T) {
+	GlobalCacheStatsTracker().Reset()
+
+	result := json.RawMessage(`{"usage":{"cache_read_input_tokens":1500}}`)
+	ProcessResponseFor(ProviderOther, result)
+	if got := GlobalCacheStatsTracker().GetStats().CacheHits; got != 0 {
+		t.Errorf("non-Anthropic response should not record a cache hit, got %d", got)
+	}
+
+	ProcessResponseFor(ProviderAnthropic, result)
+	if got := GlobalCacheStatsTracker().GetStats().CacheHits; got != 1 {
+		t.Errorf("Anthropic response should record exactly one cache hit, got %d", got)
+	}
+}
+
+func TestProcessResponseFor_BothReadAndCreationCountsOnlyHit(t *testing.T) {
+	GlobalCacheStatsTracker().Reset()
+
+	result := json.RawMessage(`{"usage":{"cache_read_input_tokens":80,"cache_creation_input_tokens":20}}`)
+	ProcessResponseFor(ProviderAnthropic, result)
+	stats := GlobalCacheStatsTracker().GetStats()
+	if stats.CacheHits != 1 {
+		t.Errorf("expected 1 cache hit when both fields present, got %d", stats.CacheHits)
+	}
+	if stats.CacheMisses != 0 {
+		t.Errorf("cache_creation should not also count as a miss when read is present, got %d misses", stats.CacheMisses)
+	}
+}
+
+func TestProcessResponseFor_EmptyResult(t *testing.T) {
+	GlobalCacheStatsTracker().Reset()
+	ProcessResponseFor(ProviderAnthropic, nil)
+	ProcessResponseFor(ProviderAnthropic, json.RawMessage(``))
+	stats := GlobalCacheStatsTracker().GetStats()
+	if stats.CacheHits != 0 || stats.CacheMisses != 0 {
+		t.Errorf("empty result should be a no-op, got %+v", stats)
 	}
 }

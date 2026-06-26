@@ -3,8 +3,6 @@ package cmd
 import (
 	"fmt"
 	"log/slog"
-	"os/user"
-	"path/filepath"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/spf13/cobra"
@@ -24,6 +22,7 @@ The cached index is used by marketplace commands and kept up-to-date via periodi
 
 Usage:
   leanproxy marketplace sync`,
+	Args: cobra.NoArgs,
 	RunE: runMarketplaceSync,
 }
 
@@ -35,9 +34,12 @@ func init() {
 func runMarketplaceSync(cmd *cobra.Command, args []string) error {
 	initLogger(cmd)
 
-	cacheDir, err := userCacheDir()
+	cacheDir, err := registry.LeanProxyDir()
 	if err != nil {
 		return fmt.Errorf("determine cache directory: %w", err)
+	}
+	if cacheDir == "" {
+		return fmt.Errorf("determine cache directory: empty path")
 	}
 
 	fetcher := registry.NewFeedFetcher(slog.Default(), cacheDir)
@@ -48,18 +50,13 @@ func runMarketplaceSync(cmd *cobra.Command, args []string) error {
 	}
 
 	index, err := fetcher.LoadCache()
-	if err == nil && index != nil {
+	switch {
+	case err != nil:
+		slog.Warn("registry feed: post-sync cache read failed", "error", err)
+	case index != nil:
 		fmt.Printf("Registry index synced successfully (%d entries)\n", len(index.Entries))
 		fmt.Printf("Cache stored at: %s\n", fetcher.IndexPath())
 	}
 
 	return nil
-}
-
-func userCacheDir() (string, error) {
-	usr, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("current user: %w", err)
-	}
-	return filepath.Join(usr.HomeDir, ".leanproxy"), nil
 }
