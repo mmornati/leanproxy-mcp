@@ -55,18 +55,18 @@ type AuthConfig struct {
 }
 
 type ServerConfig struct {
-	Name                string         `yaml:"name"`
-	Enabled             *bool          `yaml:"enabled"`
-	Transport           TransportType  `yaml:"transport"`
-	Stdio               *StdioConfig   `yaml:"stdio,omitempty"`
-	HTTP                *HTTPConfig    `yaml:"http,omitempty"`
-	Timeout             string         `yaml:"timeout"`
-	TimeoutValue        time.Duration  `yaml:"-"`
-	ConnectTimeout      string         `yaml:"connect_timeout"`
-	ConnectTimeoutValue time.Duration  `yaml:"-"`
-	IdleTimeout         string         `yaml:"idle_timeout"`
-	IdleTimeoutValue    time.Duration  `yaml:"-"`
-	CacheSettings       *CacheSettings `yaml:"cache_settings,omitempty"`
+	Name                string             `yaml:"name"`
+	Enabled             *bool              `yaml:"enabled"`
+	Transport           TransportType      `yaml:"transport"`
+	Stdio               *StdioConfig       `yaml:"stdio,omitempty"`
+	HTTP                *HTTPConfig        `yaml:"http,omitempty"`
+	Timeout             string             `yaml:"timeout"`
+	TimeoutValue        time.Duration      `yaml:"-"`
+	ConnectTimeout      string             `yaml:"connect_timeout"`
+	ConnectTimeoutValue time.Duration      `yaml:"-"`
+	IdleTimeout         string             `yaml:"idle_timeout"`
+	IdleTimeoutValue    time.Duration      `yaml:"-"`
+	CacheSettings       *CacheSettings     `yaml:"cache_settings,omitempty"`
 	SummarizeSettings   *SummarizeSettings `yaml:"summarize_settings,omitempty"`
 }
 
