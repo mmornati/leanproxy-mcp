@@ -42,7 +42,7 @@ type CacheEntry struct {
 	TokensPerTurn int64
 }
 
-// CacheSnapshot is the materialised view of the registry cache. It is
+// CacheSnapshot is the materialized view of the registry cache. It is
 // returned by ServerSource.LookupCache.
 type CacheSnapshot struct {
 	Entries []CacheEntry
@@ -96,7 +96,7 @@ type LifecycleStopper interface {
 	Stop(ctx context.Context, id string) error
 }
 
-// InstallOptions controls Install behaviour. The zero value performs an
+// InstallOptions controls Install behavior. The zero value performs an
 // additive install with no graceful stop and no lifecycle manager.
 type InstallOptions struct {
 	// Force, when true, allows overwriting an existing server definition.
