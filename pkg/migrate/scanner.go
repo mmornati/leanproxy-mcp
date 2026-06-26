@@ -6,14 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-
-	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 )
 
 type DiscoveredServer struct {
 	Name      string
 	Source    string
-	Transport registry.TransportType
+	Transport TransportType
 	Stdio     *StdioConfig
 	HTTP      *HTTPConfig
 	Enabled   *bool
@@ -54,14 +52,14 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
-func validateTransport(transport string) (registry.TransportType, error) {
+func validateTransport(transport string) (TransportType, error) {
 	switch transport {
 	case "stdio":
-		return registry.TransportStdio, nil
+		return TransportStdio, nil
 	case "http":
-		return registry.TransportHTTP, nil
+		return TransportHTTP, nil
 	case "sse":
-		return registry.TransportSSE, nil
+		return TransportSSE, nil
 	default:
 		return "", fmt.Errorf("invalid transport type: %s", transport)
 	}

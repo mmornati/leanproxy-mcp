@@ -11,15 +11,16 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
+	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
 
-type TransportType string
+type TransportType = migrate.TransportType
 
 const (
-	TransportStdio TransportType = "stdio"
-	TransportHTTP  TransportType = "http"
-	TransportSSE   TransportType = "sse"
+	TransportStdio = migrate.TransportStdio
+	TransportHTTP  = migrate.TransportHTTP
+	TransportSSE   = migrate.TransportSSE
 )
 
 type HealthStatus string
