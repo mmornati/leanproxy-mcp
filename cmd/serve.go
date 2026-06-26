@@ -347,6 +347,8 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
+	cache.ProcessResponse(resp.Result)
+
 	writeResponse(writer, resp)
 }
 
@@ -384,6 +386,8 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		writeErrorAsync(writer, writerMu, errors.ErrCodeInternalError, err.Error())
 		return
 	}
+
+	cache.ProcessResponse(resp.Result)
 
 	writeResponseAsync(writer, writerMu, resp)
 }
@@ -550,27 +554,32 @@ func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) 
 	if server == nil || server.Address == "" || req == nil || len(req.Params) == 0 {
 		return
 	}
-	inj := breakpointInjector.Load()
-	if inj == nil {
-		return
-	}
-	if inj.Strategy() == cache.StrategyOff {
-		return
-	}
 	det := providerDetector.Load()
 	if det == nil {
 		return
 	}
-	if det.Detect(server.Address) != cache.ProviderAnthropic {
+	provider := det.Detect(server.Address)
+	if provider != cache.ProviderAnthropic {
 		return
 	}
-	modified, err := inj.Inject(req.Params)
-	if err != nil {
-		slog.Debug("breakpoint injection skipped", "error", err)
-		return
+
+	inputEstimate := int64(len(req.Params)) / 4
+	hasBreakpoint := false
+
+	inj := breakpointInjector.Load()
+	if inj != nil && inj.Strategy() != cache.StrategyOff {
+		modified, err := inj.Inject(req.Params)
+		if err != nil {
+			slog.Debug("breakpoint injection skipped", "error", err)
+			cache.GlobalCacheStatsTracker().RecordRequest(provider, false, inputEstimate)
+			return
+		}
+		req.Params = modified
+		hasBreakpoint = true
+		slog.Debug("cache breakpoints injected", "server", server.ID)
 	}
-	req.Params = modified
-	slog.Debug("cache breakpoints injected", "server", server.ID)
+
+	cache.GlobalCacheStatsTracker().RecordRequest(provider, hasBreakpoint, inputEstimate)
 }
 
 func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {
