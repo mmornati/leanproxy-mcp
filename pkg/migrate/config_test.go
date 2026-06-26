@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 )
 
 func TestLoadConfigMinimal(t *testing.T) {
@@ -39,7 +37,7 @@ servers:
 	if server.Name != "test-server" {
 		t.Errorf("Name = %v, want test-server", server.Name)
 	}
-	if server.Transport != registry.TransportStdio {
+	if server.Transport != TransportStdio {
 		t.Errorf("Transport = %v, want stdio", server.Transport)
 	}
 	if server.Enabled == nil || !*server.Enabled {
@@ -100,7 +98,7 @@ servers:
 	if server.Enabled != nil && *server.Enabled {
 		t.Error("Enabled should be false")
 	}
-	if server.Transport != registry.TransportHTTP {
+	if server.Transport != TransportHTTP {
 		t.Errorf("Transport = %v, want http", server.Transport)
 	}
 	if server.HTTP.URL != "http://localhost:8080" {
@@ -218,7 +216,7 @@ func TestServerConfigValidate(t *testing.T) {
 			name: "valid stdio server",
 			server: &ServerConfig{
 				Name:      "test",
-				Transport: registry.TransportStdio,
+				Transport: TransportStdio,
 				Stdio:     &StdioConfig{Command: "/bin/server"},
 			},
 			wantErr: false,
@@ -227,7 +225,7 @@ func TestServerConfigValidate(t *testing.T) {
 			name: "valid http server",
 			server: &ServerConfig{
 				Name:      "test-http",
-				Transport: registry.TransportHTTP,
+				Transport: TransportHTTP,
 				HTTP:      &HTTPConfig{URL: "http://localhost:8080"},
 			},
 			wantErr: false,
@@ -236,14 +234,14 @@ func TestServerConfigValidate(t *testing.T) {
 			name: "valid sse server",
 			server: &ServerConfig{
 				Name:      "test-sse",
-				Transport: registry.TransportSSE,
+				Transport: TransportSSE,
 				HTTP:      &HTTPConfig{URL: "http://localhost:8080/sse"},
 			},
 			wantErr: false,
 		},
 		{
 			name:    "missing name",
-			server:  &ServerConfig{Transport: registry.TransportStdio, Stdio: &StdioConfig{Command: "/bin/server"}},
+			server:  &ServerConfig{Transport: TransportStdio, Stdio: &StdioConfig{Command: "/bin/server"}},
 			wantErr: true,
 			errMsg:  "server name is required",
 		},
@@ -257,7 +255,7 @@ func TestServerConfigValidate(t *testing.T) {
 			name: "stdio missing command",
 			server: &ServerConfig{
 				Name:      "test",
-				Transport: registry.TransportStdio,
+				Transport: TransportStdio,
 				Stdio:     &StdioConfig{},
 			},
 			wantErr: true,
@@ -267,7 +265,7 @@ func TestServerConfigValidate(t *testing.T) {
 			name: "http missing url",
 			server: &ServerConfig{
 				Name:      "test",
-				Transport: registry.TransportHTTP,
+				Transport: TransportHTTP,
 				HTTP:      &HTTPConfig{},
 			},
 			wantErr: true,
@@ -277,7 +275,7 @@ func TestServerConfigValidate(t *testing.T) {
 			name: "sse missing url",
 			server: &ServerConfig{
 				Name:      "test",
-				Transport: registry.TransportSSE,
+				Transport: TransportSSE,
 				HTTP:      &HTTPConfig{},
 			},
 			wantErr: true,
@@ -323,8 +321,8 @@ func containsHelper(s, substr string) bool {
 func TestConfigValidate(t *testing.T) {
 	cfg := &Config{
 		Servers: []*ServerConfig{
-			{Name: "valid", Transport: registry.TransportStdio, Stdio: &StdioConfig{Command: "/bin/server"}},
-			{Name: "invalid-stdio", Transport: registry.TransportStdio, Stdio: &StdioConfig{}},
+			{Name: "valid", Transport: TransportStdio, Stdio: &StdioConfig{Command: "/bin/server"}},
+			{Name: "invalid-stdio", Transport: TransportStdio, Stdio: &StdioConfig{}},
 		},
 	}
 	err := cfg.Validate()
@@ -352,7 +350,7 @@ servers:
 	if err != nil {
 		t.Fatalf("LoadConfig() failed: %v", err)
 	}
-	if cfg.Servers[0].Transport != registry.TransportSSE {
+	if cfg.Servers[0].Transport != TransportSSE {
 		t.Errorf("Transport = %v, want sse", cfg.Servers[0].Transport)
 	}
 }

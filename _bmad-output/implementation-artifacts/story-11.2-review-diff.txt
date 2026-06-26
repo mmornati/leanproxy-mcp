@@ -1,0 +1,524 @@
+cmd/add.go                    | 248 ++++++++++++++++++++
+ cmd/add_test.go               | 341 +++++++++++++++++++++++++++
+ pkg/bouncer/snapshot.go       | 133 +++++++++++
+ pkg/bouncer/snapshot_test.go  | 111 +++++++++
+ pkg/migrate/config.go         |  31 ++-
+ pkg/migrate/config_test.go    |  26 +--
+ pkg/migrate/installer.go      | 527 ++++++++++++++++++++++++++++++++++++++++++
+ pkg/migrate/installer_test.go | 461 ++++++++++++++++++++++++++++++++++++
+ pkg/migrate/scanner.go        |  12 +-
+ pkg/migrate/transport.go      |  16 ++
+ pkg/registry/registry.go      |   9 +-
+ 11 files changed, 1874 insertions(+), 41 deletions(-)
+
+Changes:
+
+cmd/add.go
+  @@ -0,0 +1,248 @@
+  +package cmd
+  +
+  +import (
+  +	"context"
+  +	"errors"
+  +	"fmt"
+  +	"log/slog"
+  +	"strings"
+  +	"time"
+  +
+  +	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
+  +	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+  +	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+  +	"github.com/spf13/cobra"
+  +)
+  +
+  +var (
+  +	addServerForce        bool
+  +	addServerYes          bool
+  +	addServerDryRun       bool
+  +	addServerGracefulWait int
+  +	addServerStopExisting bool
+  +)
+  +
+  +// feedSourceAdapter satisfies migrate.ServerSource by reading from a registry
+  +// FeedFetcher. It lives in cmd/ rather than pkg/registry to keep the package
+  +// dependency direction one-way: migrate owns the installer schema, registry
+  +// owns the cache, and cmd stitches them together.
+  +type feedSourceAdapter struct {
+  +	fetcher *registry.FeedFetcher
+  +}
+  +
+  +func (a *feedSourceAdapter) LookupCache(_ context.Context) (migrate.CacheSnapshot, error) {
+  +	if a.fetcher == nil {
+  +		return migrate.CacheSnapshot{}, fmt.Errorf("feed source adapter: nil fetcher")
+  +	}
+  +	index, err := a.fetcher.LoadCache()
+  +	if err != nil {
+  +		return migrate.CacheSnapshot{}, fmt.Errorf("feed source adapter: load cache: %w", err)
+  +	}
+  +	if index == nil {
+  +		return migrate.CacheSnapshot{}, nil
+  +	}
+  +	entries := make([]migrate.CacheEntry, 0, len(index.Entries))
+  +	for _, e := range index.Entries {
+  +		entries = append(entries, migrate.CacheEntry{
+  +			Name:          e.Name,
+  +			Transport:     e.Transport,
+  +			Command:       e.Command,
+  +			Args:          append([]string(nil), e.Args...),
+  +			Env:           cloneStringMap(e.Env),
+  +			URL:           e.URL,
+  +			TokensPerTurn: e.TokensPerTurn,
+  +		})
+  +	}
+  +	return migrate.CacheSnapshot{Entries: entries}, nil
+  +}
+  +
+  +func cloneStringMap(in map[string]string) map[string]string {
+  +	if len(in) == 0 {
+  +		return nil
+  +	}
+  +	out := make(map[string]string, len(in))
+  +	for k, v := range in {
+  +		out[k] = v
+  +	}
+  +	return out
+  +}
+  +
+  +var addRegistryCmd = &cobra.Command{
+  +	Use:   "add <server-id>",
+  +	Short: "Install an MCP server from the registry",
+  +	Long: `Install an MCP server from the local MCP Registry cache.
+  +
+  +The command resolves the registry entry, merges its definition into
+  +leanproxy_servers.yaml, optionally gracefully stops any running instance with
+  +the same name, and prints a token-cost preview of the new server.
+  +
+  +If the cache is empty or stale, run 'leanproxy marketplace sync' first.`,
+  +	Args:    cobra.ExactArgs(1),
+  +	Aliases: []string{"install"},
+  +	RunE:    runAdd,
+  +}
+  +
+  +func init() {
+  +	addRegistryCmd.Flags().BoolVar(&addServerForce, "force", false, "Overwrite an existing server definition with the same name")
+  +	addRegistryCmd.Flags().BoolVarP(&addServerYes, "yes", "y", false, "Skip the confirmation prompt when overwriting")
+  +	addRegistryCmd.Flags().BoolVar(&addServerDryRun, "dry-run", false, "Preview the install without writing the config")
+  +	addRegistryCmd.Flags().BoolVar(&addServerStopExisting, "stop-existing", true, "Gracefully stop any running server with the same name before replacing")
+  +	addRegistryCmd.Flags().IntVar(&addServerGracefulWait, "graceful-wait", 10, "Seconds to wait for graceful stop before proceeding (0 = no wait)")
+  +	RootCmd.AddCommand(addRegistryCmd)
+  +}
+  +
+  +func runAdd(cmd *cobra.Command, args []string) error {
+  +	initLogger(cmd)
+  +
+  +	stdout := cmd.OutOrStdout()
+  +	stderr := cmd.ErrOrStderr()
+  +
+  +	serverID := strings.TrimSpace(args[0])
+  ... (148 lines truncated)
+  +248 -0
+
+cmd/add_test.go
+  @@ -0,0 +1,341 @@
+  +package cmd
+  +
+  +import (
+  +	"bytes"
+  +	"context"
+  +	"encoding/json"
+  +	"os"
+  +	"path/filepath"
+  +	"strings"
+  +	"testing"
+  +	"time"
+  +
+  +	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+  +	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+  +	"github.com/spf13/cobra"
+  +)
+  +
+  +func TestAddRegistryCmd_Registered(t *testing.T) {
+  +	var found bool
+  +	for _, c := range RootCmd.Commands() {
+  +		if c.Use == "add <server-id>" {
+  +			found = true
+  +			if c.Short == "" {
+  +				t.Error("add command should have a short description")
+  +			}
+  +			if !containsString(c.Aliases, "install") {
+  +				t.Error("add command should alias 'install'")
+  +			}
+  +			break
+  +		}
+  +	}
+  +	if !found {
+  +		t.Fatal("'add' command not registered on RootCmd")
+  +	}
+  +}
+  +
+  +func TestAddRegistryCmd_Flags(t *testing.T) {
+  +	flags := addRegistryCmd.Flags()
+  +	for _, name := range []string{"force", "yes", "dry-run", "stop-existing", "graceful-wait"} {
+  +		if flags.Lookup(name) == nil {
+  +			t.Errorf("add command missing --%s flag", name)
+  +		}
+  +	}
+  +	if addRegistryCmd.Args == nil {
+  +		t.Fatal("add command should declare an Args validator")
+  +	}
+  +	if err := addRegistryCmd.Args(addRegistryCmd, []string{}); err == nil {
+  +		t.Error("add command should require exactly one arg")
+  +	}
+  +	if err := addRegistryCmd.Args(addRegistryCmd, []string{"a", "b"}); err == nil {
+  +		t.Error("add command should reject more than one arg")
+  +	}
+  +}
+  +
+  +// writeIndex writes a FeedIndex JSON to the cache dir consumed by FeedFetcher.
+  +func writeIndex(t *testing.T, dir string, index registry.FeedIndex) {
+  +	t.Helper()
+  +	registryDir := filepath.Join(dir, "registry")
+  +	if err := os.MkdirAll(registryDir, 0o700); err != nil {
+  +		t.Fatal(err)
+  +	}
+  +	data, err := json.MarshalIndent(index, "", "  ")
+  +	if err != nil {
+  +		t.Fatal(err)
+  +	}
+  +	if err := os.WriteFile(filepath.Join(registryDir, "index.json"), data, 0o600); err != nil {
+  +		t.Fatal(err)
+  +	}
+  +}
+  +
+  +func TestFeedSourceAdapter_NilFetcher(t *testing.T) {
+  +	a := &feedSourceAdapter{}
+  +	_, err := a.LookupCache(context.Background())
+  +	if err == nil {
+  +		t.Fatal("expected error for nil fetcher")
+  +	}
+  +}
+  +
+  +func TestFeedSourceAdapter_PopulatedCache(t *testing.T) {
+  +	dir := t.TempDir()
+  +	writeIndex(t, dir, registry.FeedIndex{
+  +		SyncedAt: testNow(t),
+  +		Entries: []registry.RegistryFeedEntry{
+  +			{
+  +				Name:      "github",
+  +				Transport: "stdio",
+  +				Command:   "gh-mcp",
+  +				Args:      []string{"--port", "8080"},
+  +				Env:       map[string]string{"FOO": "bar"},
+  +				URL:       "https://example.com",
+  +			},
+  +			{
+  +				Name:      "remote",
+  +				Transport: "http",
+  +				URL:       "https://remote.example/mcp",
+  +			},
+  +		},
+  +	})
+  +
+  +	fetcher := registry.NewFeedFetcher(nil, dir)
+  ... (241 lines truncated)
+  +341 -0
+
+pkg/bouncer/snapshot.go
+  @@ -0,0 +1,133 @@
+  +package bouncer
+  +
+  +import (
+  +	"fmt"
+  +
+  +	"github.com/mmornati/leanproxy-mcp/pkg/utils"
+  +)
+  +
+  +const (
+  +	// DefaultEstimatedTools is the default tool-count estimate when the
+  +	// registry entry does not declare one. It matches the average used by
+  +	// pkg/utils.TokenEstimator.CompareMCPConfigurations.
+  +	DefaultEstimatedTools = 35
+  +
+  +	// estimatedToolsPerKB is a coarse heuristic used to derive a tool count
+  +	// from the registry entry's description when nothing else is available.
+  +	estimatedToolsPerKB = 40
+  +)
+  +
+  +// Snapshot describes the token impact of adding a server to a LeanProxy
+  +// deployment. It is computed from a registry feed entry before the server is
+  +// installed so the user can preview the cost.
+  +type Snapshot struct {
+  +	ServerName         string
+  +	Transport          string
+  +	EstimatedTools     int
+  +	NativeTokens       int
+  +	LeanProxyTokens    int
+  +	SavedTokens        int
+  +	SavingsPercent     float64
+  +	HasRegistryBudget  bool
+  +	RegistryBudgetNote string
+  +}
+  +
+  +// ComputeSnapshot returns a token-cost preview for the given server definition.
+  +//
+  +// The estimate is derived from the entry's declared tool count when available
+  +// (TokensPerTurn is treated as a per-turn override), otherwise from a default
+  +// heuristic. The LeanProxy cost assumes a single gateway schema (invoke_tool +
+  +// list_tools) regardless of how many real tools the server exposes.
+  +//
+  +// The returned Snapshot is safe for direct fmt.Stringer-style printing via
+  +// FormatSnapshot.
+  +func ComputeSnapshot(name, transport string, estimatedTools int, tokensPerTurn int64) Snapshot {
+  +	if name == "" {
+  +		name = "unknown"
+  +	}
+  +	if transport == "" {
+  +		transport = "stdio"
+  +	}
+  +	if estimatedTools <= 0 {
+  +		estimatedTools = DefaultEstimatedTools
+  +	}
+  +
+  +	estimator := utils.NewTokenEstimator()
+  +	native := estimator.EstimateNativeMCPOverhead(name, estimatedTools)
+  +	lean := estimator.EstimateLeanProxySchemaTokens()
+  +
+  +	saved := native - lean
+  +	if saved < 0 {
+  +		saved = 0
+  +	}
+  +	var pct float64
+  +	if native > 0 {
+  +		pct = float64(saved) / float64(native) * 100
+  +	}
+  +
+  +	return Snapshot{
+  +		ServerName:         name,
+  +		Transport:          transport,
+  +		EstimatedTools:     estimatedTools,
+  +		NativeTokens:       native,
+  +		LeanProxyTokens:    lean,
+  +		SavedTokens:        saved,
+  +		SavingsPercent:     pct,
+  +		HasRegistryBudget:  tokensPerTurn > 0,
+  +		RegistryBudgetNote: formatBudgetNote(tokensPerTurn),
+  +	}
+  +}
+  +
+  +// EstimateToolsFromDescription derives a coarse tool-count estimate from the
+  +// size of the registry entry's description. It is intentionally simple so it
+  +// can be used as a fallback when no other signal is present; callers should
+  +// prefer ComputeSnapshot with an explicit tool count whenever possible.
+  +func EstimateToolsFromDescription(description string) int {
+  +	if len(description) == 0 {
+  +		return DefaultEstimatedTools
+  +	}
+  +	kb := len(description) / 1024
+  +	if kb == 0 {
+  +		return DefaultEstimatedTools
+  +	}
+  +	estimate := kb * estimatedToolsPerKB
+  +	if estimate < DefaultEstimatedTools {
+  +		return DefaultEstimatedTools
+  +	}
+  +	return estimate
+  +}
+  +
+  +// FormatSnapshot renders the snapshot as a short human-readable block ready to
+  ... (33 lines truncated)
+  +133 -0
+
+pkg/bouncer/snapshot_test.go
+  @@ -0,0 +1,111 @@
+  +package bouncer
+  +
+  +import (
+  +	"strings"
+  +	"testing"
+  +)
+  +
+  +func TestComputeSnapshot_DefaultsApplied(t *testing.T) {
+  +	s := ComputeSnapshot("", "", 0, 0)
+  +	if s.ServerName != "unknown" {
+  +		t.Errorf("ServerName = %q, want %q", s.ServerName, "unknown")
+  +	}
+  +	if s.Transport != "stdio" {
+  +		t.Errorf("Transport = %q, want %q", s.Transport, "stdio")
+  +	}
+  +	if s.EstimatedTools != DefaultEstimatedTools {
+  +		t.Errorf("EstimatedTools = %d, want %d", s.EstimatedTools, DefaultEstimatedTools)
+  +	}
+  +	if s.NativeTokens != DefaultEstimatedTools*75 {
+  +		t.Errorf("NativeTokens = %d, want %d", s.NativeTokens, DefaultEstimatedTools*75)
+  +	}
+  +	if !s.HasRegistryBudget && s.RegistryBudgetNote != "" {
+  +		t.Errorf("HasRegistryBudget false but budget note = %q", s.RegistryBudgetNote)
+  +	}
+  +}
+  +
+  +func TestComputeSnapshot_BasicMath(t *testing.T) {
+  +	s := ComputeSnapshot("github", "stdio", 20, 0)
+  +	if s.EstimatedTools != 20 {
+  +		t.Errorf("EstimatedTools = %d, want 20", s.EstimatedTools)
+  +	}
+  +	if s.NativeTokens != 1500 {
+  +		t.Errorf("NativeTokens = %d, want 1500", s.NativeTokens)
+  +	}
+  +	if s.LeanProxyTokens <= 0 {
+  +		t.Errorf("LeanProxyTokens should be positive, got %d", s.LeanProxyTokens)
+  +	}
+  +	if s.SavedTokens <= 0 {
+  +		t.Errorf("SavedTokens should be positive, got %d", s.SavedTokens)
+  +	}
+  +	if s.SavingsPercent <= 0 || s.SavingsPercent >= 100 {
+  +		t.Errorf("SavingsPercent out of range, got %v", s.SavingsPercent)
+  +	}
+  +}
+  +
+  +func TestComputeSnapshot_RegistryBudgetReported(t *testing.T) {
+  +	s := ComputeSnapshot("github", "stdio", 10, 1500)
+  +	if !s.HasRegistryBudget {
+  +		t.Error("HasRegistryBudget should be true when tokensPerTurn > 0")
+  +	}
+  +	if !strings.Contains(s.RegistryBudgetNote, "1500") {
+  +		t.Errorf("RegistryBudgetNote = %q, expected it to mention 1500", s.RegistryBudgetNote)
+  +	}
+  +}
+  +
+  +func TestComputeSnapshot_NegativeToolsDefaultsUp(t *testing.T) {
+  +	s := ComputeSnapshot("foo", "http", -5, 0)
+  +	if s.EstimatedTools != DefaultEstimatedTools {
+  +		t.Errorf("negative tool count should default, got %d", s.EstimatedTools)
+  +	}
+  +}
+  +
+  +func TestEstimateToolsFromDescription(t *testing.T) {
+  +	tests := []struct {
+  +		name string
+  +		desc string
+  +		want int
+  +	}{
+  +		{"empty uses default", "", DefaultEstimatedTools},
+  +		{"short uses default", "tiny description", DefaultEstimatedTools},
+  +		{"medium scales up", strings.Repeat("a", 5*1024), 5 * estimatedToolsPerKB},
+  +		{"floor enforced when below default", strings.Repeat("a", 512), DefaultEstimatedTools},
+  +	}
+  +	for _, tc := range tests {
+  +		t.Run(tc.name, func(t *testing.T) {
+  +			got := EstimateToolsFromDescription(tc.desc)
+  +			if got != tc.want {
+  +				t.Errorf("EstimateToolsFromDescription(len=%d) = %d, want %d", len(tc.desc), got, tc.want)
+  +			}
+  +		})
+  +	}
+  +}
+  +
+  +func TestFormatSnapshot_ZeroSavings(t *testing.T) {
+  +	s := Snapshot{ServerName: "x", Transport: "stdio", EstimatedTools: 1, NativeTokens: 100, LeanProxyTokens: 100}
+  +	out := FormatSnapshot(s)
+  +	if !strings.Contains(out, "no savings") {
+  +		t.Errorf("FormatSnapshot with zero savings should mention 'no savings', got %q", out)
+  +	}
+  +	if !strings.Contains(out, "x") {
+  +		t.Errorf("FormatSnapshot should include server name, got %q", out)
+  +	}
+  +}
+  +
+  +func TestFormatSnapshot_PositiveSavings(t *testing.T) {
+  +	s := Snapshot{
+  +		ServerName:      "github",
+  +		Transport:       "stdio",
+  +		EstimatedTools:  20,
+  +		NativeTokens:    1500,
+  ... (11 lines truncated)
+  +111 -0
+
+pkg/migrate/config.go
+  @@ -9,7 +9,6 @@ import (
+  -	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+   	"github.com/mmornati/leanproxy-mcp/pkg/utils"
+   )
+   
+  @@ -56,19 +55,19 @@ type AuthConfig struct {
+  -	Name                string                 `yaml:"name"`
+  -	Enabled             *bool                  `yaml:"enabled"`
+  -	Transport           registry.TransportType `yaml:"transport"`
+  -	Stdio               *StdioConfig           `yaml:"stdio,omitempty"`
+  -	HTTP                *HTTPConfig            `yaml:"http,omitempty"`
+  -	Timeout             string                 `yaml:"timeout"`
+  -	TimeoutValue        time.Duration          `yaml:"-"`
+  -	ConnectTimeout      string                 `yaml:"connect_timeout"`
+  -	ConnectTimeoutValue time.Duration          `yaml:"-"`
+  -	IdleTimeout         string                 `yaml:"idle_timeout"`
+  -	IdleTimeoutValue    time.Duration          `yaml:"-"`
+  -	CacheSettings       *CacheSettings         `yaml:"cache_settings,omitempty"`
+  -	SummarizeSettings   *SummarizeSettings     `yaml:"summarize_settings,omitempty"`
+  +	Name                string         `yaml:"name"`
+  +	Enabled             *bool          `yaml:"enabled"`
+  +	Transport           TransportType  `yaml:"transport"`
+  +	Stdio               *StdioConfig   `yaml:"stdio,omitempty"`
+  +	HTTP                *HTTPConfig    `yaml:"http,omitempty"`
+  +	Timeout             string         `yaml:"timeout"`
+  +	TimeoutValue        time.Duration  `yaml:"-"`
+  +	ConnectTimeout      string         `yaml:"connect_timeout"`
+  +	ConnectTimeoutValue time.Duration  `yaml:"-"`
+  +	IdleTimeout         string         `yaml:"idle_timeout"`
+  +	IdleTimeoutValue    time.Duration  `yaml:"-"`
+  +	CacheSettings       *CacheSettings `yaml:"cache_settings,omitempty"`
+  +	SummarizeSettings   *SummarizeSettings `yaml:"summarize_settings,omitempty"`
+   }
+   
+   type Config struct {
+  @@ -101,11 +100,11 @@ func (c *ServerConfig) Validate() error {
+  -	case registry.TransportStdio:
+  +	case TransportStdio:
+   		if c.Stdio == nil || c.Stdio.Command == "" {
+   			return fmt.Errorf("server %s: command is required for stdio transport", c.Name)
+   		}
+  -	case registry.TransportHTTP, registry.TransportSSE:
+  +	case TransportHTTP, TransportSSE:
+   		if c.HTTP == nil || c.HTTP.URL == "" {
+   			return fmt.Errorf("server %s: url is required for %s transport", c.Name, c.Transport)
+   		}
+  +15 -16
+
+pkg/migrate/config_test.go
+  @@ -6,8 +6,6 @@ import (
+  -
+  -	"github.com/mmornati/leanproxy-mcp/pkg/registry"
+   )
+   
+   func TestLoadConfigMinimal(t *testing.T) {
+  @@ -39,7 +37,7 @@ servers:
+  -	if server.Transport != registry.TransportStdio {
+  +	if server.Transport != TransportStdio {
+   		t.Errorf("Transport = %v, want stdio", server.Transport)
+   	}
+   	if server.Enabled == nil || !*server.Enabled {
+  @@ -100,7 +98,7 @@ servers:
+  -	if server.Transport != registry.TransportHTTP {
+  +	if server.Transport != TransportHTTP {
+   		t.Errorf("Transport = %v, want http", server.Transport)
+   	}
+   	if server.HTTP.URL != "http://localhost:8080" {
+  @@ -218,7 +216,7 @@ func TestServerConfigValidate(t *testing.T) {
+  -				Transport: registry.TransportStdio,
+  +				Transport: TransportStdio,
+   				Stdio:     &StdioConfig{Command: "/bin/server"},
+   			},
+   			wantErr: false,
+  @@ -227,7 +225,7 @@ func TestServerConfigValidate(t *testing.T) {
+  -				Transport: registry.TransportHTTP,
+  +				Transport: TransportHTTP,
+   				HTTP:      &HTTPConfig{URL: "http://localhost:8080"},
+   			},
+   			wantErr: false,
+  @@ -236,14 +234,14 @@ func TestServerConfigValidate(t *testing.T) {
+  -				Transport: registry.TransportSSE,
+  +				Transport: TransportSSE,
+   				HTTP:      &HTTPConfig{URL: "http://localhost:8080/sse"},
+   			},
+
+... (more changes truncated)
+  +5 -7
+[full diff: rtk git diff --no-compact]
