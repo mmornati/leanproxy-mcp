@@ -29,6 +29,7 @@ Usage:
 func init() {
 	RootCmd.AddCommand(marketplaceCmd)
 	marketplaceCmd.AddCommand(marketplaceSyncCmd)
+	marketplaceCmd.AddCommand(marketplaceSearchCmd)
 }
 
 func runMarketplaceSync(cmd *cobra.Command, args []string) error {

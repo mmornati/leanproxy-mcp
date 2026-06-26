@@ -11,15 +11,19 @@ func TestMarketplaceCmd_Subcommands(t *testing.T) {
 	}
 
 	subcommands := marketplaceCmd.Commands()
-	if len(subcommands) != 1 {
-		t.Fatalf("expected 1 subcommand, got %d", len(subcommands))
+	if len(subcommands) != 2 {
+		t.Fatalf("expected 2 subcommands, got %d", len(subcommands))
 	}
 
-	if subcommands[0].Use != "sync" {
-		t.Errorf("expected subcommand 'sync', got '%s'", subcommands[0].Use)
+	seen := map[string]bool{}
+	for _, c := range subcommands {
+		seen[c.Use] = true
 	}
-	if subcommands[0].Args == nil {
-		t.Errorf("sync subcommand should declare an Args validator (cobra.NoArgs)")
+	if !seen["sync"] {
+		t.Errorf("expected subcommand 'sync'")
+	}
+	if !seen["search <query>"] {
+		t.Errorf("expected subcommand 'search'")
 	}
 }
 

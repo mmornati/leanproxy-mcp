@@ -15,11 +15,12 @@ import (
 )
 
 var (
-	addServerForce        bool
-	addServerYes          bool
-	addServerDryRun       bool
-	addServerGracefulWait int
-	addServerStopExisting bool
+	addServerForce           bool
+	addServerYes             bool
+	addServerDryRun          bool
+	addServerGracefulWait    int
+	addServerStopExisting    bool
+	addServerUnderstandRisks bool
 )
 
 // feedSourceAdapter satisfies migrate.ServerSource by reading from a registry
@@ -88,6 +89,7 @@ func init() {
 	addRegistryCmd.Flags().BoolVar(&addServerDryRun, "dry-run", false, "Preview the install without writing the config")
 	addRegistryCmd.Flags().BoolVar(&addServerStopExisting, "stop-existing", true, "Gracefully stop any running server with the same name before replacing")
 	addRegistryCmd.Flags().IntVar(&addServerGracefulWait, "graceful-wait", 10, "Seconds to wait for graceful stop before proceeding (0 = no wait)")
+	addRegistryCmd.Flags().BoolVar(&addServerUnderstandRisks, "i-understand-the-risks", false, "Acknowledge low-trust server warning and proceed with installation")
 	RootCmd.AddCommand(addRegistryCmd)
 }
 
@@ -148,6 +150,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			}
 		}
 		return fmt.Errorf("resolve server %q: %w", serverID, resolveErr)
+	}
+
+	// Surface a trust-score warning when the resolved server scores below the
+	// low-trust threshold. The user must acknowledge via --i-understand-the-risks.
+	trustScore := lookupTrustScore(cache.Entries, entry.Name)
+	if registry.IsLowTrust(trustScore) && !addServerUnderstandRisks {
+		fmt.Fprint(stderr, registry.FormatWarning(entry.Name, trustScore))
+		return fmt.Errorf("trust check failed for %q", serverID)
 	}
 
 	// Detect the existing-server case so we can prompt before the install.
@@ -235,6 +245,18 @@ func loadExistingEntry(path, name string) (*migrate.ServerConfig, error) {
 		}
 	}
 	return nil, nil
+}
+
+// lookupTrustScore scans the FeedIndex entries for a case-insensitive name
+// match and returns the calculated trust score. Returns 100 (safe default) if
+// the entry is not found so the trust gate doesn't block on lookup failures.
+func lookupTrustScore(entries []registry.RegistryFeedEntry, name string) int {
+	for _, e := range entries {
+		if strings.EqualFold(e.Name, name) {
+			return registry.CalculateTrustScore(e)
+		}
+	}
+	return 100
 }
 
 func descriptionFor(entry migrate.CacheEntry) string {
