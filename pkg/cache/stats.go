@@ -149,7 +149,14 @@ type anthropicResponseMeta struct {
 }
 
 func ProcessResponse(result json.RawMessage) {
+	ProcessResponseFor(ProviderAnthropic, result)
+}
+
+func ProcessResponseFor(provider Provider, result json.RawMessage) {
 	if len(result) == 0 {
+		return
+	}
+	if provider != ProviderAnthropic {
 		return
 	}
 	var meta anthropicResponseMeta

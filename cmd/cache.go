@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
@@ -27,12 +28,12 @@ var cacheFlags struct {
 }
 
 var cacheStatsCmd = &cobra.Command{
-	Use:   "stats",
-	Short: "Show Anthropic prompt cache hit rate statistics",
-	Long: `Display the Anthropic prompt caching hit rate report including
-total requests, cache hits, hit rate percentage, tokens saved, and
-estimated dollar savings based on Anthropic's prompt caching pricing.`,
-	Run: runCacheStats,
+	Use:          "stats",
+	Short:        "Show Anthropic prompt cache hit rate statistics",
+	Long:         `Display the Anthropic prompt caching hit rate report including total requests, cache hits, hit rate percentage, tokens saved, and estimated dollar savings based on Anthropic's prompt caching pricing.`,
+	Args:         cobra.NoArgs,
+	SilenceUsage: true,
+	RunE:         runCacheStats,
 }
 
 var cacheStatsFlags struct {
@@ -54,7 +55,7 @@ func init() {
 	cacheCmd.AddCommand(cacheStatsCmd)
 }
 
-func runCacheStats(cmd *cobra.Command, args []string) {
+func runCacheStats(cmd *cobra.Command, args []string) error {
 	model := cacheStatsFlags.model
 	if model == "" {
 		model = "claude-sonnet-4-20250514"
@@ -64,15 +65,22 @@ func runCacheStats(cmd *cobra.Command, args []string) {
 	stats := tracker.GetStats()
 
 	if !stats.HasTraffic() {
-		fmt.Println("No Anthropic traffic observed")
-		return
+		fmt.Fprintln(cmd.OutOrStdout(), "No Anthropic traffic observed")
+		return nil
+	}
+
+	if _, ok := cache.ModelCost(model); !ok {
+		slog.Warn("unknown model; estimated savings will be $0",
+			"model", model,
+			"supported_models", cache.SupportedModelList())
 	}
 
 	if cacheStatsFlags.jsonOut {
-		fmt.Println(stats.FormatJSON())
+		fmt.Fprintln(cmd.OutOrStdout(), stats.FormatJSON())
 	} else {
-		fmt.Print(stats.FormatMarkdown(model))
+		fmt.Fprint(cmd.OutOrStdout(), stats.FormatMarkdown(model))
 	}
+	return nil
 }
 
 func runCache(cmd *cobra.Command, args []string) {

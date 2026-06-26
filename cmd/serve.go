@@ -204,6 +204,8 @@ func runServe(cmd *cobra.Command, args []string) {
 		go updateServerStatusPeriodically()
 	}
 
+	go startRegistryFeedSync(ctx)
+
 	sigChan := make(chan os.Signal, 4)
 	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
 
@@ -334,7 +336,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 	}
 
 	recordProvider(server)
-	injectBreakpoints(server, req)
+	provider := injectBreakpoints(server, req)
 
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
@@ -347,7 +349,9 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
-	cache.ProcessResponse(resp.Result)
+	if resp.Error == nil {
+		cache.ProcessResponseFor(provider, resp.Result)
+	}
 
 	writeResponse(writer, resp)
 }
@@ -374,7 +378,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 	}
 
 	recordProvider(server)
-	injectBreakpoints(server, req)
+	provider := injectBreakpoints(server, req)
 
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
@@ -387,7 +391,9 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		return
 	}
 
-	cache.ProcessResponse(resp.Result)
+	if resp.Error == nil {
+		cache.ProcessResponseFor(provider, resp.Result)
+	}
 
 	writeResponseAsync(writer, writerMu, resp)
 }
@@ -430,7 +436,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 		}
 
 		recordProvider(server)
-		injectBreakpoints(server, req)
+		provider := injectBreakpoints(server, req)
 
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
@@ -446,6 +452,9 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 			continue
 		}
 
+		if resp.Error == nil {
+			cache.ProcessResponseFor(provider, resp.Result)
+		}
 		responses = append(responses, resp)
 	}
 
@@ -550,17 +559,17 @@ func recordProvider(server *registry.ServerEntry) {
 	slog.Debug("provider detected", "server", server.ID, "provider", provider, "url", server.Address)
 }
 
-func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) {
+func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) cache.Provider {
 	if server == nil || server.Address == "" || req == nil || len(req.Params) == 0 {
-		return
+		return cache.ProviderOther
 	}
 	det := providerDetector.Load()
 	if det == nil {
-		return
+		return cache.ProviderOther
 	}
 	provider := det.Detect(server.Address)
 	if provider != cache.ProviderAnthropic {
-		return
+		return provider
 	}
 
 	inputEstimate := int64(len(req.Params)) / 4
@@ -572,7 +581,7 @@ func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) 
 		if err != nil {
 			slog.Debug("breakpoint injection skipped", "error", err)
 			cache.GlobalCacheStatsTracker().RecordRequest(provider, false, inputEstimate)
-			return
+			return provider
 		}
 		req.Params = modified
 		hasBreakpoint = true
@@ -580,6 +589,7 @@ func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) 
 	}
 
 	cache.GlobalCacheStatsTracker().RecordRequest(provider, hasBreakpoint, inputEstimate)
+	return provider
 }
 
 func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {
@@ -695,7 +705,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 		}
 
 		recordProvider(server)
-		injectBreakpoints(server, req)
+		provider := injectBreakpoints(server, req)
 
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
@@ -711,6 +721,9 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 			continue
 		}
 
+		if resp.Error == nil {
+			cache.ProcessResponseFor(provider, resp.Result)
+		}
 		responses = append(responses, resp)
 	}
 
@@ -734,6 +747,26 @@ func trimNewline(data []byte) []byte {
 		data = data[:len(data)-1]
 	}
 	return data
+}
+
+func startRegistryFeedSync(ctx context.Context) {
+	cacheDir, err := registry.LeanProxyDir()
+	if err != nil {
+		slog.Warn("registry feed: unable to determine cache dir", "error", err)
+		return
+	}
+	if cacheDir == "" {
+		slog.Warn("registry feed: empty cache dir; skipping")
+		return
+	}
+
+	fetcher := registry.NewFeedFetcher(slog.Default(), cacheDir)
+
+	if notice := fetcher.CacheStaleInfo(); notice != "" {
+		slog.Warn(notice)
+	}
+
+	fetcher.StartPeriodicRefresh(ctx)
 }
 
 func updateServerStatusPeriodically() {
