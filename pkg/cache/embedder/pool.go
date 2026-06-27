@@ -9,11 +9,29 @@ import (
 const (
 	defaultPoolSize  = 4
 	defaultPoolQueue = 256
+	maxPoolSize      = 256
+	maxPoolQueue     = 4096
 )
 
 type PoolConfig struct {
 	Size  int `yaml:"size"`
 	Queue int `yaml:"queue"`
+}
+
+func (p PoolConfig) withDefaults() PoolConfig {
+	if p.Size <= 0 {
+		p.Size = defaultPoolSize
+	}
+	if p.Queue <= 0 {
+		p.Queue = defaultPoolQueue
+	}
+	if p.Size > maxPoolSize {
+		p.Size = maxPoolSize
+	}
+	if p.Queue > maxPoolQueue {
+		p.Queue = maxPoolQueue
+	}
+	return p
 }
 
 type job struct {
@@ -24,20 +42,17 @@ type job struct {
 }
 
 type Pool struct {
-	embedder Embedder
-	jobs     chan job
-	wg       sync.WaitGroup
-	quit     chan struct{}
-	logger   *slog.Logger
+	embedder  Embedder
+	jobs      chan job
+	wg        sync.WaitGroup
+	quit      chan struct{}
+	closeOnce sync.Once
+	logger    *slog.Logger
+	size      int
 }
 
 func NewPool(embedder Embedder, cfg PoolConfig, logger *slog.Logger) *Pool {
-	if cfg.Size <= 0 {
-		cfg.Size = defaultPoolSize
-	}
-	if cfg.Queue <= 0 {
-		cfg.Queue = defaultPoolQueue
-	}
+	cfg = cfg.withDefaults()
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -47,6 +62,7 @@ func NewPool(embedder Embedder, cfg PoolConfig, logger *slog.Logger) *Pool {
 		jobs:     make(chan job, cfg.Queue),
 		quit:     make(chan struct{}),
 		logger:   logger,
+		size:     cfg.Size,
 	}
 
 	for i := 0; i < cfg.Size; i++ {
@@ -63,12 +79,20 @@ func (p *Pool) worker(id int) {
 	for {
 		select {
 		case j := <-p.jobs:
+			if err := j.ctx.Err(); err != nil {
+				j.err <- err
+				close(j.result)
+				close(j.err)
+				continue
+			}
 			emb, err := p.embedder.Embed(j.ctx, j.req)
 			if err != nil {
 				j.err <- err
 			} else {
 				j.result <- emb
 			}
+			close(j.result)
+			close(j.err)
 		case <-p.quit:
 			p.logger.Debug("embedder pool worker stopped", "worker_id", id)
 			return
@@ -85,15 +109,13 @@ func (p *Pool) Embed(ctx context.Context, req EmbedRequest) (<-chan Embedding, <
 	}
 	select {
 	case p.jobs <- j:
+		return j.result, j.err
 	default:
-		err := make(chan error, 1)
-		err <- ErrPoolFull
-		close(err)
-		result := make(chan Embedding, 1)
-		close(result)
-		return result, err
+		j.err <- ErrPoolFull
+		close(j.result)
+		close(j.err)
+		return j.result, j.err
 	}
-	return j.result, j.err
 }
 
 var ErrPoolFull = &poolFullError{}
@@ -108,13 +130,14 @@ func (e *poolFullError) Unwrap() error {
 	return nil
 }
 
+func (p *Pool) Size() int {
+	return p.size
+}
+
 func (p *Pool) Close() error {
-	select {
-	case <-p.quit:
-		return nil
-	default:
+	p.closeOnce.Do(func() {
 		close(p.quit)
-	}
+	})
 	p.wg.Wait()
 	return p.embedder.Close()
 }

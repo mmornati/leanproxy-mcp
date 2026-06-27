@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -24,15 +28,30 @@ type OllamaConfig struct {
 	Model string `yaml:"model"`
 }
 
-func (c *OllamaConfig) Validate() error {
+func (c *OllamaConfig) withDefaults() {
 	if c.URL == "" {
 		c.URL = defaultOllamaURL
 	}
-	if _, err := url.Parse(c.URL); err != nil {
-		return fmt.Errorf("embedder ollama: invalid url %q: %w", c.URL, err)
-	}
 	if c.Model == "" {
 		c.Model = defaultOllamaModel
+	}
+}
+
+func validateOllamaURL(raw string) error {
+	if strings.TrimSpace(raw) == "" {
+		return fmt.Errorf("url must not be empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid url %q: %w", raw, err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return fmt.Errorf("scheme must be http or https, got %q", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("url must include a host")
 	}
 	return nil
 }
@@ -54,8 +73,9 @@ type OllamaEmbedder struct {
 }
 
 func NewOllamaEmbedder(cfg OllamaConfig, logger *slog.Logger) (*OllamaEmbedder, error) {
-	if err := cfg.Validate(); err != nil {
-		return nil, err
+	cfg.withDefaults()
+	if err := validateOllamaURL(cfg.URL); err != nil {
+		return nil, fmt.Errorf("embedder ollama: %w", err)
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -75,6 +95,9 @@ func NewOllamaEmbedder(cfg OllamaConfig, logger *slog.Logger) (*OllamaEmbedder, 
 
 func (e *OllamaEmbedder) Embed(ctx context.Context, req EmbedRequest) (Embedding, error) {
 	input := req.Input()
+	if len(input) > MaxPayloadBytes {
+		return Embedding{}, fmt.Errorf("%w: %d > %d", ErrPayloadTooLarge, len(input), MaxPayloadBytes)
+	}
 	e.logger.Debug("ollama embed", "tool", req.ToolName, "input_length", len(input))
 
 	body := ollamaEmbedRequest{
@@ -87,7 +110,10 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, req EmbedRequest) (Embedding
 		return Embedding{}, fmt.Errorf("ollama embed marshal: %w", err)
 	}
 
-	u, _ := url.JoinPath(e.cfg.URL, ollamaEmbedPath)
+	u, err := url.JoinPath(e.cfg.URL, ollamaEmbedPath)
+	if err != nil {
+		return Embedding{}, fmt.Errorf("ollama embed join path: %w", err)
+	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(payload))
 	if err != nil {
 		return Embedding{}, fmt.Errorf("ollama embed request: %w", err)
@@ -96,12 +122,15 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, req EmbedRequest) (Embedding
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
+		if isHostUnreachable(err) {
+			return Embedding{}, fmt.Errorf("%w: %v", ErrEmbedderUnavailable, err)
+		}
 		return Embedding{}, fmt.Errorf("ollama embed call: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return Embedding{}, fmt.Errorf("ollama embed: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -110,8 +139,8 @@ func (e *OllamaEmbedder) Embed(ctx context.Context, req EmbedRequest) (Embedding
 		return Embedding{}, fmt.Errorf("ollama embed decode: %w", err)
 	}
 
-	if len(embedResp.Embeddings) == 0 {
-		return Embedding{}, fmt.Errorf("ollama embed: empty embeddings response")
+	if len(embedResp.Embeddings) == 0 || len(embedResp.Embeddings[0]) == 0 {
+		return Embedding{}, errors.New("ollama embed: empty vector in response")
 	}
 
 	return Embedding{
@@ -126,5 +155,50 @@ func (e *OllamaEmbedder) Provider() Provider {
 
 func (e *OllamaEmbedder) Close() error {
 	e.client.CloseIdleConnections()
+	return nil
+}
+
+func isHostUnreachable(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	if strings.Contains(s, "connection refused") ||
+		strings.Contains(s, "no such host") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "i/o timeout") {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	return false
+}
+
+// IsAPIAvailable probes the Ollama server with a GET on the root URL.
+// Returns nil if reachable, an error otherwise. Used by startup checks.
+func IsAPIAvailable(ctx context.Context, baseURL string) error {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("ollama probe: %w", err)
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return fmt.Errorf("ollama probe: %w", err)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("ollama probe: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("ollama probe: status %d", resp.StatusCode)
+	}
+	_ = os.Getenv("") // keep os import for future probe extension
 	return nil
 }

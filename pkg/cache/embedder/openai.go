@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -17,6 +19,7 @@ const (
 	defaultOpenAIModel = "text-embedding-3-small"
 	openAIEmbedURL     = "https://api.openai.com/v1/embeddings"
 	openAITimeout      = 10 * time.Second
+	maxErrorBodyBytes  = 4 * 1024
 )
 
 type OpenAIConfig struct {
@@ -24,13 +27,16 @@ type OpenAIConfig struct {
 	APIKey string `yaml:"api_key,omitempty"`
 }
 
-func (c *OpenAIConfig) Validate() error {
+func (c *OpenAIConfig) withDefaults() {
 	if c.Model == "" {
 		c.Model = defaultOpenAIModel
 	}
-	key := c.APIKey
+}
+
+func (c *OpenAIConfig) validateKey() error {
+	key := strings.TrimSpace(c.APIKey)
 	if key == "" {
-		key = os.Getenv(envOpenAIAPIKey)
+		key = strings.TrimSpace(os.Getenv(envOpenAIAPIKey))
 	}
 	if key == "" {
 		return fmt.Errorf("embedder openai: %s env var not set and no api_key in config", envOpenAIAPIKey)
@@ -38,11 +44,12 @@ func (c *OpenAIConfig) Validate() error {
 	return nil
 }
 
-func (c *OpenAIConfig) apiKey() string {
-	if c.APIKey != "" {
-		return c.APIKey
+func (c *OpenAIConfig) resolvedAPIKey() string {
+	key := strings.TrimSpace(c.APIKey)
+	if key != "" {
+		return key
 	}
-	return os.Getenv(envOpenAIAPIKey)
+	return strings.TrimSpace(os.Getenv(envOpenAIAPIKey))
 }
 
 type openAIEmbedRequest struct {
@@ -61,19 +68,26 @@ type openAIEmbedData struct {
 
 type OpenAIEmbedder struct {
 	cfg    OpenAIConfig
+	apiKey string
 	client *http.Client
 	logger *slog.Logger
 }
 
 func NewOpenAIEmbedder(cfg OpenAIConfig, logger *slog.Logger) (*OpenAIEmbedder, error) {
-	if err := cfg.Validate(); err != nil {
+	cfg.withDefaults()
+	if err := cfg.validateKey(); err != nil {
 		return nil, err
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
+	key := cfg.resolvedAPIKey()
+	if key == "" {
+		return nil, errors.New("embedder openai: resolved api key is empty")
+	}
 	return &OpenAIEmbedder{
-		cfg: cfg,
+		cfg:    cfg,
+		apiKey: key,
 		client: &http.Client{
 			Timeout: openAITimeout,
 			Transport: &http.Transport{
@@ -87,6 +101,9 @@ func NewOpenAIEmbedder(cfg OpenAIConfig, logger *slog.Logger) (*OpenAIEmbedder, 
 
 func (e *OpenAIEmbedder) Embed(ctx context.Context, req EmbedRequest) (Embedding, error) {
 	input := req.Input()
+	if len(input) > MaxPayloadBytes {
+		return Embedding{}, fmt.Errorf("%w: %d > %d", ErrPayloadTooLarge, len(input), MaxPayloadBytes)
+	}
 
 	body := openAIEmbedRequest{
 		Model: e.cfg.Model,
@@ -102,16 +119,16 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, req EmbedRequest) (Embedding
 		return Embedding{}, fmt.Errorf("openai embed request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+e.cfg.apiKey())
+	httpReq.Header.Set("Authorization", "Bearer "+e.apiKey)
 
 	resp, err := e.client.Do(httpReq)
 	if err != nil {
-		return Embedding{}, fmt.Errorf("openai embed call: %w", err)
+		return Embedding{}, fmt.Errorf("%w: %v", ErrEmbedderUnavailable, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
 		return Embedding{}, fmt.Errorf("openai embed: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
@@ -120,8 +137,8 @@ func (e *OpenAIEmbedder) Embed(ctx context.Context, req EmbedRequest) (Embedding
 		return Embedding{}, fmt.Errorf("openai embed decode: %w", err)
 	}
 
-	if len(embedResp.Data) == 0 {
-		return Embedding{}, fmt.Errorf("openai embed: empty data response")
+	if len(embedResp.Data) == 0 || len(embedResp.Data[0].Vector) == 0 {
+		return Embedding{}, errors.New("openai embed: empty vector in response")
 	}
 
 	return Embedding{

@@ -208,12 +208,10 @@ func runServe(cmd *cobra.Command, args []string) {
 				Model: serveFlags.openAIModel,
 			}
 		default:
-			slog.Warn("unknown embed provider, disabling embedding", "provider", serveFlags.embedProvider)
+			logError("unknown embed provider %q: must be 'ollama' or 'openai'", serveFlags.embedProvider)
 		}
-		if err := embedCfg.Validate(); err == nil {
-			bouncer.MustSetupEmbedder(embedCfg, embedder.PoolConfig{Size: serveFlags.embedPoolSize})
-		} else {
-			slog.Warn("embedder configuration invalid, disabling", "error", err)
+		if err := bouncer.SetupEmbedder(embedCfg, embedder.PoolConfig{Size: serveFlags.embedPoolSize}); err != nil {
+			logError("embedder setup failed (failing startup): %v", err)
 		}
 	}
 
@@ -595,14 +593,17 @@ func recordProvider(server *registry.ServerEntry) {
 
 func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) cache.Provider {
 	if server == nil || server.Address == "" || req == nil || len(req.Params) == 0 {
+		embedOutboundPayload(req)
 		return cache.ProviderOther
 	}
 	det := providerDetector.Load()
 	if det == nil {
+		embedOutboundPayload(req)
 		return cache.ProviderOther
 	}
 	provider := det.Detect(server.Address)
 	if provider != cache.ProviderAnthropic {
+		embedOutboundPayload(req)
 		return provider
 	}
 
@@ -615,6 +616,7 @@ func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) 
 		if err != nil {
 			slog.Debug("breakpoint injection skipped", "error", err)
 			cache.GlobalCacheStatsTracker().RecordRequest(provider, false, inputEstimate)
+			embedOutboundPayload(req)
 			return provider
 		}
 		req.Params = modified
@@ -629,17 +631,36 @@ func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) 
 }
 
 func embedOutboundPayload(req *proxy.JSONRPCRequest) {
-	pool := bouncer.GlobalEmbedPool()
-	if pool == nil {
+	if req == nil || len(req.Params) == 0 {
 		return
 	}
-	if len(req.Params) == 0 {
+	if bouncer.GlobalEmbedPool() == nil {
 		return
 	}
-	_, _ = bouncer.EmbedToolCall(context.Background(), bouncer.EmbedRequest{
-		ToolName: req.Method,
+	toolName := extractToolName(req)
+	bouncer.EmbedToolCall(context.Background(), bouncer.EmbedRequest{
+		ToolName: toolName,
 		Args:     req.Params,
 	})
+}
+
+func extractToolName(req *proxy.JSONRPCRequest) string {
+	if req == nil {
+		return ""
+	}
+	if req.Method != "" && isToolCallMethod(req.Method) {
+		var p struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err == nil && p.Name != "" {
+			return p.Name
+		}
+	}
+	return req.Method
+}
+
+func isToolCallMethod(method string) bool {
+	return method == "tools/call" || method == "invoke_tool"
 }
 
 func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {

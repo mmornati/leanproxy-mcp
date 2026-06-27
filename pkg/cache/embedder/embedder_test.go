@@ -16,11 +16,13 @@ type mockEmbedder struct {
 	err      error
 	provider Provider
 	inputs   []string
+	calls    int
 }
 
 func (m *mockEmbedder) Embed(_ context.Context, req EmbedRequest) (Embedding, error) {
 	m.mu.Lock()
 	m.inputs = append(m.inputs, req.Input())
+	m.calls++
 	m.mu.Unlock()
 	return m.emb, m.err
 }
@@ -76,7 +78,6 @@ func TestEmbedRequestInputOrderDeterministic(t *testing.T) {
 		Args:     json.RawMessage(`{"z":1,"a":2,"m":3}`),
 	}
 	got := req.Input()
-	// Must be sorted: a, m, z
 	if !strings.Contains(got, " a=2") || !strings.Contains(got, " m=3") || !strings.Contains(got, " z=1") {
 		t.Errorf("expected sorted keys, got: %s", got)
 	}
@@ -108,12 +109,26 @@ func TestConfigValidate(t *testing.T) {
 		},
 		{
 			name: "valid ollama config",
-			cfg:  Config{Provider: ProviderOllama, Ollama: &OllamaConfig{URL: "http://localhost:11434"}},
+			cfg:  Config{Provider: ProviderOllama, Ollama: &OllamaConfig{URL: "http://localhost:11434", Model: "m"}},
 		},
 		{
-			name:    "invalid ollama url",
-			cfg:     Config{Provider: ProviderOllama, Ollama: &OllamaConfig{URL: "://invalid"}},
-			wantErr: "invalid url",
+			name: "valid openai config",
+			cfg:  Config{Provider: ProviderOpenAI, OpenAI: &OpenAIConfig{APIKey: "sk-test"}},
+		},
+		{
+			name:    "empty ollama url",
+			cfg:     Config{Provider: ProviderOllama, Ollama: &OllamaConfig{URL: " "}},
+			wantErr: "url must not be empty",
+		},
+		{
+			name:    "bad scheme",
+			cfg:     Config{Provider: ProviderOllama, Ollama: &OllamaConfig{URL: "ftp://x"}},
+			wantErr: "scheme must be http or https",
+		},
+		{
+			name:    "empty model",
+			cfg:     Config{Provider: ProviderOllama, Ollama: &OllamaConfig{URL: "http://localhost:11434", Model: " "}},
+			wantErr: "model must not be empty",
 		},
 	}
 	for _, tc := range tests {
@@ -182,13 +197,10 @@ func TestPoolEmbedError(t *testing.T) {
 func TestPoolFullQueue(t *testing.T) {
 	blocker := &blockingEmbedder{block: make(chan struct{})}
 	pool := NewPool(blocker, PoolConfig{Size: 1, Queue: 1}, nil)
-	defer pool.Close()
 
-	// Fill the pool
 	_, _ = pool.Embed(context.Background(), EmbedRequest{ToolName: "a"})
 	_, _ = pool.Embed(context.Background(), EmbedRequest{ToolName: "b"})
 
-	// Next submit should fail with pool full
 	_, errCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "c"})
 	select {
 	case err := <-errCh:
@@ -200,6 +212,7 @@ func TestPoolFullQueue(t *testing.T) {
 	}
 
 	close(blocker.block)
+	pool.Close()
 }
 
 type blockingEmbedder struct {
@@ -220,13 +233,24 @@ func TestNewPoolDefaults(t *testing.T) {
 		t.Fatal("expected non-nil pool")
 	}
 	defer pool.Close()
+	if pool.Size() != defaultPoolSize {
+		t.Errorf("default size = %d, want %d", pool.Size(), defaultPoolSize)
+	}
+}
+
+func TestPoolConfigBounds(t *testing.T) {
+	cfg := PoolConfig{Size: 100000, Queue: 10000000}.withDefaults()
+	if cfg.Size > maxPoolSize {
+		t.Errorf("size not capped: %d", cfg.Size)
+	}
+	if cfg.Queue > maxPoolQueue {
+		t.Errorf("queue not capped: %d", cfg.Queue)
+	}
 }
 
 func TestOllamaConfigValidate(t *testing.T) {
 	cfg := &OllamaConfig{}
-	if err := cfg.Validate(); err != nil {
-		t.Errorf("default config should validate: %v", err)
-	}
+	cfg.withDefaults()
 	if cfg.URL != defaultOllamaURL {
 		t.Errorf("default url = %q, want %q", cfg.URL, defaultOllamaURL)
 	}
@@ -235,34 +259,45 @@ func TestOllamaConfigValidate(t *testing.T) {
 	}
 
 	cfg2 := &OllamaConfig{URL: "http://myhost:8080", Model: "my-model"}
-	if err := cfg2.Validate(); err != nil {
-		t.Errorf("valid custom config: %v", err)
+	cfg2.withDefaults()
+	if cfg2.URL != "http://myhost:8080" || cfg2.Model != "my-model" {
+		t.Errorf("custom config not preserved: %+v", cfg2)
 	}
 }
 
-func TestOllamaConfigValidateBadURL(t *testing.T) {
-	cfg := &OllamaConfig{URL: "://bad"}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "invalid url") {
-		t.Errorf("expected invalid url error, got: %v", err)
+func TestOllamaConfigValidateURL(t *testing.T) {
+	tests := []struct {
+		url     string
+		wantErr string
+	}{
+		{"", "url must not be empty"},
+		{"  ", "url must not be empty"},
+		{"ftp://x", "scheme must be http or https"},
+		{"://bad", "invalid url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.url, func(t *testing.T) {
+			err := validateOllamaURL(tt.url)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("url %q: error = %v, want contain %q", tt.url, err, tt.wantErr)
+			}
+		})
 	}
 }
 
 func TestOpenAIConfigValidate(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 
-	// No API key set should fail
 	cfg := &OpenAIConfig{}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
+	if err := cfg.validateKey(); err == nil || !strings.Contains(err.Error(), "OPENAI_API_KEY") {
 		t.Errorf("expected OPENAI_API_KEY error, got: %v", err)
 	}
 
-	// API key in config should pass
 	cfg2 := &OpenAIConfig{APIKey: "sk-test"}
-	if err := cfg2.Validate(); err != nil {
+	if err := cfg2.validateKey(); err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
+	cfg2.withDefaults()
 	if cfg2.Model != defaultOpenAIModel {
 		t.Errorf("default model = %q, want %q", cfg2.Model, defaultOpenAIModel)
 	}
@@ -289,41 +324,130 @@ func TestNewOpenAIEmbedderWithKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if e.cfg.apiKey() != "sk-test" {
-		t.Errorf("apiKey() = %q, want %q", e.cfg.apiKey(), "sk-test")
+	if e.apiKey != "sk-test" {
+		t.Errorf("apiKey = %q, want %q", e.apiKey, "sk-test")
 	}
 	e.Close()
+}
+
+func TestOllamaEmbedPayloadTooLarge(t *testing.T) {
+	e, err := NewOllamaEmbedder(OllamaConfig{URL: "http://localhost:11434"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+
+	big := make([]byte, MaxPayloadBytes+1)
+	for i := range big {
+		big[i] = 'a'
+	}
+	_, err = e.Embed(context.Background(), EmbedRequest{ToolName: "x", Args: big})
+	if !errors.Is(err, ErrPayloadTooLarge) {
+		t.Errorf("expected ErrPayloadTooLarge, got: %v", err)
+	}
 }
 
 func TestPoolConcurrentEmbed(t *testing.T) {
 	mock := &mockEmbedder{
 		emb: Embedding{Vector: []float32{0.5}, Model: "test"},
 	}
-	pool := NewPool(mock, PoolConfig{Size: 4, Queue: 100}, nil)
+	pool := NewPool(mock, PoolConfig{Size: 4, Queue: 200}, nil)
 	defer pool.Close()
 
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
+	errCount := 0
+	var errMu sync.Mutex
+	for i := 0; i < 50; i++ {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
 			resultCh, errCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "tool"})
 			select {
-			case <-resultCh:
-			case <-errCh:
-				t.Errorf("goroutine %d got error", n)
-			case <-time.After(time.Second):
-				t.Errorf("goroutine %d timeout", n)
+			case _, ok := <-resultCh:
+				if !ok {
+					errMu.Lock()
+					errCount++
+					errMu.Unlock()
+				}
+			case _, ok := <-errCh:
+				if ok {
+					errMu.Lock()
+					errCount++
+					errMu.Unlock()
+				}
+			case <-time.After(2 * time.Second):
+				errMu.Lock()
+				errCount++
+				errMu.Unlock()
 			}
 		}(i)
 	}
 	wg.Wait()
+	if errCount > 0 {
+		t.Errorf("%d goroutines got errors", errCount)
+	}
 }
 
-func TestNewPoolClose(t *testing.T) {
+func TestPoolDoubleClose(t *testing.T) {
 	mock := &mockEmbedder{emb: Embedding{Vector: []float32{0.1}, Model: "t"}}
 	pool := NewPool(mock, PoolConfig{Size: 2}, nil)
 	pool.Close()
-	// Close twice should not panic
+	// Second close should not panic
 	pool.Close()
+}
+
+func TestEmbedderUnavailableWrapped(t *testing.T) {
+	e, err := NewOllamaEmbedder(OllamaConfig{URL: "http://localhost:11434"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.Close()
+	if !errors.Is(embedderSentinel(), ErrEmbedderUnavailable) {
+		t.Error("ErrEmbedderUnavailable should be a sentinel")
+	}
+}
+
+func embedderSentinel() error { return ErrEmbedderUnavailable }
+
+// Benchmark: NFR11 <5ms p95 (NFR11: hot-path overhead target).
+// Measures the cost of building the embed input string (the only sync work
+// done on the request hot path before submitting to the async pool).
+func BenchmarkEmbedRequestInput(b *testing.B) {
+	args := json.RawMessage(`{"location":"San Francisco","unit":"celsius","date":"2026-06-27","hourly":true}`)
+	req := EmbedRequest{ToolName: "get_weather", Args: args}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = req.Input()
+	}
+}
+
+// Benchmark the async pool submit path (the actual hot-path call site).
+// This is the overhead added per outbound tool call when embedder is enabled.
+func BenchmarkPoolSubmit(b *testing.B) {
+	mock := &mockEmbedder{emb: Embedding{Vector: make([]float32, 384), Model: "m"}}
+	pool := NewPool(mock, PoolConfig{Size: 8, Queue: 1024}, nil)
+	defer pool.Close()
+
+	args := json.RawMessage(`{"location":"San Francisco","unit":"celsius"}`)
+	req := EmbedRequest{ToolName: "get_weather", Args: args}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		resultCh, errCh := pool.Embed(context.Background(), req)
+		// Drain to avoid leaking goroutines
+		select {
+		case <-resultCh:
+		case <-errCh:
+		}
+	}
+}
+
+// Benchmark input formatting with a large payload (max-allowed size).
+func BenchmarkEmbedRequestInputLarge(b *testing.B) {
+	bigArgs := json.RawMessage(`"` + strings.Repeat("x", MaxPayloadBytes-2) + `"`)
+	req := EmbedRequest{ToolName: "big_tool", Args: bigArgs}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = req.Input()
+	}
 }

@@ -3,20 +3,26 @@ package bouncer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/embedder"
 )
 
-var globalEmbedPool *embedder.Pool
+var globalEmbedPool atomic.Pointer[embedder.Pool]
 
 func SetGlobalEmbedPool(p *embedder.Pool) {
-	globalEmbedPool = p
+	if p == nil {
+		globalEmbedPool.Store(nil)
+		return
+	}
+	globalEmbedPool.Store(p)
 }
 
 func GlobalEmbedPool() *embedder.Pool {
-	return globalEmbedPool
+	return globalEmbedPool.Load()
 }
 
 type EmbedRequest struct {
@@ -24,21 +30,29 @@ type EmbedRequest struct {
 	Args     json.RawMessage
 }
 
-type EmbedResult struct {
-	Vector []float32 `json:"vector"`
-	Model  string    `json:"model"`
+type EmbedOutcome struct {
+	Request  EmbedRequest `json:"request"`
+	Provider string       `json:"provider"`
+	Model    string       `json:"model,omitempty"`
+	Vector   []float32    `json:"vector,omitempty"`
+	Err      string       `json:"error,omitempty"`
 }
 
-func EmbedToolCall(ctx context.Context, req EmbedRequest) (<-chan embedder.Embedding, <-chan error) {
-	emptyEmb := make(chan embedder.Embedding, 1)
-	close(emptyEmb)
-	emptyErr := make(chan error, 1)
-	emptyErr <- fmt.Errorf("embedder: no global embed pool configured")
-	close(emptyErr)
+var EmbedResultHandler func(EmbedOutcome)
 
-	pool := globalEmbedPool
+func EmbedToolCall(ctx context.Context, req EmbedRequest) {
+	pool := globalEmbedPool.Load()
 	if pool == nil {
-		return emptyEmb, emptyErr
+		return
+	}
+	if req.ToolName == "" {
+		return
+	}
+	if len(req.Args) > embedder.MaxPayloadBytes {
+		slog.Warn("embedder: payload too large, skipping",
+			"tool", req.ToolName,
+			"bytes", len(req.Args))
+		return
 	}
 
 	embReq := embedder.EmbedRequest{
@@ -46,24 +60,98 @@ func EmbedToolCall(ctx context.Context, req EmbedRequest) (<-chan embedder.Embed
 		Args:     req.Args,
 	}
 
-	return pool.Embed(ctx, embReq)
+	resultCh, errCh := pool.Embed(ctx, embReq)
+
+	go func(req EmbedRequest) {
+		outcome := EmbedOutcome{Request: req, Provider: "unknown"}
+		select {
+		case emb, ok := <-resultCh:
+			if !ok {
+				return
+			}
+			outcome.Vector = emb.Vector
+			outcome.Model = emb.Model
+			slog.Debug("embedder: success",
+				"tool", req.ToolName,
+				"model", emb.Model,
+				"dims", len(emb.Vector))
+			recordEmbedSuccess()
+		case err, ok := <-errCh:
+			if !ok {
+				return
+			}
+			outcome.Err = err.Error()
+			handleEmbedError(req, err)
+			recordEmbedFailure()
+		}
+		if EmbedResultHandler != nil {
+			EmbedResultHandler(outcome)
+		}
+	}(req)
 }
 
-func MustSetupEmbedder(cfg embedder.Config, poolCfg embedder.PoolConfig) {
+func handleEmbedError(req EmbedRequest, err error) {
+	switch {
+	case errors.Is(err, embedder.ErrPoolFull):
+		slog.Warn("embedder: pool full, falling back to exact-match",
+			"tool", req.ToolName)
+	case errors.Is(err, embedder.ErrEmbedderUnavailable):
+		slog.Warn("embedder: provider unreachable, falling back to exact-match",
+			"tool", req.ToolName,
+			"error", err)
+	case errors.Is(err, embedder.ErrPayloadTooLarge):
+		slog.Warn("embedder: payload too large, falling back to exact-match",
+			"tool", req.ToolName,
+			"error", err)
+	default:
+		slog.Warn("embedder: failure, falling back to exact-match",
+			"tool", req.ToolName,
+			"error", err)
+	}
+}
+
+var (
+	embedSuccessCount atomic.Uint64
+	embedFailureCount atomic.Uint64
+)
+
+func recordEmbedSuccess() { embedSuccessCount.Add(1) }
+func recordEmbedFailure() { embedFailureCount.Add(1) }
+
+func EmbedSuccessCount() uint64 { return embedSuccessCount.Load() }
+func EmbedFailureCount() uint64 { return embedFailureCount.Load() }
+
+func SetupEmbedder(cfg embedder.Config, poolCfg embedder.PoolConfig) error {
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("embedder config: %w", err)
+	}
+
 	logger := slog.With("component", "bouncer.embedder")
 
 	eng, err := newEmbedderFromConfig(cfg, logger)
 	if err != nil {
-		slog.Error("embedder setup failed", "error", err)
-		return
+		return fmt.Errorf("embedder create: %w", err)
 	}
 
+	poolCfg = embedder.PoolConfig{
+		Size:  poolCfg.Size,
+		Queue: poolCfg.Queue,
+	}
+	if poolCfg.Size <= 0 {
+		poolCfg.Size = 4
+	}
+	if poolCfg.Queue <= 0 {
+		poolCfg.Queue = 256
+	}
 	pool := embedder.NewPool(eng, poolCfg, logger)
-	SetGlobalEmbedPool(pool)
-	slog.Info("embedder pool initialized",
+	if old := globalEmbedPool.Swap(pool); old != nil {
+		_ = old.Close()
+	}
+	logger.Info("embedder pool initialized",
 		"provider", cfg.Provider,
 		"pool_size", poolCfg.Size,
 	)
+	return nil
 }
 
 func newEmbedderFromConfig(cfg embedder.Config, logger *slog.Logger) (embedder.Embedder, error) {

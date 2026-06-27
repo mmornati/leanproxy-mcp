@@ -3,6 +3,7 @@ package embedder
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -69,13 +70,34 @@ func (c Config) Validate() error {
 		if c.Ollama == nil {
 			return fmt.Errorf("embedder: ollama config required when provider=%q", c.Provider)
 		}
-		return c.Ollama.Validate()
+		c.Ollama.withDefaults()
+		if err := validateOllamaURL(c.Ollama.URL); err != nil {
+			return fmt.Errorf("embedder ollama: %w", err)
+		}
+		if strings.TrimSpace(c.Ollama.Model) == "" {
+			return fmt.Errorf("embedder ollama: model must not be empty")
+		}
+		return nil
 	case ProviderOpenAI:
 		if c.OpenAI == nil {
 			return fmt.Errorf("embedder: openai config required when provider=%q", c.Provider)
 		}
-		return c.OpenAI.Validate()
+		c.OpenAI.withDefaults()
+		if err := c.OpenAI.validateKey(); err != nil {
+			return err
+		}
+		if strings.TrimSpace(c.OpenAI.Model) == "" {
+			return fmt.Errorf("embedder openai: model must not be empty")
+		}
+		return nil
 	default:
 		return fmt.Errorf("embedder: unknown provider %q", c.Provider)
 	}
 }
+
+var (
+	ErrEmbedderUnavailable = errors.New("embedder unavailable")
+	ErrPayloadTooLarge     = errors.New("embedder payload too large")
+)
+
+const MaxPayloadBytes = 64 * 1024
