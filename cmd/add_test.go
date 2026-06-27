@@ -34,13 +34,7 @@ func TestAddRegistryCmd_Registered(t *testing.T) {
 	}
 }
 
-func TestAddRegistryCmd_Flags(t *testing.T) {
-	flags := addRegistryCmd.Flags()
-	for _, name := range []string{"force", "yes", "dry-run", "stop-existing", "graceful-wait"} {
-		if flags.Lookup(name) == nil {
-			t.Errorf("add command missing --%s flag", name)
-		}
-	}
+func TestAddRegistryCmd_Flags_Args(t *testing.T) {
 	if addRegistryCmd.Args == nil {
 		t.Fatal("add command should declare an Args validator")
 	}
@@ -329,6 +323,164 @@ func TestRunAdd_FreshInstallWritesConfig(t *testing.T) {
 
 func testNow(_ *testing.T) time.Time {
 	return time.Now()
+}
+
+func TestAddRegistryCmd_Flags(t *testing.T) {
+	flags := addRegistryCmd.Flags()
+	for _, name := range []string{"force", "yes", "dry-run", "stop-existing", "graceful-wait", "i-understand-the-risks"} {
+		if flags.Lookup(name) == nil {
+			t.Errorf("add command missing --%s flag", name)
+		}
+	}
+}
+
+func TestLookupTrustScore(t *testing.T) {
+	entries := []registry.RegistryFeedEntry{
+		{Name: "github", LastRelease: time.Now().Format(time.RFC3339), Downloads: 50000},
+		{Name: "GitHub", LastRelease: "2020-01-01", OpenIssues: 200}, // case-insensitive dupe
+		{Name: "stale", LastRelease: "2020-01-01", OpenIssues: 200},
+	}
+	if score, ok := lookupTrustScore(entries, "github"); !ok || score < 40 || score >= 70 {
+		t.Errorf("github lookup: got (%d, %v), want ok=true and medium trust (40-69)", score, ok)
+	}
+	if _, ok := lookupTrustScore(entries, "GITHUB"); !ok {
+		t.Error("case-insensitive lookup failed")
+	}
+	if score, ok := lookupTrustScore(entries, "missing"); ok || score != 0 {
+		t.Errorf("missing lookup: got (%d, %v), want (0, false) to fail closed", score, ok)
+	}
+}
+
+func TestRunAdd_LowTrustBlockedWithoutFlag(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LEANPROXY_CONFIG", filepath.Join(cfgDir, "leanproxy_servers.yaml"))
+	t.Setenv("HOME", dir)
+
+	writeIndex(t, filepath.Join(dir, ".leanproxy"), registry.FeedIndex{
+		SyncedAt: testNow(t),
+		Entries: []registry.RegistryFeedEntry{
+			{Name: "sketchy", Transport: "stdio", Command: "sketchy-mcp",
+				LastRelease: "2020-01-01", OpenIssues: 200},
+		},
+	})
+
+	stderr := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(stderr)
+
+	prevAck := addServerUnderstandRisks
+	prevDry := addServerDryRun
+	prevGlobalDry := DryRunEnabled
+	addServerUnderstandRisks = false
+	addServerDryRun = false
+	DryRunEnabled = false
+	defer func() {
+		addServerUnderstandRisks = prevAck
+		addServerDryRun = prevDry
+		DryRunEnabled = prevGlobalDry
+	}()
+
+	err := runAdd(cmd, []string{"sketchy"})
+	if err == nil {
+		t.Fatal("expected error blocking low-trust install")
+	}
+	if !strings.Contains(stderr.String(), "--i-understand-the-risks") {
+		t.Errorf("stderr should mention --i-understand-the-risks, got: %q", stderr.String())
+	}
+}
+
+func TestRunAdd_LowTrustAllowedWithFlag(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "leanproxy_servers.yaml")
+	t.Setenv("LEANPROXY_CONFIG", cfgPath)
+	t.Setenv("HOME", dir)
+
+	writeIndex(t, filepath.Join(dir, ".leanproxy"), registry.FeedIndex{
+		SyncedAt: testNow(t),
+		Entries: []registry.RegistryFeedEntry{
+			{Name: "sketchy", Transport: "stdio", Command: "sketchy-mcp",
+				LastRelease: "2020-01-01", OpenIssues: 200},
+		},
+	})
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+
+	prevAck := addServerUnderstandRisks
+	prevDry := addServerDryRun
+	prevGlobalDry := DryRunEnabled
+	addServerUnderstandRisks = true
+	addServerDryRun = false
+	DryRunEnabled = false
+	defer func() {
+		addServerUnderstandRisks = prevAck
+		addServerDryRun = prevDry
+		DryRunEnabled = prevGlobalDry
+	}()
+
+	if err := runAdd(cmd, []string{"sketchy"}); err != nil {
+		t.Fatalf("expected install to proceed with --i-understand-the-risks, got: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "proceeding") {
+		t.Errorf("stderr should report proceeding, got: %q", stderr.String())
+	}
+}
+
+func TestRunAdd_LowTrustDryRunBypassesGate(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("LEANPROXY_CONFIG", filepath.Join(cfgDir, "leanproxy_servers.yaml"))
+	t.Setenv("HOME", dir)
+
+	writeIndex(t, filepath.Join(dir, ".leanproxy"), registry.FeedIndex{
+		SyncedAt: testNow(t),
+		Entries: []registry.RegistryFeedEntry{
+			{Name: "sketchy", Transport: "stdio", Command: "sketchy-mcp",
+				LastRelease: "2020-01-01", OpenIssues: 200},
+		},
+	})
+
+	stdout := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(stdout)
+	cmd.SetErr(&bytes.Buffer{})
+
+	prevAck := addServerUnderstandRisks
+	prevDry := addServerDryRun
+	prevGlobalDry := DryRunEnabled
+	addServerUnderstandRisks = false
+	addServerDryRun = true
+	DryRunEnabled = false
+	defer func() {
+		addServerUnderstandRisks = prevAck
+		addServerDryRun = prevDry
+		DryRunEnabled = prevGlobalDry
+	}()
+
+	if err := runAdd(cmd, []string{"sketchy"}); err != nil {
+		t.Fatalf("dry-run should not require risk acknowledgment, got: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Dry-run") {
+		t.Errorf("dry-run output missing, got: %s", stdout.String())
+	}
 }
 
 func containsString(haystack []string, needle string) bool {

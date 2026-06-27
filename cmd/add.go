@@ -154,10 +154,21 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	// Surface a trust-score warning when the resolved server scores below the
 	// low-trust threshold. The user must acknowledge via --i-understand-the-risks.
-	trustScore := lookupTrustScore(cache.Entries, entry.Name)
-	if registry.IsLowTrust(trustScore) && !addServerUnderstandRisks {
+	// In dry-run mode the warning is informational only and does not block.
+	trustScore, trustFound := lookupTrustScore(cache.Entries, entry.Name)
+	lowTrust := registry.IsLowTrust(trustScore)
+	switch {
+	case lowTrust && !trustFound:
+		fmt.Fprintf(stderr, "[WARN] trust score unavailable for %q; install will require explicit acknowledgment.\n", entry.Name)
+		if !addServerUnderstandRisks {
+			return fmt.Errorf("trust check failed for %q", entry.Name)
+		}
+	case lowTrust && !addServerUnderstandRisks && !addServerDryRun && !DryRunEnabled:
 		fmt.Fprint(stderr, registry.FormatWarning(entry.Name, trustScore))
-		return fmt.Errorf("trust check failed for %q", serverID)
+		return fmt.Errorf("trust check failed for %q", entry.Name)
+	case lowTrust:
+		fmt.Fprintf(stderr, "[INFO] %q trust score: %d/100 (low trust, but proceeding due to %s).\n",
+			entry.Name, trustScore, trustFlagLabel(addServerDryRun, addServerUnderstandRisks))
 	}
 
 	// Detect the existing-server case so we can prompt before the install.
@@ -248,15 +259,27 @@ func loadExistingEntry(path, name string) (*migrate.ServerConfig, error) {
 }
 
 // lookupTrustScore scans the FeedIndex entries for a case-insensitive name
-// match and returns the calculated trust score. Returns 100 (safe default) if
-// the entry is not found so the trust gate doesn't block on lookup failures.
-func lookupTrustScore(entries []registry.RegistryFeedEntry, name string) int {
+// match and returns the calculated trust score along with a found flag. When
+// the entry is absent it returns (0, false) so the trust gate fails closed:
+// an unverifiable server must be explicitly acknowledged by the user.
+func lookupTrustScore(entries []registry.RegistryFeedEntry, name string) (int, bool) {
 	for _, e := range entries {
 		if strings.EqualFold(e.Name, name) {
-			return registry.CalculateTrustScore(e)
+			return registry.CalculateTrustScore(e), true
 		}
 	}
-	return 100
+	return 0, false
+}
+
+func trustFlagLabel(dryRun, acknowledged bool) string {
+	switch {
+	case dryRun:
+		return "--dry-run"
+	case acknowledged:
+		return "--i-understand-the-risks"
+	default:
+		return ""
+	}
 }
 
 func descriptionFor(entry migrate.CacheEntry) string {

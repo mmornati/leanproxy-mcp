@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -46,17 +47,17 @@ func TestRunMarketplaceSearch_EmptyCache(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
+	stdout := &bytes.Buffer{}
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
-	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetOut(stdout)
 	cmd.SetErr(&bytes.Buffer{})
 
-	err := runMarketplaceSearch(cmd, []string{"test"})
-	if err == nil {
-		t.Fatal("expected error when cache is empty")
+	if err := runMarketplaceSearch(cmd, []string{"test"}); err != nil {
+		t.Fatalf("empty cache should not error, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "marketplace sync") {
-		t.Errorf("error should mention 'marketplace sync', got: %v", err)
+	if !strings.Contains(stdout.String(), "marketplace sync") {
+		t.Errorf("output should hint at 'marketplace sync', got: %s", stdout.String())
 	}
 }
 
@@ -142,20 +143,22 @@ func TestRunMarketplaceSearch_WithMatches(t *testing.T) {
 	if strings.Contains(output, "database") {
 		t.Errorf("output should NOT contain 'database': %s", output)
 	}
-	if !strings.Contains(output, "TRUST") {
-		t.Errorf("output should have TRUST column header: %s", output)
+	wantCols := []string{"name", "trust", "last release", "open issues", "downloads", "est tokens/turn"}
+	headerLine := strings.SplitN(output, "\n", 2)[0]
+	if !strings.HasPrefix(headerLine, "name") {
+		t.Fatalf("first output line should start with 'name', got: %q", headerLine)
 	}
-	if !strings.Contains(output, "LAST RELEASE") {
-		t.Errorf("output should have LAST RELEASE column header: %s", output)
-	}
-	if !strings.Contains(output, "OPEN ISSUES") {
-		t.Errorf("output should have OPEN ISSUES column header: %s", output)
-	}
-	if !strings.Contains(output, "DOWNLOADS") {
-		t.Errorf("output should have DOWNLOADS column header: %s", output)
-	}
-	if !strings.Contains(output, "EST. TOKENS/TURN") {
-		t.Errorf("output should have EST. TOKENS/TURN column header: %s", output)
+	lastIdx := -1
+	for _, col := range wantCols {
+		idx := strings.Index(headerLine, col)
+		if idx < 0 {
+			t.Errorf("header missing column %q, got: %q", col, headerLine)
+			continue
+		}
+		if idx <= lastIdx {
+			t.Errorf("column %q appears out of order at idx %d (prev %d): %q", col, idx, lastIdx, headerLine)
+		}
+		lastIdx = idx
 	}
 }
 
@@ -170,16 +173,67 @@ func TestRunMarketplaceSearch_EmptyQuery(t *testing.T) {
 		},
 	})
 
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	if err := runMarketplaceSearch(cmd, []string{""}); err == nil {
+		t.Fatal("expected error for empty query (would match everything)")
+	}
+}
+
+func TestRunMarketplaceSearch_WhitespaceQuery(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	writeIndex(t, filepath.Join(dir, ".leanproxy"), registry.FeedIndex{
+		SyncedAt: testNow(t),
+		Entries: []registry.RegistryFeedEntry{
+			{Name: "github"},
+		},
+	})
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	if err := runMarketplaceSearch(cmd, []string{"   "}); err == nil {
+		t.Fatal("expected error for whitespace-only query (would match everything)")
+	}
+}
+
+func TestRunMarketplaceSearch_RespectsLimit(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	entries := make([]registry.RegistryFeedEntry, 0, 10)
+	for i := 0; i < 10; i++ {
+		entries = append(entries, registry.RegistryFeedEntry{Name: fmt.Sprintf("server-%02d", i)})
+	}
+	writeIndex(t, filepath.Join(dir, ".leanproxy"), registry.FeedIndex{
+		SyncedAt: testNow(t),
+		Entries:  entries,
+	})
+
 	stdout := &bytes.Buffer{}
 	cmd := &cobra.Command{}
 	cmd.SetContext(t.Context())
 	cmd.SetOut(stdout)
 	cmd.SetErr(&bytes.Buffer{})
 
-	if err := runMarketplaceSearch(cmd, []string{""}); err != nil {
-		t.Fatalf("expected success with empty query, got: %v", err)
+	prev := searchLimit
+	searchLimit = 3
+	defer func() { searchLimit = prev }()
+
+	if err := runMarketplaceSearch(cmd, []string{"server"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "github") {
-		t.Errorf("empty query should match all entries: %s", stdout.String())
+
+	rows := strings.Split(strings.TrimRight(stdout.String(), "\n"), "\n")
+	// 1 header row + 3 data rows = 4 total.
+	if len(rows) != 4 {
+		t.Errorf("expected 4 rows (header + 3 matches), got %d:\n%s", len(rows), stdout.String())
 	}
 }
