@@ -29,6 +29,7 @@ Usage:
 func init() {
 	RootCmd.AddCommand(marketplaceCmd)
 	marketplaceCmd.AddCommand(marketplaceSyncCmd)
+	marketplaceCmd.AddCommand(marketplaceSearchCmd)
 }
 
 func runMarketplaceSync(cmd *cobra.Command, args []string) error {
@@ -37,9 +38,6 @@ func runMarketplaceSync(cmd *cobra.Command, args []string) error {
 	cacheDir, err := registry.LeanProxyDir()
 	if err != nil {
 		return fmt.Errorf("determine cache directory: %w", err)
-	}
-	if cacheDir == "" {
-		return fmt.Errorf("determine cache directory: empty path")
 	}
 
 	fetcher := registry.NewFeedFetcher(slog.Default(), cacheDir)

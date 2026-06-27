@@ -15,11 +15,12 @@ import (
 )
 
 var (
-	addServerForce        bool
-	addServerYes          bool
-	addServerDryRun       bool
-	addServerGracefulWait int
-	addServerStopExisting bool
+	addServerForce           bool
+	addServerYes             bool
+	addServerDryRun          bool
+	addServerGracefulWait    int
+	addServerStopExisting    bool
+	addServerUnderstandRisks bool
 )
 
 // feedSourceAdapter satisfies migrate.ServerSource by reading from a registry
@@ -88,6 +89,7 @@ func init() {
 	addRegistryCmd.Flags().BoolVar(&addServerDryRun, "dry-run", false, "Preview the install without writing the config")
 	addRegistryCmd.Flags().BoolVar(&addServerStopExisting, "stop-existing", true, "Gracefully stop any running server with the same name before replacing")
 	addRegistryCmd.Flags().IntVar(&addServerGracefulWait, "graceful-wait", 10, "Seconds to wait for graceful stop before proceeding (0 = no wait)")
+	addRegistryCmd.Flags().BoolVar(&addServerUnderstandRisks, "i-understand-the-risks", false, "Acknowledge low-trust server warning and proceed with installation")
 	RootCmd.AddCommand(addRegistryCmd)
 }
 
@@ -148,6 +150,25 @@ func runAdd(cmd *cobra.Command, args []string) error {
 			}
 		}
 		return fmt.Errorf("resolve server %q: %w", serverID, resolveErr)
+	}
+
+	// Surface a trust-score warning when the resolved server scores below the
+	// low-trust threshold. The user must acknowledge via --i-understand-the-risks.
+	// In dry-run mode the warning is informational only and does not block.
+	trustScore, trustFound := lookupTrustScore(cache.Entries, entry.Name)
+	lowTrust := registry.IsLowTrust(trustScore)
+	switch {
+	case lowTrust && !trustFound:
+		fmt.Fprintf(stderr, "[WARN] trust score unavailable for %q; install will require explicit acknowledgment.\n", entry.Name)
+		if !addServerUnderstandRisks {
+			return fmt.Errorf("trust check failed for %q", entry.Name)
+		}
+	case lowTrust && !addServerUnderstandRisks && !addServerDryRun && !DryRunEnabled:
+		fmt.Fprint(stderr, registry.FormatWarning(entry.Name, trustScore))
+		return fmt.Errorf("trust check failed for %q", entry.Name)
+	case lowTrust:
+		fmt.Fprintf(stderr, "[INFO] %q trust score: %d/100 (low trust, but proceeding due to %s).\n",
+			entry.Name, trustScore, trustFlagLabel(addServerDryRun, addServerUnderstandRisks))
 	}
 
 	// Detect the existing-server case so we can prompt before the install.
@@ -235,6 +256,30 @@ func loadExistingEntry(path, name string) (*migrate.ServerConfig, error) {
 		}
 	}
 	return nil, nil
+}
+
+// lookupTrustScore scans the FeedIndex entries for a case-insensitive name
+// match and returns the calculated trust score along with a found flag. When
+// the entry is absent it returns (0, false) so the trust gate fails closed:
+// an unverifiable server must be explicitly acknowledged by the user.
+func lookupTrustScore(entries []registry.RegistryFeedEntry, name string) (int, bool) {
+	for _, e := range entries {
+		if strings.EqualFold(e.Name, name) {
+			return registry.CalculateTrustScore(e), true
+		}
+	}
+	return 0, false
+}
+
+func trustFlagLabel(dryRun, acknowledged bool) string {
+	switch {
+	case dryRun:
+		return "--dry-run"
+	case acknowledged:
+		return "--i-understand-the-risks"
+	default:
+		return ""
+	}
 }
 
 func descriptionFor(entry migrate.CacheEntry) string {

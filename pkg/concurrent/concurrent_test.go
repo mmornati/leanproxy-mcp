@@ -317,14 +317,27 @@ func TestQueueManagerEnqueue(t *testing.T) {
 		ErrorCh:    errorCh,
 	}
 
-	err := qm.Enqueue("test_server", req, resultCh, errorCh)
-	if err != nil {
+	if err := qm.Enqueue("test_server", req, resultCh, errorCh); err != nil {
 		t.Fatalf("Enqueue failed: %v", err)
 	}
 
-	size := qm.GetQueueSize("test_server")
-	if size != 1 {
-		t.Errorf("Expected queue size 1, got %d", size)
+	// QueueManager.processQueue runs as a goroutine spawned by Enqueue and
+	// unconditionally dequeues + tries to send on resultCh. The queue can
+	// therefore be size 0 OR 1 by the time we observe it (both are valid
+	// post-conditions); the deterministic invariant is that the request is
+	// actually processed. Verify by draining resultCh.
+	select {
+	case resp := <-resultCh:
+		if resp == nil {
+			t.Fatal("expected non-nil response from queue processing")
+		}
+		if resp.ID != req.ID {
+			t.Errorf("response ID = %d, want %d", resp.ID, req.ID)
+		}
+	case err := <-errorCh:
+		t.Fatalf("unexpected error from queue: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for response — Enqueue did not schedule processing")
 	}
 }
 
