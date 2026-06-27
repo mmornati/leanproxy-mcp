@@ -17,7 +17,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
+	"github.com/mmornati/leanproxy-mcp/pkg/cache/embedder"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
@@ -44,6 +46,11 @@ var serveFlags struct {
 	upstreamURL     string
 	providersConfig string
 	cacheStrategy   string
+	embedProvider   string
+	ollamaURL       string
+	ollamaModel     string
+	openAIModel     string
+	embedPoolSize   int
 }
 
 var providerDetector atomic.Pointer[cache.ProviderDetector]
@@ -78,6 +85,11 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.upstreamURL, "upstream", "http://localhost:8081", "Upstream JSON-RPC server URL")
 	serveCmd.Flags().StringVar(&serveFlags.providersConfig, "providers-config", "", "Path to providers config file for provider detection")
 	serveCmd.Flags().StringVar(&serveFlags.cacheStrategy, "cache-strategy", "off", "Cache breakpoint injection strategy for Anthropic requests: off (default, no injection), aggressive (last system + last tool), balanced (largest block only)")
+	serveCmd.Flags().StringVar(&serveFlags.embedProvider, "embed-provider", "", "Embedding provider: ollama or openai (empty = disabled)")
+	serveCmd.Flags().StringVar(&serveFlags.ollamaURL, "ollama-url", "http://localhost:11434", "Ollama server URL")
+	serveCmd.Flags().StringVar(&serveFlags.ollamaModel, "ollama-model", "nomic-embed-text", "Ollama embedding model")
+	serveCmd.Flags().StringVar(&serveFlags.openAIModel, "openai-model", "text-embedding-3-small", "OpenAI embedding model")
+	serveCmd.Flags().IntVar(&serveFlags.embedPoolSize, "embed-pool-size", 4, "Embedder worker pool size")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -181,6 +193,28 @@ func runServe(cmd *cobra.Command, args []string) {
 			cache.WithInjectLogger(slog.Default()),
 			cache.WithStrategy(strategy),
 		))
+	}
+
+	if serveFlags.embedProvider != "" {
+		embedCfg := embedder.Config{Provider: embedder.Provider(serveFlags.embedProvider)}
+		switch embedCfg.Provider {
+		case embedder.ProviderOllama:
+			embedCfg.Ollama = &embedder.OllamaConfig{
+				URL:   serveFlags.ollamaURL,
+				Model: serveFlags.ollamaModel,
+			}
+		case embedder.ProviderOpenAI:
+			embedCfg.OpenAI = &embedder.OpenAIConfig{
+				Model: serveFlags.openAIModel,
+			}
+		default:
+			slog.Warn("unknown embed provider, disabling embedding", "provider", serveFlags.embedProvider)
+		}
+		if err := embedCfg.Validate(); err == nil {
+			bouncer.MustSetupEmbedder(embedCfg, embedder.PoolConfig{Size: serveFlags.embedPoolSize})
+		} else {
+			slog.Warn("embedder configuration invalid, disabling", "error", err)
+		}
 	}
 
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), toolStore)
@@ -588,8 +622,24 @@ func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) 
 		slog.Debug("cache breakpoints injected", "server", server.ID)
 	}
 
+	embedOutboundPayload(req)
+
 	cache.GlobalCacheStatsTracker().RecordRequest(provider, hasBreakpoint, inputEstimate)
 	return provider
+}
+
+func embedOutboundPayload(req *proxy.JSONRPCRequest) {
+	pool := bouncer.GlobalEmbedPool()
+	if pool == nil {
+		return
+	}
+	if len(req.Params) == 0 {
+		return
+	}
+	_, _ = bouncer.EmbedToolCall(context.Background(), bouncer.EmbedRequest{
+		ToolName: req.Method,
+		Args:     req.Params,
+	})
 }
 
 func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {
