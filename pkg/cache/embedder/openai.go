@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	// #nosec G101 -- this is the env var NAME, not a credential
 	envOpenAIAPIKey    = "OPENAI_API_KEY"
 	defaultOpenAIModel = "text-embedding-3-small"
 	openAIEmbedURL     = "https://api.openai.com/v1/embeddings"

@@ -158,18 +158,19 @@ func TestPoolEmbed(t *testing.T) {
 	pool := NewPool(mock, PoolConfig{Size: 2}, nil)
 	defer pool.Close()
 
-	resultCh, errCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "test"})
+	outCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "test"})
 
 	select {
-	case emb := <-resultCh:
-		if len(emb.Vector) != 3 {
-			t.Errorf("expected 3 dims, got %d", len(emb.Vector))
+	case o := <-outCh:
+		if o.Err != nil {
+			t.Fatalf("unexpected error: %v", o.Err)
 		}
-		if emb.Model != "test" {
-			t.Errorf("model = %q, want %q", emb.Model, "test")
+		if len(o.Embedding.Vector) != 3 {
+			t.Errorf("expected 3 dims, got %d", len(o.Embedding.Vector))
 		}
-	case err := <-errCh:
-		t.Fatalf("unexpected error: %v", err)
+		if o.Embedding.Model != "test" {
+			t.Errorf("model = %q, want %q", o.Embedding.Model, "test")
+		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for embed result")
 	}
@@ -182,12 +183,12 @@ func TestPoolEmbedError(t *testing.T) {
 	pool := NewPool(mock, PoolConfig{Size: 1}, nil)
 	defer pool.Close()
 
-	_, errCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "test"})
+	outCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "test"})
 
 	select {
-	case err := <-errCh:
-		if err == nil || !strings.Contains(err.Error(), "embed failed") {
-			t.Errorf("expected 'embed failed', got: %v", err)
+	case o := <-outCh:
+		if o.Err == nil || !strings.Contains(o.Err.Error(), "embed failed") {
+			t.Errorf("expected 'embed failed', got: %v", o.Err)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for error")
@@ -198,17 +199,31 @@ func TestPoolFullQueue(t *testing.T) {
 	blocker := &blockingEmbedder{block: make(chan struct{})}
 	pool := NewPool(blocker, PoolConfig{Size: 1, Queue: 1}, nil)
 
-	_, _ = pool.Embed(context.Background(), EmbedRequest{ToolName: "a"})
-	_, _ = pool.Embed(context.Background(), EmbedRequest{ToolName: "b"})
+	// Fill both slots: one in worker, one in queue.
+	if ch := pool.Embed(context.Background(), EmbedRequest{ToolName: "a"}); ch == nil {
+		t.Fatal("nil channel for a")
+	}
+	// Give the worker a moment to actually pick up "a" and enter blocker.Embed.
+	// Without this sleep, the race detector can schedule j2 into the queue
+	// before j1 has reached the blocking call, leaving a queue slot for j3.
+	time.Sleep(2 * time.Millisecond)
+	if ch := pool.Embed(context.Background(), EmbedRequest{ToolName: "b"}); ch == nil {
+		t.Fatal("nil channel for b")
+	}
 
-	_, errCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "c"})
+	// Third call should hit the pool-full path.
+	outCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "c"})
+	if outCh == nil {
+		t.Fatal("nil channel for c")
+	}
+
 	select {
-	case err := <-errCh:
-		if !errors.Is(err, ErrPoolFull) {
-			t.Errorf("expected ErrPoolFull, got: %v", err)
+	case o, ok := <-outCh:
+		if !errors.Is(o.Err, ErrPoolFull) {
+			t.Errorf("expected ErrPoolFull, got: %v (ok=%v)", o.Err, ok)
 		}
-	case <-time.After(time.Second):
-		t.Fatal("timeout")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for pool-full outcome")
 	}
 
 	close(blocker.block)
@@ -220,8 +235,12 @@ type blockingEmbedder struct {
 }
 
 func (b *blockingEmbedder) Embed(ctx context.Context, _ EmbedRequest) (Embedding, error) {
-	<-b.block
-	return Embedding{}, nil
+	select {
+	case <-b.block:
+		return Embedding{}, nil
+	case <-ctx.Done():
+		return Embedding{}, ctx.Err()
+	}
 }
 func (b *blockingEmbedder) Provider() Provider { return ProviderOllama }
 func (b *blockingEmbedder) Close() error       { return nil }
@@ -361,16 +380,10 @@ func TestPoolConcurrentEmbed(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			resultCh, errCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "tool"})
+			outCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "tool"})
 			select {
-			case _, ok := <-resultCh:
-				if !ok {
-					errMu.Lock()
-					errCount++
-					errMu.Unlock()
-				}
-			case _, ok := <-errCh:
-				if ok {
+			case o, ok := <-outCh:
+				if !ok || o.Err != nil {
 					errMu.Lock()
 					errCount++
 					errMu.Unlock()
@@ -394,6 +407,42 @@ func TestPoolDoubleClose(t *testing.T) {
 	pool.Close()
 	// Second close should not panic
 	pool.Close()
+}
+
+// TestPoolCloseCancelsInFlight verifies the deferred fix: workers blocked
+// inside in-flight HTTP calls observe ctx.Done() when Close() is invoked and
+// exit promptly instead of waiting for the HTTP timeout (5–10s).
+func TestPoolCloseCancelsInFlight(t *testing.T) {
+	blocker := &blockingEmbedder{block: make(chan struct{})}
+	pool := NewPool(blocker, PoolConfig{Size: 1}, nil)
+
+	// Submit a job; worker picks it up and blocks inside Embed().
+	outCh := pool.Embed(context.Background(), EmbedRequest{ToolName: "slow"})
+
+	// Give the worker a moment to start the HTTP call.
+	time.Sleep(50 * time.Millisecond)
+
+	// Close should cancel the in-flight call within the HTTP timeout window.
+	closeStart := time.Now()
+	pool.Close()
+	closeDur := time.Since(closeStart)
+
+	if closeDur > 2*time.Second {
+		t.Errorf("Close() took %s, expected < 2s (in-flight should be canceled)", closeDur)
+	}
+
+	// Drain whatever came back. Either way the test must not hang.
+	select {
+	case o, ok := <-outCh:
+		if !ok {
+			t.Error("channel should have delivered an outcome")
+		}
+		if o.Err == nil {
+			t.Error("expected ctx.Canceled error, got nil")
+		}
+	case <-time.After(time.Second):
+		t.Error("channel should have been closed/canceled by now")
+	}
 }
 
 func TestEmbedderUnavailableWrapped(t *testing.T) {
@@ -433,12 +482,9 @@ func BenchmarkPoolSubmit(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		resultCh, errCh := pool.Embed(context.Background(), req)
+		outCh := pool.Embed(context.Background(), req)
 		// Drain to avoid leaking goroutines
-		select {
-		case <-resultCh:
-		case <-errCh:
-		}
+		<-outCh
 	}
 }
 

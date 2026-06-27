@@ -95,21 +95,35 @@ func TestEmbedToolCallPoolFull(t *testing.T) {
 		SetGlobalEmbedPool(nil)
 	}()
 
-	_, _ = pool.Embed(context.Background(), embedder.EmbedRequest{ToolName: "filler"})
-	_, _ = pool.Embed(context.Background(), embedder.EmbedRequest{ToolName: "filler2"})
+	_ = pool.Embed(context.Background(), embedder.EmbedRequest{ToolName: "filler"})
+	// Give the worker a moment to enter the blocking embed call before we
+	// queue the second job — otherwise the race detector can land "filler2"
+	// in the queue before "filler" reaches the blocking call, and the third
+	// embed then fits in the queue instead of hitting the pool-full path.
+	time.Sleep(2 * time.Millisecond)
+	_ = pool.Embed(context.Background(), embedder.EmbedRequest{ToolName: "filler2"})
 
+	// Drive through EmbedResultHandler (set up before triggering EmbedToolCall)
+	// and wait via a done channel. Using a signal channel instead of reading
+	// the channels directly avoids a goroutine-scheduling race under -race.
 	done := make(chan struct{})
+	var gotErr error
 	prev := EmbedResultHandler
 	EmbedResultHandler = func(o EmbedOutcome) {
 		if o.Err != "" && strings.Contains(o.Err, "queue full") {
+			gotErr = errors.New(o.Err)
 			close(done)
 		}
 	}
 	defer func() { EmbedResultHandler = prev }()
 
 	EmbedToolCall(context.Background(), EmbedRequest{ToolName: "overflow"})
+
 	select {
 	case <-done:
+		if gotErr == nil {
+			t.Fatal("handler called but no error captured")
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for pool-full error")
 	}

@@ -60,29 +60,27 @@ func EmbedToolCall(ctx context.Context, req EmbedRequest) {
 		Args:     req.Args,
 	}
 
-	resultCh, errCh := pool.Embed(ctx, embReq)
+	outCh := pool.Embed(ctx, embReq)
 
 	go func(req EmbedRequest) {
-		outcome := EmbedOutcome{Request: req, Provider: "unknown"}
-		select {
-		case emb, ok := <-resultCh:
-			if !ok {
-				return
-			}
-			outcome.Vector = emb.Vector
-			outcome.Model = emb.Model
+		outcome := EmbedOutcome{Request: req, Provider: string(pool.Provider())}
+		// Single outcome channel: either Embedding is set (success) or Err is set.
+		o, ok := <-outCh
+		if !ok {
+			return
+		}
+		if o.Err != nil {
+			outcome.Err = o.Err.Error()
+			handleEmbedError(req, o.Err)
+			recordEmbedFailure()
+		} else {
+			outcome.Vector = o.Embedding.Vector
+			outcome.Model = o.Embedding.Model
 			slog.Debug("embedder: success",
 				"tool", req.ToolName,
-				"model", emb.Model,
-				"dims", len(emb.Vector))
+				"model", o.Embedding.Model,
+				"dims", len(o.Embedding.Vector))
 			recordEmbedSuccess()
-		case err, ok := <-errCh:
-			if !ok {
-				return
-			}
-			outcome.Err = err.Error()
-			handleEmbedError(req, err)
-			recordEmbedFailure()
 		}
 		if EmbedResultHandler != nil {
 			EmbedResultHandler(outcome)
