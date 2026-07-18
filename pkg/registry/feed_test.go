@@ -427,3 +427,91 @@ func newTestRegistryServer(t *testing.T, entries []RegistryFeedEntry) *httptest.
 		}
 	}))
 }
+
+// mutableRegistryServer serves NDJSON whose content can be swapped between
+// requests, enabling change-detection tests.
+type mutableRegistryServer struct {
+	mu      sync.Mutex
+	entries []RegistryFeedEntry
+	ts      *httptest.Server
+}
+
+func newMutableRegistryServer(t *testing.T, entries []RegistryFeedEntry) *mutableRegistryServer {
+	t.Helper()
+	m := &mutableRegistryServer{entries: entries}
+	m.ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for _, entry := range m.entries {
+			data, err := json.Marshal(entry)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprintln(w, string(data))
+		}
+	}))
+	t.Cleanup(m.ts.Close)
+	return m
+}
+
+func (m *mutableRegistryServer) setEntries(entries []RegistryFeedEntry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries = entries
+}
+
+func TestFeedFetcher_OnSync_FiresOnlyOnChange(t *testing.T) {
+	cacheDir := t.TempDir()
+	fetcher := NewFeedFetcher(nil, cacheDir)
+
+	initial := []RegistryFeedEntry{
+		{Name: "github", Description: "GitHub API", Transport: "stdio"},
+	}
+	srv := newMutableRegistryServer(t, initial)
+	fetcher.WithURL(srv.ts.URL)
+
+	var calls int
+	fetcher.OnSync(func(entries []RegistryFeedEntry) { calls++ })
+
+	ctx := context.Background()
+
+	if err := fetcher.Sync(ctx); err != nil {
+		t.Fatalf("first Sync() failed: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("OnSync calls after first sync = %d, want 1 (no prior cache)", calls)
+	}
+
+	if err := fetcher.Sync(ctx); err != nil {
+		t.Fatalf("second Sync() failed: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("OnSync calls after identical sync = %d, want 1 (unchanged content must not fire)", calls)
+	}
+
+	srv.setEntries([]RegistryFeedEntry{
+		{Name: "github", Description: "GitHub API v2", Transport: "stdio"},
+		{Name: "slack", Description: "Slack API", Transport: "http"},
+	})
+	if err := fetcher.Sync(ctx); err != nil {
+		t.Fatalf("third Sync() failed: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("OnSync calls after changed sync = %d, want 2", calls)
+	}
+}
+
+func TestFeedFetcher_OnSync_PanicIsRecovered(t *testing.T) {
+	cacheDir := t.TempDir()
+	fetcher := NewFeedFetcher(nil, cacheDir)
+
+	srv := newMutableRegistryServer(t, []RegistryFeedEntry{{Name: "x"}})
+	fetcher.WithURL(srv.ts.URL)
+
+	fetcher.OnSync(func(entries []RegistryFeedEntry) { panic("boom") })
+
+	if err := fetcher.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync() must succeed despite panicking callback: %v", err)
+	}
+}

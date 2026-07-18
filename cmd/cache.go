@@ -25,6 +25,7 @@ var cacheFlags struct {
 	jsonOut  bool
 	clear    bool
 	location bool
+	semantic bool
 }
 
 var cacheStatsCmd = &cobra.Command{
@@ -48,6 +49,9 @@ func init() {
 	cacheCmd.Flags().BoolVar(&cacheFlags.jsonOut, "json", false, "Output in JSON format")
 	cacheCmd.Flags().BoolVar(&cacheFlags.clear, "clear", false, "Clear cache for specified server (use --server)")
 	cacheCmd.Flags().BoolVar(&cacheFlags.location, "location", false, "Show the cache directory location")
+	cacheCmd.Flags().BoolVar(&cacheFlags.semantic, "semantic", false, "Show semantic cache hit/miss dashboard")
+	cacheCmd.MarkFlagsMutuallyExclusive("semantic", "clear", "list", "search", "location")
+	cacheCmd.MarkFlagsMutuallyExclusive("semantic", "server")
 	RootCmd.AddCommand(cacheCmd)
 
 	cacheStatsCmd.Flags().BoolVar(&cacheStatsFlags.jsonOut, "json", false, "Output in JSON format")
@@ -84,6 +88,11 @@ func runCacheStats(cmd *cobra.Command, args []string) error {
 }
 
 func runCache(cmd *cobra.Command, args []string) {
+	if cacheFlags.semantic {
+		showSemanticCacheStats(cmd)
+		return
+	}
+
 	if cacheFlags.location {
 		showCacheLocation()
 		return
@@ -288,4 +297,34 @@ func clearCache() {
 	}
 
 	fmt.Printf("Cache cleared for server: %s\n", cacheFlags.server)
+}
+
+func showSemanticCacheStats(cmd *cobra.Command) {
+	path := cache.DefaultSemanticStatsPath()
+	snap, err := cache.LoadSemanticStatsSnapshot(path)
+	if err != nil {
+		if cacheFlags.jsonOut {
+			out, _ := json.Marshal(map[string]string{
+				"status": "unavailable",
+				"reason": err.Error(),
+				"path":   path,
+			})
+			fmt.Fprintln(cmd.OutOrStdout(), string(out))
+		} else {
+			fmt.Fprintf(cmd.OutOrStdout(), "Semantic cache stats unavailable: %v\n(path: %s — the leanproxy server writes stats here while running)\n", err, path)
+		}
+		return
+	}
+
+	if cacheFlags.jsonOut {
+		fmt.Fprintln(cmd.OutOrStdout(), snap.Stats.FormatJSON())
+		return
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "_Snapshot: %s_\n\n", snap.UpdatedAt.Local().Format("2006-01-02 15:04:05 MST"))
+	if snap.Stats.TotalRequests == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No semantic cache activity observed")
+		return
+	}
+	fmt.Fprint(cmd.OutOrStdout(), snap.Stats.FormatMarkdown())
 }

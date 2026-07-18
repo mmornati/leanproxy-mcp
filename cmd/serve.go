@@ -168,6 +168,8 @@ func runServe(cmd *cobra.Command, args []string) {
 
 	initVectorStore(loadedCfg)
 
+	initSemanticCache(ctx)
+
 	var toolStore toolstore.Cache
 	fileCache, err := toolstore.NewFileCache(slog.Default())
 	if err != nil {
@@ -242,7 +244,17 @@ func runServe(cmd *cobra.Command, args []string) {
 		go updateServerStatusPeriodically()
 	}
 
-	go startRegistryFeedSync(ctx)
+	go startRegistryFeedSync(ctx, func(entries []registry.RegistryFeedEntry) {
+		if sc := cache.GlobalSemanticCache(); sc != nil {
+			count := sc.PurgeAll()
+			if count > 0 {
+				slog.Info("registry refresh: purged semantic cache entries",
+					"count", count,
+					"entries_synced", len(entries),
+				)
+			}
+		}
+	})
 
 	sigChan := make(chan os.Signal, 4)
 	signal.Notify(sigChan, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM)
@@ -279,6 +291,9 @@ func runServe(cmd *cobra.Command, args []string) {
 					statusStore.RemoveFile()
 				}
 				ln.Close()
+				if sc := cache.GlobalSemanticCache(); sc != nil {
+					sc.Stop()
+				}
 				if stdioPool != nil {
 					stdioPool.Close()
 				}
@@ -381,6 +396,12 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 	recordProvider(server)
 	provider := injectBreakpoints(server, req)
 
+	cached, prompt, embedding := semanticCacheLookup(ctx, req)
+	if cached != nil && cached.HitType != cache.HitMiss {
+		writeResponse(writer, cachedResponse(req, cached.Response))
+		return
+	}
+
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -394,6 +415,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 
 	if resp.Error == nil {
 		cache.ProcessResponseFor(provider, resp.Result)
+		semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
 	}
 
 	writeResponse(writer, resp)
@@ -423,6 +445,12 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 	recordProvider(server)
 	provider := injectBreakpoints(server, req)
 
+	cached, prompt, embedding := semanticCacheLookup(ctx, req)
+	if cached != nil && cached.HitType != cache.HitMiss {
+		writeResponseAsync(writer, writerMu, cachedResponse(req, cached.Response))
+		return
+	}
+
 	timeout := GetConfig().RequestTimeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
@@ -436,6 +464,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 
 	if resp.Error == nil {
 		cache.ProcessResponseFor(provider, resp.Result)
+		semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
 	}
 
 	writeResponseAsync(writer, writerMu, resp)
@@ -481,6 +510,12 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 		recordProvider(server)
 		provider := injectBreakpoints(server, req)
 
+		cached, prompt, embedding := semanticCacheLookup(ctx, req)
+		if cached != nil && cached.HitType != cache.HitMiss {
+			responses = append(responses, cachedResponse(req, cached.Response))
+			continue
+		}
+
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
 			timeout = 30 * time.Second
@@ -497,6 +532,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 
 		if resp.Error == nil {
 			cache.ProcessResponseFor(provider, resp.Result)
+			semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
 		}
 		responses = append(responses, resp)
 	}
@@ -655,6 +691,82 @@ func embedOutboundPayload(req *proxy.JSONRPCRequest) {
 	})
 }
 
+// semanticCacheDenylist lists JSON-RPC lifecycle/listing methods whose
+// responses must never be cached.
+var semanticCacheDenylist = map[string]bool{
+	"initialize":                true,
+	"ping":                      true,
+	"notifications/initialized": true,
+	"tools/list":                true,
+	"resources/list":            true,
+	"prompts/list":              true,
+}
+
+const semanticEmbedTimeout = 2 * time.Second
+
+// semanticCacheLookup checks the semantic cache for a cached response to
+// req. It returns the lookup result (miss when caching does not apply), the
+// canonical prompt, and the request embedding so the caller can store a
+// fresh response after upstream execution.
+func semanticCacheLookup(ctx context.Context, req *proxy.JSONRPCRequest) (*cache.SemanticCacheResult, string, []float32) {
+	sc := cache.GlobalSemanticCache()
+	if sc == nil || req == nil || len(req.Params) == 0 || semanticCacheDenylist[req.Method] {
+		return nil, "", nil
+	}
+	toolName := extractToolName(req)
+	if toolName == "" {
+		return nil, "", nil
+	}
+	prompt := toolName + ":" + string(req.Params)
+	embedding := embedForCache(ctx, toolName, req.Params)
+	result, err := sc.Get(ctx, prompt, toolName, embedding)
+	if err != nil {
+		slog.Debug("semantic cache lookup failed", "tool", toolName, "error", err)
+		return nil, prompt, embedding
+	}
+	return result, prompt, embedding
+}
+
+// semanticCacheStore writes a fresh upstream response into the semantic
+// cache using the prompt/embedding captured during lookup.
+func semanticCacheStore(ctx context.Context, req *proxy.JSONRPCRequest, prompt string, result json.RawMessage, embedding []float32) {
+	sc := cache.GlobalSemanticCache()
+	if sc == nil || prompt == "" || len(result) == 0 {
+		return
+	}
+	if err := sc.Set(ctx, prompt, result, extractToolName(req), embedding); err != nil {
+		slog.Debug("semantic cache store failed", "error", err)
+	}
+}
+
+// embedForCache embeds synchronously with a bounded timeout so cache lookups
+// never stall the request path waiting on an embedding provider.
+func embedForCache(ctx context.Context, toolName string, args json.RawMessage) []float32 {
+	pool := bouncer.GlobalEmbedPool()
+	if pool == nil {
+		return nil
+	}
+	ectx, cancel := context.WithTimeout(ctx, semanticEmbedTimeout)
+	defer cancel()
+	select {
+	case out, ok := <-pool.Embed(ectx, embedder.EmbedRequest{ToolName: toolName, Args: args}):
+		if !ok || out.Err != nil {
+			return nil
+		}
+		return out.Embedding.Vector
+	case <-ectx.Done():
+		return nil
+	}
+}
+
+func cachedResponse(req *proxy.JSONRPCRequest, result json.RawMessage) *proxy.JSONRPCResponse {
+	return &proxy.JSONRPCResponse{
+		JSONRPC: "2.0",
+		Result:  result,
+		ID:      req.ID,
+	}
+}
+
 func extractToolName(req *proxy.JSONRPCRequest) string {
 	if req == nil {
 		return ""
@@ -789,6 +901,12 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 		recordProvider(server)
 		provider := injectBreakpoints(server, req)
 
+		cached, prompt, embedding := semanticCacheLookup(ctx, req)
+		if cached != nil && cached.HitType != cache.HitMiss {
+			responses = append(responses, cachedResponse(req, cached.Response))
+			continue
+		}
+
 		timeout := GetConfig().RequestTimeout
 		if timeout == 0 {
 			timeout = 30 * time.Second
@@ -805,6 +923,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 
 		if resp.Error == nil {
 			cache.ProcessResponseFor(provider, resp.Result)
+			semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
 		}
 		responses = append(responses, resp)
 	}
@@ -831,7 +950,7 @@ func trimNewline(data []byte) []byte {
 	return data
 }
 
-func startRegistryFeedSync(ctx context.Context) {
+func startRegistryFeedSync(ctx context.Context, onSync func(entries []registry.RegistryFeedEntry)) {
 	cacheDir, err := registry.LeanProxyDir()
 	if err != nil {
 		slog.Warn("registry feed: unable to determine cache dir", "error", err)
@@ -846,6 +965,10 @@ func startRegistryFeedSync(ctx context.Context) {
 
 	if notice := fetcher.CacheStaleInfo(); notice != "" {
 		slog.Warn(notice)
+	}
+
+	if onSync != nil {
+		fetcher.OnSync(onSync)
 	}
 
 	fetcher.StartPeriodicRefresh(ctx)
@@ -907,6 +1030,22 @@ func formatUptime(stats pool.ServerStats) string {
 		return duration.Round(time.Second).String()
 	}
 	return duration.Round(time.Minute).String()
+}
+
+func initSemanticCache(ctx context.Context) {
+	vs := globalVectorStore.Load()
+	var store vectordb.Store
+	if vs != nil {
+		store, _ = vs.(vectordb.Store)
+	}
+
+	sc := cache.NewSemanticCache(store, slog.Default(), 0)
+	cache.SetGlobalSemanticCache(sc)
+	sc.Start(ctx)
+	slog.Info("semantic cache initialized",
+		"ttl", cache.DefaultSemanticTTL,
+		"vector_store", store != nil,
+	)
 }
 
 func initVectorStore(cfg *migrate.Config) {

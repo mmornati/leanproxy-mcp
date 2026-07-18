@@ -2,11 +2,16 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
+	"github.com/spf13/cobra"
 )
 
 func resetCacheStatsFlags(t *testing.T) {
@@ -34,6 +39,7 @@ func TestCacheCmd_Flags(t *testing.T) {
 		{"json", "json", "true", true},
 		{"clear", "clear", "true", true},
 		{"location", "location", "true", true},
+		{"semantic", "semantic", "true", true},
 	}
 
 	for _, tt := range tests {
@@ -209,5 +215,101 @@ func TestCacheStatsCmd_FormatJSON_IsValid(t *testing.T) {
 	}
 	if !strings.Contains(out, "cache_hits") {
 		t.Errorf("expected JSON to contain cache_hits, got: %s", out)
+	}
+}
+
+func writeSemanticSnapshot(t *testing.T, home string, stats cache.SemanticCacheStats) {
+	t.Helper()
+	dir := filepath.Join(home, ".leanproxy", "cache")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	snap := cache.SemanticStatsSnapshot{
+		Version:   1,
+		UpdatedAt: time.Now(),
+		Stats:     stats,
+	}
+	data, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "semantic-stats.json"), data, 0600); err != nil {
+		t.Fatalf("write snapshot: %v", err)
+	}
+}
+
+func TestCacheCmd_SemanticFlag_Markdown(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeSemanticSnapshot(t, home, cache.SemanticCacheStats{
+		TotalRequests: 10,
+		ExactHits:     6,
+		SemanticHits:  2,
+		Misses:        2,
+		AvgSimilarity: 0.97,
+	})
+
+	old := cacheFlags.jsonOut
+	t.Cleanup(func() { cacheFlags.jsonOut = old })
+	cacheFlags.jsonOut = false
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	showSemanticCacheStats(cmd)
+
+	out := buf.String()
+	for _, want := range []string{"Total Requests", "Exact Hits", "Semantic Hits", "Misses", "Hit Rate", "Avg Similarity", "80.00%"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("semantic dashboard output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestCacheCmd_SemanticFlag_JSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	writeSemanticSnapshot(t, home, cache.SemanticCacheStats{TotalRequests: 5, ExactHits: 5})
+
+	old := cacheFlags.jsonOut
+	t.Cleanup(func() { cacheFlags.jsonOut = old })
+	cacheFlags.jsonOut = true
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	showSemanticCacheStats(cmd)
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("--semantic --json must emit valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if parsed["total_requests"] != float64(5) {
+		t.Errorf("total_requests = %v, want 5", parsed["total_requests"])
+	}
+}
+
+func TestCacheCmd_SemanticFlag_UnavailableJSON(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // no snapshot file written
+
+	old := cacheFlags.jsonOut
+	t.Cleanup(func() { cacheFlags.jsonOut = old })
+	cacheFlags.jsonOut = true
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	showSemanticCacheStats(cmd)
+
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
+		t.Fatalf("unavailable stats must still emit valid JSON: %v\noutput: %s", err, buf.String())
+	}
+	if parsed["status"] != "unavailable" {
+		t.Errorf("status = %v, want unavailable", parsed["status"])
 	}
 }
