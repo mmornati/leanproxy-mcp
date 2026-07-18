@@ -8,7 +8,7 @@
 | Key | discovery-signatures |
 | Epic | Epic 3: Context Optimization (JIT Discovery & Compactor) |
 | Title | Implement Discovery Signatures |
-| Status | review |
+| Status | done |
 | Estimated Points | 3 |
 
 ## User Story

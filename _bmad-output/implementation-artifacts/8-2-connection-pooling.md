@@ -4,7 +4,7 @@ story_key: 8-2-connection-pooling
 epic_num: 8
 story_num: 2
 story_title: "Implement Connection Pooling"
-status: review
+status: done
 created: 2026-05-07
 source: market-research-2026-05-07
 priority: CRITICAL

@@ -9,7 +9,7 @@
 | **Epic** | Epic 4 - CLI Installation and Interaction |
 | **Title** | Implement IDE Extension Socket |
 | **Priority** | High |
-| **Status** | review |
+| **Status** | done |
 
 ## Story Requirements
 

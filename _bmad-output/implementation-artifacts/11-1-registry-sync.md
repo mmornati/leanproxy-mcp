@@ -1,6 +1,6 @@
 # Story 11.1: Subscribe to the MCP Registry feed
 
-Status: ready-for-dev
+Status: done
 
 ## Story Header
 

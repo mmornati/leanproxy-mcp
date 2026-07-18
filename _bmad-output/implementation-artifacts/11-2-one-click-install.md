@@ -1,6 +1,6 @@
 # Story 11.2: Implement 'leanproxy add <server-id>' one-click install
 
-Status: ready-for-dev
+Status: done
 
 ## Story Header
 

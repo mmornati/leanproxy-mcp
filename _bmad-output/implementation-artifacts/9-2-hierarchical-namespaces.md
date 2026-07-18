@@ -4,7 +4,7 @@ story_key: 9-2-hierarchical-namespaces
 epic_num: 9
 story_num: 2
 story_title: "Implement Hierarchical Namespaces"
-status: ready-for-dev
+status: done
 created: 2026-05-07
 source: market-research-2026-05-07
 priority: MEDIUM

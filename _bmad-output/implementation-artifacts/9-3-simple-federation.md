@@ -4,7 +4,7 @@ story_key: 9-3-simple-federation
 epic_num: 9
 story_num: 3
 story_title: "Implement Simple Federation"
-status: ready-for-dev
+status: done
 created: 2026-05-07
 source: market-research-2026-05-07
 priority: MEDIUM

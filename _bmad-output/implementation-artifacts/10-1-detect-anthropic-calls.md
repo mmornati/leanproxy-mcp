@@ -1,6 +1,6 @@
 # Story 10.1: Detect Anthropic API calls in the proxy stream
 
-Status: review
+Status: done
 
 ## Story Header
 

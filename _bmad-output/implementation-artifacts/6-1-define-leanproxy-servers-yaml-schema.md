@@ -1,6 +1,6 @@
 # Story 6-1: Define LeanProxy Servers YAML Schema
 
-Status: review
+Status: done
 
 ## Story Header
 

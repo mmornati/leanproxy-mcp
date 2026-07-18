@@ -1,6 +1,6 @@
 # Story 7.2: Expose Gateway Tools to IDE
 
-Status: review
+Status: done
 
 ## Story Header
 

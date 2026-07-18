@@ -1,6 +1,6 @@
 # Story 11.3: Surface trust score and maintenance status
 
-Status: ready-for-dev
+Status: done
 
 ## Story Header
 

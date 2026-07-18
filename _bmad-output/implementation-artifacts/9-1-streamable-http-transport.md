@@ -4,7 +4,7 @@ story_key: 9-1-streamable-http-transport
 epic_num: 9
 story_num: 1
 story_title: "Implement Streamable HTTP Transport"
-status: ready-for-dev
+status: done
 created: 2026-05-07
 source: market-research-2026-05-07
 priority: HIGH

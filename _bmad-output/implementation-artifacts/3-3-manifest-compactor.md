@@ -8,7 +8,7 @@
 | Key | manifest-compactor |
 | Epic | Epic 3: Context Optimization (JIT Discovery & Compactor) |
 | Title | Implement Manifest Compactor (LLM Distillation) |
-| Status | review |
+| Status | done |
 | Estimated Points | 8 |
 
 ## User Story

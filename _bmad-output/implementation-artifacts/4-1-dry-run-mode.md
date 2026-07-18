@@ -9,7 +9,7 @@
 | **Epic** | Epic 4 - CLI Installation and Interaction |
 | **Title** | Implement Dry-Run Mode |
 | **Priority** | High |
-| **Status** | review |
+| **Status** | done |
 
 ## Tasks/Subtasks
 

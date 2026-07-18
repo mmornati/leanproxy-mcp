@@ -9,7 +9,7 @@
 | **Epic** | Epic 4 - CLI Installation and Interaction |
 | **Title** | Implement Universal Installer |
 | **Priority** | High |
-| **Status** | review |
+| **Status** | done |
 
 ## Story Requirements
 

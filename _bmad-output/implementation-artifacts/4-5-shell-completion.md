@@ -9,7 +9,7 @@
 | **Epic** | Epic 4 - CLI Installation and Interaction |
 | **Title** | Implement Shell Completion |
 | **Priority** | Medium |
-| **Status** | review |
+| **Status** | done |
 
 ## Tasks/Subtasks
 

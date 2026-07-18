@@ -3,6 +3,7 @@ id: 2-3
 key: 2-3-custom-redaction-patterns
 epic: epic-2
 title: Implement Custom Redaction Patterns
+status: done
 ---
 
 # Story 2-3: Implement Custom Redaction Patterns

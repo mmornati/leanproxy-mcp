@@ -271,7 +271,7 @@ func TestNoFalsePositives(t *testing.T) {
 ## Status
 
 - [x] Tasks/Subtasks completed
-- Status: review
+- Status: done
 - Last Updated: 2026-05-02
 
 ## File List

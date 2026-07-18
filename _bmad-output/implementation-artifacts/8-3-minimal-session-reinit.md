@@ -4,7 +4,7 @@ story_key: 8-3-minimal-session-reinit
 epic_num: 8
 story_num: 3
 story_title: "Implement Minimal Session Re-Initialization"
-status: review
+status: done
 created: 2026-05-07
 source: market-research-2026-05-07
 priority: HIGH

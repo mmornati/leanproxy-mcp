@@ -4,7 +4,7 @@ story_key: 8-1-lazy-loading-tool-schemas
 epic_num: 8
 story_num: 1
 story_title: "Implement Lazy-Loading Tool Schemas"
-status: ready-for-dev
+status: done
 created: 2026-05-07
 source: market-research-2026-05-07
 priority: CRITICAL

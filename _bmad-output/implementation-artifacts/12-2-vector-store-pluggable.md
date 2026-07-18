@@ -1,6 +1,6 @@
 # Story 12.2: Vector-store integration (pluggable backends)
 
-Status: review
+Status: in-progress
 
 ## Story Header
 
