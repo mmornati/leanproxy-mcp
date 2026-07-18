@@ -1,0 +1,54 @@
+# DO NOT EDIT -- overwritten on every update.
+#
+# Default customization values for bmad-loop.
+# Override in _bmad/custom/bmad-loop.toml or
+# _bmad/custom/bmad-loop.user.toml.
+#
+# Merge rules:
+# - Strings replace the default.
+# - Lists append to the default list.
+# - Tables merge key by key.
+
+[workflow]
+
+# Extra instructions to run before config is loaded.
+
+activation_steps_prepend = []
+
+# Extra instructions to run after config is loaded and before step 01.
+
+activation_steps_append = []
+
+# Facts kept in context for the whole run.
+# Entries are literal text or file references prefixed with "file:".
+# File entries may use globs and are loaded during activation.
+
+persistent_facts = [
+  "file:{project-root}/**/project-context.md",
+]
+
+# Instruction run by HALT after writing the terminal result.
+# Empty means no extra terminal behavior.
+
+on_complete = ""
+
+# === Configurable Overrides (extend via _bmad/custom/bmad-loop.toml) ===
+#
+# review_model_override = ""
+#   If your runtime supports model routing in subagents, set this to
+#   a model identifier (e.g. "gpt-4o", "claude-sonnet-4") and the
+#   review subagent prompt will include a routing instruction.
+#   Empty = use the same model as the current session.
+#
+# merge_strategy = "squash"
+#   PR merge strategy: squash | merge | rebase
+#
+# ci_poll_interval_seconds = 30
+#   Seconds between CI status polls.
+#
+# ci_max_retries = 3
+#   Number of fix-attempt cycles before halting on persistent CI failure.
+#
+# ci_fix_agent_model_override = ""
+#   Optional model override for the CI fix subagent (same semantics as
+#   review_model_override).
