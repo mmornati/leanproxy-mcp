@@ -21,7 +21,7 @@ func TestStdioPipeConnectivity(t *testing.T) {
 	config := StdioServerConfig{
 		Name:    "test-echo",
 		Command: "sh",
-		Args: []string{"-c", `while read -r line; do echo '{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}'; done`},
+		Args:    []string{"-c", `while read -r line; do echo '{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}'; done`},
 	}
 
 	server := newServerV2("test-echo", config, slog.Default())
