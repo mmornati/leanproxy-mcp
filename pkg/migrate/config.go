@@ -32,6 +32,7 @@ type SQLiteVectorConfig struct {
 type QdrantVectorConfig struct {
 	URL        string `yaml:"url"`
 	APIKey     string `yaml:"api_key"`
+	APIKeyEnv  string `yaml:"api_key_env"`
 	Collection string `yaml:"collection"`
 }
 
@@ -41,10 +42,11 @@ type PineconeVectorConfig struct {
 }
 
 type VectorStoreConfig struct {
-	Backend string              `yaml:"backend"`
-	SQLite  *SQLiteVectorConfig `yaml:"sqlite,omitempty"`
-	Qdrant  *QdrantVectorConfig `yaml:"qdrant,omitempty"`
-	Pinecone *PineconeVectorConfig `yaml:"pinecone,omitempty"`
+	Backend   string                `yaml:"backend"`
+	Dimension int                   `yaml:"dimension"`
+	SQLite    *SQLiteVectorConfig   `yaml:"sqlite,omitempty"`
+	Qdrant    *QdrantVectorConfig   `yaml:"qdrant,omitempty"`
+	Pinecone  *PineconeVectorConfig `yaml:"pinecone,omitempty"`
 }
 
 type CacheConfig struct {
@@ -241,6 +243,9 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 		vs := cfg.Cache.VectorStore
 		if vs.Backend == "" {
 			vs.Backend = "sqlite-vec"
+		}
+		if vs.Dimension <= 0 {
+			vs.Dimension = 1536
 		}
 		if vs.SQLite != nil && vs.SQLite.Path == "" {
 			home, err := os.UserHomeDir()

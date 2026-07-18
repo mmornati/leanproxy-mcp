@@ -288,6 +288,11 @@ func runServe(cmd *cobra.Command, args []string) {
 				if ssePool != nil {
 					ssePool.Close()
 				}
+				if v := globalVectorStore.Load(); v != nil {
+					if store, ok := v.(vectordb.Store); ok {
+						store.Close()
+					}
+				}
 				os.Exit(0)
 			}
 		}

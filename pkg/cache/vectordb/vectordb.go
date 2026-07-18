@@ -14,6 +14,8 @@ const (
 	BackendSQLite   Backend = "sqlite-vec"
 	BackendQdrant   Backend = "qdrant"
 	BackendPinecone Backend = "pinecone"
+
+	defaultDim = 1536
 )
 
 type VectorRecord struct {
@@ -35,14 +37,21 @@ type Store interface {
 }
 
 func NewStore(cfg *migrate.VectorStoreConfig, logger *slog.Logger) (Store, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	if cfg == nil {
 		cfg = &migrate.VectorStoreConfig{Backend: string(BackendSQLite)}
 	}
+	dim := cfg.Dimension
+	if dim <= 0 {
+		dim = defaultDim
+	}
 	switch Backend(cfg.Backend) {
 	case BackendSQLite:
-		return newSQLiteStore(cfg.SQLite, logger)
+		return newSQLiteStore(cfg.SQLite, dim, logger)
 	case BackendQdrant:
-		return newQdrantStore(cfg.Qdrant, logger)
+		return newQdrantStore(cfg.Qdrant, dim, logger)
 	case BackendPinecone:
 		return newPineconeStore(cfg.Pinecone, logger)
 	default:

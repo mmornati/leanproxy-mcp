@@ -2,9 +2,12 @@ package vectordb
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
@@ -130,7 +133,7 @@ func TestUnmarshalMetadata_Empty(t *testing.T) {
 func TestSQLiteStore(t *testing.T) {
 	store, err := newSQLiteStore(&migrate.SQLiteVectorConfig{
 		Path: ":memory:",
-	}, discardLogger())
+	}, 5, discardLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -173,7 +176,7 @@ func TestSQLiteStore(t *testing.T) {
 func TestSQLiteStore_EmptyUpsert(t *testing.T) {
 	store, err := newSQLiteStore(&migrate.SQLiteVectorConfig{
 		Path: ":memory:",
-	}, discardLogger())
+	}, 5, discardLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -184,7 +187,7 @@ func TestSQLiteStore_EmptyUpsert(t *testing.T) {
 func TestSQLiteStore_EmptyDelete(t *testing.T) {
 	store, err := newSQLiteStore(&migrate.SQLiteVectorConfig{
 		Path: ":memory:",
-	}, discardLogger())
+	}, 5, discardLogger())
 	require.NoError(t, err)
 	defer store.Close()
 
@@ -202,21 +205,21 @@ func TestSQLiteStore_DefaultPath(t *testing.T) {
 func TestQdrantStore(t *testing.T) {
 	store, err := newQdrantStore(&migrate.QdrantVectorConfig{
 		URL: "http://localhost:99999",
-	}, discardLogger())
+	}, 1536, discardLogger())
 	require.Error(t, err)
 	require.Nil(t, store)
 	assert.Contains(t, err.Error(), "connection failed")
 }
 
 func TestQdrantStore_NoURL(t *testing.T) {
-	store, err := newQdrantStore(nil, discardLogger())
+	store, err := newQdrantStore(nil, 1536, discardLogger())
 	require.Error(t, err)
 	require.Nil(t, store)
 	assert.Contains(t, err.Error(), "url required")
 }
 
 func TestQdrantStore_EmptyURL(t *testing.T) {
-	store, err := newQdrantStore(&migrate.QdrantVectorConfig{}, discardLogger())
+	store, err := newQdrantStore(&migrate.QdrantVectorConfig{}, 1536, discardLogger())
 	require.Error(t, err)
 	require.Nil(t, store)
 	assert.Contains(t, err.Error(), "url required")
@@ -306,8 +309,177 @@ func TestPineconeSearch_Unreachable(t *testing.T) {
 	require.Nil(t, results)
 }
 
-func TestStringsTrimRight(t *testing.T) {
-	assert.Equal(t, "http://localhost", stringsTrimRight("http://localhost/", "/"))
-	assert.Equal(t, "http://localhost", stringsTrimRight("http://localhost", "/"))
-	assert.Equal(t, "", stringsTrimRight("", "/"))
+func BenchmarkCosineSimilarity(b *testing.B) {
+	a := make([]float32, 1536)
+	vec := make([]float32, 1536)
+	for i := range a {
+		a[i] = float32(i) / 1536
+		vec[i] = float32(1536-i) / 1536
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		cosineSimilarity(a, vec)
+	}
 }
+
+func BenchmarkSQLiteSearch(b *testing.B) {
+	store, err := newSQLiteStore(&migrate.SQLiteVectorConfig{
+		Path: ":memory:",
+	}, 1536, discardLogger())
+	require.NoError(b, err)
+	defer store.Close()
+
+	vec := make([]float32, 1536)
+	for i := 0; i < 100; i++ {
+		for j := range vec {
+			vec[j] = float32(i+j) / 1536
+		}
+		store.Upsert(context.Background(), VectorRecord{
+			ID:     fmt.Sprintf("doc-%d", i),
+			Vector: vec,
+		})
+	}
+
+	query := make([]float32, 1536)
+	for i := range query {
+		query[i] = float32(i) / 1536
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := store.Search(context.Background(), query, 10)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestQdrantMockServer(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/collections/test", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("/collections/test/points", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		json.NewDecoder(r.Body).Decode(&body)
+		pts, ok := body["points"].([]interface{})
+		if !ok || len(pts) == 0 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		pt := pts[0].(map[string]interface{})
+		id, _ := pt["id"].(string)
+		_ = id
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("/collections/test/points/search", func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{
+			"result": []map[string]interface{}{
+				{
+					"id":     qdrantPointID("doc1"),
+					"score":  0.95,
+					"vector": []float32{0.1, 0.2, 0.3},
+					"payload": map[string]interface{}{
+						"_original_id": "doc1",
+						"title":        "test",
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+	mux.HandleFunc("/collections/test/points/delete", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	store := &qdrantStore{
+		client:     server.Client(),
+		baseURL:    server.URL,
+		collection: "test",
+		dim:        3,
+		logger:     discardLogger(),
+	}
+
+	err := store.Upsert(context.Background(), VectorRecord{
+		ID:     "doc1",
+		Vector: []float32{0.1, 0.2, 0.3},
+		Metadata: map[string]string{"title": "test"},
+	})
+	require.NoError(t, err)
+
+	results, err := store.Search(context.Background(), []float32{0.1, 0.2, 0.3}, 10)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "doc1", results[0].Record.ID)
+	assert.InDelta(t, 0.95, results[0].Score, 0.001)
+	assert.Equal(t, "test", results[0].Record.Metadata["title"])
+
+	err = store.Delete(context.Background(), "doc1")
+	require.NoError(t, err)
+}
+
+func TestPineconeMockServer(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/vectors/upsert", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]int{"upsertedCount": 1})
+	})
+	mux.HandleFunc("/query", func(w http.ResponseWriter, r *http.Request) {
+		resp := pineconeQueryResponse{
+			Matches: []struct {
+				ID       string            `json:"id"`
+				Score    float64           `json:"score"`
+				Values   []float32         `json:"values"`
+				Metadata map[string]string `json:"metadata"`
+			}{
+				{
+					ID:     "doc1",
+					Score:  0.95,
+					Values: []float32{0.1, 0.2, 0.3},
+					Metadata: map[string]string{
+						"title": "test",
+					},
+				},
+			},
+		}
+		json.NewEncoder(w).Encode(resp)
+	})
+	mux.HandleFunc("/vectors/delete", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	store := &pineconeStore{
+		client:  server.Client(),
+		baseURL: server.URL,
+		apiKey:  "test-key",
+		logger:  discardLogger(),
+	}
+
+	err := store.Upsert(context.Background(), VectorRecord{
+		ID:     "doc1",
+		Vector: []float32{0.1, 0.2, 0.3},
+		Metadata: map[string]string{"title": "test"},
+	})
+	require.NoError(t, err)
+
+	results, err := store.Search(context.Background(), []float32{0.1, 0.2, 0.3}, 10)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, "doc1", results[0].Record.ID)
+	assert.InDelta(t, 0.95, results[0].Score, 0.001)
+
+	err = store.Delete(context.Background(), "doc1")
+	require.NoError(t, err)
+}
+
+

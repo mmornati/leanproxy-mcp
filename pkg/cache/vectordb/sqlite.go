@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	_ "modernc.org/sqlite"
 
@@ -18,18 +21,22 @@ import (
 )
 
 type sqliteStore struct {
-	db      *sql.DB
-	vec0    bool
-	mu      sync.RWMutex
-	logger  *slog.Logger
-	closeMu sync.Mutex
-	closed  bool
+	db     *sql.DB
+	vec0   bool
+	dim    int
+	mu     sync.RWMutex
+	logger *slog.Logger
+	closed atomic.Bool
 }
 
-func newSQLiteStore(cfg *migrate.SQLiteVectorConfig, logger *slog.Logger) (*sqliteStore, error) {
+func newSQLiteStore(cfg *migrate.SQLiteVectorConfig, dim int, logger *slog.Logger) (*sqliteStore, error) {
 	path := defaultSQLitePath()
 	if cfg != nil && cfg.Path != "" {
 		path = cfg.Path
+	}
+
+	if strings.ContainsAny(path, "?&") {
+		return nil, fmt.Errorf("vectordb sqlite: path must not contain '?' or '&': %q", path)
 	}
 
 	dir := filepath.Dir(path)
@@ -44,6 +51,7 @@ func newSQLiteStore(cfg *migrate.SQLiteVectorConfig, logger *slog.Logger) (*sqli
 
 	s := &sqliteStore{
 		db:     db,
+		dim:    dim,
 		logger: logger,
 	}
 
@@ -107,10 +115,10 @@ func (s *sqliteStore) createTables() error {
 	}
 
 	if s.vec0 {
-		vecTable := `CREATE VIRTUAL TABLE IF NOT EXISTS vec_vectors USING vec0(
+		vecTable := fmt.Sprintf(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_vectors USING vec0(
 			id TEXT PRIMARY KEY,
-			vector float[1536]
-		)`
+			vector float[%d]
+		)`, s.dim)
 		if _, err := s.db.Exec(vecTable); err != nil {
 			s.logger.Warn("vectordb sqlite: vec0 table creation failed, using manual search", "error", err)
 			s.vec0 = false
@@ -125,12 +133,12 @@ func (s *sqliteStore) Upsert(ctx context.Context, records ...VectorRecord) error
 		return nil
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
+	if s.closed.Load() {
 		return fmt.Errorf("vectordb sqlite: store closed")
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -175,11 +183,7 @@ func (s *sqliteStore) Search(ctx context.Context, vector []float32, k int) ([]Se
 		k = 10
 	}
 
-	s.mu.RLock()
-	closed := s.closed
-	s.mu.RUnlock()
-
-	if closed {
+	if s.closed.Load() {
 		return nil, fmt.Errorf("vectordb sqlite: store closed")
 	}
 
@@ -233,19 +237,22 @@ func (s *sqliteStore) searchManual(ctx context.Context, vector []float32, k int)
 	for rows.Next() {
 		var id string
 		var vecBytes []byte
-		var metaStr string
+		var metaStr sql.NullString
 		if err := rows.Scan(&id, &vecBytes, &metaStr); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 
 		storedVec := bytesToFloat32Slice(vecBytes)
 		score := cosineSimilarity(vector, storedVec)
+		if storedVec == nil {
+			continue
+		}
 
 		candidates = append(candidates, SearchResult{
 			Record: VectorRecord{
 				ID:       id,
 				Vector:   storedVec,
-				Metadata: unmarshalMetadata([]byte(metaStr)),
+				Metadata: unmarshalMetadata([]byte(metaStr.String)),
 			},
 			Score: score,
 		})
@@ -266,7 +273,7 @@ func (s *sqliteStore) searchManual(ctx context.Context, vector []float32, k int)
 func (s *sqliteStore) getRecord(ctx context.Context, id string) (VectorRecord, error) {
 	var rec VectorRecord
 	var vecBytes []byte
-	var metaStr string
+	var metaStr sql.NullString
 
 	err := s.db.QueryRowContext(ctx, `SELECT id, vector, metadata FROM vectors WHERE id = ?`, id).Scan(&rec.ID, &vecBytes, &metaStr)
 	if err != nil {
@@ -274,7 +281,7 @@ func (s *sqliteStore) getRecord(ctx context.Context, id string) (VectorRecord, e
 	}
 
 	rec.Vector = bytesToFloat32Slice(vecBytes)
-	rec.Metadata = unmarshalMetadata([]byte(metaStr))
+	rec.Metadata = unmarshalMetadata([]byte(metaStr.String))
 	return rec, nil
 }
 
@@ -283,12 +290,12 @@ func (s *sqliteStore) Delete(ctx context.Context, ids ...string) error {
 		return nil
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
+	if s.closed.Load() {
 		return fmt.Errorf("vectordb sqlite: store closed")
 	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -326,12 +333,9 @@ func (s *sqliteStore) Delete(ctx context.Context, ids ...string) error {
 }
 
 func (s *sqliteStore) Close() error {
-	s.closeMu.Lock()
-	defer s.closeMu.Unlock()
-	if s.closed {
+	if s.closed.Swap(true) {
 		return nil
 	}
-	s.closed = true
 	return s.db.Close()
 }
 
@@ -344,6 +348,9 @@ func float32SliceToBytes(v []float32) []byte {
 }
 
 func bytesToFloat32Slice(b []byte) []float32 {
+	if len(b)%4 != 0 {
+		return nil
+	}
 	v := make([]float32, len(b)/4)
 	for i := range v {
 		v[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
@@ -386,50 +393,26 @@ func cosineSimilarity(a, b []float32) float64 {
 }
 
 func sortResults(results []SearchResult) {
-	for i := 0; i < len(results); i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].Score > results[i].Score {
-				results[i], results[j] = results[j], results[i]
-			}
-		}
-	}
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
 }
 
 func marshalMetadata(m map[string]string) []byte {
 	if m == nil {
 		return []byte("{}")
 	}
-	var b strings.Builder
-	b.WriteByte('{')
-	first := true
-	for k, v := range m {
-		if !first {
-			b.WriteByte(',')
-		}
-		first = false
-		b.WriteString(fmt.Sprintf("%q:%q", k, v))
+	data, err := json.Marshal(m)
+	if err != nil {
+		return []byte("{}")
 	}
-	b.WriteByte('}')
-	return []byte(b.String())
+	return data
 }
 
 func unmarshalMetadata(data []byte) map[string]string {
-	m := make(map[string]string)
-	if len(data) <= 2 {
-		return m
-	}
-	inner := string(data[1 : len(data)-1])
-	if inner == "" {
-		return m
-	}
-	pairs := strings.Split(inner, ",")
-	for _, p := range pairs {
-		kv := strings.SplitN(p, ":", 2)
-		if len(kv) == 2 {
-			k := strings.Trim(kv[0], "\"")
-			v := strings.Trim(kv[1], "\"")
-			m[k] = v
-		}
+	var m map[string]string
+	if err := json.Unmarshal(data, &m); err != nil {
+		return make(map[string]string)
 	}
 	return m
 }

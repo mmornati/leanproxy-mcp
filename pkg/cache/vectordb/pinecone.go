@@ -9,20 +9,21 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 )
+
+const pineconeBase = "https://api.pinecone.io"
 
 type pineconeStore struct {
 	client  *http.Client
 	baseURL string
 	apiKey  string
 	logger  *slog.Logger
-	closed  bool
+	closed  atomic.Bool
 }
-
-const pineconeBase = "https://api.pinecone.io"
 
 func newPineconeStore(cfg *migrate.PineconeVectorConfig, logger *slog.Logger) (*pineconeStore, error) {
 	if cfg == nil || cfg.Index == "" {
@@ -71,23 +72,40 @@ type pineconeListResponse struct {
 	Indexes []pineconeIndexResponse `json:"indexes"`
 }
 
-func (s *pineconeStore) describeIndex(ctx context.Context, index string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pineconeBase+"/indexes/"+index, nil)
+func (s *pineconeStore) doRequest(ctx context.Context, method, url string, body []byte) (*http.Response, error) {
+	var reqBody io.Reader
+	if body != nil {
+		reqBody = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Api-Key", s.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return s.client.Do(req)
+}
 
-	resp, err := s.client.Do(req)
+func (s *pineconeStore) readErrorBody(resp *http.Response) string {
+	limited := io.LimitReader(resp.Body, maxErrorBody)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		return fmt.Sprintf("(read error: %v)", err)
+	}
+	return string(body)
+}
+
+func (s *pineconeStore) describeIndex(ctx context.Context, index string) (string, error) {
+	resp, err := s.doRequest(ctx, http.MethodGet, pineconeBase+"/indexes/"+index, nil)
 	if err != nil {
 		return "", fmt.Errorf("http request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("describe index status %d: %s", resp.StatusCode, string(body))
+		return "", fmt.Errorf("describe index status %d: %s", resp.StatusCode, s.readErrorBody(resp))
 	}
 
 	var idx pineconeIndexResponse
@@ -96,16 +114,20 @@ func (s *pineconeStore) describeIndex(ctx context.Context, index string) (string
 	}
 
 	if idx.Host == "" {
-		return "", fmt.Errorf("index %q not ready or not found", index)
+		return "", fmt.Errorf("index %q not found", index)
+	}
+
+	if !idx.Status.Ready {
+		s.logger.Warn("vectordb pinecone: index not ready", "index", index, "state", idx.Status.State)
 	}
 
 	return idx.Host, nil
 }
 
 type pineconeVector struct {
-	ID     string                 `json:"id"`
-	Values []float32              `json:"values"`
-	Metadata map[string]string    `json:"metadata,omitempty"`
+	ID       string            `json:"id"`
+	Values   []float32         `json:"values"`
+	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
 type pineconeUpsertRequest struct {
@@ -114,11 +136,11 @@ type pineconeUpsertRequest struct {
 }
 
 type pineconeQueryRequest struct {
-	Vector    []float32 `json:"vector"`
-	TopK      int       `json:"topK"`
-	Namespace string    `json:"namespace,omitempty"`
-	IncludeValues bool `json:"includeValues"`
-	IncludeMetadata bool `json:"includeMetadata"`
+	Vector          []float32 `json:"vector"`
+	TopK            int       `json:"topK"`
+	Namespace       string    `json:"namespace,omitempty"`
+	IncludeValues   bool      `json:"includeValues"`
+	IncludeMetadata bool      `json:"includeMetadata"`
 }
 
 type pineconeQueryResponse struct {
@@ -135,6 +157,10 @@ func (s *pineconeStore) Upsert(ctx context.Context, records ...VectorRecord) err
 		return nil
 	}
 
+	if s.closed.Load() {
+		return fmt.Errorf("vectordb pinecone: store closed")
+	}
+
 	vectors := make([]pineconeVector, len(records))
 	for i, rec := range records {
 		vectors[i] = pineconeVector{
@@ -145,24 +171,19 @@ func (s *pineconeStore) Upsert(ctx context.Context, records ...VectorRecord) err
 	}
 
 	body := pineconeUpsertRequest{Vectors: vectors}
-	data, _ := json.Marshal(body)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/vectors/upsert", bytes.NewReader(data))
+	data, err := json.Marshal(body)
 	if err != nil {
-		return fmt.Errorf("upsert request: %w", err)
+		return fmt.Errorf("marshal: %w", err)
 	}
-	req.Header.Set("Api-Key", s.apiKey)
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.client.Do(req)
+	resp, err := s.doRequest(ctx, http.MethodPost, s.baseURL+"/vectors/upsert", data)
 	if err != nil {
 		return fmt.Errorf("upsert request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("upsert status %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("upsert status %d: %s", resp.StatusCode, s.readErrorBody(resp))
 	}
 
 	return nil
@@ -173,30 +194,29 @@ func (s *pineconeStore) Search(ctx context.Context, vector []float32, k int) ([]
 		k = 10
 	}
 
+	if s.closed.Load() {
+		return nil, fmt.Errorf("vectordb pinecone: store closed")
+	}
+
 	body := pineconeQueryRequest{
-		Vector:         vector,
-		TopK:           k,
-		IncludeValues:  true,
+		Vector:          vector,
+		TopK:            k,
+		IncludeValues:   true,
 		IncludeMetadata: true,
 	}
-	data, _ := json.Marshal(body)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/query", bytes.NewReader(data))
+	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("search request: %w", err)
+		return nil, fmt.Errorf("marshal: %w", err)
 	}
-	req.Header.Set("Api-Key", s.apiKey)
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.client.Do(req)
+	resp, err := s.doRequest(ctx, http.MethodPost, s.baseURL+"/query", data)
 	if err != nil {
 		return nil, fmt.Errorf("search request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("search status %d: %s", resp.StatusCode, string(respBody))
+		return nil, fmt.Errorf("search status %d: %s", resp.StatusCode, s.readErrorBody(resp))
 	}
 
 	var qr pineconeQueryResponse
@@ -232,31 +252,33 @@ func (s *pineconeStore) Delete(ctx context.Context, ids ...string) error {
 		return nil
 	}
 
-	body := pineconeDeleteRequest{IDs: ids}
-	data, _ := json.Marshal(body)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+"/vectors/delete", bytes.NewReader(data))
-	if err != nil {
-		return fmt.Errorf("delete request: %w", err)
+	if s.closed.Load() {
+		return fmt.Errorf("vectordb pinecone: store closed")
 	}
-	req.Header.Set("Api-Key", s.apiKey)
-	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.client.Do(req)
+	body := pineconeDeleteRequest{IDs: ids}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+
+	resp, err := s.doRequest(ctx, http.MethodPost, s.baseURL+"/vectors/delete", data)
 	if err != nil {
 		return fmt.Errorf("delete request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("delete status %d: %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("delete status %d: %s", resp.StatusCode, s.readErrorBody(resp))
 	}
 
 	return nil
 }
 
 func (s *pineconeStore) Close() error {
-	s.closed = true
+	if s.closed.Swap(true) {
+		return nil
+	}
+	s.client.CloseIdleConnections()
 	return nil
 }
