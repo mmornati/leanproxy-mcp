@@ -407,8 +407,8 @@ func TestQdrantMockServer(t *testing.T) {
 	}
 
 	err := store.Upsert(context.Background(), VectorRecord{
-		ID:     "doc1",
-		Vector: []float32{0.1, 0.2, 0.3},
+		ID:       "doc1",
+		Vector:   []float32{0.1, 0.2, 0.3},
 		Metadata: map[string]string{"title": "test"},
 	})
 	require.NoError(t, err)
@@ -466,8 +466,8 @@ func TestPineconeMockServer(t *testing.T) {
 	}
 
 	err := store.Upsert(context.Background(), VectorRecord{
-		ID:     "doc1",
-		Vector: []float32{0.1, 0.2, 0.3},
+		ID:       "doc1",
+		Vector:   []float32{0.1, 0.2, 0.3},
 		Metadata: map[string]string{"title": "test"},
 	})
 	require.NoError(t, err)
@@ -481,5 +481,3 @@ func TestPineconeMockServer(t *testing.T) {
 	err = store.Delete(context.Background(), "doc1")
 	require.NoError(t, err)
 }
-
-

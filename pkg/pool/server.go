@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -57,6 +58,35 @@ type ServerStats struct {
 	LastErrorAt    time.Time
 }
 
+// stderrRing captures the most recent stderr lines for diagnostics.
+type stderrRing struct {
+	mu    sync.Mutex
+	lines []string
+	max   int
+}
+
+func newStderrRing(max int) *stderrRing {
+	return &stderrRing{max: max}
+}
+
+func (r *stderrRing) add(line string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.lines) >= r.max {
+		r.lines = r.lines[1:]
+	}
+	r.lines = append(r.lines, line)
+}
+
+func (r *stderrRing) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.lines) == 0 {
+		return "(no stderr output)"
+	}
+	return strings.Join(r.lines, "\n")
+}
+
 type StdioServerV2 struct {
 	name            string
 	config          StdioServerConfig
@@ -85,6 +115,7 @@ type StdioServerV2 struct {
 	stopChOnce      sync.Once
 	wg              sync.WaitGroup
 	mcpInitialized  atomic.Bool
+	stderrLines     *stderrRing
 }
 
 func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *StdioServerV2 {
@@ -130,6 +161,7 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 		healthTicker:    time.NewTicker(30 * time.Second),
 		stopCh:          make(chan struct{}),
 		logger:          logger,
+		stderrLines:     newStderrRing(50),
 	}
 }
 
@@ -186,9 +218,14 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	atomic.StoreInt32(&s.state, stateStarting)
 
 	cmd := exec.CommandContext(ctx, s.config.Command, s.config.Args...)
+	// Build environment: inherit current env, apply user config, then ensure
+	// PYTHONUNBUFFERED=1 so Python-based MCP servers don't buffer stdout.
+	env := os.Environ()
 	if s.config.Env != nil {
-		cmd.Env = append(os.Environ(), s.config.Env...)
+		env = append(env, s.config.Env...)
 	}
+	env = append(env, "PYTHONUNBUFFERED=1")
+	cmd.Env = env
 	if s.config.CWD != "" {
 		cmd.Dir = s.config.CWD
 	}
@@ -243,6 +280,11 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	go s.waitForExit(ctx)
 	s.wg.Add(1)
 	go s.readResponses()
+
+	// Post-spawn verification: confirm process is alive.
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		return fmt.Errorf("pool: server %s process not alive after spawn: %w (recent stderr: %s)", s.name, err, s.stderrLines.String())
+	}
 
 	return nil
 }
@@ -395,6 +437,7 @@ func (s *StdioServerV2) readStderr(stderr io.Reader) {
 
 				line := scanner.Bytes()
 				if len(line) > 0 {
+					s.stderrLines.add(string(line))
 					s.logger.Info("server stderr", "name", s.name, "output", string(line))
 				}
 			} else {
@@ -569,7 +612,7 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 		}
 		return resp.Result, nil
 	case <-time.After(timeout):
-		return nil, fmt.Errorf("pool: request timeout after %v", timeout)
+		return nil, fmt.Errorf("pool: request timeout after %v (recent stderr: %s)", timeout, s.stderrLines.String())
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
