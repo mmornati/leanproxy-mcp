@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
+	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/embedder"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/vectordb"
@@ -57,6 +58,7 @@ var serveFlags struct {
 var providerDetector atomic.Pointer[cache.ProviderDetector]
 var breakpointInjector atomic.Pointer[cache.BreakpointInjector]
 var globalVectorStore atomic.Value
+var globalInjectionClassifier atomic.Pointer[injection.Classifier]
 
 func init() {
 	providerDetector.Store(cache.NewProviderDetector())
@@ -169,6 +171,17 @@ func runServe(cmd *cobra.Command, args []string) {
 	initVectorStore(loadedCfg)
 
 	initSemanticCache(ctx)
+
+	if loadedCfg != nil && loadedCfg.Injection != nil {
+		classifier, err := loadedCfg.Injection.BuildClassifier()
+		if err != nil {
+			slog.Warn("injection: failed to build classifier", "error", err)
+		} else if classifier != nil {
+			globalInjectionClassifier.Store(classifier)
+			slog.Info("injection classifier initialized",
+				"threshold", loadedCfg.Injection.Threshold)
+		}
+	}
 
 	var toolStore toolstore.Cache
 	fileCache, err := toolstore.NewFileCache(slog.Default())

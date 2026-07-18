@@ -9,6 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
 
@@ -104,6 +105,7 @@ type Config struct {
 	Optimization *OptimizationConfig `yaml:"optimization,omitempty"`
 	Cache        *CacheConfig        `yaml:"cache,omitempty"`
 	Federation   *FederationConfig   `yaml:"federation,omitempty"`
+	Injection    *injection.Config   `yaml:"injection,omitempty"`
 }
 
 type OptimizationConfig struct {

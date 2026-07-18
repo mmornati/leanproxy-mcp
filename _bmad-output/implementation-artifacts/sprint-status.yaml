@@ -88,7 +88,7 @@ development_status:
   12-1-embed-payloads: done
   12-2-vector-store-pluggable: in-progress
   12-3-cache-ttl-dashboard: ready-for-dev
-  13-1-injection-classifier: ready-for-dev
+  13-1-injection-classifier: review
   13-2-configurable-actions: ready-for-dev
   13-3-red-team-corpus: ready-for-dev
   14-1-metrics-endpoint: ready-for-dev

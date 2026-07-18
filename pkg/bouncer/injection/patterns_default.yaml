@@ -1,0 +1,87 @@
+# Default prompt-injection detection patterns for LeanProxy-MCP
+# These patterns use regex + weighted heuristics to compute a risk score (0-100).
+# Weights are calibrated so a single high-risk match pushes the score above 70.
+custom_patterns:
+  - name: ignore-previous-instructions
+    pattern: "(?i)(ignore|disregard|forget|override)\\s+(all\\s+)?(previous|prior|above)\\s+(instructions|commands|directions|prompts)"
+    weight: 90
+    enabled: true
+    description: "Attempts to override system instructions"
+
+  - name: new-instruction-override
+    pattern: "(?i)(here\\s+are\\s+(your\\s+)?new\\s+(instructions|prompt)|you\\s+(are\\s+)?now\\s+|you\\s+will\\s+(now\\s+)?act\\s+as|your\\s+(new\\s+)?(role|mission|task)\\s+(is|will\\s+be))"
+    weight: 85
+    enabled: true
+    description: "Attempts to redefine the assistant role"
+
+  - name: system-prompt-extraction
+    pattern: "(?i)(output|print|display|show|reveal|leak|dump)\\s+((your|all)\\s+)?(system\\s+)?(prompt|instructions|commands|directives|initial\\s+prompt)"
+    weight: 80
+    enabled: true
+    description: "Attempts to extract the system prompt"
+
+  - name: dan-jailbreak
+    pattern: "(?i)(dan\\s*(\\d+(\\.\\d+)?)?|do\\s+anything\\s+now|jail\\s*(break|free)|unfiltered\\s+mode|no\\s+(rules|restrictions|limits|boundaries|filter))"
+    weight: 75
+    enabled: true
+    description: "Jailbreak and DAN-style attacks"
+
+  - name: role-impersonation
+    pattern: "(?i)act\\s+as\\s+(if\\s+you\\s+are|though\\s+you\\s+are|an?\\s+(ai\\s+)?(without|with(out)?\\s+(no\\s+)?)?(restrictions|limits|filter|rules|boundaries|ethics|safety|guidelines))"
+    weight: 70
+    enabled: true
+    description: "Role impersonation and boundary removal attempts"
+
+  - name: repeat-everything
+    pattern: "(?i)(repeat|echo|mirror|copy)\\s+(everything|this\\s+entire|the\\s+(full|complete|entire)\\s+(prompt|text|message|conversation|chat))"
+    weight: 70
+    enabled: true
+    description: "Attempts to make the model repeat the entire conversation"
+
+  - name: token-smuggling
+    pattern: "(?i)(base64|hex|binary|rot13|rot47|cipher|encod(?:e|ed))\\s*(?:convert|transform|decode|interpret|treat|process)\\s*(?:the\\s+)?(following|above|below|text|content|payload)"
+    weight: 65
+    enabled: true
+    description: "Token smuggling via encoded payloads"
+
+  - name: forget-everything
+    pattern: "(?i)(forget|erase|clear|reset|remove)\\s+(everything(\\s+you\\s+(know|have))?|(all\\s+)?(your\\s+)?(memory|training|knowledge|context|instructions)|this\\s+(conversation|session|chat))"
+    weight: 75
+    enabled: true
+    description: "Attempts to reset model context"
+
+  - name: inject-command
+    pattern: "(?i)(new\\s+(prompt|command|instruction)|prompt\\s+(injection|override|hack)|injected|malicious\\s+(prompt|input))"
+    weight: 80
+    enabled: true
+    description: "Explicit prompt injection markers"
+
+  - name: important-override
+    pattern: "(?i)^(important|critical|urgent|imperative|mandatory)\\s*(:|\\n)"
+    weight: 30
+    enabled: true
+    description: "Urgency-based override attempts"
+
+  - name: roleplay-context-switch
+    pattern: "(?i)(let\\s+us\\s+roleplay|we\\s+are\\s+(now\\s+)?playing|imagine\\s+(you\\s+are|we\\s+are)|pretend\\s+(you\\s+are|that)|from\\s+now\\s+on\\s+(you\\s+are|i\\s+want))"
+    weight: 40
+    enabled: true
+    description: "Context-switching roleplay attempts"
+
+  - name: hypothetical-override
+    pattern: "(?i)(in\\s+this\\s+(hypothetical|thought\\s+experiment|fictional\\s+scenario|simulation)|for\\s+(the\\s+)?purpose\\s+of\\s+this\\s+(exercise|scenario|simulation))"
+    weight: 25
+    enabled: true
+    description: "Hypothetical scenario overrides"
+
+  - name: ignore-above
+    pattern: "(?i)(ignore|disregard|skip|forget)\\s+(everything\\s+)?(above|below|the\\s+(previous|above|following))"
+    weight: 50
+    enabled: true
+    description: "Selective instruction ignoring"
+
+  - name: separator-injection
+    pattern: "(?m)^[-=*]{3,}\\n*(?i)(ignore|new\\s+instructions|override|system|user\\s+said)"
+    weight: 85
+    enabled: true
+    description: "Delimiter-based instruction injection"
