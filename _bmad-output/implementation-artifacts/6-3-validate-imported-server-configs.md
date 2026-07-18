@@ -1,6 +1,6 @@
 # Story 6-3: Validate Imported Server Configurations
 
-Status: review
+Status: done
 
 ## Story Header
 

@@ -3,7 +3,7 @@ id: 5-1
 key: token-savings-calculator
 epic: epic-5-reporting-insights
 title: Implement Token Savings Calculator
-status: ready-for-dev
+status: done
 developer: Amelia
 ---
 

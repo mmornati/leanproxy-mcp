@@ -1,6 +1,6 @@
 # Story 7.4: Integrate Registry with Proxy for Dynamic Routing
 
-Status: review
+Status: done
 
 ## Dev Agent Record
 

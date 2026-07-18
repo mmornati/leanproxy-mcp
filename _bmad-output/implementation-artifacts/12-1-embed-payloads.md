@@ -1,6 +1,6 @@
 # Story 12.1: Embed tool-call payloads via local or remote model
 
-Status: ready-for-dev
+Status: done
 
 ## Story Header
 

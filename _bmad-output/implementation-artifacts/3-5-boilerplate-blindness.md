@@ -8,7 +8,7 @@
 | Key | boilerplate-blindness |
 | Epic | Epic 3: Context Optimization (JIT Discovery & Compactor) |
 | Title | Implement Boilerplate Blindness |
-| Status | review |
+| Status | done |
 | Estimated Points | 3 |
 
 ## User Story

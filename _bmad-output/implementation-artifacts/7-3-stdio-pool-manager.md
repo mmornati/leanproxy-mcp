@@ -1,6 +1,6 @@
 # Story 7.3: Stdio Pool Manager
 
-Status: review
+Status: done
 
 ## Story Header
 

@@ -20,6 +20,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/embedder"
+	"github.com/mmornati/leanproxy-mcp/pkg/cache/vectordb"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
@@ -55,6 +56,7 @@ var serveFlags struct {
 
 var providerDetector atomic.Pointer[cache.ProviderDetector]
 var breakpointInjector atomic.Pointer[cache.BreakpointInjector]
+var globalVectorStore atomic.Value
 
 func init() {
 	providerDetector.Store(cache.NewProviderDetector())
@@ -127,13 +129,15 @@ func runServe(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	var loadedCfg *migrate.Config
 	if configPath != "" {
-		cfg, err := migrate.LoadConfig(ctx, configPath)
+		var err error
+		loadedCfg, err = migrate.LoadConfig(ctx, configPath)
 		if err != nil {
 			slog.Warn("failed to load config", "path", configPath, "error", err)
-		} else if cfg != nil {
-			slog.Info("loaded server config", "path", configPath, "server_count", len(cfg.Servers))
-			for _, srv := range cfg.Servers {
+		} else if loadedCfg != nil {
+			slog.Info("loaded server config", "path", configPath, "server_count", len(loadedCfg.Servers))
+			for _, srv := range loadedCfg.Servers {
 				slog.Info("server configured",
 					"name", srv.Name,
 					"transport", srv.Transport,
@@ -161,6 +165,8 @@ func runServe(cmd *cobra.Command, args []string) {
 	} else {
 		slog.Info("no config file specified, starting in passthrough mode")
 	}
+
+	initVectorStore(loadedCfg)
 
 	var toolStore toolstore.Cache
 	fileCache, err := toolstore.NewFileCache(slog.Default())
@@ -281,6 +287,11 @@ func runServe(cmd *cobra.Command, args []string) {
 				}
 				if ssePool != nil {
 					ssePool.Close()
+				}
+				if v := globalVectorStore.Load(); v != nil {
+					if store, ok := v.(vectordb.Store); ok {
+						store.Close()
+					}
 				}
 				os.Exit(0)
 			}
@@ -896,4 +907,22 @@ func formatUptime(stats pool.ServerStats) string {
 		return duration.Round(time.Second).String()
 	}
 	return duration.Round(time.Minute).String()
+}
+
+func initVectorStore(cfg *migrate.Config) {
+	var vsConfig *migrate.VectorStoreConfig
+	if cfg != nil && cfg.Cache != nil {
+		vsConfig = cfg.Cache.VectorStore
+	}
+	store, err := vectordb.NewStore(vsConfig, slog.Default())
+	if err != nil {
+		slog.Warn("vector store init failed, continuing without vector store", "error", err)
+		return
+	}
+	globalVectorStore.Store(store)
+	backend := "sqlite-vec"
+	if vsConfig != nil && vsConfig.Backend != "" {
+		backend = vsConfig.Backend
+	}
+	slog.Info("vector store initialized", "backend", backend)
 }

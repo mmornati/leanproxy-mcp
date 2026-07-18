@@ -1,6 +1,6 @@
 # Story 7.6: Implement Concurrent Multi-Server Request Handling
 
-Status: review
+Status: done
 
 ## Story Header
 

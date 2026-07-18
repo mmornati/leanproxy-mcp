@@ -1,6 +1,6 @@
 # Story 6-2: Implement Auto-Detection and Migration
 
-Status: review
+Status: done
 
 ## Story Header
 

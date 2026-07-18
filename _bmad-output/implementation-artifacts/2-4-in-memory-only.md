@@ -3,6 +3,7 @@ id: 2-4
 key: 2-4-in-memory-only
 epic: epic-2
 title: Implement In-Memory Only Processing
+status: done
 ---
 
 # Story 2-4: Implement In-Memory Only Processing

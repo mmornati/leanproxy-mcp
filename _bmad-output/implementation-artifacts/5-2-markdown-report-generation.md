@@ -3,7 +3,7 @@ id: 5-2
 key: markdown-report-generation
 epic: epic-5-reporting-insights
 title: Implement Markdown Report Generation
-status: review
+status: done
 developer: Amelia
 ---
 

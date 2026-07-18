@@ -1,6 +1,6 @@
 # Story 10.2: Auto-inject cache_control: ephemeral breakpoints
 
-Status: ready-for-dev
+Status: done
 
 ## Story Header
 
@@ -104,7 +104,7 @@ New files listed in technical notes; modify existing files only where required.
 
 ## Status
 
-Status: review
+Status: done
 
 ### Review Findings (2026-06-23)
 

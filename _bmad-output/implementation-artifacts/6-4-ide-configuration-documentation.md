@@ -1,6 +1,6 @@
 # Story 6-4: Add IDE Configuration Documentation
 
-Status: review
+Status: done
 
 ## Story Header
 

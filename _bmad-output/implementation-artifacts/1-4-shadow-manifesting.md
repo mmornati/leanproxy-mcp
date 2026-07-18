@@ -247,5 +247,5 @@ Implemented shadow manifesting (config merging) for MCP server configurations:
 
 | Field | Value |
 |-------|-------|
-| **Status** | review |
+| **Status** | done |
 | **Last Updated** | 2026-05-01 |

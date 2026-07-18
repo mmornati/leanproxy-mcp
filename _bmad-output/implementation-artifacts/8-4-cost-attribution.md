@@ -4,7 +4,7 @@ story_key: 8-4-cost-attribution
 epic_num: 8
 story_num: 4
 story_title: "Implement Cost Attribution Layer"
-status: ready-for-dev
+status: done
 created: 2026-05-07
 source: market-research-2026-05-07
 priority: HIGH

@@ -8,7 +8,7 @@
 | Key | jit-schema-injection |
 | Epic | Epic 3: Context Optimization (JIT Discovery & Compactor) |
 | Title | Implement JIT Schema Injection |
-| Status | review |
+| Status | done |
 | Estimated Points | 5 |
 
 ## User Story
