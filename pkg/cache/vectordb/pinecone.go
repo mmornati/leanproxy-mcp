@@ -32,7 +32,7 @@ func newPineconeStore(cfg *migrate.PineconeVectorConfig, logger *slog.Logger) (*
 
 	apiKeyEnv := cfg.APIKeyEnv
 	if apiKeyEnv == "" {
-		apiKeyEnv = "PINECONE_API_KEY"
+		apiKeyEnv = "PINECONE_API_KEY" //nolint:gosec
 	}
 
 	apiKey := os.Getenv(apiKeyEnv)
@@ -66,10 +66,6 @@ type pineconeIndexResponse struct {
 		Ready bool   `json:"ready"`
 		State string `json:"state"`
 	} `json:"status"`
-}
-
-type pineconeListResponse struct {
-	Indexes []pineconeIndexResponse `json:"indexes"`
 }
 
 func (s *pineconeStore) doRequest(ctx context.Context, method, url string, body []byte) (*http.Response, error) {

@@ -144,7 +144,7 @@ func (s *sqliteStore) Upsert(ctx context.Context, records ...VectorRecord) error
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	stmt, err := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO vectors (id, vector, metadata) VALUES (?, ?, ?)`)
 	if err != nil {
@@ -203,7 +203,7 @@ func (s *sqliteStore) searchVec0(ctx context.Context, vector []float32, k int) (
 	}
 	defer rows.Close()
 
-	var results []SearchResult
+	results := make([]SearchResult, 0, k)
 	for rows.Next() {
 		var id string
 		var distance float64
@@ -233,7 +233,7 @@ func (s *sqliteStore) searchManual(ctx context.Context, vector []float32, k int)
 	}
 	defer rows.Close()
 
-	var candidates []SearchResult
+	var candidates []SearchResult //nolint:prealloc
 	for rows.Next() {
 		var id string
 		var vecBytes []byte
@@ -301,7 +301,7 @@ func (s *sqliteStore) Delete(ctx context.Context, ids ...string) error {
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer tx.Rollback() //nolint:errcheck
 
 	stmt, err := tx.PrepareContext(ctx, `DELETE FROM vectors WHERE id = ?`)
 	if err != nil {
