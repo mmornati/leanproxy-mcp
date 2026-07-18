@@ -3,6 +3,8 @@ package registry
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -54,6 +56,12 @@ type FeedFetcher struct {
 	cached   *FeedIndex
 
 	refreshWG sync.WaitGroup
+
+	onSync func(entries []RegistryFeedEntry)
+}
+
+func (f *FeedFetcher) OnSync(fn func(entries []RegistryFeedEntry)) {
+	f.onSync = fn
 }
 
 func NewFeedFetcher(logger *slog.Logger, cacheDir string) *FeedFetcher {
@@ -134,6 +142,15 @@ func (f *FeedFetcher) Sync(ctx context.Context) error {
 		Entries:  entries,
 	}
 
+	// Detect whether the feed content actually changed since the last sync
+	// so downstream invalidation hooks only fire on real changes.
+	changed := true
+	if prev, err := f.readCacheFromDisk(); err == nil && prev != nil {
+		if hashFeedEntries(prev.Entries) == hashFeedEntries(entries) {
+			changed = false
+		}
+	}
+
 	if err := f.store(index); err != nil {
 		return fmt.Errorf("registry feed: store cache: %w", err)
 	}
@@ -147,7 +164,36 @@ func (f *FeedFetcher) Sync(ctx context.Context) error {
 		"entries", len(entries),
 		"cache", f.IndexPath(),
 	)
+
+	if f.onSync != nil && changed {
+		f.invokeOnSync(entries)
+	} else if !changed {
+		f.logger.Debug("registry feed unchanged, skipping onSync hook")
+	}
+
 	return nil
+}
+
+// invokeOnSync runs the registered callback with panic isolation so a faulty
+// hook cannot crash the process.
+func (f *FeedFetcher) invokeOnSync(entries []RegistryFeedEntry) {
+	defer func() {
+		if r := recover(); r != nil {
+			f.logger.Error("registry feed: onSync callback panicked", "panic", r)
+		}
+	}()
+	f.onSync(entries)
+}
+
+// hashFeedEntries returns a stable hash of the entry list for change
+// detection between syncs.
+func hashFeedEntries(entries []RegistryFeedEntry) string {
+	data, err := json.Marshal(entries)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func (f *FeedFetcher) store(index FeedIndex) error {
