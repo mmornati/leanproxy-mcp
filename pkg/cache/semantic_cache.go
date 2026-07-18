@@ -114,8 +114,8 @@ type SemanticCache struct {
 	vectorDB vectordb.Store
 	logger   *slog.Logger
 
-	evictInterval  time.Duration
-	persistPath    string
+	evictInterval   time.Duration
+	persistPath     string
 	persistInterval time.Duration
 
 	done    chan struct{}

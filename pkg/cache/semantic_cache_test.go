@@ -62,12 +62,6 @@ func (m *mockVectorStore) Delete(_ context.Context, ids ...string) error {
 
 func (m *mockVectorStore) Close() error { return nil }
 
-func (m *mockVectorStore) count() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.records)
-}
-
 func cosineSim(a, b []float32) float64 {
 	if len(a) != len(b) || len(a) == 0 {
 		return 0
