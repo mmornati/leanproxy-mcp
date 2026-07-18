@@ -66,6 +66,10 @@ development_status:
   10-1-detect-anthropic-calls: ready-for-dev
   10-2-inject-cache-breakpoints: ready-for-dev
   10-3-cache-hit-rate-report: done
+  epic-12: in-progress
+  epic-12-retrospective: backlog
+  12-1-embed-payloads: done
+  12-2-vector-store-pluggable: review
 
-last_updated: 2026-06-23
+last_updated: 2026-07-18
 sprint_goal: Implement all stories across epics (including Epics 10-18)

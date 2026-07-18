@@ -25,6 +25,32 @@ type SummarizeSettings struct {
 	Strategy  string `yaml:"strategy"`
 }
 
+type SQLiteVectorConfig struct {
+	Path string `yaml:"path"`
+}
+
+type QdrantVectorConfig struct {
+	URL        string `yaml:"url"`
+	APIKey     string `yaml:"api_key"`
+	Collection string `yaml:"collection"`
+}
+
+type PineconeVectorConfig struct {
+	Index     string `yaml:"index"`
+	APIKeyEnv string `yaml:"api_key_env"`
+}
+
+type VectorStoreConfig struct {
+	Backend string              `yaml:"backend"`
+	SQLite  *SQLiteVectorConfig `yaml:"sqlite,omitempty"`
+	Qdrant  *QdrantVectorConfig `yaml:"qdrant,omitempty"`
+	Pinecone *PineconeVectorConfig `yaml:"pinecone,omitempty"`
+}
+
+type CacheConfig struct {
+	VectorStore *VectorStoreConfig `yaml:"vector_store,omitempty"`
+}
+
 type LazyLoadingSettings struct {
 	Enabled       bool          `yaml:"enabled"`
 	StubTokens    int           `yaml:"stub_tokens"`
@@ -74,6 +100,7 @@ type Config struct {
 	Version      string              `yaml:"version"`
 	Servers      []*ServerConfig     `yaml:"servers"`
 	Optimization *OptimizationConfig `yaml:"optimization,omitempty"`
+	Cache        *CacheConfig        `yaml:"cache,omitempty"`
 	Federation   *FederationConfig   `yaml:"federation,omitempty"`
 }
 
@@ -207,6 +234,25 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 
 		if lazy.StubTokens == 0 {
 			lazy.StubTokens = 54
+		}
+	}
+
+	if cfg.Cache != nil && cfg.Cache.VectorStore != nil {
+		vs := cfg.Cache.VectorStore
+		if vs.Backend == "" {
+			vs.Backend = "sqlite-vec"
+		}
+		if vs.SQLite != nil && vs.SQLite.Path == "" {
+			home, err := os.UserHomeDir()
+			if err == nil {
+				vs.SQLite.Path = filepath.Join(home, ".leanproxy", "cache", "vectors.db")
+			}
+		}
+		if vs.Qdrant != nil && vs.Qdrant.Collection == "" {
+			vs.Qdrant.Collection = "leanproxy_cache"
+		}
+		if vs.Pinecone != nil && vs.Pinecone.APIKeyEnv == "" {
+			vs.Pinecone.APIKeyEnv = "PINECONE_API_KEY"
 		}
 	}
 

@@ -1,6 +1,6 @@
 # Story 12.2: Vector-store integration (pluggable backends)
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -52,6 +52,48 @@ New files listed in technical notes; modify existing files only where required.
 - [Source: _bmad-output/brainstorming/brainstorming-session-2026-05-01.md] (original market-trend idea)
 - Related epic: Semantic Prompt Cache
 
+---
+
+## Dev Agent Record
+
+### Debug Log
+
+- Config types defined in `pkg/migrate/config.go`: `CacheConfig`, `VectorStoreConfig`, `SQLiteVectorConfig`, `QdrantVectorConfig`, `PineconeVectorConfig`
+- Defaults applied in `LoadConfig()`: backend=`sqlite-vec`, sqlite path=`~/.leanproxy/cache/vectors.db`, qdrant collection=`leanproxy_cache`, pinecone env=`PINECONE_API_KEY`
+- `vectordb.Store` interface: `Upsert`, `Search`, `Delete`, `Close`
+- SQLite backend uses CGO-free `modernc.org/sqlite`, attempts vec0 extension load on init (warns if unavailable, falls back to Go-native cosine similarity)
+- Qdrant backend uses `net/http` REST client; validates connection on init (returns error on fail — logged as warn in serve.go, continues without store)
+- Pinecone backend uses `net/http` REST client; API key from env var (default `PINECONE_API_KEY`); validates index via describe_index_stats on init
+- Wired in `cmd/serve.go` via `initVectorStore(cfg)` called after config load; stores in `globalVectorStore atomic.Value`
+- 28 unit tests covering all backends, edge cases, utility functions
+
+### Completion Notes
+
+Implemented Story 12.2 — Vector-store pluggable backends. The three backends share a common `Store` interface:
+
+- **sqlite-vec** (default): CGO-free via modernc.org/sqlite, tries to load vec0 extension, fallback to manual cosine search
+- **qdrant**: REST API collection validation at init
+- **pinecone**: REST API with index validation, API key from environment
+
+Config structure: `cache.vector_store.backend: sqlite-vec | qdrant | pinecone` in `leanproxy_servers.yaml`. If no config section exists, defaults to sqlite-vec.
+
+All 1395 tests pass (28 new, 1367 existing). `go vet` clean. Binary size 18.2MB < 20MB limit.
+
 ## File List
 
-- See Technical Notes above
+| File | Status | Description |
+|------|--------|-------------|
+| `pkg/cache/vectordb/vectordb.go` | new | Store interface, VectorRecord, SearchResult, NewStore factory |
+| `pkg/cache/vectordb/sqlite.go` | new | SQLite backend (modernc.org/sqlite CGO-free), vec0 extension, cosine fallback |
+| `pkg/cache/vectordb/qdrant.go` | new | Qdrant REST client (net/http), collection validation at init |
+| `pkg/cache/vectordb/pinecone.go` | new | Pinecone REST client, API key from env, index validation |
+| `pkg/cache/vectordb/vectordb_test.go` | new | Unit tests (28 tests) for all backends + utilities |
+| `pkg/migrate/config.go` | modified | Added CacheConfig, VectorStoreConfig, SQLiteVectorConfig, QdrantVectorConfig, PineconeVectorConfig |
+| `cmd/serve.go` | modified | Added globalVectorStore, initVectorStore helper, wired NewStore after config load |
+| `go.mod` / `go.sum` | modified | Added modernc.org/sqlite v1.54.0 dependency |
+
+## Change Log
+
+| Date | Change |
+|------|--------|
+| 2026-07-18 | Implemented vector-store pluggable backends (SQLite, Qdrant, Pinecone) with factory pattern. Config via `cache.vector_store` in YAML. 28 new tests, 1395 total passing, binary 18.2MB < 20MB limit. |
