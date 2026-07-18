@@ -26,8 +26,14 @@ type Classifier struct {
 func NewClassifier() *Classifier {
 	patterns := make([]*InjectionPattern, len(defaultPatterns))
 	for i, p := range defaultPatterns {
-		cp := *p
-		patterns[i] = &cp
+		np := &InjectionPattern{
+			Name:        p.Name,
+			Pattern:     p.Pattern,
+			Weight:      p.Weight,
+			Description: p.Description,
+		}
+		np.Enabled.Store(p.Enabled.Load())
+		patterns[i] = np
 	}
 	return &Classifier{
 		patterns: patterns,

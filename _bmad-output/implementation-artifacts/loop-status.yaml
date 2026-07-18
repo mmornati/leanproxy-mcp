@@ -3,7 +3,8 @@ started: "2026-07-18"
 total_stories: 3
 stories:
   - key: "13-1"
-    status: review-done
+    status: pr-created
+    pr_number: 249
   - key: "13-2"
     status: pending
   - key: "13-3"
