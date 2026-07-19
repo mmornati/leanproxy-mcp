@@ -1,0 +1,50 @@
+name: Publish VS Code Extension
+
+on:
+  push:
+    tags:
+      - 'vscode-v*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: extensions/vscode/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: extensions/vscode
+
+      - name: Lint
+        run: npm run lint
+        working-directory: extensions/vscode
+        continue-on-error: true
+
+      - name: Compile
+        run: npm run compile
+        working-directory: extensions/vscode
+
+      - name: Package extension
+        run: npx vsce package
+        working-directory: extensions/vscode
+
+      - name: Publish to Marketplace
+        run: npx vsce publish -p ${{ secrets.VSCODE_MARKETPLACE_TOKEN }}
+        working-directory: extensions/vscode
+        if: startsWith(github.ref, 'refs/tags/vscode-v')
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: leanproxy-cost-vscode
+          path: extensions/vscode/*.vsix
