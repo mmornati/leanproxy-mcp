@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "module": "none",
+    "target": "ES2022",
+    "outDir": "../../out/webview",
+    "rootDir": ".",
+    "lib": ["ES2022", "DOM"],
+    "sourceMap": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["*.ts"],
+  "exclude": []
+}
