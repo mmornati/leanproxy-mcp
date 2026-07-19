@@ -1,6 +1,10 @@
+---
+baseline_commit: fc54f8391d5c0db2e01914ae9ddeadfc8c38dadd
+---
+
 # Story 14.1: Publish /metrics JSON endpoint
 
-Status: ready-for-dev
+Status: done
 
 ## Story Header
 
@@ -51,6 +55,50 @@ New files listed in technical notes; modify existing files only where required.
 - [Source: _bmad-output/brainstorming/brainstorming-session-2026-05-01.md] (original market-trend idea)
 - Related epic: IDE Plugin (VS Code / JetBrains) + Live Cost Sidebar
 
+## Tasks/Subtasks
+
+- [x] Create `pkg/metrics/aggregator.go` — MetricsSnapshot struct + Snapshot() function wrapping reporter.CostTracker
+- [x] Create `pkg/metrics/server.go` — HTTP server for /metrics endpoint using net/http stdlib
+- [x] Write unit tests for aggregator (Snapshot, empty data, top-5 sorting, concurrency)
+- [x] Write integration tests for server (disabled addr, GET /metrics response, method validation, concurrent requests)
+- [x] Integrate metrics server into `cmd/serve.go` — add `--metrics-bind` flag, start/shutdown lifecycle
+- [x] Run full test suite and verify no regressions (1584 tests passing)
+- [x] Update story file with status, file list, and completion notes
+
+## Dev Agent Record
+
+### Debug Log
+
+- Implemented metrics package at `pkg/metrics/` with aggregator and HTTP server components
+- Reused existing `reporter.GlobalCostTracker()` for token tracking — no duplicate state
+- Integrated into `cmd/serve.go` with `--metrics-bind` flag; empty or "off" disables the endpoint
+- Used `net.Listen` + `srv.Serve` pattern to correctly report the actual listening port
+- Non-loopback bind addresses produce a security warning via slog.Warn (per FR44 security requirement)
+- No new dependencies introduced; all functionality uses stdlib (`net/http`, `encoding/json`)
+
+### Completion Notes
+
+Implemented `/metrics` JSON endpoint exposing real-time token spend data. The server starts on the main serve lifecycle, respects disable-by-config, warns on non-loopback bind, and exposes per-server tokens, per-tool tokens, total session spend, and top-5 most expensive tools. All 1584 tests pass with no regressions.
+
 ## File List
 
-- See Technical Notes above
+- `pkg/metrics/aggregator.go` (NEW)
+- `pkg/metrics/server.go` (NEW)
+- `pkg/metrics/aggregator_test.go` (NEW)
+- `pkg/metrics/server_test.go` (NEW)
+- `cmd/serve.go` (MODIFIED — added metrics integration)
+
+## Review Findings
+
+- [x] [Review][Patch] `enc.Encode(snapshot)` error silently discarded [pkg/metrics/server.go:64]
+- [x] [Review][Patch] Empty host (`:9090`) binds all interfaces without security warning [pkg/metrics/server.go:22]
+- [x] [Review][Patch] Test cleanup lacks `defer` for `Reset()`, risks state leaks on panic [pkg/metrics/aggregator_test.go]
+- [x] [Review][Patch] `TestServeConcurrentRequests` silently discards HTTP errors [pkg/metrics/server_test.go:125-134]
+- [x] [Review][Patch] Fragile test name generation using `string(rune('a' + i - 1))` [pkg/metrics/aggregator_test.go:67]
+- [x] [Review][Defer] No graceful shutdown (`Close()` vs `Shutdown()`) — pre-existing pattern across codebase [cmd/serve.go:319]
+- [x] [Review][Defer] Redundant allocation in `Snapshot()` — metrics endpoint is not a hot path [pkg/metrics/aggregator.go]
+
+## Change Log
+
+- Added `pkg/metrics/` package with aggregator and HTTP server for /metrics endpoint
+- Modified `cmd/serve.go` to accept `--metrics-bind` flag and manage metrics server lifecycle

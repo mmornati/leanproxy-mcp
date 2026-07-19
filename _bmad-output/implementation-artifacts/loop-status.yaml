@@ -1,13 +1,11 @@
 # Loop Status
-started: "2026-07-18"
+started: "2026-07-19"
 total_stories: 3
 stories:
-  - key: "13-1"
-    status: merged
-    pr_number: 249
-  - key: "13-2"
-    status: merged
-    pr_number: 250
-  - key: "13-3"
-    status: merged
-    pr_number: 251
+  - key: "14-1"
+    status: ci-in-progress
+    pr_number: 252
+  - key: "14-2"
+    status: pending
+  - key: "14-3"
+    status: pending
