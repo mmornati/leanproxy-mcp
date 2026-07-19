@@ -41,7 +41,7 @@ type Client struct {
 	fallbackCount atomic.Int64
 }
 
-func NewClient(cfg Config, logger *slog.Logger) (*Client, error) {
+func NewOllamaClient(cfg Config, logger *slog.Logger) (*Client, error) {
 	if !cfg.Enabled() {
 		return nil, nil
 	}
@@ -60,6 +60,16 @@ func NewClient(cfg Config, logger *slog.Logger) (*Client, error) {
 		},
 		logger: logger,
 	}, nil
+}
+
+func NewClient(cfg Config, logger *slog.Logger) (RedactClient, error) {
+	if !cfg.Enabled() {
+		return nil, nil
+	}
+	if strings.EqualFold(cfg.Provider, ProviderMLX) {
+		return newMLXClient(cfg, logger)
+	}
+	return NewOllamaClient(cfg, logger)
 }
 
 func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {

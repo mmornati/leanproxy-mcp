@@ -6,7 +6,7 @@ stories:
     status: merged
     pr_number: 255
   - key: "15-2"
-    status: ci-in-progress
+    status: merged
     pr_number: 256
   - key: "15-3"
-    status: pending
+    status: review-done
