@@ -3,9 +3,10 @@ started: "2026-07-19"
 total_stories: 3
 stories:
   - key: "14-1"
-    status: merge-in-progress
+    status: merged
     pr_number: 252
   - key: "14-2"
-    status: pending
+    status: merged
+    pr_number: 253
   - key: "14-3"
-    status: pending
+    status: pr-in-progress

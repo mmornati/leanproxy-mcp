@@ -1,5 +1,5 @@
 ---
-current_index: 1
+current_index: 2
 ---
 
 # Step 2: Execute Loop

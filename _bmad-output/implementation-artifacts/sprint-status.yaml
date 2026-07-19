@@ -93,7 +93,7 @@ development_status:
   13-3-red-team-corpus: done
   14-1-metrics-endpoint: done
   14-2-vscode-extension: ready-for-dev
-  14-3-jetbrains-plugin: ready-for-dev
+  14-3-jetbrains-plugin: review
   15-1-per-tool-model-routing: ready-for-dev
   15-2-ollama-sidecar: ready-for-dev
   15-3-mlx-apple-silicon: ready-for-dev
