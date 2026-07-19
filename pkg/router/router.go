@@ -13,6 +13,7 @@ type ServerEntry = registry.ServerEntry
 type Router interface {
 	Route(ctx context.Context, method string) (*ServerEntry, error)
 	RouteBatch(ctx context.Context, methods []string) ([]*ServerEntry, []error)
+	GetComplexityTier(ctx context.Context, method string) (string, error)
 }
 
 type router struct {
@@ -27,6 +28,39 @@ func NewRouter(toolRegistry ToolRegistry, serverReg registry.Registry, logger in
 		serverReg:    serverReg,
 		logger:       logger,
 	}
+}
+
+func (r *router) GetComplexityTier(ctx context.Context, method string) (string, error) {
+	if method == "" {
+		return "", NewRouterError(ErrCodeInternalError, "empty method name", ErrInvalidMethod)
+	}
+
+	namespace, toolName := parseMethod(method)
+	fullToolName := method
+	if namespace != "" && toolName != "" && !strings.Contains(method, ".") {
+		fullToolName = namespace + "." + toolName
+	}
+
+	serverIDs, err := r.toolRegistry.FindByToolName(ctx, fullToolName)
+	if err != nil || len(serverIDs) == 0 {
+		serverIDs, err = r.toolRegistry.FindByNamespace(ctx, namespace)
+		if err != nil || len(serverIDs) == 0 {
+			return "", NewRouterError(ErrCodeMethodNotFound, "tool not found: "+method, ErrToolNotFound)
+		}
+	}
+
+	server, err := r.serverReg.Get(ctx, serverIDs[0])
+	if err != nil {
+		return "", NewRouterError(ErrCodeInternalError, "server lookup failed: "+err.Error(), ErrRoutingFailed)
+	}
+
+	tier := server.ComplexityTier
+	r.logger.Debug("route: complexity tier",
+		"method", method,
+		"tier", tier,
+		"server", server.ID,
+	)
+	return tier, nil
 }
 
 type RouteResult struct {

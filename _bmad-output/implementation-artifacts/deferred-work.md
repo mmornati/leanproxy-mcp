@@ -8,3 +8,8 @@
 ## Deferred from: code review of 13-1-injection-classifier (2026-07-18)
 
 - [Review][Defer] **No recall corpus test for FR43 AC** — Story AC requires ≥95% recall on a 200-payload corpus. No corpus file or recall test exists. Deferred: requires labeled dataset, out of scope for this PR.
+
+## Deferred from: code review of 15-1-per-tool-model-routing (2026-07-19)
+
+- [Review][Defer] ComplexityTier validation at config load — `pkg/migrate/config.go:90` lacks validation; invalid values silently fall back to medium. Pre-existing pattern (other fields also unvalidated at parse time).
+- [Review][Defer] GetComplexityTier dot-less method handling — `pkg/router/router.go:38-42` constructs `method.method` for dot-less names. Pre-existing issue inherited from `Route()`.

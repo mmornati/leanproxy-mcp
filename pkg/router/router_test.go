@@ -278,6 +278,70 @@ func TestFindServerForTool(t *testing.T) {
 	})
 }
 
+func TestRouter_GetComplexityTier(t *testing.T) {
+	ctx := context.Background()
+	logger := &mockLogger{}
+
+	serverReg := registry.NewRegistry(slog.Default(), "")
+	toolReg := NewToolRegistry()
+
+	_ = serverReg.Register(ctx, registry.ServerEntry{
+		ID:             "github-1",
+		Transport:      registry.TransportStdio,
+		ComplexityTier: "high",
+	})
+	_ = serverReg.Register(ctx, registry.ServerEntry{
+		ID:        "fs-1",
+		Transport: registry.TransportStdio,
+	})
+	_ = toolReg.RegisterTool(ctx, ToolEntry{
+		Name:      "github.create_issue",
+		Namespace: "github",
+		ServerID:  "github-1",
+	})
+	_ = toolReg.RegisterTool(ctx, ToolEntry{
+		Name:      "filesystem.read_file",
+		Namespace: "filesystem",
+		ServerID:  "fs-1",
+	})
+
+	r := NewRouter(toolReg, serverReg, logger)
+
+	t.Run("returns complexity tier for tool with tier set", func(t *testing.T) {
+		tier, err := r.GetComplexityTier(ctx, "github.create_issue")
+		if err != nil {
+			t.Fatalf("GetComplexityTier() error = %v", err)
+		}
+		if tier != "high" {
+			t.Errorf("GetComplexityTier() = %q, want %q", tier, "high")
+		}
+	})
+
+	t.Run("returns empty string for tool without tier", func(t *testing.T) {
+		tier, err := r.GetComplexityTier(ctx, "filesystem.read_file")
+		if err != nil {
+			t.Fatalf("GetComplexityTier() error = %v", err)
+		}
+		if tier != "" {
+			t.Errorf("GetComplexityTier() = %q, want empty string", tier)
+		}
+	})
+
+	t.Run("empty method returns error", func(t *testing.T) {
+		_, err := r.GetComplexityTier(ctx, "")
+		if err == nil {
+			t.Error("GetComplexityTier() expected error for empty method, got nil")
+		}
+	})
+
+	t.Run("unknown tool returns error", func(t *testing.T) {
+		_, err := r.GetComplexityTier(ctx, "nonexistent.do_something")
+		if err == nil {
+			t.Error("GetComplexityTier() expected error for unknown tool, got nil")
+		}
+	})
+}
+
 func TestFindServerForTool_NotFound(t *testing.T) {
 	ctx := context.Background()
 	reg := NewToolRegistry()
