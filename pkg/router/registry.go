@@ -6,9 +6,10 @@ import (
 )
 
 type ToolEntry struct {
-	Name      string
-	Namespace string
-	ServerID  string
+	Name           string
+	Namespace      string
+	ServerID       string
+	ComplexityTier string
 }
 
 type ToolRegistry interface {

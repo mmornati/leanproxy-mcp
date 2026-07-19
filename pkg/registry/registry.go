@@ -39,15 +39,16 @@ type ServerStats struct {
 }
 
 type ServerEntry struct {
-	ID           string
-	Config       *ServerConfig
-	Address      string
-	Transport    TransportType
-	Capabilities []string
-	Health       HealthStatus
-	Stats        ServerStats
-	RegisteredAt time.Time
-	LastSeenAt   time.Time
+	ID             string
+	Config         *ServerConfig
+	Address        string
+	Transport      TransportType
+	Capabilities   []string
+	Health         HealthStatus
+	Stats          ServerStats
+	ComplexityTier string
+	RegisteredAt   time.Time
+	LastSeenAt     time.Time
 }
 
 type EventType int

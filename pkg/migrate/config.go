@@ -87,6 +87,7 @@ type ServerConfig struct {
 	Name                string             `yaml:"name"`
 	Enabled             *bool              `yaml:"enabled"`
 	Transport           TransportType      `yaml:"transport"`
+	ComplexityTier      string             `yaml:"complexity_tier,omitempty"`
 	Stdio               *StdioConfig       `yaml:"stdio,omitempty"`
 	HTTP                *HTTPConfig        `yaml:"http,omitempty"`
 	Timeout             string             `yaml:"timeout"`

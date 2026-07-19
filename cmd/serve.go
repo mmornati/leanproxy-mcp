@@ -28,6 +28,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+	"github.com/mmornati/leanproxy-mcp/pkg/modelrouter"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
@@ -46,16 +47,18 @@ var serveCmd = &cobra.Command{
 }
 
 var serveFlags struct {
-	listenAddr      string
-	upstreamURL     string
-	providersConfig string
-	cacheStrategy   string
-	embedProvider   string
-	ollamaURL       string
-	ollamaModel     string
-	openAIModel     string
-	embedPoolSize   int
-	metricsBind     string
+	listenAddr         string
+	upstreamURL        string
+	providersConfig    string
+	cacheStrategy      string
+	embedProvider      string
+	ollamaURL          string
+	ollamaModel        string
+	openAIModel        string
+	embedPoolSize      int
+	metricsBind        string
+	modelRouterEnabled bool
+	modelRouterConfig  string
 }
 
 var metricsServer *http.Server
@@ -71,14 +74,16 @@ func init() {
 }
 
 var (
-	serverReg    registry.Registry
-	toolReg      router.ToolRegistry
-	gatewayTools gateway.GatewayTools
-	stdioPool    *pool.StdioPool
-	httpPool     *pool.HTTPClientPool
-	ssePool      *pool.SSEPool
-	unifiedPool  *pool.UnifiedPool
-	statusStore  *statusfile.FileStatusStore
+	serverReg         registry.Registry
+	toolReg           router.ToolRegistry
+	gatewayTools      gateway.GatewayTools
+	stdioPool         *pool.StdioPool
+	httpPool          *pool.HTTPClientPool
+	ssePool           *pool.SSEPool
+	unifiedPool       *pool.UnifiedPool
+	statusStore       *statusfile.FileStatusStore
+	globalModelRouter modelrouter.ModelRouter
+	serverTiers       map[string]string
 )
 
 type Router interface {
@@ -101,6 +106,8 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.openAIModel, "openai-model", "text-embedding-3-small", "OpenAI embedding model")
 	serveCmd.Flags().IntVar(&serveFlags.embedPoolSize, "embed-pool-size", 4, "Embedder worker pool size")
 	serveCmd.Flags().StringVar(&serveFlags.metricsBind, "metrics-bind", "", "Metrics endpoint bind address (e.g. 127.0.0.1:9090). Set to 'off' or empty to disable.")
+	serveCmd.Flags().BoolVar(&serveFlags.modelRouterEnabled, "model-router", false, "Enable per-tool model routing based on complexity_tier")
+	serveCmd.Flags().StringVar(&serveFlags.modelRouterConfig, "model-router-config", "", "Path to model router YAML config (uses defaults if not set)")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -173,6 +180,33 @@ func runServe(cmd *cobra.Command, args []string) {
 		}
 	} else {
 		slog.Info("no config file specified, starting in passthrough mode")
+	}
+
+	modelRouterCfg := modelrouter.DefaultConfig()
+	if serveFlags.modelRouterConfig != "" {
+		mrCfg, err := modelrouter.LoadConfig(serveFlags.modelRouterConfig)
+		if err != nil {
+			slog.Warn("failed to load model router config", "path", serveFlags.modelRouterConfig, "error", err)
+		} else {
+			modelRouterCfg = mrCfg
+			slog.Info("loaded model router config", "path", serveFlags.modelRouterConfig)
+		}
+	}
+	serverTiers = make(map[string]string)
+	if loadedCfg != nil {
+		for _, srv := range loadedCfg.Servers {
+			if srv.ComplexityTier != "" {
+				serverTiers[srv.Name] = srv.ComplexityTier
+			}
+		}
+	}
+	if serveFlags.modelRouterEnabled {
+		globalModelRouter = modelrouter.NewWithEnvOverride(modelRouterCfg, slog.Default())
+		slog.Info("model router enabled",
+			"default_tier", modelRouterCfg.DefaultTier,
+		)
+	} else {
+		slog.Debug("model router disabled")
 	}
 
 	initVectorStore(loadedCfg)
@@ -430,6 +464,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
+	logModelSelection(ctx, server, req.Method)
 	recordProvider(server)
 	provider := injectBreakpoints(server, req)
 
@@ -484,6 +519,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		return
 	}
 
+	logModelSelection(ctx, server, req.Method)
 	recordProvider(server)
 	provider := injectBreakpoints(server, req)
 
@@ -554,6 +590,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 			continue
 		}
 
+		logModelSelection(ctx, server, req.Method)
 		recordProvider(server)
 		provider := injectBreakpoints(server, req)
 
@@ -671,6 +708,27 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 
 func isBatchRequest(data []byte) bool {
 	return proxy.IsBatchRequest(data)
+}
+
+func logModelSelection(ctx context.Context, server *registry.ServerEntry, method string) {
+	if globalModelRouter == nil || server == nil {
+		return
+	}
+	tier := serverTiers[server.ID]
+	if tier == "" {
+		tier = string(modelrouter.TierMedium)
+	}
+	sel, err := globalModelRouter.Select(ctx, modelrouter.Tier(tier))
+	if err != nil {
+		slog.Debug("model selection failed", "method", method, "tier", tier, "error", err)
+		return
+	}
+	slog.Debug("model router selected",
+		"method", method,
+		"tier", tier,
+		"provider", sel.Provider,
+		"model", sel.Model,
+	)
 }
 
 func recordProvider(server *registry.ServerEntry) {
@@ -990,6 +1048,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 			continue
 		}
 
+		logModelSelection(ctx, server, req.Method)
 		recordProvider(server)
 		provider := injectBreakpoints(server, req)
 

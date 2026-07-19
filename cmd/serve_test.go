@@ -36,6 +36,10 @@ func (m *mockRouter) RouteBatch(ctx context.Context, methods []string) ([]*regis
 	return results, nil
 }
 
+func (m *mockRouter) GetComplexityTier(ctx context.Context, method string) (string, error) {
+	return "", nil
+}
+
 type mockGatewayTools struct {
 	listServersFunc func(ctx context.Context) ([]gateway.ServerInfo, error)
 	invokeToolFunc  func(ctx context.Context, params gateway.InvokeToolParams) (interface{}, error)
