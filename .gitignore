@@ -50,3 +50,6 @@ __pycache__/
 
 #Graphify
 graphify-out/
+
+# BMad output
+_bmad-output/implementation-artifacts/loop-status.yaml
