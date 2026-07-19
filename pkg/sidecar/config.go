@@ -56,7 +56,7 @@ func (c *Config) Validate() error {
 	c.withDefaults()
 	if strings.TrimSpace(c.Model) == "" {
 		if strings.EqualFold(strings.TrimSpace(c.Provider), ProviderMLX) {
-			return fmt.Errorf("sidecar: MLX model must be configured (e.g. model: mlx-community/Llama-3.2-3B-Instruct-4bit)")
+			return fmt.Errorf("sidecar: MLX model must be configured (e.g. model: %s)", defaultMLXModel)
 		}
 		return fmt.Errorf("sidecar: model must not be empty")
 	}
