@@ -29,9 +29,9 @@ type generateRequest struct {
 }
 
 type generateResponse struct {
-	Model     string `json:"model"`
-	Response  string `json:"response"`
-	Done      bool   `json:"done"`
+	Model    string `json:"model"`
+	Response string `json:"response"`
+	Done     bool   `json:"done"`
 }
 
 type Client struct {

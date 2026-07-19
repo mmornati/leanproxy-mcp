@@ -127,7 +127,7 @@ func TestClient_FallbackCount(t *testing.T) {
 	t.Run("increments on redact error", func(t *testing.T) {
 		logger := slog.Default()
 		c := &Client{
-			cfg: Config{Provider: "ollama", Model: "llama3.1:8b", URL: "http://127.0.0.1:1"},
+			cfg:    Config{Provider: "ollama", Model: "llama3.1:8b", URL: "http://127.0.0.1:1"},
 			client: &http.Client{Timeout: time.Second},
 			logger: logger,
 		}
@@ -226,7 +226,7 @@ func TestClient_Generate_Success(t *testing.T) {
 
 func TestClient_Generate_Unreachable(t *testing.T) {
 	c := &Client{
-		cfg: Config{Provider: "ollama", Model: "llama3.1:8b", URL: "http://127.0.0.1:1"},
+		cfg:    Config{Provider: "ollama", Model: "llama3.1:8b", URL: "http://127.0.0.1:1"},
 		client: &http.Client{Timeout: time.Second},
 		logger: slog.Default(),
 	}
@@ -401,7 +401,7 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestClient_Redact_HTTPError(t *testing.T) {
 	c := &Client{
-		cfg: Config{Provider: "ollama", Model: "llama3.1:8b", URL: "http://invalid-host-that-does-not-exist.local"},
+		cfg:    Config{Provider: "ollama", Model: "llama3.1:8b", URL: "http://invalid-host-that-does-not-exist.local"},
 		client: &http.Client{Timeout: time.Second},
 		logger: slog.Default(),
 	}
@@ -429,7 +429,7 @@ func TestClient_Generate_ContextCancelled(t *testing.T) {
 
 	_, err = c.Generate(ctx, "test")
 	if err == nil {
-		t.Fatal("expected error for cancelled context")
+		t.Fatal("expected error for canceled context")
 	}
 }
 
@@ -488,9 +488,9 @@ func TestClient_Redact_EmptyResponse(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(generateResponse{
-			Model: "llama3.1:8b",
+			Model:    "llama3.1:8b",
 			Response: "",
-			Done:  true,
+			Done:     true,
 		})
 	}))
 	defer ts.Close()

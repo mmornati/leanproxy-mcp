@@ -352,9 +352,9 @@ func (m *mockSidecarClient) Redact(ctx context.Context, content string) string {
 	return content
 }
 
-func (m *mockSidecarClient) FallbackCount() int64 { return 0 }
-func (m *mockSidecarClient) Provider() string     { return "test" }
-func (m *mockSidecarClient) Model() string         { return "test" }
+func (m *mockSidecarClient) FallbackCount() int64             { return 0 }
+func (m *mockSidecarClient) Provider() string                 { return "test" }
+func (m *mockSidecarClient) Model() string                    { return "test" }
 func (m *mockSidecarClient) Healthy(ctx context.Context) bool { return true }
 
 func TestRedactJSONWithSidecar_RegexMatches(t *testing.T) {

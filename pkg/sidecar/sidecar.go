@@ -16,9 +16,9 @@ type RedactClient interface {
 }
 
 type Manager struct {
-	client        RedactClient
-	enabled       atomic.Bool
-	logger        *slog.Logger
+	client  RedactClient
+	enabled atomic.Bool
+	logger  *slog.Logger
 }
 
 func NewManager(cfg Config, logger *slog.Logger) (*Manager, error) {
