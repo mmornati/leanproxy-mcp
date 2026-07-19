@@ -9,4 +9,5 @@ stories:
     status: merged
     pr_number: 253
   - key: "14-3"
-    status: pr-in-progress
+    status: merge-in-progress
+    pr_number: 254
