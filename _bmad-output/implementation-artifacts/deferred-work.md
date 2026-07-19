@@ -13,3 +13,9 @@
 
 - [Review][Defer] ComplexityTier validation at config load — `pkg/migrate/config.go:90` lacks validation; invalid values silently fall back to medium. Pre-existing pattern (other fields also unvalidated at parse time).
 - [Review][Defer] GetComplexityTier dot-less method handling — `pkg/router/router.go:38-42` constructs `method.method` for dot-less names. Pre-existing issue inherited from `Route()`.
+
+## Deferred from: code review of 15-2-ollama-sidecar (2026-07-19)
+
+- [Review][Defer] No telemetry exposure for fallback count — metrics endpoint for sidecar is out of scope for first implementation
+- [Review][Defer] No large-content guard for sidecar — model-specific context windows are outside this story's scope
+- [Review][Defer] `pkg/health` integration not implemented — sidecar `Healthy()` is sufficient for v1

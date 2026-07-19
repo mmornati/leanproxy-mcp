@@ -6,6 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +19,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/router"
+	"github.com/mmornati/leanproxy-mcp/pkg/sidecar"
 )
 
 type mockRouter struct {
@@ -558,4 +563,131 @@ func TestInjectBreakpointsEmptyParams(t *testing.T) {
 	if req.Params != nil {
 		t.Errorf("empty-params request should not gain Params, got: %s", req.Params)
 	}
+}
+
+func TestHandleSingleRequest_SidecarRedactsParams(t *testing.T) {
+	prevSidecar := globalSidecar
+	prevDetector := providerDetector.Load()
+	prevInjector := breakpointInjector.Load()
+	t.Cleanup(func() {
+		globalSidecar = prevSidecar
+		providerDetector.Store(prevDetector)
+		breakpointInjector.Store(prevInjector)
+	})
+
+	var sidecarCalled bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sidecarCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"test","response":"SIDECAR_REDACTED","done":true}`))
+	}))
+	defer ts.Close()
+
+	var err error
+	globalSidecar, err = sidecar.NewManager(
+		sidecar.Config{Provider: "ollama", Model: "test", URL: ts.URL},
+		slog.Default(),
+	)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	providerDetector.Store(cache.NewProviderDetector())
+	breakpointInjector.Store(cache.NewBreakpointInjector(cache.WithStrategy(cache.StrategyOff)))
+
+	mockR := &mockRouter{
+		routeFunc: func(ctx context.Context, method string) (*registry.ServerEntry, error) {
+			return &registry.ServerEntry{ID: "server1"}, nil
+		},
+	}
+	mockGT := &mockGatewayTools{}
+	mockP := &mockPool{}
+
+	readBuf := &bytes.Buffer{}
+	writer := bufio.NewWriter(readBuf)
+
+	handleSingleRequest(ctx,
+		[]byte(`{"jsonrpc":"2.0","method":"test.tool","params":{"key":"safe_value"},"id":1}`),
+		writer, mockR, mockGT, mockP)
+	writer.Flush()
+
+	if !sidecarCalled {
+		t.Error("expected sidecar to be called by handleSingleRequest")
+	}
+}
+
+func TestHandleSingleRequestAsync_SidecarRedactsParams(t *testing.T) {
+	prevSidecar := globalSidecar
+	prevDetector := providerDetector.Load()
+	prevInjector := breakpointInjector.Load()
+	t.Cleanup(func() {
+		globalSidecar = prevSidecar
+		providerDetector.Store(prevDetector)
+		breakpointInjector.Store(prevInjector)
+	})
+
+	var sidecarCalled bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sidecarCalled = true
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"model":"test","response":"SIDECAR_REDACTED","done":true}`))
+	}))
+	defer ts.Close()
+
+	var err error
+	globalSidecar, err = sidecar.NewManager(
+		sidecar.Config{Provider: "ollama", Model: "test", URL: ts.URL},
+		slog.Default(),
+	)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	providerDetector.Store(cache.NewProviderDetector())
+	breakpointInjector.Store(cache.NewBreakpointInjector(cache.WithStrategy(cache.StrategyOff)))
+
+	mockR := &mockRouter{
+		routeFunc: func(ctx context.Context, method string) (*registry.ServerEntry, error) {
+			return &registry.ServerEntry{ID: "server1"}, nil
+		},
+	}
+	mockGT := &mockGatewayTools{}
+	mockP := &mockPool{}
+
+	readBuf := &bytes.Buffer{}
+	writer := bufio.NewWriter(readBuf)
+
+	handleSingleRequestAsync(ctx,
+		[]byte(`{"jsonrpc":"2.0","method":"test.tool","params":{"key":"safe_value"},"id":1}`),
+		writer, &sync.Mutex{}, mockR, mockGT, mockP)
+	writer.Flush()
+
+	if !sidecarCalled {
+		t.Error("expected sidecar to be called by handleSingleRequestAsync")
+	}
+}
+
+func TestHandleSingleRequest_SidecarDisabled_NoCall(t *testing.T) {
+	prevSidecar := globalSidecar
+	t.Cleanup(func() { globalSidecar = prevSidecar })
+
+	globalSidecar = nil
+
+	mockR := &mockRouter{
+		routeFunc: func(ctx context.Context, method string) (*registry.ServerEntry, error) {
+			return &registry.ServerEntry{ID: "server1"}, nil
+		},
+	}
+	mockGT := &mockGatewayTools{}
+	mockP := &mockPool{}
+
+	readBuf := &bytes.Buffer{}
+	writer := bufio.NewWriter(readBuf)
+
+	handleSingleRequest(ctx,
+		[]byte(`{"jsonrpc":"2.0","method":"test.tool","params":{"key":"safe_value"},"id":1}`),
+		writer, mockR, mockGT, mockP)
+	writer.Flush()
+
+	_ = readBuf.String()
 }

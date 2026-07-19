@@ -2,12 +2,12 @@ package bouncer
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -176,51 +176,64 @@ func (r *Redactor) redactChunk(chunk []byte) []byte {
 	return result
 }
 
-func (r *Redactor) RedactJSON(data []byte) ([]byte, error) {
+func (r *Redactor) RedactJSON(data []byte) ([]byte, int, error) {
 	slog.Debug("redacting message", "size", len(data))
 
 	var raw interface{}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		slog.Warn("invalid JSON input, passing through unchanged")
-		return data, nil
+		return data, 0, nil
 	}
 
-	redactedRaw := r.redactInterface(raw)
+	redactedRaw, count := r.redactInterface(raw)
 	redacted, err := json.Marshal(redactedRaw)
 	if err != nil {
-		return data, err
+		return data, 0, err
 	}
 
-	slog.Info("redaction complete", "secrets_found", strings.Count(string(redacted), SecretRedacted)-strings.Count(string(data), SecretRedacted))
+	if count > 0 {
+		slog.Info("redaction complete", "secrets_found", count)
+	}
 
-	return redacted, nil
+	return redacted, count, nil
 }
 
-func (r *Redactor) redactInterface(val interface{}) interface{} {
+func (r *Redactor) redactInterface(val interface{}) (interface{}, int) {
 	switch v := val.(type) {
 	case string:
 		return r.redactString(v)
 	case map[string]interface{}:
+		totalCount := 0
 		for k, val := range v {
-			v[k] = r.redactInterface(val)
+			newVal, count := r.redactInterface(val)
+			v[k] = newVal
+			totalCount += count
 		}
-		return v
+		return v, totalCount
 	case []interface{}:
+		totalCount := 0
 		for i, val := range v {
-			v[i] = r.redactInterface(val)
+			newVal, count := r.redactInterface(val)
+			v[i] = newVal
+			totalCount += count
 		}
-		return v
+		return v, totalCount
 	default:
-		return v
+		return v, 0
 	}
 }
 
-func (r *Redactor) redactString(data string) string {
+func (r *Redactor) redactString(data string) (string, int) {
 	result := data
+	totalCount := 0
 	for _, pattern := range r.patterns {
-		result = pattern.ReplaceAllString(result, SecretRedacted)
+		matches := pattern.FindAllString(result, -1)
+		if len(matches) > 0 {
+			totalCount += len(matches)
+			result = pattern.ReplaceAllString(result, SecretRedacted)
+		}
 	}
-	return result
+	return result, totalCount
 }
 
 func NewRedactorFromLoaded(loaded *LoadedPatterns) *Redactor {
@@ -228,4 +241,29 @@ func NewRedactorFromLoaded(loaded *LoadedPatterns) *Redactor {
 		patterns:   loaded.All,
 		bufferSize: 4096,
 	}
+}
+
+type SidecarClient interface {
+	Redact(ctx context.Context, content string) string
+	FallbackCount() int64
+	Provider() string
+	Model() string
+	Healthy(ctx context.Context) bool
+}
+
+func RedactJSONWithSidecar(ctx context.Context, data []byte, r *Redactor, sidecar SidecarClient) ([]byte, error) {
+	if r != nil {
+		redacted, count, err := r.RedactJSON(data)
+		if err != nil {
+			return nil, err
+		}
+		if count > 0 {
+			return redacted, nil
+		}
+	}
+	if sidecar != nil {
+		sidecarResult := sidecar.Redact(ctx, string(data))
+		return []byte(sidecarResult), nil
+	}
+	return data, nil
 }
