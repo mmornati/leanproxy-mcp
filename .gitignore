@@ -47,3 +47,6 @@ __pycache__/
 
 # Logs
 *.log
+
+#Graphify
+graphify-out/

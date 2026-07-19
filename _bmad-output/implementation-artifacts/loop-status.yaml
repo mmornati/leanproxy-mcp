@@ -6,6 +6,8 @@ stories:
     status: merged
     pr_number: 249
   - key: "13-2"
-    status: review-done
+    status: merged
+    pr_number: 250
   - key: "13-3"
-    status: pending
+    status: merged
+    pr_number: 251
