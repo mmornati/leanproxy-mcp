@@ -3,7 +3,7 @@ started: "2026-07-19"
 total_stories: 3
 stories:
   - key: "14-1"
-    status: ci-in-progress
+    status: merge-in-progress
     pr_number: 252
   - key: "14-2"
     status: pending
