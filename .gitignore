@@ -53,3 +53,5 @@ graphify-out/
 
 # BMad output
 _bmad-output/implementation-artifacts/loop-status.yaml
+.bmad-loop/runs/
+.bmad-loop/cache/

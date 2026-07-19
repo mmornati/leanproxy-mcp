@@ -25,13 +25,13 @@ development_status:
   epic-10-retrospective: backlog
   epic-11: done
   epic-11-retrospective: backlog
-  epic-12: in-progress
+  epic-12: done
   epic-12-retrospective: backlog
   epic-13: done
   epic-13-retrospective: backlog
-  epic-14: ready-for-dev
+  epic-14: done
   epic-14-retrospective: backlog
-  epic-15: ready-for-dev
+  epic-15: done
   epic-15-retrospective: backlog
   epic-16: ready-for-dev
   epic-16-retrospective: backlog
@@ -86,17 +86,17 @@ development_status:
   11-2-one-click-install: done
   11-3-trust-scoring: done
   12-1-embed-payloads: done
-  12-2-vector-store-pluggable: in-progress
-  12-3-cache-ttl-dashboard: ready-for-dev
+  12-2-vector-store-pluggable: done
+  12-3-cache-ttl-dashboard: done
   13-1-injection-classifier: done
   13-2-configurable-actions: done
   13-3-red-team-corpus: done
   14-1-metrics-endpoint: done
-  14-2-vscode-extension: ready-for-dev
-  14-3-jetbrains-plugin: review
+  14-2-vscode-extension: done
+  14-3-jetbrains-plugin: done
   15-1-per-tool-model-routing: done
-  15-2-ollama-sidecar: ready-for-dev
-  15-3-mlx-apple-silicon: in-progress
+  15-2-ollama-sidecar: done
+  15-3-mlx-apple-silicon: done
   16-1-first-party-github: ready-for-dev
   16-2-first-party-filesystem: ready-for-dev
   16-3-first-party-db-servers: ready-for-dev
@@ -108,8 +108,9 @@ development_status:
 
 last_updated: 2026-07-19
 
+# Reconciliated with GitHub Issues/PRs:
 # Updated by bmad-code-review for story 15-3-mlx-apple-silicon
 # Updated by bmad-code-review for story 15-1-per-tool-model-routing
 
 # Updated by bmad-dev-story for story 15-1-per-tool-model-routing
-sprint_goal: Complete Epic 12 (Semantic Cache), begin Epics 13-14 as capacity allows
+sprint_goal: "Begin Epic 16 (First-Party MCP Servers) - next: Story 16.1"

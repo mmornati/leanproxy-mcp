@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "hooks": {
+    "agentStop": [
+      {
+        "type": "command",
+        "command": "python3 /Users/mmornati/Projects/leanproxy-mcp/.bmad-loop/bmad_loop_hook.py Stop",
+        "timeoutSec": 60
+      }
+    ],
+    "sessionStart": [
+      {
+        "type": "command",
+        "command": "python3 /Users/mmornati/Projects/leanproxy-mcp/.bmad-loop/bmad_loop_hook.py SessionStart",
+        "timeoutSec": 60
+      }
+    ],
+    "sessionEnd": [
+      {
+        "type": "command",
+        "command": "python3 /Users/mmornati/Projects/leanproxy-mcp/.bmad-loop/bmad_loop_hook.py SessionEnd",
+        "timeoutSec": 60
+      }
+    ]
+  }
+}
