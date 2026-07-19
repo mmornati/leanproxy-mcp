@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"os/user"
@@ -25,6 +26,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
+	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
@@ -53,7 +55,10 @@ var serveFlags struct {
 	ollamaModel     string
 	openAIModel     string
 	embedPoolSize   int
+	metricsBind     string
 }
+
+var metricsServer *http.Server
 
 var providerDetector atomic.Pointer[cache.ProviderDetector]
 var breakpointInjector atomic.Pointer[cache.BreakpointInjector]
@@ -95,6 +100,7 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.ollamaModel, "ollama-model", "nomic-embed-text", "Ollama embedding model")
 	serveCmd.Flags().StringVar(&serveFlags.openAIModel, "openai-model", "text-embedding-3-small", "OpenAI embedding model")
 	serveCmd.Flags().IntVar(&serveFlags.embedPoolSize, "embed-pool-size", 4, "Embedder worker pool size")
+	serveCmd.Flags().StringVar(&serveFlags.metricsBind, "metrics-bind", "", "Metrics endpoint bind address (e.g. 127.0.0.1:9090). Set to 'off' or empty to disable.")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -262,6 +268,11 @@ func runServe(cmd *cobra.Command, args []string) {
 		go updateServerStatusPeriodically()
 	}
 
+	metricsServer, err = metrics.ListenAndServe(serveFlags.metricsBind, slog.Default())
+	if err != nil {
+		slog.Warn("failed to start metrics endpoint", "error", err)
+	}
+
 	go startRegistryFeedSync(ctx, func(entries []registry.RegistryFeedEntry) {
 		if sc := cache.GlobalSemanticCache(); sc != nil {
 			count := sc.PurgeAll()
@@ -305,6 +316,9 @@ func runServe(cmd *cobra.Command, args []string) {
 				}
 				slog.Info("shutting down server")
 				signal.Stop(sigChan)
+				if metricsServer != nil {
+					metricsServer.Close()
+				}
 				if statusStore != nil {
 					statusStore.RemoveFile()
 				}

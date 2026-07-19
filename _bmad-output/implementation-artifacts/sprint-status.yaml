@@ -91,7 +91,7 @@ development_status:
   13-1-injection-classifier: done
   13-2-configurable-actions: done
   13-3-red-team-corpus: done
-  14-1-metrics-endpoint: ready-for-dev
+  14-1-metrics-endpoint: done
   14-2-vscode-extension: ready-for-dev
   14-3-jetbrains-plugin: ready-for-dev
   15-1-per-tool-model-routing: ready-for-dev
