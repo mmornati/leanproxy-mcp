@@ -516,12 +516,12 @@ func TestClassify_InjectionCorpus(t *testing.T) {
 			if detected {
 				tp++
 				if result.RiskScore < entry.ExpectedRiskMin {
-				payloadDisplay := entry.Payload
-				if len(payloadDisplay) > 80 {
-					payloadDisplay = payloadDisplay[:80] + "..."
-				}
-				t.Errorf("corpus entry %q: expected risk >= %d, got %d",
-					payloadDisplay, entry.ExpectedRiskMin, result.RiskScore)
+					payloadDisplay := entry.Payload
+					if len(payloadDisplay) > 80 {
+						payloadDisplay = payloadDisplay[:80] + "..."
+					}
+					t.Errorf("corpus entry %q: expected risk >= %d, got %d",
+						payloadDisplay, entry.ExpectedRiskMin, result.RiskScore)
 				}
 			} else {
 				fn++
