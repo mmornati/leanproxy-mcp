@@ -2,6 +2,7 @@ package bouncer
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"strings"
@@ -13,7 +14,7 @@ func TestRedactAWSKey(t *testing.T) {
 	expected := `{"api_key":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result, err := redactor.RedactJSON([]byte(input))
+	result, _, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
 	}
@@ -28,7 +29,7 @@ func TestRedactGitHubToken(t *testing.T) {
 	expected := `{"token":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result, err := redactor.RedactJSON([]byte(input))
+	result, _, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
 	}
@@ -43,7 +44,7 @@ func TestRedactGitHubFineGrainedPAT(t *testing.T) {
 	expected := `{"token":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result, err := redactor.RedactJSON([]byte(input))
+	result, _, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
 	}
@@ -62,7 +63,7 @@ func TestRedactMultipleSecrets(t *testing.T) {
 	expected := `{"aws":"[SECRET_REDACTED]","github":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result, err := redactor.RedactJSON([]byte(input))
+	result, _, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestRedactNoSecrets(t *testing.T) {
 	expected := `{"message":"hello world"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result, err := redactor.RedactJSON([]byte(input))
+	result, _, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestRedactJSONStructurePreservation(t *testing.T) {
 	input := `{"data": {"api_key": "AKIAIOSFODNN7EXAMPLE"}, "count": 1}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result, err := redactor.RedactJSON([]byte(input))
+	result, _, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
 	}
@@ -171,7 +172,7 @@ func TestRedactInvalidJSON(t *testing.T) {
 	input := `{invalid json}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result, err := redactor.RedactJSON([]byte(input))
+	result, _, err := redactor.RedactJSON([]byte(input))
 
 	if err != nil {
 		t.Fatalf("RedactJSON should not fail on invalid JSON, got: %v", err)
@@ -187,7 +188,7 @@ func TestRedactBearerToken(t *testing.T) {
 	expected := `{"auth":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result, err := redactor.RedactJSON([]byte(input))
+	result, _, err := redactor.RedactJSON([]byte(input))
 	if err != nil {
 		t.Fatalf("RedactJSON failed: %v", err)
 	}
@@ -202,7 +203,7 @@ func TestRedactAPIKeyCaseInsensitive(t *testing.T) {
 	expected := `[SECRET_REDACTED]`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result := redactor.redactString(input)
+	result, _ := redactor.redactString(input)
 
 	if result != expected {
 		t.Errorf("got %q, want %q", result, expected)
@@ -215,7 +216,7 @@ func BenchmarkRedactSmallMessage(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = redactor.RedactJSON([]byte(input))
+		_, _, _ = redactor.RedactJSON([]byte(input))
 	}
 }
 
@@ -337,5 +338,124 @@ func TestStreamingRedactorMultipleSecrets(t *testing.T) {
 	}
 	if expected != w.String() {
 		t.Errorf("got %q, want %q", w.String(), expected)
+	}
+}
+
+type mockSidecarClient struct {
+	redactFunc func(ctx context.Context, content string) string
+}
+
+func (m *mockSidecarClient) Redact(ctx context.Context, content string) string {
+	if m.redactFunc != nil {
+		return m.redactFunc(ctx, content)
+	}
+	return content
+}
+
+func (m *mockSidecarClient) FallbackCount() int64 { return 0 }
+func (m *mockSidecarClient) Provider() string     { return "test" }
+func (m *mockSidecarClient) Model() string         { return "test" }
+func (m *mockSidecarClient) Healthy(ctx context.Context) bool { return true }
+
+func TestRedactJSONWithSidecar_RegexMatches(t *testing.T) {
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	sidecar := &mockSidecarClient{
+		redactFunc: func(ctx context.Context, content string) string {
+			t.Error("sidecar should not be called when regex matches")
+			return content
+		},
+	}
+	input := []byte(`{"key": "AKIAIOSFODNN7EXAMPLE"}`)
+	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar)
+	if err != nil {
+		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
+	}
+	if !strings.Contains(string(result), SecretRedacted) {
+		t.Errorf("expected regex-redacted result, got %q", string(result))
+	}
+}
+
+func TestRedactJSONWithSidecar_RegexNoMatch_SidecarCalled(t *testing.T) {
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	var sidecarCalled bool
+	sidecar := &mockSidecarClient{
+		redactFunc: func(ctx context.Context, content string) string {
+			sidecarCalled = true
+			return `{"key":"sidecar_redacted"}`
+		},
+	}
+	input := []byte(`{"key": "safe_value"}`)
+	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar)
+	if err != nil {
+		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
+	}
+	if !sidecarCalled {
+		t.Error("expected sidecar to be called when regex finds no matches")
+	}
+	if string(result) != `{"key":"sidecar_redacted"}` {
+		t.Errorf("expected sidecar redacted result, got %q", string(result))
+	}
+}
+
+func TestRedactJSONWithSidecar_NilRedactor_CallsSidecar(t *testing.T) {
+	var sidecarCalled bool
+	sidecar := &mockSidecarClient{
+		redactFunc: func(ctx context.Context, content string) string {
+			sidecarCalled = true
+			return `{"key":"sidecar_redacted"}`
+		},
+	}
+	input := []byte(`{"key": "value"}`)
+	result, err := RedactJSONWithSidecar(context.Background(), input, nil, sidecar)
+	if err != nil {
+		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
+	}
+	if !sidecarCalled {
+		t.Error("expected sidecar to be called when redactor is nil")
+	}
+	if string(result) != `{"key":"sidecar_redacted"}` {
+		t.Errorf("expected sidecar redacted result, got %q", string(result))
+	}
+}
+
+func TestRedactJSONWithSidecar_NilBoth(t *testing.T) {
+	input := []byte(`{"key": "value"}`)
+	result, err := RedactJSONWithSidecar(context.Background(), input, nil, nil)
+	if err != nil {
+		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
+	}
+	if string(result) != `{"key": "value"}` {
+		t.Errorf("expected passthrough, got %q", string(result))
+	}
+}
+
+func TestRedactJSONWithSidecar_NoSidecar_Passthrough(t *testing.T) {
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	input := []byte(`{"key": "safe_value"}`)
+	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, nil)
+	if err != nil {
+		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
+	}
+	if !strings.Contains(string(result), `safe_value`) {
+		t.Errorf("expected passthrough, got %q", string(result))
+	}
+}
+
+func TestRedactJSONWithSidecar_CountTracking(t *testing.T) {
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	sidecar := &mockSidecarClient{
+		redactFunc: func(ctx context.Context, content string) string {
+			t.Error("sidecar should not be called when regex matches already")
+			return content
+		},
+	}
+	input := []byte(`{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_123456789012345678901234567890123456"}`)
+	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar)
+	if err != nil {
+		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
+	}
+	c := strings.Count(string(result), SecretRedacted)
+	if c != 2 {
+		t.Errorf("expected 2 redacted tokens, got %d", c)
 	}
 }

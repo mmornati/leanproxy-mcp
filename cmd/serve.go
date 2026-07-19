@@ -33,6 +33,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/router"
+	"github.com/mmornati/leanproxy-mcp/pkg/sidecar"
 	"github.com/mmornati/leanproxy-mcp/pkg/statusfile"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils/dryrun"
@@ -59,6 +60,9 @@ var serveFlags struct {
 	metricsBind        string
 	modelRouterEnabled bool
 	modelRouterConfig  string
+	sidecarProvider    string
+	sidecarModel       string
+	sidecarURL         string
 }
 
 var metricsServer *http.Server
@@ -84,6 +88,7 @@ var (
 	statusStore       *statusfile.FileStatusStore
 	globalModelRouter modelrouter.ModelRouter
 	serverTiers       map[string]string
+	globalSidecar     *sidecar.Manager
 )
 
 type Router interface {
@@ -108,6 +113,9 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.metricsBind, "metrics-bind", "", "Metrics endpoint bind address (e.g. 127.0.0.1:9090). Set to 'off' or empty to disable.")
 	serveCmd.Flags().BoolVar(&serveFlags.modelRouterEnabled, "model-router", false, "Enable per-tool model routing based on complexity_tier")
 	serveCmd.Flags().StringVar(&serveFlags.modelRouterConfig, "model-router-config", "", "Path to model router YAML config (uses defaults if not set)")
+	serveCmd.Flags().StringVar(&serveFlags.sidecarProvider, "sidecar-provider", "", "Sidecar provider (ollama) for local LLM redaction (empty = disabled)")
+	serveCmd.Flags().StringVar(&serveFlags.sidecarModel, "sidecar-model", "llama3.1:8b", "Sidecar model name")
+	serveCmd.Flags().StringVar(&serveFlags.sidecarURL, "sidecar-url", "http://localhost:11434", "Sidecar server URL")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -207,6 +215,25 @@ func runServe(cmd *cobra.Command, args []string) {
 		)
 	} else {
 		slog.Debug("model router disabled")
+	}
+
+	{
+		sidecarCfg := sidecar.Config{
+			Provider: serveFlags.sidecarProvider,
+			Model:    serveFlags.sidecarModel,
+			URL:      serveFlags.sidecarURL,
+		}
+		var err error
+		globalSidecar, err = sidecar.NewManager(sidecarCfg, slog.Default())
+		if err != nil {
+			slog.Warn("sidecar: initialization failed", "error", err)
+		}
+		if globalSidecar != nil && globalSidecar.Enabled() {
+			slog.Info("sidecar enabled",
+				"provider", globalSidecar.Provider(),
+				"model", globalSidecar.Model(),
+			)
+		}
 	}
 
 	initVectorStore(loadedCfg)
@@ -356,6 +383,9 @@ func runServe(cmd *cobra.Command, args []string) {
 				if statusStore != nil {
 					statusStore.RemoveFile()
 				}
+				if globalSidecar != nil {
+					globalSidecar.Close()
+				}
 				ln.Close()
 				if sc := cache.GlobalSemanticCache(); sc != nil {
 					sc.Stop()
@@ -479,6 +509,8 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		timeout = 30 * time.Second
 	}
 
+	redactWithSidecar(ctx, req)
+
 	resp, err := p.SendRequest(ctx, server.ID, req, timeout)
 	if err != nil {
 		writeError(writer, errors.ErrCodeInternalError, err.Error())
@@ -533,6 +565,8 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
+
+	redactWithSidecar(ctx, req)
 
 	resp, err := p.SendRequest(ctx, server.ID, req, timeout)
 	if err != nil {
@@ -604,6 +638,9 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 		if timeout == 0 {
 			timeout = 30 * time.Second
 		}
+
+		redactWithSidecar(ctx, req)
+
 		resp, err := p.SendRequest(ctx, server.ID, req, timeout)
 		if err != nil {
 			responses = append(responses, &proxy.JSONRPCResponse{
@@ -836,6 +873,21 @@ func embedOutboundPayload(req *proxy.JSONRPCRequest) {
 	})
 }
 
+func redactWithSidecar(ctx context.Context, req *proxy.JSONRPCRequest) {
+	if globalSidecar == nil || !globalSidecar.Enabled() {
+		return
+	}
+	if req == nil || len(req.Params) == 0 {
+		return
+	}
+	redacted, err := bouncer.RedactJSONWithSidecar(ctx, req.Params, nil, globalSidecar)
+	if err != nil {
+		slog.Warn("sidecar: redaction error", "error", err)
+		return
+	}
+	req.Params = redacted
+}
+
 // semanticCacheDenylist lists JSON-RPC lifecycle/listing methods whose
 // responses must never be cached.
 var semanticCacheDenylist = map[string]bool{
@@ -1062,6 +1114,9 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 		if timeout == 0 {
 			timeout = 30 * time.Second
 		}
+
+		redactWithSidecar(ctx, req)
+
 		resp, err := p.SendRequest(ctx, server.ID, req, timeout)
 		if err != nil {
 			responses = append(responses, &proxy.JSONRPCResponse{
