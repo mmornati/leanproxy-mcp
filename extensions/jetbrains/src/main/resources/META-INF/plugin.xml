@@ -1,0 +1,51 @@
+<idea-plugin>
+    <id>com.leanproxy.leanproxy-cost</id>
+    <name>LeanProxy Cost Monitor</name>
+    <version>0.1.0</version>
+    <vendor email="support@leanproxy.dev" url="https://github.com/mmornati/leanproxy-mcp">LeanProxy</vendor>
+    <description><![CDATA[
+        <h2>LeanProxy Cost Monitor</h2>
+        <p>Real-time AI cost monitoring for LeanProxy in your JetBrains IDE status bar and tool window.</p>
+        <p>Features:</p>
+        <ul>
+            <li>Status bar widget showing estimated session cost</li>
+            <li>Tool window with per-tool and per-server token breakdown</li>
+            <li>Configurable polling interval and metrics endpoint</li>
+            <li>Top 5 most expensive tools view</li>
+        </ul>
+    ]]></description>
+    <change-notes><![CDATA[
+        <ul>
+            <li>0.1.0: Initial release - parity with VS Code extension</li>
+        </ul>
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="LeanProxy"
+                    anchor="right"
+                    factoryClass="com.leanproxy.jetbrains.LeanProxyToolWindowFactory"
+                    icon="AllIcons.General.ProjectStructure"/>
+        <statusBarWidgetFactory
+                id="leanproxyStatusBar"
+                implementation="com.leanproxy.jetbrains.LeanProxyStatusBarWidgetFactory"/>
+        <applicationService serviceImplementation="com.leanproxy.jetbrains.LeanProxySettings"/>
+        <applicationConfigurable groupId="tools"
+                                 id="com.leanproxy.jetbrains.SettingsConfigurable"
+                                 displayName="LeanProxy Cost Monitor"
+                                 instance="com.leanproxy.jetbrains.SettingsConfigurable"/>
+        <postStartupActivity implementation="com.leanproxy.jetbrains.LeanProxyProjectService"/>
+    </extensions>
+
+    <actions>
+        <action id="leanproxy.openCostPanel"
+                class="com.leanproxy.jetbrains.OpenCostPanelAction"
+                text="LeanProxy: Open Cost Panel"
+                description="Open LeanProxy Cost Breakdown tool window"/>
+        <action id="leanproxy.refreshStatusBar"
+                class="com.leanproxy.jetbrains.RefreshStatusBarAction"
+                text="LeanProxy: Refresh Status Bar"
+                description="Force refresh LeanProxy status bar widget"/>
+    </actions>
+</idea-plugin>

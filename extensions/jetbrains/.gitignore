@@ -1,0 +1,9 @@
+build/
+.gradle/
+*.iml
+.idea/
+out/
+dist/
+*.jar
+*.zip
+local.properties
