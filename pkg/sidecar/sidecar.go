@@ -2,6 +2,7 @@ package sidecar
 
 import (
 	"context"
+	"io"
 	"sync/atomic"
 
 	"log/slog"
@@ -13,6 +14,7 @@ type RedactClient interface {
 	Provider() string
 	Model() string
 	Healthy(ctx context.Context) bool
+	io.Closer
 }
 
 type Manager struct {
@@ -89,7 +91,9 @@ func (m *Manager) Close() {
 		return
 	}
 	m.enabled.Store(false)
-	if c, ok := m.client.(*Client); ok {
-		c.Close()
+	if m.client != nil {
+		if err := m.client.Close(); err != nil && m.logger != nil {
+			m.logger.Debug("sidecar: client close error", "error", err)
+		}
 	}
 }

@@ -91,7 +91,7 @@ func TestNewClient(t *testing.T) {
 		}
 	})
 
-	t.Run("ollama config creates client", func(t *testing.T) {
+	t.Run("ollama config creates client via dispatcher", func(t *testing.T) {
 		c, err := NewClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: "http://localhost:11434"}, nil)
 		if err != nil {
 			t.Fatalf("NewClient() error = %v", err)
@@ -105,7 +105,16 @@ func TestNewClient(t *testing.T) {
 		if c.Model() != "llama3.1:8b" {
 			t.Errorf("expected model llama3.1:8b, got %q", c.Model())
 		}
-		c.Close()
+	})
+
+	t.Run("mlx config returns error without mlx build tag", func(t *testing.T) {
+		c, err := NewClient(Config{Provider: "mlx", Model: "test"}, nil)
+		if err == nil {
+			t.Fatal("expected error for mlx provider without mlx build tag")
+		}
+		if c != nil {
+			t.Error("expected nil client on error")
+		}
 	})
 }
 
@@ -165,9 +174,9 @@ func TestClient_Redact_Success(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c, err := NewClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
+	c, err := NewOllamaClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
 	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("NewOllamaClient() error = %v", err)
 	}
 	defer c.Close()
 
@@ -186,9 +195,9 @@ func TestClient_Redact_ServerError(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c, err := NewClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
+	c, err := NewOllamaClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
 	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("NewOllamaClient() error = %v", err)
 	}
 	defer c.Close()
 
@@ -209,9 +218,9 @@ func TestClient_Generate_Success(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c, err := NewClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
+	c, err := NewOllamaClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
 	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("NewOllamaClient() error = %v", err)
 	}
 	defer c.Close()
 
@@ -417,9 +426,9 @@ func TestClient_Generate_ContextCancelled(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c, err := NewClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
+	c, err := NewOllamaClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
 	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("NewOllamaClient() error = %v", err)
 	}
 	defer c.Close()
 
@@ -472,9 +481,9 @@ func TestClient_Redact_MalformedJSON(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c, err := NewClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
+	c, err := NewOllamaClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
 	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("NewOllamaClient() error = %v", err)
 	}
 	defer c.Close()
 
@@ -495,9 +504,9 @@ func TestClient_Redact_EmptyResponse(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	c, err := NewClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
+	c, err := NewOllamaClient(Config{Provider: "ollama", Model: "llama3.1:8b", URL: ts.URL}, nil)
 	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
+		t.Fatalf("NewOllamaClient() error = %v", err)
 	}
 	defer c.Close()
 

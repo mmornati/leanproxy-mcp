@@ -19,3 +19,8 @@
 - [Review][Defer] No telemetry exposure for fallback count — metrics endpoint for sidecar is out of scope for first implementation
 - [Review][Defer] No large-content guard for sidecar — model-specific context windows are outside this story's scope
 - [Review][Defer] `pkg/health` integration not implemented — sidecar `Healthy()` is sufficient for v1
+
+## Deferred from: code review of 15-3-mlx-apple-silicon (2026-07-19)
+
+- [Review][Defer] Story file `baseline_commit` frontmatter is misleading — story claims `baseline_commit: 42c06c67...` but changes are uncommitted on main. Defer: dev should commit before tagging review complete.
+- [Review][Defer] Story Dev Agent Record claims "All acceptance criteria satisfied" — but A1/A2/A4 are unmet. Defer: amend Dev Agent Record on next edit.
