@@ -1,9 +1,24 @@
 package injection
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type CorpusEntry struct {
+	Payload         string   `json:"payload"`
+	ShouldDetect    bool     `json:"should_detect"`
+	Categories      []string `json:"categories"`
+	ExpectedRiskMin int      `json:"expected_risk_min"`
+	Notes           string   `json:"notes"`
+}
+
+func corpusPath() string {
+	return filepath.Join("..", "..", "..", "tests", "security", "injection_corpus.json")
+}
 
 func TestNewClassifier(t *testing.T) {
 	c := NewClassifier()
@@ -470,6 +485,77 @@ func TestPatternDef_CompileInvalid(t *testing.T) {
 	_, err := def.Compile()
 	if err == nil {
 		t.Fatal("expected error for invalid regex")
+	}
+}
+
+func TestClassify_InjectionCorpus(t *testing.T) {
+	data, err := os.ReadFile(corpusPath())
+	if err != nil {
+		t.Fatalf("failed to read injection corpus: %v", err)
+	}
+
+	var corpus []CorpusEntry
+	if err := json.Unmarshal(data, &corpus); err != nil {
+		t.Fatalf("failed to parse injection corpus: %v", err)
+	}
+
+	if len(corpus) != 200 {
+		t.Errorf("expected 200 corpus entries, got %d", len(corpus))
+	}
+
+	c := NewClassifier()
+
+	var tp, fn int
+	var falsePositives []string
+	var falseNegatives []string
+
+	for _, entry := range corpus {
+		result := c.Classify(entry.Payload)
+		detected := result.RiskScore > 0
+		if entry.ShouldDetect {
+			if detected {
+				tp++
+				if result.RiskScore < entry.ExpectedRiskMin {
+				payloadDisplay := entry.Payload
+				if len(payloadDisplay) > 80 {
+					payloadDisplay = payloadDisplay[:80] + "..."
+				}
+				t.Errorf("corpus entry %q: expected risk >= %d, got %d",
+					payloadDisplay, entry.ExpectedRiskMin, result.RiskScore)
+				}
+			} else {
+				fn++
+				falseNegatives = append(falseNegatives, entry.Payload)
+			}
+		} else {
+			if detected {
+				falsePositives = append(falsePositives, entry.Payload)
+			}
+		}
+	}
+
+	totalInjections := tp + fn
+	if totalInjections == 0 {
+		t.Errorf("corpus has no injection entries: all %d entries are benign; regression gate is vacuous", len(corpus))
+	}
+	recall := float64(tp) / float64(totalInjections) * 100
+	t.Logf("Injection corpus recall: %.1f%% (%d/%d detected)", recall, tp, totalInjections)
+	if recall < 100.0 {
+		t.Errorf("recall %.1f%% below 100%% threshold (want 100%%)", recall)
+	}
+
+	if len(falseNegatives) > 0 {
+		t.Logf("False negatives (%d):", len(falseNegatives))
+		for _, fn := range falseNegatives {
+			t.Logf("  - %q", fn)
+		}
+	}
+
+	if len(falsePositives) > 0 {
+		t.Errorf("benign payloads detected (%d):", len(falsePositives))
+		for _, fp := range falsePositives {
+			t.Errorf("  - %q", fp)
+		}
 	}
 }
 
