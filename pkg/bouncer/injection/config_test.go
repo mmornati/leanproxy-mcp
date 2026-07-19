@@ -217,3 +217,150 @@ func TestConfig_BuildClassifier_NoCustom(t *testing.T) {
 		t.Errorf("expected %d default patterns, got %d", len(DefaultPatternDefs), len(allPatterns))
 	}
 }
+
+func TestConfig_BuildDispatcher_Default(t *testing.T) {
+	cfg := DefaultConfig()
+	d := cfg.BuildDispatcher()
+	if d == nil {
+		t.Fatal("expected non-nil dispatcher")
+	}
+	rules := d.Rules()
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 catch-all rule from Action shorthand, got %d", len(rules))
+	}
+	if rules[0].Action != ActionBlock {
+		t.Errorf("expected block action from DefaultConfig, got %s", rules[0].Action)
+	}
+	if rules[0].MinRisk != 1 || rules[0].MaxRisk != 100 {
+		t.Errorf("expected catch-all rule (1-100), got %d-%d", rules[0].MinRisk, rules[0].MaxRisk)
+	}
+}
+
+func TestConfig_BuildDispatcher_WithPolicies(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Policies = []Rule{
+		{MinRisk: 90, MaxRisk: 100, Action: ActionBlock},
+		{MinRisk: 1, MaxRisk: 89, Action: ActionLog},
+	}
+	d := cfg.BuildDispatcher()
+	rules := d.Rules()
+	if len(rules) != 2 {
+		t.Fatalf("expected 2 custom rules, got %d", len(rules))
+	}
+	if rules[0].MinRisk != 90 {
+		t.Errorf("expected MinRisk 90, got %d", rules[0].MinRisk)
+	}
+	if rules[1].Action != ActionLog {
+		t.Errorf("expected ActionLog for second rule, got %s", rules[1].Action)
+	}
+}
+
+func TestConfig_BuildDispatcher_BlockPolicy(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Policies = []Rule{
+		{MinRisk: 80, MaxRisk: 100, Action: ActionBlock},
+	}
+	d := cfg.BuildDispatcher()
+	result := d.Dispatch(Result{RiskScore: 85, Payload: "test"})
+	if result.Action != ActionBlock {
+		t.Errorf("expected block, got %s", result.Action)
+	}
+}
+
+func TestConfig_BuildDispatcher_EmptyPolicies(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Policies = []Rule{}
+	d := cfg.BuildDispatcher()
+	rules := d.Rules()
+	if len(rules) != 0 {
+		t.Errorf("expected 0 rules with empty policies, got %d", len(rules))
+	}
+}
+
+func TestConfig_BuildDispatcher_ActionShorthand(t *testing.T) {
+	cfg := &Config{
+		Enabled:   true,
+		Threshold: 70,
+		Action:    "redact",
+	}
+	d := cfg.BuildDispatcher()
+	if d == nil {
+		t.Fatal("expected non-nil dispatcher")
+	}
+	rules := d.Rules()
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 catch-all rule from Action shorthand, got %d", len(rules))
+	}
+	if rules[0].Action != ActionRedact {
+		t.Errorf("expected redact action, got %s", rules[0].Action)
+	}
+	if rules[0].MinRisk != 1 || rules[0].MaxRisk != 100 {
+		t.Errorf("expected catch-all rule (1-100), got %d-%d", rules[0].MinRisk, rules[0].MaxRisk)
+	}
+}
+
+func TestConfig_BuildDispatcher_NoActionNoPolicies(t *testing.T) {
+	cfg := &Config{
+		Enabled:   true,
+		Threshold: 70,
+	}
+	d := cfg.BuildDispatcher()
+	if d == nil {
+		t.Fatal("expected non-nil dispatcher")
+	}
+	rules := d.Rules()
+	if len(rules) != 3 {
+		t.Fatalf("expected 3 default rules, got %d", len(rules))
+	}
+}
+
+func TestConfig_BuildDispatcher_PoliciesOverrideAction(t *testing.T) {
+	cfg := &Config{
+		Enabled:   true,
+		Threshold: 70,
+		Action:    "block",
+		Policies: []Rule{
+			{MinRisk: 50, MaxRisk: 100, Action: ActionLog},
+		},
+	}
+	d := cfg.BuildDispatcher()
+	rules := d.Rules()
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 policy rule, got %d", len(rules))
+	}
+	if rules[0].Action != ActionLog {
+		t.Errorf("expected log action from policies, got %s", rules[0].Action)
+	}
+}
+
+func TestLoadConfig_WithPolicies(t *testing.T) {
+	yamlContent := `
+enabled: true
+threshold: 70
+policies:
+  - min_risk: 80
+    max_risk: 100
+    action: block
+  - min_risk: 1
+    max_risk: 79
+    action: log
+`
+	cfg, err := LoadConfig(strings.NewReader(yamlContent))
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if len(cfg.Policies) != 2 {
+		t.Fatalf("expected 2 policies, got %d", len(cfg.Policies))
+	}
+	if cfg.Policies[0].Action != ActionBlock {
+		t.Errorf("expected block action, got %s", cfg.Policies[0].Action)
+	}
+	if cfg.Policies[1].Action != ActionLog {
+		t.Errorf("expected log action, got %s", cfg.Policies[1].Action)
+	}
+	d := cfg.BuildDispatcher()
+	result := d.Dispatch(Result{RiskScore: 90, Payload: "test"})
+	if result.Action != ActionBlock {
+		t.Errorf("expected block from policies, got %s", result.Action)
+	}
+}

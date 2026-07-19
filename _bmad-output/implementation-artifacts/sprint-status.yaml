@@ -89,7 +89,7 @@ development_status:
   12-2-vector-store-pluggable: in-progress
   12-3-cache-ttl-dashboard: ready-for-dev
   13-1-injection-classifier: review
-  13-2-configurable-actions: ready-for-dev
+  13-2-configurable-actions: review
   13-3-red-team-corpus: ready-for-dev
   14-1-metrics-endpoint: ready-for-dev
   14-2-vscode-extension: ready-for-dev
@@ -106,5 +106,5 @@ development_status:
   18-2-drill-down: ready-for-dev
   18-3-csv-json-export: ready-for-dev
 
-last_updated: 2026-07-18
+last_updated: 2026-07-19
 sprint_goal: Complete Epic 12 (Semantic Cache), begin Epics 13-14 as capacity allows

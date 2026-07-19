@@ -1,16 +1,16 @@
 # Graph Report - leanproxy-mcp  (2026-07-18)
 
 ## Corpus Check
-- 580 files · ~435,694 words
+- 593 files · ~446,780 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 5226 nodes · 9914 edges · 396 communities (281 shown, 115 thin omitted)
-- Extraction: 83% EXTRACTED · 17% INFERRED · 0% AMBIGUOUS · INFERRED: 1700 edges (avg confidence: 0.81)
+- 5442 nodes · 10437 edges · 407 communities (291 shown, 116 thin omitted)
+- Extraction: 83% EXTRACTED · 17% INFERRED · 0% AMBIGUOUS · INFERRED: 1822 edges (avg confidence: 0.81)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `2fcc14f8`
+- Built from commit: `24f69394`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -153,8 +153,10 @@
 - Code Module 136
 - Code Module 137
 - Code Module 138
+- NewSemanticCache
 - Code Module 140
 - Code Module 141
+- SemanticCache
 - Code Module 143
 - Code Module 144
 - Code Module 145
@@ -178,6 +180,7 @@
 - Code Module 163
 - Code Module 164
 - Code Module 165
+- MCPServerInstance
 - Code Module 167
 - Code Module 168
 - Code Module 169
@@ -189,13 +192,16 @@
 - Code Module 175
 - Code Module 176
 - Code Module 177
+- LoadSemanticStatsSnapshot
 - Response
+- .Compile
 - Code Module 181
 - Code Module 182
 - Code Module 183
 - Code Module 184
 - Code Module 185
 - Code Module 186
+- semantic_cache.go
 - Code Module 188
 - Code Module 189
 - Code Module 190
@@ -225,6 +231,7 @@
 - Code Module 215
 - Code Module 216
 - Code Module 217
+- mockVectorStore
 - Code Module 219
 - Code Module 220
 - Code Module 221
@@ -258,6 +265,7 @@
 - Code Module 249
 - Code Module 250
 - Code Module 251
+- SemanticCacheStats
 - Code Module 253
 - Code Module 254
 - Code Module 255
@@ -269,6 +277,7 @@
 - TestMCPServer_LoadAndToolCall
 - Small Fragment 262
 - Small Fragment 263
+- cosineSimilarity
 - Small Fragment 265
 - Small Fragment 266
 - Small Fragment 267
@@ -278,6 +287,7 @@
 - Small Fragment 271
 - Small Fragment 272
 - Small Fragment 273
+- Acceptance Auditor — Spec Compliance Review
 - Small Fragment 275
 - Small Fragment 276
 - Small Fragment 277
@@ -399,19 +409,20 @@
 - Small Fragment 394
 - Small Fragment 395
 - Small Fragment 400
+- formatUptime
 - FederationRouter
 
 ## God Nodes (most connected - your core abstractions)
 1. `New()` - 117 edges
-2. `Logger` - 109 edges
+2. `Logger` - 111 edges
 3. `LeanProxy-MCP` - 71 edges
 4. `NewBreakpointInjector()` - 54 edges
 5. `StdioServerV2` - 43 edges
-6. `NewProviderDetector()` - 37 edges
-7. `NewStdioPool()` - 37 edges
-8. `NewServer()` - 37 edges
-9. `NewHTTPClientPool()` - 34 edges
-10. `StdioPool` - 34 edges
+6. `NewClassifier()` - 40 edges
+7. `NewServer()` - 38 edges
+8. `NewProviderDetector()` - 37 edges
+9. `NewStdioPool()` - 37 edges
+10. `NewHTTPClientPool()` - 34 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `main()` --calls--> `New()`  [INFERRED]
@@ -532,15 +543,15 @@
 - **Epic 8 Performance Features** — leanproxymcp_lazy_loading, leanproxymcp_e2e_test_configuration [EXTRACTED 1.00]
 - **Epic 9 Federation Features** — leanproxymcp_hierarchical_namespaces, leanproxymcp_federation, leanproxymcp_e2e_test_configuration [EXTRACTED 1.00]
 
-## Communities (396 total, 115 thin omitted)
+## Communities (407 total, 116 thin omitted)
 
 ### Community 0 - "Caching and Metrics"
 Cohesion: 0.05
-Nodes (66): anthropicResponseMeta, anthropicUsage, CacheStats, CacheStatsTracker, ModelPricing, clearCache(), Command, listCachedServers() (+58 more)
+Nodes (69): anthropicResponseMeta, anthropicUsage, CacheStats, CacheStatsTracker, ModelPricing, clearCache(), Command, listCachedServers() (+61 more)
 
 ### Community 1 - "MCP Server Instance"
-Cohesion: 0.06
-Nodes (46): CallToolRequest, MCPServerInstance, MCPServer, CallToolResult, Context, StdioPool, NewMCPServerInstance(), CallToolResult (+38 more)
+Cohesion: 0.08
+Nodes (39): CallToolResult, CancelFunc, Client, Context, Duration, Once, RawMessage, Response (+31 more)
 
 ### Community 2 - "Breakpoint Injection"
 Cohesion: 0.11
@@ -551,8 +562,8 @@ Cohesion: 0.08
 Nodes (52): RWMutex, Time, ListStatusFilesFromConfigDir(), listStatusFilesFromDir(), NewFileStatusStore(), NewFileStatusStoreFromConfigDir(), newFileStatusStoreWithDir(), ReadCurrentStatus() (+44 more)
 
 ### Community 4 - "Provider Detection Config"
-Cohesion: 0.09
-Nodes (52): DetectorConfig, errorReader, Provider, ProviderConfig, ProviderDetector, ProviderDetectorOption, providerPattern, init() (+44 more)
+Cohesion: 0.06
+Nodes (65): DetectorConfig, errorReader, Provider, ProviderConfig, ProviderDetector, ProviderDetectorOption, providerPattern, Command (+57 more)
 
 ### Community 5 - "Namespace Commands"
 Cohesion: 0.08
@@ -567,8 +578,8 @@ Cohesion: 0.04
 Nodes (53): Anthropic (AI Provider), BMad Framework, CI Workflow (GitHub Actions), Claude Code (IDE), Cobra CLI Library, Cursor (IDE), Dry-Run Mode, E2E Test Suite (+45 more)
 
 ### Community 8 - "Trust Score Calculation"
-Cohesion: 0.10
-Nodes (47): CalculateTrustScore(), downloadScore(), FormatInt(), FormatInt64(), FormatLastRelease(), FormatString(), FormatTrustLabel(), FormatWarning() (+39 more)
+Cohesion: 0.09
+Nodes (48): CalculateTrustScore(), downloadScore(), FormatInt(), FormatInt64(), FormatLastRelease(), FormatString(), FormatTrustLabel(), FormatWarning() (+40 more)
 
 ### Community 9 - "Party Mode Resolution"
 Cohesion: 0.05
@@ -579,8 +590,8 @@ Cohesion: 0.06
 Nodes (26): _alias(), _brief(), build_pool(), _emit(), find_party_skill(), load_agents(), load_party_overrides(), load_party_workflow() (+18 more)
 
 ### Community 11 - "Secret Pattern Validation"
-Cohesion: 0.09
-Nodes (40): PatternConfig, SecretPattern, CompileCustomPatterns(), CompileCustomPatternsWithTimeout(), FormatPatternList(), GetBuiltInPatterns(), GetPatternByName(), GetPatternNames() (+32 more)
+Cohesion: 0.10
+Nodes (36): PatternConfig, SecretPattern, FormatPatternList(), GetBuiltInPatterns(), GetPatternByName(), GetPatternNames(), Regexp, LoadPatternsWithLogging() (+28 more)
 
 ### Community 12 - "Connection Pool Management"
 Cohesion: 0.11
@@ -599,8 +610,8 @@ Cohesion: 0.09
 Nodes (33): buildSessionMetrics(), Command, runReport(), T, TestBuildSessionMetrics(), TestGlobalReportGenerator(), TestReportCmd_Flags(), TestReportCmd_HelpOutput() (+25 more)
 
 ### Community 16 - "JIT Tool Schema"
-Cohesion: 0.15
-Nodes (29): RawMessage, IsGetToolSchemaRequest(), NewJITHandler(), BenchmarkJITCacheHit(), BenchmarkJITCacheMiss(), ExampleJITHandler(), B, Context (+21 more)
+Cohesion: 0.14
+Nodes (31): Context, RawMessage, IsGetToolSchemaRequest(), newErrorResponse(), NewJITHandler(), newSuccessResponse(), BenchmarkJITCacheHit(), BenchmarkJITCacheMiss() (+23 more)
 
 ### Community 17 - "Security and Config Docs"
 Cohesion: 0.05
@@ -616,7 +627,7 @@ Nodes (38): Architectural Patterns Analysis, BMad Sprint Planning, BMad Sprint S
 
 ### Community 20 - "Mock Server State"
 Cohesion: 0.18
-Nodes (33): ServerSource, NewHandler(), NewHandlerWithToolStore(), RawMessage, T, newMockPool(), TestCollectTools(), TestFormatToolSearchResult() (+25 more)
+Nodes (34): MockRequestResult, ServerSource, NewHandler(), NewHandlerWithToolStore(), RawMessage, T, newMockPool(), TestCollectTools() (+26 more)
 
 ### Community 21 - "HTTP Client Pool"
 Cohesion: 0.16
@@ -639,8 +650,8 @@ Cohesion: 0.15
 Nodes (32): blockingEmbedder, EmbedOutcome, EmbedRequest, EmbedFailureCount(), EmbedSuccessCount(), EmbedToolCall(), GlobalEmbedPool(), Context (+24 more)
 
 ### Community 26 - "Add Command Interface"
-Cohesion: 0.13
-Nodes (31): cloneStringMap(), descriptionFor(), Command, Context, ServerConfig, loadExistingEntry(), runAdd(), containsString() (+23 more)
+Cohesion: 0.12
+Nodes (33): cloneStringMap(), descriptionFor(), Command, Context, ServerConfig, loadExistingEntry(), lookupTrustScore(), runAdd() (+25 more)
 
 ### Community 27 - "Server Capabilities"
 Cohesion: 0.05
@@ -655,8 +666,8 @@ Cohesion: 0.08
 Nodes (33): compile-epic-context, bmad-quick-dev, Ready for Development Standard, Scope Standard, Step-File Architecture, spec-template, step-01-clarify-and-route, Epic Story Path (+25 more)
 
 ### Community 30 - "Vector Store Abstraction"
-Cohesion: 0.14
-Nodes (37): newPineconeStore(), newQdrantStore(), cosineSimilarity(), defaultSQLitePath(), newSQLiteStore(), NewStore(), BenchmarkCosineSimilarity(), BenchmarkSQLiteSearch() (+29 more)
+Cohesion: 0.17
+Nodes (33): newPineconeStore(), newQdrantStore(), defaultSQLitePath(), newSQLiteStore(), NewStore(), BenchmarkSQLiteSearch(), discardLogger(), T (+25 more)
 
 ### Community 31 - "Duration and Timing"
 Cohesion: 0.26
@@ -679,8 +690,8 @@ Cohesion: 0.10
 Nodes (31): BMad Advanced Elicitation Skill, Elicitation Method, Party Mode, BMad Architecture Skill, AD-n Architecture Decision, Architecture Spine, Coaching Path vs Fast Path, Inherited Invariants (+23 more)
 
 ### Community 36 - "Cache Entry Model"
-Cohesion: 0.11
-Nodes (25): CacheEntry, CacheSnapshot, ErrAlreadyInstalled, ErrUnknownServer, fakeSource, Installer, InstallOptions, InstallResult (+17 more)
+Cohesion: 0.10
+Nodes (26): CacheEntry, CacheSnapshot, ErrAlreadyInstalled, ErrUnknownServer, fakeSource, fakeStopper, Installer, InstallOptions (+18 more)
 
 ### Community 37 - "Spine Lint Tests"
 Cohesion: 0.09
@@ -688,15 +699,15 @@ Nodes (12): cats(), test_duplicate_ad_id_caught(), test_fenced_stack_heading_not
 
 ### Community 39 - "Pool Configuration"
 Cohesion: 0.17
-Nodes (35): Pool, Router, formatUptime(), GetConfig(), Command, Config, Context, Duration (+27 more)
+Nodes (42): Pool, Router, cachedResponse(), embedForCache(), embedOutboundPayload(), extractToolName(), GetConfig(), Context (+34 more)
 
 ### Community 40 - "Boolean Options"
-Cohesion: 0.14
-Nodes (18): DB, bytesToFloat32Slice(), float32SliceToBytes(), float32SliceToString(), Bool, Context, RWMutex, marshalMetadata() (+10 more)
+Cohesion: 0.15
+Nodes (16): DB, bytesToFloat32Slice(), float32SliceToBytes(), float32SliceToString(), Bool, Context, RWMutex, marshalMetadata() (+8 more)
 
 ### Community 41 - "HTTP Transport Config"
-Cohesion: 0.16
-Nodes (23): IsBatchRequest(), NewProxy(), ParseJSONRPCBatchRequest(), ParseJSONRPCRequest(), ParseJSONRPCResponse(), contains(), findSubstring(), generateLargeBatch() (+15 more)
+Cohesion: 0.22
+Nodes (18): NewProxy(), contains(), findSubstring(), generateLargeBatch(), T, TestConcurrentProxyOperations(), TestIsBatchRequest(), TestJSONRPCErrorError() (+10 more)
 
 ### Community 42 - "Transport Protocol Types"
 Cohesion: 0.17
@@ -712,7 +723,7 @@ Nodes (28): NewValidator(), NewValidatorWithoutExecutableCheck(), T, TestFormatV
 
 ### Community 45 - "Request Queue Dequeue"
 Cohesion: 0.13
-Nodes (13): Context, Duration, Mutex, Request, RWMutex, Time, NewPoolQueueManager(), NewRequestQueue() (+5 more)
+Nodes (14): Logger, Context, Duration, Mutex, Request, RWMutex, Time, NewPoolQueueManager() (+6 more)
 
 ### Community 46 - "App Config Management"
 Cohesion: 0.14
@@ -755,8 +766,8 @@ Cohesion: 0.15
 Nodes (14): DefaultHealthConfig(), Context, Duration, RWMutex, Ticker, Time, WaitGroup, HealthConfig (+6 more)
 
 ### Community 56 - "Code Module 56"
-Cohesion: 0.14
-Nodes (12): lookupTrustScore(), Client, Context, Duration, Once, Time, WaitGroup, LeanProxyDir() (+4 more)
+Cohesion: 0.16
+Nodes (10): Client, Context, Duration, Once, Time, WaitGroup, hashFeedEntries(), FeedFetcher (+2 more)
 
 ### Community 57 - "Code Module 57"
 Cohesion: 0.16
@@ -775,16 +786,16 @@ Cohesion: 0.13
 Nodes (10): CancelFunc, Client, Once, RWMutex, ServerConfig, ServerState, NewHTTPClientServer(), HTTPClientPool (+2 more)
 
 ### Community 61 - "Code Module 61"
-Cohesion: 0.18
-Nodes (8): AlertManager, RedactionEvent, Get(), VersionString(), detectSecretFields(), Mutex, Time, Info
+Cohesion: 0.22
+Nodes (5): AlertManager, RedactionEvent, detectSecretFields(), Mutex, Time
 
 ### Community 62 - "Code Module 62"
-Cohesion: 0.08
-Nodes (18): Bool, Cmd, Context, Duration, Mutex, Once, RawMessage, Reader (+10 more)
+Cohesion: 0.09
+Nodes (16): Bool, Cmd, Context, Duration, Once, RawMessage, Reader, Request (+8 more)
 
 ### Community 63 - "Code Module 63"
-Cohesion: 0.16
-Nodes (14): BatchConfig, Batcher, BatchProcessor, BatchRequest, DefaultBatchProcessor, Logger, Context, Duration (+6 more)
+Cohesion: 0.15
+Nodes (13): BatchConfig, Batcher, BatchProcessor, BatchRequest, DefaultBatchProcessor, Context, Duration, Request (+5 more)
 
 ### Community 64 - "Code Module 64"
 Cohesion: 0.15
@@ -799,8 +810,8 @@ Cohesion: 0.18
 Nodes (23): Reader, LoadConfig(), T, TestCompilePatterns_ValidRejectsDangerous(), TestCompilePatternsInvalidRegexSkipped(), TestCompilePatternsNoCustom(), TestCompilePatternsOrderCustomFirst(), TestCompilePatternsValidCustom() (+15 more)
 
 ### Community 67 - "Code Module 67"
-Cohesion: 0.14
-Nodes (14): Context, Duration, Mutex, RawMessage, RWMutex, StdioPool, Time, NewHealthChecker() (+6 more)
+Cohesion: 0.16
+Nodes (12): Context, Duration, Mutex, RWMutex, StdioPool, Time, NewHealthChecker(), healthCheck (+4 more)
 
 ### Community 68 - "Code Module 68"
 Cohesion: 0.11
@@ -819,8 +830,8 @@ Cohesion: 0.18
 Nodes (13): getProcessStats(), Cmd, Context, Duration, serverEntry, RWMutex, Time, WaitGroup (+5 more)
 
 ### Community 72 - "Code Module 72"
-Cohesion: 0.18
-Nodes (12): Command, runMigrate(), DryRunner, NewDryRunner(), T, TestEnabled(), TestNewDryRunner(), TestNewDryRunnerDisabled() (+4 more)
+Cohesion: 0.05
+Nodes (72): Classifier, Config, InjectionPattern, Match, Result, BenchmarkClassifier_LongPayload(), BenchmarkClassifier_MultipleMatches(), BenchmarkClassifier_NoMatch() (+64 more)
 
 ### Community 73 - "Code Module 73"
 Cohesion: 0.09
@@ -839,8 +850,8 @@ Cohesion: 0.09
 Nodes (22): Agent-Team Mode, Auto Mode, BMad Advanced Elicitation Skill, BMad Customize Skill, BMad Party Mode Skill, Cast Ensemble, Create Party Reference, Focus Group Panel (+14 more)
 
 ### Community 77 - "Code Module 77"
-Cohesion: 0.21
-Nodes (14): ServerState, ServerStats, newServerV2(), newStderrRing(), T, TestRequestMarshalJSONNoTimeout(), TestSpawnAliveCheck(), TestSpawnSetsPythonUnbuffered() (+6 more)
+Cohesion: 0.17
+Nodes (16): Mutex, ServerState, ServerStats, newServerV2(), newStderrRing(), T, TestRequestMarshalJSONNoTimeout(), TestSpawnAliveCheck() (+8 more)
 
 ### Community 78 - "Code Module 78"
 Cohesion: 0.20
@@ -868,7 +879,7 @@ Nodes (21): BMad Advanced Elicitation, BMad Agent Analyst, BMad Agent Architect,
 
 ### Community 84 - "Code Module 84"
 Cohesion: 0.15
-Nodes (21): Buffer, mockReadWriter, injectBreakpoints(), Reader, T, TestHandleBatchRequest(), TestHandleConnection_EOF(), TestHandleConnection_GatewayTool() (+13 more)
+Nodes (20): Buffer, mockReadWriter, Reader, T, TestHandleBatchRequest(), TestHandleConnection_EOF(), TestHandleConnection_GatewayTool(), TestHandleConnection_ParseError() (+12 more)
 
 ### Community 85 - "Code Module 85"
 Cohesion: 0.11
@@ -887,8 +898,8 @@ Cohesion: 0.13
 Nodes (11): testEmbedder, Embedding, mockEmbedder, Context, EmbedRequest, Mutex, Provider, Context (+3 more)
 
 ### Community 89 - "Code Module 89"
-Cohesion: 0.12
-Nodes (14): mockGatewayTools, mockRouter, Context, ServerInfo, Tool, InvokeToolParams, ServerInfo, Tool (+6 more)
+Cohesion: 0.15
+Nodes (11): mockGatewayTools, mockRouter, Context, ServerInfo, Tool, InvokeToolParams, ServerInfo, Tool (+3 more)
 
 ### Community 90 - "Code Module 90"
 Cohesion: 0.32
@@ -911,8 +922,8 @@ Cohesion: 0.11
 Nodes (20): BMad Architecture Skill, BMad Create Epics and Stories Skill, BMad PRD Skill, BMad UX Skill, Headless Mode, Headless Mode JSON Schemas, Product Requirements Document (PRD), PRD Adapt-In Menu (+12 more)
 
 ### Community 95 - "Code Module 95"
-Cohesion: 0.16
-Nodes (12): ImportResult, MigrationSummary, Migrator, Scanner, ScanResult, Context, NewMigrator(), userConfigPath() (+4 more)
+Cohesion: 0.17
+Nodes (9): Command, runMigrate(), ImportResult, MigrationSummary, Migrator, ScanResult, Context, NewMigrator() (+1 more)
 
 ### Community 96 - "Code Module 96"
 Cohesion: 0.20
@@ -939,8 +950,8 @@ Cohesion: 0.25
 Nodes (9): Bool, Client, Context, Request, Response, qdrantPointID(), qdrantPoint, qdrantSearchResponse (+1 more)
 
 ### Community 102 - "Code Module 102"
-Cohesion: 0.29
-Nodes (18): NewFeedFetcher(), T, newTestRegistryServer(), TestFeedFetcher_CacheAge_ZeroSyncedAt(), TestFeedFetcher_CacheStaleInfo_CorruptFile(), TestFeedFetcher_CacheStaleInfo_FutureTimestamp(), TestFeedFetcher_FreshCache_NoNotice(), TestFeedFetcher_LoadCache_MissingFile() (+10 more)
+Cohesion: 0.15
+Nodes (27): Command, runMarketplaceSync(), startRegistryFeedSync(), LeanProxyDir(), NewFeedFetcher(), Mutex, T, newMutableRegistryServer() (+19 more)
 
 ### Community 103 - "Code Module 103"
 Cohesion: 0.11
@@ -1035,8 +1046,8 @@ Cohesion: 0.26
 Nodes (12): Command, runMarketplaceSearch(), T, TestMarketplaceSearchCmd_Registered(), TestMarketplaceSearchCmd_RejectsMultipleArgs(), TestMarketplaceSearchCmd_RejectsNoArgs(), TestRunMarketplaceSearch_EmptyCache(), TestRunMarketplaceSearch_EmptyQuery() (+4 more)
 
 ### Community 126 - "Code Module 126"
-Cohesion: 0.21
-Nodes (8): Compactor, OpenAIClient, RawManifest, Context, Client, Context, BuildDistillationPrompt(), manifestJSON()
+Cohesion: 0.19
+Nodes (8): OpenAIClient, OpenAIClientConfig, RawManifest, Context, Client, Context, BuildDistillationPrompt(), manifestJSON()
 
 ### Community 127 - "Code Module 127"
 Cohesion: 0.19
@@ -1055,8 +1066,8 @@ Cohesion: 0.12
 Nodes (16): Homebrew tap installation, Cost Attribution, Dry-Run Mode, Hierarchical multi-team namespaces, LeanProxy-MCP project, Multi-Transport (stdio/HTTP/SSE), OAuth2 Authentication, OpenCode IDE integration (+8 more)
 
 ### Community 131 - "Code Module 131"
-Cohesion: 0.26
-Nodes (11): mockPool, embedOutboundPayload(), extractToolName(), isToolCallMethod(), Duration, Context, newErrorResponse(), newSuccessResponse() (+3 more)
+Cohesion: 0.23
+Nodes (9): mockPool, isBatchRequest(), Duration, RawMessage, IsBatchRequest(), ParseJSONRPCResponse(), JSONRPCResponse, mockForwarder (+1 more)
 
 ### Community 132 - "Code Module 132"
 Cohesion: 0.30
@@ -1075,12 +1086,16 @@ Cohesion: 0.23
 Nodes (14): deep_merge(), _detect_keyed_merge_field(), extract_key(), find_project_root(), load_toml(), main(), _merge_arrays(), _merge_by_key() (+6 more)
 
 ### Community 137 - "Code Module 137"
-Cohesion: 0.24
-Nodes (8): boilerplatePattern, BoilerplateProcessor, BoilerplatePruner, BoilerplateReport, DetectLanguage(), Reader, Regexp, Writer
+Cohesion: 0.22
+Nodes (9): boilerplatePattern, BoilerplateProcessor, BoilerplatePruner, BoilerplateReport, DetectLanguage(), PatternDef, Reader, Regexp (+1 more)
 
 ### Community 138 - "Code Module 138"
 Cohesion: 0.25
 Nodes (14): T, TestBuildRawManifest(), TestCompactorCommand_HelpOutput(), TestJoinStrings(), TestJoinStrings_Empty(), TestRebuildAllServers_AllDisabled(), TestRebuildAllServers_NoServers(), TestRebuildCommand_DisabledServer() (+6 more)
+
+### Community 139 - "NewSemanticCache"
+Cohesion: 0.19
+Nodes (25): NewSemanticCache(), BenchmarkSemanticCacheGetExact(), BenchmarkSemanticCacheSet(), B, T, newMockVectorStore(), TestGlobalSemanticCache(), TestHitType_String() (+17 more)
 
 ### Community 140 - "Code Module 140"
 Cohesion: 0.19
@@ -1089,6 +1104,10 @@ Nodes (8): CallToolResult, Context, Duration, RawMessage, Response, StdioPool, T
 ### Community 141 - "Code Module 141"
 Cohesion: 0.23
 Nodes (12): displayCumulativeSavings(), displayServerSavings(), Command, runSavings(), T, TestDisplayCumulativeSavings(), TestDisplayServerSavings(), TestDisplayServerSavings_NotFound() (+4 more)
+
+### Community 142 - "SemanticCache"
+Cohesion: 0.16
+Nodes (12): SemanticCacheEntry, SemanticCacheResult, cacheKey(), Bool, SemanticCache, Context, RawMessage, RWMutex (+4 more)
 
 ### Community 143 - "Code Module 143"
 Cohesion: 0.13
@@ -1103,16 +1122,16 @@ Cohesion: 0.32
 Nodes (14): NewAlertManager(), T, TestAlertManagerDisabled(), TestAlertManagerEmitSummary(), TestAlertManagerEmitSummaryNoRedactions(), TestAlertManagerMultipleRedactions(), TestAlertManagerRecordsRedactions(), TestAlertManagerResetAfterSummary() (+6 more)
 
 ### Community 146 - "Code Module 146"
-Cohesion: 0.25
-Nodes (14): T, TestClaudeScanner_Name(), TestClaudeScanner_Scan_NotFound(), TestCursorScanner_Name(), TestCursorScanner_Scan_NotFound(), TestExecutableExists(), TestExpandPath(), TestFileExists() (+6 more)
+Cohesion: 0.17
+Nodes (18): Scanner, ExecutableExists(), fileExists(), T, TestClaudeScanner_Name(), TestClaudeScanner_Scan_NotFound(), TestCursorScanner_Name(), TestCursorScanner_Scan_NotFound() (+10 more)
 
 ### Community 147 - "Code Module 147"
 Cohesion: 0.28
 Nodes (14): NewHealthMonitor(), T, TestDefaultHealthConfig(), TestHealthMonitor_checkServer_Running(), TestHealthMonitor_checkServer_Stopped(), TestHealthMonitor_checkServer_Unresponsive(), TestHealthMonitor_GetStatus(), TestHealthMonitor_RegisterServer() (+6 more)
 
 ### Community 148 - "Code Module 148"
-Cohesion: 0.13
-Nodes (9): JSONRPCError, mockPool, MockRequestResult, RawMessage, Context, Duration, Response, ServerState (+1 more)
+Cohesion: 0.17
+Nodes (6): mockPool, Context, Duration, Response, ServerState, Tool
 
 ### Community 149 - "Code Module 149"
 Cohesion: 0.14
@@ -1135,8 +1154,8 @@ Cohesion: 0.26
 Nodes (12): calculateErrorRate(), filterByServer(), getLastError(), getRealStatusList(), getRunningStatusList(), Command, ServerState, ServerStats (+4 more)
 
 ### Community 154 - "Code Module 154"
-Cohesion: 0.21
-Nodes (7): ContextError, Context, NewContextError(), T, TestContextError(), TestValidateContext(), ValidateContext()
+Cohesion: 0.15
+Nodes (11): ContextError, JSONRPCError, Context, RawMessage, NewContextError(), T, TestContextError(), TestValidateContext() (+3 more)
 
 ### Community 155 - "Code Module 155"
 Cohesion: 0.14
@@ -1155,8 +1174,8 @@ Cohesion: 0.25
 Nodes (11): calculateTokenReduction(), compactDescription(), NewManifestProcessor(), T, TestCalculateTokenReduction(), TestCalculateTokenReduction_EmptyOriginal(), TestCompactDescription(), TestManifestProcessor_Process() (+3 more)
 
 ### Community 159 - "Code Module 159"
-Cohesion: 0.50
-Nodes (3): Reader, LoadRegistryConfig(), RegistryConfig
+Cohesion: 0.24
+Nodes (8): Config, initVectorStore(), Get(), VersionString(), Reader, LoadRegistryConfig(), RegistryConfig, Info
 
 ### Community 160 - "Code Module 160"
 Cohesion: 0.33
@@ -1182,6 +1201,10 @@ Nodes (6): get_assignee_for_delivery(), is_bot_name(), process_delivery(), get_i
 Cohesion: 0.17
 Nodes (13): Auto-throttle at Budget Threshold, Epic 17: Token Budget Governor, FR48, Hard Cap Budget Policy, Model Downgrade at Budget Threshold, NFR11, pkg/modelrouter/ package (from 15.1), Soft Cap Budget Policy (+5 more)
 
+### Community 166 - "MCPServerInstance"
+Cohesion: 0.19
+Nodes (7): CallToolRequest, MCPServerInstance, MCPServer, CallToolResult, Context, StdioPool, NewMCPServerInstance()
+
 ### Community 167 - "Code Module 167"
 Cohesion: 0.33
 Nodes (6): pineconeDeleteRequest, pineconeIndexResponse, pineconeQueryRequest, pineconeQueryResponse, pineconeUpsertRequest, pineconeVector
@@ -1203,12 +1226,12 @@ Cohesion: 0.17
 Nodes (11): description, required, $schema, title, type, completed_steps, current_step, mode (+3 more)
 
 ### Community 172 - "Code Module 172"
-Cohesion: 0.33
-Nodes (10): CompactorConfig, Cache, NewCompactor(), T, TestCompactor_Compact_CallsLLMOnCacheMiss(), TestCompactor_Compact_Disabled(), TestCompactor_Compact_UsesCache(), TestCompactor_CompactWithFallback() (+2 more)
+Cohesion: 0.27
+Nodes (12): Compactor, CompactorConfig, LLMClient, Cache, NewCompactor(), T, TestCompactor_Compact_CallsLLMOnCacheMiss(), TestCompactor_Compact_Disabled() (+4 more)
 
 ### Community 173 - "Code Module 173"
-Cohesion: 0.32
-Nodes (10): LLMClient, OpenAIClientConfig, NewOpenAIClient(), T, TestBuildDistillationPrompt(), TestOpenAIClient_Distill_APIError(), TestOpenAIClient_Distill_MissingAPIKey(), TestOpenAIClient_Distill_MissingEndpoint() (+2 more)
+Cohesion: 0.47
+Nodes (8): NewOpenAIClient(), T, TestBuildDistillationPrompt(), TestOpenAIClient_Distill_APIError(), TestOpenAIClient_Distill_MissingAPIKey(), TestOpenAIClient_Distill_MissingEndpoint(), TestOpenAIClient_Distill_RetrySucceeds(), TestOpenAIClient_Distill_Success()
 
 ### Community 174 - "Code Module 174"
 Cohesion: 0.36
@@ -1226,9 +1249,17 @@ Nodes (12): Config Merging, Config Schema, Deep Merge Strategy, Dynamic Server R
 Cohesion: 0.17
 Nodes (12): actions/cache@v4, actions/configure-pages@v4, actions/deploy-pages@v4, actions/upload-pages-artifact@v3, chrnorm/deployment-action@v2, chrnorm/deployment-status@v2, docs directory, Documentation (+4 more)
 
+### Community 178 - "LoadSemanticStatsSnapshot"
+Cohesion: 0.26
+Nodes (9): SemanticStatsSnapshot, SemanticCache, Time, LoadSemanticStatsSnapshot(), T, TestLoadSemanticStatsSnapshot_MissingFile(), TestSemanticCache_StopPersistsFinalSnapshot(), TestSemanticStatsSnapshot_RoundTrip() (+1 more)
+
 ### Community 179 - "Response"
 Cohesion: 0.42
 Nodes (5): Bool, Client, Context, Response, pineconeStore
+
+### Community 180 - ".Compile"
+Cohesion: 0.31
+Nodes (8): PatternConfig, PatternDef, CompileCustomPatterns(), CompileCustomPatternsWithTimeout(), Duration, PatternConfig, ValidateReDoS(), init()
 
 ### Community 181 - "Code Module 181"
 Cohesion: 0.20
@@ -1253,6 +1284,10 @@ Nodes (9): type, type, type, properties, architecture_type, parts_count, primary
 ### Community 186 - "Code Module 186"
 Cohesion: 0.35
 Nodes (6): StreamingRedactor, Reader, Regexp, Writer, NewStreamingRedactor(), NewStreamingRedactorWithAlerts()
+
+### Community 187 - "semantic_cache.go"
+Cohesion: 0.36
+Nodes (7): HitType, SemanticCacheOption, Duration, TestSemanticCache_StartStopLifecycle(), WithEvictionInterval(), WithStatsPersistInterval(), WithStatsPersistPath()
 
 ### Community 188 - "Code Module 188"
 Cohesion: 0.18
@@ -1299,8 +1334,8 @@ Cohesion: 0.20
 Nodes (10): Golangci Lint Configuration, errcheck, gofmt, goimports, gosimple, govet, misspell, prealloc (+2 more)
 
 ### Community 200 - "Code Module 200"
-Cohesion: 0.24
-Nodes (7): CompilePatterns(), Regexp, Regexp, IsPatternSafe(), SafeCompile(), SafeCompileMust(), StripComments()
+Cohesion: 0.22
+Nodes (8): CompilePatterns(), PatternConfig, Regexp, Regexp, IsPatternSafe(), SafeCompile(), SafeCompileMust(), StripComments()
 
 ### Community 201 - "Code Module 201"
 Cohesion: 0.36
@@ -1317,6 +1352,10 @@ Nodes (8): deep_merge(), _detect_keyed_merge_field(), extract_key(), load_toml()
 ### Community 204 - "Code Module 204"
 Cohesion: 0.36
 Nodes (7): buildRawManifest(), Command, Context, ServerConfig, rebuildAllServers(), rebuildServer(), runRebuild()
+
+### Community 205 - "Code Module 205"
+Cohesion: 0.25
+Nodes (7): Blind Hunter — Adversarial Review, classifier.go, config.go, patterns_default.yaml, patterns.go, Target: pkg/bouncer/injection/ — Story 13-1, Test files
 
 ### Community 206 - "Code Module 206"
 Cohesion: 0.25
@@ -1362,6 +1401,10 @@ Nodes (8): Architecture Decision Document, Bifrost (Competitor), Cloudflare MCP 
 Cohesion: 0.25
 Nodes (8): bouncer command, cache command, CLI Commands, migrate command, namespace command, serve command, server command, status command
 
+### Community 218 - "mockVectorStore"
+Cohesion: 0.32
+Nodes (4): mockVectorStore, cosineSim(), Context, Mutex
+
 ### Community 219 - "Code Module 219"
 Cohesion: 0.50
 Nodes (7): NewFileCache(), T, TestFileCache_DirectoryCreation(), TestFileCache_Get_NotFound(), TestFileCache_Invalidate(), TestFileCache_SetAndGet(), TestNoOpCache()
@@ -1395,8 +1438,8 @@ Cohesion: 0.33
 Nodes (3): is_direct_push_to_main(), TestIsDirectPushToMain, TestIsDirectPushToMain
 
 ### Community 227 - "Code Module 227"
-Cohesion: 0.43
-Nodes (5): Config, LoadedPatterns, PatternDef, Regexp, LoadConfigFile()
+Cohesion: 0.32
+Nodes (6): Config, LoadedPatterns, PatternDef, PatternDef, Regexp, LoadConfigFile()
 
 ### Community 228 - "Code Module 228"
 Cohesion: 0.48
@@ -1431,8 +1474,8 @@ Cohesion: 0.29
 Nodes (7): cmd/savings.go CLI command, Epic 5: Reporting & Insights, FR21, NFR9, SavingsTracker (cumulative token savings), Story 5-1: Implement Token Savings Calculator, TokenEstimator (character-based token counting)
 
 ### Community 236 - "Code Module 236"
-Cohesion: 0.33
-Nodes (4): claudeConfig, ClaudeScanner, claudeServer, Context
+Cohesion: 0.15
+Nodes (9): claudeConfig, ClaudeScanner, claudeServer, cursorConfig, CursorScanner, cursorServer, Context, Context (+1 more)
 
 ### Community 237 - "newServerV2"
 Cohesion: 0.38
@@ -1523,8 +1566,8 @@ Cohesion: 0.60
 Nodes (4): T, TestAllPatternsCompile(), TestBuiltInPatterns(), TestPatternCount()
 
 ### Community 260 - "JSONRPCError"
-Cohesion: 0.33
-Nodes (4): cursorConfig, CursorScanner, cursorServer, Context
+Cohesion: 0.50
+Nodes (3): Context, gatewayTools, ServerInfo
 
 ### Community 261 - "TestMCPServer_LoadAndToolCall"
 Cohesion: 0.60
@@ -1537,6 +1580,10 @@ Nodes (4): Batching Strategy, bmad-document-project Validation Checklist, Scan L
 ### Community 263 - "Small Fragment 263"
 Cohesion: 0.67
 Nodes (4): Code Review Present, Review Finding Types, Code Review Triage, Review Layer Types
+
+### Community 264 - "cosineSimilarity"
+Cohesion: 0.40
+Nodes (5): cosineSimilarity(), BenchmarkCosineSimilarity(), B, TestCosineSimilarity(), TestCosineSimilarity_Empty()
 
 ### Community 266 - "Small Fragment 266"
 Cohesion: 0.50
@@ -1610,24 +1657,28 @@ Nodes (3): bmad-forge-idea, idea pressure-testing, bmad-forge-idea skill
 Cohesion: 0.67
 Nodes (3): bmad-party-mode, multi-agent discussion, bmad-party-mode skill
 
+### Community 405 - "formatUptime"
+Cohesion: 0.67
+Nodes (3): formatUptime(), ServerStats, updateServerStatusPeriodically()
+
 ### Community 412 - "FederationRouter"
 Cohesion: 0.31
 Nodes (5): FederationRouter, PeerManager, Context, PeerManager, NewFederationRouter()
 
 ## Knowledge Gaps
-- **843 isolated node(s):** `$schema`, `title`, `description`, `type`, `workflow_version` (+838 more)
+- **852 isolated node(s):** `$schema`, `title`, `description`, `type`, `workflow_version` (+847 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **115 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **116 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Logger` connect `Code Module 63` to `MCP Server Instance`, `Breakpoint Injection`, `File Status Listing`, `Provider Detection Config`, `Namespace Commands`, `Code Module 134`, `Code Module 135`, `Code Module 257`, `Connection Pool Management`, `File Cache Layer`, `Auth and Server Config`, `Code Module 140`, `JIT Tool Schema`, `Code Module 147`, `Mock Server State`, `HTTP Client Pool`, `Server Capabilities`, `FederationRouter`, `Stdio Pool Tests`, `Vector Store Abstraction`, `Code Module 158`, `Connection Close Logic`, `Cache Entry Model`, `Pool Configuration`, `Boolean Options`, `HTTP Transport Config`, `Transport Protocol Types`, `Test Logger Utility`, `Code Module 172`, `Code Module 173`, `Request Queue Dequeue`, `Code Module 174`, `Network Address Config`, `Response`, `Pool and Request Handling`, `Embedding Providers`, `Installer Tests`, `Health Monitor Dashboard`, `Code Module 56`, `Code Module 58`, `Code Module 60`, `Code Module 62`, `Code Module 67`, `Code Module 69`, `Code Module 71`, `Code Module 72`, `Code Module 77`, `Code Module 81`, `Code Module 213`, `Code Module 85`, `Code Module 90`, `Code Module 219`, `Code Module 220`, `Code Module 96`, `Code Module 100`, `Code Module 101`, `Code Module 102`, `newServerV2`, `Code Module 115`, `Code Module 116`, `Code Module 126`?**
-  _High betweenness centrality (0.293) - this node is a cross-community bridge._
-- **Why does `Info` connect `Code Module 61` to `Handler Registration`, `Code Module 227`, `Pool Configuration`, `Secret Pattern Validation`, `Code Module 204`, `MCP Server Handler`, `Code Module 152`, `Code Module 186`, `Code Module 159`?**
-  _High betweenness centrality (0.100) - this node is a cross-community bridge._
-- **Why does `New()` connect `Code Module 90` to `Caching and Metrics`, `Bouncer`, `Breakpoint Injection`, `Provider Detection Config`, `Namespace Commands`, `Code Module 145`, `Mock Server State`, `Blocking Embedder`, `Code Module 154`, `Vector Store Abstraction`, `Connection Close Logic`, `Code Module 160`, `Code Module 163`, `HTTP Transport Config`, `Code Module 174`, `Embedding Providers`, `Installer Tests`, `Code Module 72`, `Code Module 74`, `Code Module 75`, `Code Module 102`, `newServerV2`, `Code Module 116`?**
-  _High betweenness centrality (0.080) - this node is a cross-community bridge._
+- **Why does `Logger` connect `Request Queue Dequeue` to `MCP Server Instance`, `Breakpoint Injection`, `File Status Listing`, `Provider Detection Config`, `Namespace Commands`, `Code Module 134`, `Code Module 135`, `Code Module 257`, `NewSemanticCache`, `Connection Pool Management`, `File Cache Layer`, `SemanticCache`, `Auth and Server Config`, `JIT Tool Schema`, `Code Module 140`, `Code Module 147`, `Mock Server State`, `HTTP Client Pool`, `Server Capabilities`, `FederationRouter`, `Stdio Pool Tests`, `Vector Store Abstraction`, `Code Module 158`, `Connection Close Logic`, `Cache Entry Model`, `MCPServerInstance`, `Pool Configuration`, `Boolean Options`, `HTTP Transport Config`, `Transport Protocol Types`, `Test Logger Utility`, `Code Module 172`, `Code Module 173`, `Code Module 174`, `Network Address Config`, `Response`, `Pool and Request Handling`, `Embedding Providers`, `Installer Tests`, `Health Monitor Dashboard`, `Code Module 56`, `Code Module 58`, `Code Module 60`, `Code Module 62`, `Code Module 63`, `Code Module 67`, `Code Module 69`, `Code Module 71`, `Code Module 77`, `Code Module 81`, `Code Module 213`, `Code Module 85`, `Code Module 90`, `Code Module 219`, `Code Module 220`, `Code Module 96`, `Code Module 100`, `Code Module 101`, `Code Module 102`, `newServerV2`, `Code Module 115`, `Code Module 116`, `Code Module 126`?**
+  _High betweenness centrality (0.273) - this node is a cross-community bridge._
+- **Why does `Info` connect `Code Module 159` to `Handler Registration`, `Code Module 227`, `Provider Detection Config`, `Pool Configuration`, `Code Module 72`, `Secret Pattern Validation`, `Code Module 204`, `MCP Server Handler`, `Code Module 152`, `Code Module 186`, `Code Module 61`?**
+  _High betweenness centrality (0.109) - this node is a cross-community bridge._
+- **Why does `New()` connect `Code Module 90` to `Caching and Metrics`, `Bouncer`, `Breakpoint Injection`, `Provider Detection Config`, `Namespace Commands`, `Code Module 145`, `Mock Server State`, `Blocking Embedder`, `Code Module 154`, `Vector Store Abstraction`, `Connection Close Logic`, `Code Module 160`, `Code Module 163`, `HTTP Transport Config`, `Code Module 174`, `Embedding Providers`, `Installer Tests`, `Code Module 74`, `Code Module 75`, `Code Module 102`, `newServerV2`, `Code Module 116`?**
+  _High betweenness centrality (0.064) - this node is a cross-community bridge._
 - **Are the 115 inferred relationships involving `New()` (e.g. with `TestCacheStatsCmd_UnknownModelWarningEmitted()` and `initLogger()`) actually correct?**
   _`New()` has 115 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 4 inferred relationships involving `LeanProxy-MCP` (e.g. with `Anthropic (AI Provider)` and `Google Gemini (AI Provider)`) actually correct?**
@@ -1635,4 +1686,4 @@ _Questions this graph is uniquely positioned to answer:_
 - **Are the 52 inferred relationships involving `NewBreakpointInjector()` (e.g. with `runServe()` and `TestInjectBreakpointsAnthropicAggressive()`) actually correct?**
   _`NewBreakpointInjector()` has 52 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `$schema`, `title`, `description` to the rest of the system?**
-  _843 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _852 weakly-connected nodes found - possible documentation gaps or missing edges._
