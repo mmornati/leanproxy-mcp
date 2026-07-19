@@ -26,11 +26,11 @@ type Rule struct {
 }
 
 type ActionResult struct {
-	Action            Action `json:"action"`
-	Message           string `json:"message,omitempty"`
-	RiskScore         int    `json:"risk_score"`
-	QuarantineID      string `json:"quarantine_id,omitempty"`
-	QuarantineDir     string `json:"-"`
+	Action             Action `json:"action"`
+	Message            string `json:"message,omitempty"`
+	RiskScore          int    `json:"risk_score"`
+	QuarantineID       string `json:"quarantine_id,omitempty"`
+	QuarantineDir      string `json:"-"`
 	TransformedPayload string `json:"-"`
 }
 
@@ -134,9 +134,9 @@ func (d *Dispatcher) quarantine(result Result) ActionResult {
 
 	qPath := filepath.Join(qDir, id+".json")
 	qEntry := struct {
-		ID        string `json:"id"`
-		RiskScore int    `json:"risk_score"`
-		Payload   string `json:"payload"`
+		ID        string  `json:"id"`
+		RiskScore int     `json:"risk_score"`
+		Payload   string  `json:"payload"`
 		Matches   []Match `json:"matches"`
 	}{
 		ID:        id,
