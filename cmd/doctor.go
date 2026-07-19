@@ -18,7 +18,7 @@ var doctorCmd = &cobra.Command{
 			runSecurityDiagnostic()
 			return
 		}
-		cmd.Help()
+		_ = cmd.Help()
 	},
 }
 
