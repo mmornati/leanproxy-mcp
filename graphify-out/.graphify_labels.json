@@ -405,5 +405,19 @@
   "403": "Small Fragment 403",
   "404": "Small Fragment 404",
   "405": "formatUptime",
-  "412": "FederationRouter"
+  "406": "Command",
+  "407": "Config",
+  "408": "Mutex",
+  "409": "Provider",
+  "410": "RawMessage",
+  "411": "ServerStats",
+  "412": "FederationRouter",
+  "413": "B",
+  "414": "PatternDef",
+  "415": "RWMutex",
+  "416": "PatternDef",
+  "417": "Reader",
+  "418": "Bool",
+  "419": "Regexp",
+  "420": "AuthConfig"
 }

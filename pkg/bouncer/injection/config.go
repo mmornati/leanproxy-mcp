@@ -12,13 +12,16 @@ import (
 type Config struct {
 	Enabled        bool         `yaml:"enabled"`
 	Threshold      int          `yaml:"threshold"`
+	Action         string       `yaml:"action"`
 	CustomPatterns []PatternDef `yaml:"custom_patterns"`
+	Policies       []Rule       `yaml:"policies,omitempty"`
 }
 
 func DefaultConfig() Config {
 	return Config{
 		Enabled:   true,
 		Threshold: 70,
+		Action:    "block",
 	}
 }
 
@@ -81,4 +84,17 @@ func (c *Config) BuildClassifier() (*Classifier, error) {
 	}
 
 	return classifier, nil
+}
+
+func (c *Config) BuildDispatcher() *Dispatcher {
+	if c.Policies != nil {
+		return NewDispatcher(c.Policies)
+	}
+	if c.Action != "" {
+		action := Action(c.Action)
+		return NewDispatcher([]Rule{
+			{MinRisk: 1, MaxRisk: 100, Action: action},
+		})
+	}
+	return NewDispatcher(nil)
 }

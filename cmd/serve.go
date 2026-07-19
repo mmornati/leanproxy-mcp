@@ -59,6 +59,7 @@ var providerDetector atomic.Pointer[cache.ProviderDetector]
 var breakpointInjector atomic.Pointer[cache.BreakpointInjector]
 var globalVectorStore atomic.Value
 var globalInjectionClassifier atomic.Pointer[injection.Classifier]
+var globalInjectionDispatcher atomic.Pointer[injection.Dispatcher]
 
 func init() {
 	providerDetector.Store(cache.NewProviderDetector())
@@ -181,6 +182,10 @@ func runServe(cmd *cobra.Command, args []string) {
 			slog.Info("injection classifier initialized",
 				"threshold", loadedCfg.Injection.Threshold)
 		}
+		dispatcher := loadedCfg.Injection.BuildDispatcher()
+		globalInjectionDispatcher.Store(dispatcher)
+		slog.Info("injection dispatcher initialized",
+			"policies", len(dispatcher.Rules()))
 	}
 
 	var toolStore toolstore.Cache
@@ -395,6 +400,11 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
+	if resp := checkInjection(req); resp != nil {
+		writeResponse(writer, resp)
+		return
+	}
+
 	if isGatewayTool(req.Method) {
 		handleGatewayTool(ctx, req, writer, gt)
 		return
@@ -438,6 +448,11 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 	req, err := proxy.ParseJSONRPCRequest(line)
 	if err != nil {
 		writeErrorAsync(writer, writerMu, errors.ErrCodeParseError, "Parse error")
+		return
+	}
+
+	if resp := checkInjection(req); resp != nil {
+		writeResponseAsync(writer, writerMu, resp)
 		return
 	}
 
@@ -499,6 +514,11 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 	for i := range reqs {
 		req := &reqs[i]
 		if req.ID == nil {
+			continue
+		}
+
+		if resp := checkInjection(req); resp != nil {
+			responses = append(responses, resp)
 			continue
 		}
 
@@ -688,6 +708,46 @@ func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) 
 
 	cache.GlobalCacheStatsTracker().RecordRequest(provider, hasBreakpoint, inputEstimate)
 	return provider
+}
+
+func checkInjection(req *proxy.JSONRPCRequest) *proxy.JSONRPCResponse {
+	classifier := globalInjectionClassifier.Load()
+	dispatcher := globalInjectionDispatcher.Load()
+	if classifier == nil || dispatcher == nil {
+		return nil
+	}
+
+	if len(req.Params) == 0 {
+		return nil
+	}
+
+	payload := string(req.Params)
+	result := classifier.Classify(payload)
+	if result.RiskScore == 0 {
+		return nil
+	}
+
+	actionResult := dispatcher.Dispatch(result)
+	switch actionResult.Action {
+	case injection.ActionBlock:
+		return &proxy.JSONRPCResponse{
+			JSONRPC: "2.0",
+			Error:   errors.NewJSONRPCError(errors.ErrCodeInvalidRequest, actionResult.Message),
+			ID:      req.ID,
+		}
+	case injection.ActionQuarantine:
+		data, _ := json.Marshal(actionResult.Message)
+		return &proxy.JSONRPCResponse{
+			JSONRPC: "2.0",
+			Result:  data,
+			ID:      req.ID,
+		}
+	case injection.ActionRedact:
+		req.Params = json.RawMessage(actionResult.TransformedPayload)
+		return nil
+	default:
+		return nil
+	}
 }
 
 func embedOutboundPayload(req *proxy.JSONRPCRequest) {
@@ -890,6 +950,11 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 	for i := range reqs {
 		req := &reqs[i]
 		if req.ID == nil {
+			continue
+		}
+
+		if resp := checkInjection(req); resp != nil {
+			responses = append(responses, resp)
 			continue
 		}
 

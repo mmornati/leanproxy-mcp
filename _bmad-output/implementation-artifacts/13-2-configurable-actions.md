@@ -1,6 +1,10 @@
+---
+baseline_commit: e43a46311bbd689f14ad14891b126b029f5fcfd0
+---
+
 # Story 13.2: Configurable actions (quarantine / redact / block / log)
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -52,6 +56,44 @@ New files listed in technical notes; modify existing files only where required.
 - [Source: _bmad-output/brainstorming/brainstorming-session-2026-05-01.md] (original market-trend idea)
 - Related epic: AI Safety — Prompt-Injection Firewall v2
 
+## Tasks/Subtasks
+
+- [x] Create action dispatcher with policy map (pkg/bouncer/injection/actions.go)
+- [x] Write unit tests for action dispatcher (block, quarantine, redact, log)
+- [x] Wire config Policies to Dispatcher via BuildDispatcher
+- [x] Create cmd/doctor.go with --security flag and doctor security subcommand
+- [x] Fix import cycle: remove registry dependency from injection/actions.go
+- [x] Run all tests and verify no regressions
+
+## Dev Agent Record
+
+### Implementation Notes
+- actions.go already existed from story 13-1 with full Action types, Rule/Dispatcher/ActionResult structs, DefaultRules, and block/quarantine/redact/log implementations
+- Fixed import cycle: removed registry.LeanProxyDir() dependency, inlined the logic using os.UserHomeDir()
+- Created actions_test.go with 25 tests covering boundary conditions (risk thresholds), quarantine file writes, readonly fallback, custom rules, and dispatcher lifecycle
+- Added BuildDispatcher() method to Config for wiring YAML policies to the Dispatcher
+- Created cmd/doctor.go with doctor command and `doctor security` subcommand showing policy configuration and quarantine statistics
+- Added test coverage for config policies including YAML loading with custom policies
+
+### Completion Notes
+- Actions dispatcher fully functional with default rules (80-100→block, 50-79→quarantine, 1-49→log)
+- All exported functions have unit tests
+- Config.Policies correctly wired to BuildDispatcher
+- doctor security command shows policy config and quarantine dir status
+- Import cycle resolved, build clean, go vet clean
+
 ## File List
 
-- See Technical Notes above
+- pkg/bouncer/injection/actions.go (modified: removed registry import cycle)
+- pkg/bouncer/injection/actions_test.go (new: 25 tests)
+- pkg/bouncer/injection/config.go (modified: added BuildDispatcher method)
+- pkg/bouncer/injection/config_test.go (modified: added policy tests)
+- cmd/doctor.go (new: doctor command with --security flag)
+
+## Change Log
+
+- Fixed import cycle: injection → registry → migrate → injection
+- Added 25 unit tests for action dispatcher (boundary conditions, quarantine, custom rules)
+- Added Config.BuildDispatcher() to wire YAML policies to Dispatcher
+- Added cmd/doctor.go with doctor security subcommand
+- All 1571 tests pass, go vet clean

@@ -3045,8 +3045,8 @@
     "semantic_hash": ""
   },
   "pkg/bouncer/injection/classifier.go": {
-    "mtime": 1784403148.0686274,
-    "ast_hash": "75783c52ca0db5e54834794ac5f089c6",
+    "mtime": 1784403391.323662,
+    "ast_hash": "abfd6bf2cfd44a1cc6608e0c29b6f2c6",
     "semantic_hash": ""
   },
   "pkg/bouncer/injection/classifier_test.go": {
@@ -3090,8 +3090,8 @@
     "semantic_hash": ""
   },
   "_bmad-output/implementation-artifacts/loop-status.yaml": {
-    "mtime": 1784403207.6468074,
-    "ast_hash": "25dc02933db564094d76d2d95acc2f43",
+    "mtime": 1784403249.8057454,
+    "ast_hash": "41ba1ee9bfcd75462214db8fdd58cf11",
     "semantic_hash": ""
   },
   "_bmad-output/implementation-artifacts/review-13-1-acceptance-auditor-prompt.md": {

@@ -180,13 +180,13 @@
     "semantic_hash": "b0d8fe067af8825eecc78687df19c843"
   },
   "cmd/cache.go": {
-    "mtime": 1784402227.1506026,
-    "ast_hash": "d7498fd37411ed48cf2c6c73f6fc205c",
+    "mtime": 1784402230.2855778,
+    "ast_hash": "e0bf6bfd371650373beeac2e8f93f6ac",
     "semantic_hash": ""
   },
   "cmd/cache_test.go": {
-    "mtime": 1784402227.1508806,
-    "ast_hash": "8330306c3096af3eaf71b23e13b83582",
+    "mtime": 1784402230.2859192,
+    "ast_hash": "9940ef04bf92586da992d611f09c238e",
     "semantic_hash": ""
   },
   "cmd/compactor.go": {
@@ -290,8 +290,8 @@
     "semantic_hash": "f54a4704fc083c3303d1b62a24cb7dd2"
   },
   "cmd/serve.go": {
-    "mtime": 1784402227.1512187,
-    "ast_hash": "f62658138158a035a41cc31a8e0cbb9f",
+    "mtime": 1784403080.8767648,
+    "ast_hash": "fc71e04db5a21f075de8da22a443bb86",
     "semantic_hash": ""
   },
   "cmd/serve_test.go": {
@@ -770,9 +770,9 @@
     "semantic_hash": "487360c870865e3b3dcb0ffe7e49551b"
   },
   "pkg/migrate/config.go": {
-    "mtime": 1784393491.151985,
-    "ast_hash": "c611bf9727c8321e302c886d0ea82141",
-    "semantic_hash": "c611bf9727c8321e302c886d0ea82141"
+    "mtime": 1784403070.479395,
+    "ast_hash": "cc0c57b479d9289c77a3e33a34b4d8a3",
+    "semantic_hash": ""
   },
   "pkg/migrate/config_test.go": {
     "mtime": 1782507158.8642735,
@@ -1015,13 +1015,13 @@
     "semantic_hash": "b07d3c27cb0a34409a18b9b38f790cde"
   },
   "pkg/registry/feed.go": {
-    "mtime": 1784402227.151546,
-    "ast_hash": "1f1267ae9ee545859bb38da55a49542d",
+    "mtime": 1784402230.287517,
+    "ast_hash": "e9775ea5f336dfdd11f3b4cbf4462e3f",
     "semantic_hash": ""
   },
   "pkg/registry/feed_test.go": {
-    "mtime": 1784402227.151858,
-    "ast_hash": "d0e08e92ec306ffc3d3a45ff033d9564",
+    "mtime": 1784402230.2877457,
+    "ast_hash": "7e7f7b4ec6278764980e79a987d169d2",
     "semantic_hash": ""
   },
   "pkg/registry/lazy.go": {
@@ -2615,14 +2615,14 @@
     "semantic_hash": "936bbae71a8a7f4b775ddc1e43b20055"
   },
   "_bmad-output/implementation-artifacts/12-3-cache-ttl-dashboard.md": {
-    "mtime": 1784402227.150076,
-    "ast_hash": "5b7e9c8077c452f796f7d9aecf3aac17",
+    "mtime": 1784402230.2853055,
+    "ast_hash": "4cfe2b00a404003deb20049e9f86f7b2",
     "semantic_hash": ""
   },
   "_bmad-output/implementation-artifacts/13-1-injection-classifier.md": {
-    "mtime": 1782161145.349465,
-    "ast_hash": "74d3f48e9af626cb66f2bcd6ce6da59b",
-    "semantic_hash": "74d3f48e9af626cb66f2bcd6ce6da59b"
+    "mtime": 1784402903.6907306,
+    "ast_hash": "898480da097bc42b81e36a57bc7cb1ff",
+    "semantic_hash": ""
   },
   "_bmad-output/implementation-artifacts/13-2-configurable-actions.md": {
     "mtime": 1782161145.3536334,
@@ -2880,9 +2880,9 @@
     "semantic_hash": "4722dacd3c63608206ae25624785bd7e"
   },
   "_bmad-output/implementation-artifacts/deferred-work.md": {
-    "mtime": 1782505339.7502084,
-    "ast_hash": "02d9bbc7d7229ed4fbd6063cf77eb7da",
-    "semantic_hash": "02d9bbc7d7229ed4fbd6063cf77eb7da"
+    "mtime": 1784402909.6177876,
+    "ast_hash": "e90c64d3f7a12e7a672eb8c4581b923b",
+    "semantic_hash": ""
   },
   "_bmad-output/implementation-artifacts/review-acceptance-auditor-prompt.md": {
     "mtime": 1782507158.8613298,
@@ -2900,9 +2900,9 @@
     "semantic_hash": "a5a69fa29e46c85557a11a7b511312dd"
   },
   "_bmad-output/implementation-artifacts/sprint-status.yaml": {
-    "mtime": 1784393491.1499004,
-    "ast_hash": "915676b93659c14d942dee8564f101f0",
-    "semantic_hash": "915676b93659c14d942dee8564f101f0"
+    "mtime": 1784402765.605637,
+    "ast_hash": "1617889ba0edd5cdfb737f45fdd755a0",
+    "semantic_hash": ""
   },
   "_bmad-output/implementation-artifacts/story-11.2-review-diff.txt": {
     "mtime": 1782507158.8624017,
@@ -3037,6 +3037,81 @@
   "pkg/pool/server_stdio_test.go": {
     "mtime": 1784396497.0191338,
     "ast_hash": "ccf1756e5c3b7c9e1cc1c6649166fabc",
+    "semantic_hash": ""
+  },
+  "pkg/bouncer/injection/benchmark_test.go": {
+    "mtime": 1784402714.567694,
+    "ast_hash": "66be8cb0475eac525d088e21d2f0215d",
+    "semantic_hash": ""
+  },
+  "pkg/bouncer/injection/classifier.go": {
+    "mtime": 1784403148.0686274,
+    "ast_hash": "75783c52ca0db5e54834794ac5f089c6",
+    "semantic_hash": ""
+  },
+  "pkg/bouncer/injection/classifier_test.go": {
+    "mtime": 1784403060.5709014,
+    "ast_hash": "c81940670c2d3cb5c05fed1dfe83f251",
+    "semantic_hash": ""
+  },
+  "pkg/bouncer/injection/config.go": {
+    "mtime": 1784403045.8616433,
+    "ast_hash": "deb0b2b4930f17a933d2f3da4300303f",
+    "semantic_hash": ""
+  },
+  "pkg/bouncer/injection/config_test.go": {
+    "mtime": 1784403064.032202,
+    "ast_hash": "84098d3c94d392de0c7f8d0aee7cd20a",
+    "semantic_hash": ""
+  },
+  "pkg/bouncer/injection/patterns.go": {
+    "mtime": 1784403141.7551537,
+    "ast_hash": "a562e840d83e3b3275734d3353f97323",
+    "semantic_hash": ""
+  },
+  "pkg/cache/semantic_cache.go": {
+    "mtime": 1784402230.2867644,
+    "ast_hash": "37570ea97dfa58b1ec5ba350df4bd971",
+    "semantic_hash": ""
+  },
+  "pkg/cache/semantic_cache_test.go": {
+    "mtime": 1784402230.286938,
+    "ast_hash": "bab363611b434f09c9756a4215824567",
+    "semantic_hash": ""
+  },
+  "pkg/cache/semantic_persist.go": {
+    "mtime": 1784402230.2871194,
+    "ast_hash": "2efea55562bcab2cec05bea85ba9536f",
+    "semantic_hash": ""
+  },
+  "pkg/cache/semantic_persist_test.go": {
+    "mtime": 1784402230.2872837,
+    "ast_hash": "ff86cdd40c662df67faeacb2b92cac54",
+    "semantic_hash": ""
+  },
+  "_bmad-output/implementation-artifacts/loop-status.yaml": {
+    "mtime": 1784403207.6468074,
+    "ast_hash": "25dc02933db564094d76d2d95acc2f43",
+    "semantic_hash": ""
+  },
+  "_bmad-output/implementation-artifacts/review-13-1-acceptance-auditor-prompt.md": {
+    "mtime": 1784402852.770682,
+    "ast_hash": "b35376167b6318bb5838c72382a2347f",
+    "semantic_hash": ""
+  },
+  "_bmad-output/implementation-artifacts/review-13-1-blind-hunter-prompt.md": {
+    "mtime": 1784402845.8140376,
+    "ast_hash": "67377a595b855b16dbb0d73a829fc7e8",
+    "semantic_hash": ""
+  },
+  "_bmad-output/implementation-artifacts/review-13-1-edge-case-hunter-prompt.md": {
+    "mtime": 1784402849.552427,
+    "ast_hash": "9d3488212ef1b4f015f59a96ddcc7763",
+    "semantic_hash": ""
+  },
+  "pkg/bouncer/injection/patterns_default.yaml": {
+    "mtime": 1784403084.178704,
+    "ast_hash": "ffdc81daf601179d5f1142f0d8967776",
     "semantic_hash": ""
   }
 }
