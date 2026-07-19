@@ -1,0 +1,91 @@
+{
+  "name": "leanproxy-cost",
+  "displayName": "LeanProxy Cost Monitor",
+  "description": "Real-time AI cost monitoring for LeanProxy in your VS Code status bar",
+  "version": "0.1.0",
+  "publisher": "leanproxy",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mmornati/leanproxy-mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/mmornati/leanproxy-mcp/issues"
+  },
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "leanproxy",
+    "ai",
+    "cost",
+    "monitoring",
+    "tokens"
+  ],
+  "icon": "icon.png",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "leanproxy.openCostPanel",
+        "title": "LeanProxy: Open Cost Panel"
+      },
+      {
+        "command": "leanproxy.refreshStatusBar",
+        "title": "LeanProxy: Refresh Status Bar"
+      }
+    ],
+    "configuration": {
+      "title": "LeanProxy Cost Monitor",
+      "properties": {
+        "leanproxy.metricsEndpoint": {
+          "type": "string",
+          "default": "http://127.0.0.1:9090/metrics",
+          "description": "URL of the LeanProxy metrics endpoint"
+        },
+        "leanproxy.pollInterval": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 500,
+          "description": "Polling interval in milliseconds"
+        },
+        "leanproxy.currencySymbol": {
+          "type": "string",
+          "default": "$",
+          "description": "Currency symbol for cost display"
+        },
+        "leanproxy.tokenCostPer1000": {
+          "type": "number",
+          "default": 0.002,
+          "description": "Cost per 1000 tokens"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./ && tsc -p src/webview/tsconfig.json",
+    "compile:ext": "tsc -p ./",
+    "compile:webview": "tsc -p src/webview/tsconfig.json",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/test-electron": "^2.4.1",
+    "eslint": "^9.0.0",
+    "mocha": "^10.8.0",
+    "typescript": "^5.7.0"
+  }
+}
