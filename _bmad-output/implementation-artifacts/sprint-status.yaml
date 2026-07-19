@@ -90,7 +90,7 @@ development_status:
   12-3-cache-ttl-dashboard: ready-for-dev
   13-1-injection-classifier: review
   13-2-configurable-actions: review
-  13-3-red-team-corpus: ready-for-dev
+  13-3-red-team-corpus: review
   14-1-metrics-endpoint: ready-for-dev
   14-2-vscode-extension: ready-for-dev
   14-3-jetbrains-plugin: ready-for-dev
