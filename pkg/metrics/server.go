@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 )
 
 func ListenAndServe(addr string, logger *slog.Logger) (*http.Server, error) {
@@ -33,8 +34,9 @@ func ListenAndServe(addr string, logger *slog.Logger) (*http.Server, error) {
 	mux.HandleFunc("/metrics", handleMetrics)
 
 	srv := &http.Server{
-		Addr:    ln.Addr().String(),
-		Handler: mux,
+		Addr:              ln.Addr().String(),
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	go func() {

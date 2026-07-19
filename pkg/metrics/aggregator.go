@@ -7,10 +7,10 @@ import (
 )
 
 type MetricsSnapshot struct {
-	ByTool             []ToolMetric  `json:"by_tool"`
+	ByTool             []ToolMetric   `json:"by_tool"`
 	ByServer           []ServerMetric `json:"by_server"`
-	TotalSpend         int64         `json:"total_spend"`
-	Top5ExpensiveTools []ToolMetric  `json:"top_5_expensive_tools"`
+	TotalSpend         int64          `json:"total_spend"`
+	Top5ExpensiveTools []ToolMetric   `json:"top_5_expensive_tools"`
 }
 
 type ToolMetric struct {
