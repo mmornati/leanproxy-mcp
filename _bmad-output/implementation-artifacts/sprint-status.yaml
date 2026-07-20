@@ -100,7 +100,7 @@ development_status:
   16-1-first-party-github: ready-for-dev
   16-2-first-party-filesystem: review
   16-3-first-party-db-servers: review
-  17-1-budget-config: ready-for-dev
+  17-1-budget-config: in-progress
   17-2-auto-throttle-downgrade: ready-for-dev
   18-1-web-dashboard: ready-for-dev
   18-2-drill-down: ready-for-dev
@@ -108,9 +108,11 @@ development_status:
 
 last_updated: 2026-07-20
 
-# Reconciliated with GitHub Issues/PRs:
+# Updated by bmad-code-review for story 17-1-budget-config
+
 # Updated by bmad-code-review for story 15-3-mlx-apple-silicon
 # Updated by bmad-code-review for story 15-1-per-tool-model-routing
 
 # Updated by bmad-dev-story for story 15-1-per-tool-model-routing
+# Updated by bmad-dev-story for story 17-1-budget-config
 sprint_goal: "Begin Epic 16 (First-Party MCP Servers) - next: Story 16.1"

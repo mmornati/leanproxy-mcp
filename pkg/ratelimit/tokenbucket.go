@@ -40,6 +40,17 @@ func (tb *TokenBucket) AllowN(n int) bool {
 	return false
 }
 
+func (tb *TokenBucket) AddN(n int) {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+
+	tb.refill()
+	tb.tokens += float64(n)
+	if tb.tokens > tb.capacity {
+		tb.tokens = tb.capacity
+	}
+}
+
 func (tb *TokenBucket) Remaining() int {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
