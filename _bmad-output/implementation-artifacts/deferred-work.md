@@ -30,3 +30,9 @@
 - [Review][Defer] Multi-root validation name mismatch — `resolvePathWithinRoots` suggests multi-root checks but only single root via `os.OpenRoot` is used. Pre-existing design limitation.
 - [Review][Defer] Unbounded content size in write_file — out of scope for this story.
 - [Review][Defer] No concurrency protection on FilesystemClient — not triggered by serial stdin architecture.
+
+## Deferred from: code review of 16-3-first-party-db-servers (2026-07-20)
+
+- [Review][Defer] Missing LEANPROXY_REDIS_DB env var [servers/redis/main.go] — `Config.DB` field exists but has no corresponding env var. Not part of spec requirements.
+- [Review][Defer] go.sum has stale testify entries [go.sum] — Old `stretchr/testify v1.9.0` entries remain after upgrade. `go mod tidy` would clean this up.
+- [Review][Defer] isFatalError uses string matching instead of pgx error codes [pkg/postgresql/tools.go:196-201] — Works for common cases but may not match all pgx structured errors.

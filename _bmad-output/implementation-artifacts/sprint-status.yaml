@@ -99,7 +99,7 @@ development_status:
   15-3-mlx-apple-silicon: done
   16-1-first-party-github: ready-for-dev
   16-2-first-party-filesystem: review
-  16-3-first-party-db-servers: ready-for-dev
+  16-3-first-party-db-servers: review
   17-1-budget-config: ready-for-dev
   17-2-auto-throttle-downgrade: ready-for-dev
   18-1-web-dashboard: ready-for-dev
