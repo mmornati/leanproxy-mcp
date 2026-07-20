@@ -98,7 +98,7 @@ development_status:
   15-2-ollama-sidecar: done
   15-3-mlx-apple-silicon: done
   16-1-first-party-github: ready-for-dev
-  16-2-first-party-filesystem: ready-for-dev
+  16-2-first-party-filesystem: review
   16-3-first-party-db-servers: ready-for-dev
   17-1-budget-config: ready-for-dev
   17-2-auto-throttle-downgrade: ready-for-dev
@@ -106,7 +106,7 @@ development_status:
   18-2-drill-down: ready-for-dev
   18-3-csv-json-export: ready-for-dev
 
-last_updated: 2026-07-19
+last_updated: 2026-07-20
 
 # Reconciliated with GitHub Issues/PRs:
 # Updated by bmad-code-review for story 15-3-mlx-apple-silicon

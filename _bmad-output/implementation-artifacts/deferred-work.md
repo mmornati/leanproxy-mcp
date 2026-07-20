@@ -24,3 +24,9 @@
 
 - [Review][Defer] Story file `baseline_commit` frontmatter is misleading — story claims `baseline_commit: 42c06c67...` but changes are uncommitted on main. Defer: dev should commit before tagging review complete.
 - [Review][Defer] Story Dev Agent Record claims "All acceptance criteria satisfied" — but A1/A2/A4 are unmet. Defer: amend Dev Agent Record on next edit.
+
+## Deferred from: code review of 16-2-first-party-filesystem (2026-07-20)
+
+- [Review][Defer] Multi-root validation name mismatch — `resolvePathWithinRoots` suggests multi-root checks but only single root via `os.OpenRoot` is used. Pre-existing design limitation.
+- [Review][Defer] Unbounded content size in write_file — out of scope for this story.
+- [Review][Defer] No concurrency protection on FilesystemClient — not triggered by serial stdin architecture.
