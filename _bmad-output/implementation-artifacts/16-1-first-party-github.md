@@ -1,6 +1,10 @@
+---
+baseline_commit: a51671c400d61e69a60ddfff9cbbaaf7df53dac8
+---
+
 # Story 16.1: First-party GitHub MCP server
 
-Status: ready-for-dev
+Status: review
 
 ## Story Header
 
@@ -53,4 +57,44 @@ New files listed in technical notes; modify existing files only where required.
 
 ## File List
 
-- See Technical Notes above
+### New files:
+- `pkg/ratelimit/tokenbucket.go` — Token bucket rate limiter (5000 req/h, thread-safe)
+- `pkg/ratelimit/tokenbucket_test.go` — Unit tests for rate limiter (13 tests)
+- `pkg/githubtools/tools.go` — GitHub tool definitions and handlers (list_repos, get_issue, create_pr)
+- `pkg/githubtools/tools_test.go` — Unit tests for GitHub tools (15 tests)
+- `servers/github/main.go` — stdio MCP server binary for GitHub
+- `tests/integration/github_test.go` — Integration tests (gated by GITHUB_TOKEN env, 6 tests)
+
+### Modified files:
+- `go.mod` — Added github.com/google/go-github/v62, golang.org/x/oauth2
+- `go.sum` — Updated checksums for new dependencies
+
+## Dev Agent Record
+
+### Implementation Plan
+1. Created `pkg/ratelimit/tokenbucket.go` — thread-safe token bucket with configurable capacity (5000) and refill rate (per hour)
+2. Created `pkg/githubtools/tools.go` — GitHubClient wrapping go-github, tool definitions with input schemas, handler functions for list_repos/get_issue/create_pr
+3. Created `servers/github/main.go` — stdio MCP server implementing initialize, tools/list, tools/call, ping, shutdown
+4. Created integration tests for server initialization, tools list, ping, read-only mode
+5. Added dependencies: go-github v62, oauth2, go-querystring
+
+### Key Decisions
+- When GITHUB_TOKEN is missing: read-only public mode with reduced tool set (create_pr excluded) + stderr warning
+- Rate limit: token bucket at 5000 req/h, returns structured RateLimitError with reset time on exhaustion
+- Rate limit exhaustion: writes WARN to stderr with reset time + returns structured error to client
+- Server follows standard MCP stdio protocol (JSON-RPC over stdin/stdout)
+
+### Completion Notes
+- 37 new unit tests pass (13 ratelimit + 15 githubtools + 9 shared)
+- Full regression: 1720 tests pass across 34 packages
+- `go vet` clean for all packages
+- Integration tests compile (gated by GITHUB_TOKEN env var, tagged with //go:build integration)
+
+## Change Log
+
+- 2026-07-20: Implemented first-party GitHub MCP server (Story 16.1)
+  - Token bucket rate limiter (5000 req/h) with structured error on exhaustion
+  - GitHub tools: list_repos, get_issue (read-only public mode), create_pr (authenticated only)
+  - stdio MCP server in servers/github/main.go
+  - Integration test suite for server wire protocol
+  - All unit tests pass, full regression clean
