@@ -121,4 +121,6 @@ const (
 	ErrCodeTimeout = -32001
 	// ErrCodeUnauthorized indicates the request was unauthorized (-32604).
 	ErrCodeUnauthorized = -32604
+	// ErrCodeBudgetExceeded indicates the budget has been exceeded (-32050).
+	ErrCodeBudgetExceeded = -32050
 )
