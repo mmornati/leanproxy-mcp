@@ -14,9 +14,9 @@ import (
 )
 
 const (
-	toolListRepos  = "list_repos"
-	toolGetIssue   = "get_issue"
-	toolCreatePR   = "create_pr"
+	toolListRepos = "list_repos"
+	toolGetIssue  = "get_issue"
+	toolCreatePR  = "create_pr"
 
 	rateLimitCapacity = 5000
 	rateLimitInterval = 1 * time.Hour
@@ -39,10 +39,10 @@ func init() {
 }
 
 type GitHubClient struct {
-	client     *github.Client
-	logger     *slog.Logger
+	client      *github.Client
+	logger      *slog.Logger
 	rateLimiter *ratelimit.TokenBucket
-	readOnly   bool
+	readOnly    bool
 }
 
 func NewGitHubClient(logger *slog.Logger) *GitHubClient {
@@ -211,14 +211,14 @@ func handleListRepos(ctx context.Context, client *github.Client, args json.RawMe
 		params.PerPage = 30
 	}
 
-	opt := &github.RepositoryListOptions{
+	opt := &github.RepositoryListByUserOptions{
 		Type: params.Type,
 		ListOptions: github.ListOptions{
 			PerPage: params.PerPage,
 		},
 	}
 
-	repos, _, err := client.Repositories.List(ctx, params.Owner, opt)
+	repos, _, err := client.Repositories.ListByUser(ctx, params.Owner, opt)
 	if err != nil {
 		return nil, fmt.Errorf("list repos: %w", err)
 	}
@@ -317,4 +317,3 @@ func handleCreatePR(ctx context.Context, client *github.Client, args json.RawMes
 func GetReadOnlyNotice() string {
 	return "GITHUB_TOKEN not set. Running in read-only public mode. Only public repository data is accessible. Set GITHUB_TOKEN environment variable for full access (including create_pr tool)."
 }
-
