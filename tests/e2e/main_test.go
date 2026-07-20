@@ -133,8 +133,6 @@ func TestServe_BasicStart(t *testing.T) {
 	t.Skip("Skipping serve test - requires running server")
 }
 
-
-
 func TestCache_Commands(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
