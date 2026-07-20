@@ -16,11 +16,11 @@ type mockAlert struct {
 	pct     float64
 }
 
-func (m mockAlert) TeamName() string        { return m.team }
-func (m mockAlert) ProjectName() string     { return m.project }
-func (m mockAlert) MetricName() string      { return m.metric }
-func (m mockAlert) UsageAmount() int64      { return m.usage }
-func (m mockAlert) LimitAmount() int64      { return m.limit }
+func (m mockAlert) TeamName() string         { return m.team }
+func (m mockAlert) ProjectName() string      { return m.project }
+func (m mockAlert) MetricName() string       { return m.metric }
+func (m mockAlert) UsageAmount() int64       { return m.usage }
+func (m mockAlert) LimitAmount() int64       { return m.limit }
 func (m mockAlert) PercentageValue() float64 { return m.pct }
 
 func TestNewDispatcher(t *testing.T) {

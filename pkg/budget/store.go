@@ -201,11 +201,11 @@ type BudgetAlert struct {
 	Percentage float64
 }
 
-func (a BudgetAlert) TeamName() string     { return a.Team }
-func (a BudgetAlert) ProjectName() string  { return a.Project }
-func (a BudgetAlert) MetricName() string   { return a.Metric }
-func (a BudgetAlert) UsageAmount() int64   { return a.Usage }
-func (a BudgetAlert) LimitAmount() int64   { return a.Limit }
+func (a BudgetAlert) TeamName() string         { return a.Team }
+func (a BudgetAlert) ProjectName() string      { return a.Project }
+func (a BudgetAlert) MetricName() string       { return a.Metric }
+func (a BudgetAlert) UsageAmount() int64       { return a.Usage }
+func (a BudgetAlert) LimitAmount() int64       { return a.Limit }
 func (a BudgetAlert) PercentageValue() float64 { return a.Percentage }
 
 type AlertCallback func(BudgetAlert)

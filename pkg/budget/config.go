@@ -6,10 +6,10 @@ type ProjectBudget struct {
 }
 
 type TeamBudget struct {
-	Daily     int64                    `yaml:"daily"`
-	Monthly   int64                    `yaml:"monthly"`
-	WebhookURL string                  `yaml:"webhook_url"`
-	Projects  map[string]ProjectBudget `yaml:"projects"`
+	Daily      int64                    `yaml:"daily"`
+	Monthly    int64                    `yaml:"monthly"`
+	WebhookURL string                   `yaml:"webhook_url"`
+	Projects   map[string]ProjectBudget `yaml:"projects"`
 }
 
 type BudgetConfig struct {
