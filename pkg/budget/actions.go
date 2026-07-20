@@ -8,9 +8,9 @@ import (
 type BudgetAction int
 
 const (
-	BudgetActionAllow    BudgetAction = 0
+	BudgetActionAllow     BudgetAction = 0
 	BudgetActionDowngrade BudgetAction = 1
-	BudgetActionReject   BudgetAction = 2
+	BudgetActionReject    BudgetAction = 2
 )
 
 func (a BudgetAction) String() string {
@@ -27,13 +27,13 @@ func (a BudgetAction) String() string {
 }
 
 type BudgetDecision struct {
-	Action      BudgetAction
-	Message     string
-	Team        string
-	Project     string
-	DailyPct    float64
-	MonthlyPct  float64
-	Err         error
+	Action     BudgetAction
+	Message    string
+	Team       string
+	Project    string
+	DailyPct   float64
+	MonthlyPct float64
+	Err        error
 }
 
 type BudgetExceededError struct {
@@ -73,8 +73,8 @@ func EvaluateBudget(team, project string, store *BudgetStore, config *BudgetConf
 			"project", project,
 		)
 		return BudgetDecision{
-			Action: BudgetActionAllow,
-			Team:   team,
+			Action:  BudgetActionAllow,
+			Team:    team,
 			Project: project,
 		}
 	}
@@ -113,12 +113,12 @@ func EvaluateBudget(team, project string, store *BudgetStore, config *BudgetConf
 			HardCap: teamCfg.HardCap,
 		}
 		return BudgetDecision{
-			Action:    BudgetActionReject,
-			Message:   exceededErr.Error(),
-			Err:       exceededErr,
-			Team:      team,
-			Project:   project,
-			DailyPct:  100.0,
+			Action:     BudgetActionReject,
+			Message:    exceededErr.Error(),
+			Err:        exceededErr,
+			Team:       team,
+			Project:    project,
+			DailyPct:   100.0,
 			MonthlyPct: monthlyPct,
 		}
 	}
@@ -130,12 +130,12 @@ func EvaluateBudget(team, project string, store *BudgetStore, config *BudgetConf
 			Monthly: true,
 		}
 		return BudgetDecision{
-			Action:    BudgetActionReject,
-			Message:   exceededErr.Error(),
-			Err:       exceededErr,
-			Team:      team,
-			Project:   project,
-			DailyPct:  dailyPct,
+			Action:     BudgetActionReject,
+			Message:    exceededErr.Error(),
+			Err:        exceededErr,
+			Team:       team,
+			Project:    project,
+			DailyPct:   dailyPct,
 			MonthlyPct: 100.0,
 		}
 	}
@@ -149,32 +149,32 @@ func EvaluateBudget(team, project string, store *BudgetStore, config *BudgetConf
 			HardCap: true,
 		}
 		return BudgetDecision{
-			Action:    BudgetActionReject,
-			Message:   exceededErr.Error(),
-			Err:       exceededErr,
-			Team:      team,
-			Project:   project,
-			DailyPct:  dailyPct,
+			Action:     BudgetActionReject,
+			Message:    exceededErr.Error(),
+			Err:        exceededErr,
+			Team:       team,
+			Project:    project,
+			DailyPct:   dailyPct,
 			MonthlyPct: monthlyPct,
 		}
 	}
 
 	if dailyPct >= softCapPct || monthlyPct >= softCapPct {
 		return BudgetDecision{
-			Action:    BudgetActionDowngrade,
-			Message:   fmt.Sprintf("budget threshold reached for team %q (daily: %.1f%%, monthly: %.1f%%)", team, dailyPct, monthlyPct),
-			Team:      team,
-			Project:   project,
-			DailyPct:  dailyPct,
+			Action:     BudgetActionDowngrade,
+			Message:    fmt.Sprintf("budget threshold reached for team %q (daily: %.1f%%, monthly: %.1f%%)", team, dailyPct, monthlyPct),
+			Team:       team,
+			Project:    project,
+			DailyPct:   dailyPct,
 			MonthlyPct: monthlyPct,
 		}
 	}
 
 	return BudgetDecision{
-		Action:    BudgetActionAllow,
-		Team:      team,
-		Project:   project,
-		DailyPct:  dailyPct,
+		Action:     BudgetActionAllow,
+		Team:       team,
+		Project:    project,
+		DailyPct:   dailyPct,
 		MonthlyPct: monthlyPct,
 	}
 }
