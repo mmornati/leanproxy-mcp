@@ -9,7 +9,16 @@ type TeamBudget struct {
 	Daily      int64                    `yaml:"daily"`
 	Monthly    int64                    `yaml:"monthly"`
 	WebhookURL string                   `yaml:"webhook_url"`
+	HardCap    bool                     `yaml:"hard_cap"`
+	SoftCapPct *float64                 `yaml:"soft_cap_pct"`
 	Projects   map[string]ProjectBudget `yaml:"projects"`
+}
+
+func (t *TeamBudget) SoftCapPercentage() float64 {
+	if t.SoftCapPct != nil {
+		return *t.SoftCapPct
+	}
+	return 90.0
 }
 
 type BudgetConfig struct {
