@@ -107,7 +107,10 @@ func (c *RedisClient) dial() (net.Conn, error) {
 	var conn net.Conn
 	var err error
 	if c.config.UseTLS {
-		conn, err = tls.DialWithDialer(dialer, "tcp", c.config.Address, &tls.Config{InsecureSkipVerify: false})
+		conn, err = tls.DialWithDialer(dialer, "tcp", c.config.Address, &tls.Config{
+			InsecureSkipVerify: false,
+			MinVersion:         tls.VersionTLS12,
+		})
 	} else {
 		conn, err = dialer.Dial("tcp", c.config.Address)
 	}
@@ -342,7 +345,7 @@ func (c *RedisClient) readResponseInternal(conn net.Conn, depth int) (interface{
 }
 
 func readLine(conn net.Conn) ([]byte, error) {
-	var buf []byte
+	buf := make([]byte, 0, 128)
 	tmp := make([]byte, 1)
 	for {
 		_, err := conn.Read(tmp)
@@ -454,7 +457,7 @@ func (c *RedisClient) handleSet(ctx context.Context, args json.RawMessage) (inte
 }
 
 type DeleteResult struct {
-	Deleted int64 `json:"deleted"`
+	Deleted int64    `json:"deleted"`
 	Keys    []string `json:"keys"`
 }
 

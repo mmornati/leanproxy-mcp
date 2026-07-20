@@ -16,13 +16,6 @@ func benchLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
 // BenchmarkPostgresQueryPoolOverhead measures the connection-pool-management
 // overhead for the postgresql client. It validates that the pool can handle
 // concurrent requests without exceeding pool limits.

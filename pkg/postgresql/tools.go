@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"time"
 
@@ -12,13 +13,13 @@ import (
 )
 
 const (
-	toolQuery       = "postgresql_query"
-	toolExecute     = "postgresql_execute"
-	toolListTables  = "postgresql_list_tables"
-	toolPGDescribe  = "postgresql_describe"
+	toolQuery      = "postgresql_query"
+	toolExecute    = "postgresql_execute"
+	toolListTables = "postgresql_list_tables"
+	toolPGDescribe = "postgresql_describe"
 
-	maxRetries     = 3
-	baseBackoff    = 50 * time.Millisecond
+	maxRetries      = 3
+	baseBackoff     = 50 * time.Millisecond
 	DefaultPoolSize = 10
 )
 
@@ -38,9 +39,9 @@ type PostgresClient struct {
 }
 
 type Config struct {
-	ConnectionString  string        `json:"connection_string"`
-	PoolSize          int           `json:"pool_size"`
-	StatementTimeout  time.Duration `json:"statement_timeout"`
+	ConnectionString string        `json:"connection_string"`
+	PoolSize         int           `json:"pool_size"`
+	StatementTimeout time.Duration `json:"statement_timeout"`
 }
 
 func DefaultConfig() Config {
@@ -63,6 +64,9 @@ func NewPostgresClient(logger *slog.Logger, cfg Config) (*PostgresClient, error)
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
+	if cfg.PoolSize > math.MaxInt32 {
+		return nil, fmt.Errorf("pool size %d exceeds maximum", cfg.PoolSize)
+	}
 	poolCfg.MaxConns = int32(cfg.PoolSize)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -161,9 +165,9 @@ func (c *PostgresClient) CallTool(ctx context.Context, name string, args json.Ra
 
 func (c *PostgresClient) withRetry(ctx context.Context, fn func(context.Context) error) error {
 	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
+	for attempt := uint(0); attempt < maxRetries; attempt++ {
 		if attempt > 0 {
-			backoff := baseBackoff * (1 << uint(attempt-1))
+			backoff := baseBackoff * (1 << (attempt - 1))
 			c.logger.Debug("retrying after error", "attempt", attempt+1, "backoff", backoff, "error", lastErr)
 			select {
 			case <-ctx.Done():
@@ -202,9 +206,9 @@ func isFatalError(err error) bool {
 }
 
 type QueryResult struct {
-	Columns []string           `json:"columns"`
-	Rows    []map[string]interface{} `json:"rows"`
-	RowCount int64             `json:"row_count"`
+	Columns  []string                 `json:"columns"`
+	Rows     []map[string]interface{} `json:"rows"`
+	RowCount int64                    `json:"row_count"`
 }
 
 func (c *PostgresClient) handleQuery(ctx context.Context, args json.RawMessage) (interface{}, error) {
@@ -263,8 +267,8 @@ func (c *PostgresClient) handleQuery(ctx context.Context, args json.RawMessage) 
 }
 
 type ExecuteResult struct {
-	CommandTag string `json:"command_tag"`
-	RowsAffected int64 `json:"rows_affected"`
+	CommandTag   string `json:"command_tag"`
+	RowsAffected int64  `json:"rows_affected"`
 }
 
 func (c *PostgresClient) handleExecute(ctx context.Context, args json.RawMessage) (interface{}, error) {
@@ -301,10 +305,10 @@ func (c *PostgresClient) handleExecute(ctx context.Context, args json.RawMessage
 }
 
 type TableInfo struct {
-	Schema    string `json:"schema"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	RowEstimate int64 `json:"row_estimate,omitempty"`
+	Schema      string `json:"schema"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	RowEstimate int64  `json:"row_estimate,omitempty"`
 }
 
 func (c *PostgresClient) handleListTables(ctx context.Context, args json.RawMessage) (interface{}, error) {

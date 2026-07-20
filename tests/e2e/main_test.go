@@ -133,27 +133,7 @@ func TestServe_BasicStart(t *testing.T) {
 	t.Skip("Skipping serve test - requires running server")
 }
 
-func createTestConfig(t *testing.T, path string) {
-	config := map[string]interface{}{
-		"servers": []map[string]interface{}{
-			{
-				"name":      "test-echo",
-				"command":   "echo",
-				"args":      []string{"hello"},
-				"transport": "stdio",
-			},
-		},
-	}
 
-	data, err := json.Marshal(config)
-	if err != nil {
-		t.Fatalf("Failed to marshal config: %v", err)
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		t.Fatalf("Failed to write config: %v", err)
-	}
-}
 
 func TestCache_Commands(t *testing.T) {
 	if !binaryAvailable() {
