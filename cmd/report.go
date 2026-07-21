@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 	"github.com/spf13/cobra"
 )
@@ -21,8 +23,10 @@ The report includes:
 - Security events breakdown by redaction type
 - Per-server detailed metrics
 
-Output is written to stdout by default. Use --output to write to a file.`,
-	Run: runReport,
+Output is written to stdout by default. Use --output to write to a file.
+
+Use --export to export raw cost data as CSV or JSON for finance reporting.`,
+	RunE: runReport,
 }
 
 var reportFlags struct {
@@ -30,6 +34,8 @@ var reportFlags struct {
 	outputPath string
 	jsonOutput bool
 	noSecurity bool
+	export     string
+	since      string
 }
 
 func init() {
@@ -37,12 +43,22 @@ func init() {
 	reportCmd.Flags().StringVar(&reportFlags.outputPath, "output", "", "Output file path (default: stdout)")
 	reportCmd.Flags().BoolVar(&reportFlags.jsonOutput, "json", false, "Output JSON instead of Markdown")
 	reportCmd.Flags().BoolVar(&reportFlags.noSecurity, "no-security", false, "Exclude security events from report")
+	reportCmd.Flags().StringVar(&reportFlags.export, "export", "", "Export raw cost data format (csv, json)")
+	reportCmd.Flags().StringVar(&reportFlags.since, "since", "", "Include entries since this date (YYYY-MM-DD)")
 	RootCmd.AddCommand(reportCmd)
 }
 
 var globalReportGenerator = utils.NewReportGenerator()
 
-func runReport(cmd *cobra.Command, args []string) {
+func runReport(cmd *cobra.Command, args []string) error {
+	if reportFlags.since != "" && reportFlags.export == "" {
+		return fmt.Errorf("--since flag requires --export")
+	}
+
+	if reportFlags.export != "" {
+		return runExport()
+	}
+
 	sessionData := buildSessionMetrics()
 
 	if reportFlags.noSecurity {
@@ -57,15 +73,64 @@ func runReport(cmd *cobra.Command, args []string) {
 	}
 
 	if reportFlags.outputPath != "" {
-		err := os.WriteFile(reportFlags.outputPath, []byte(output), 0600)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing report: %v\n", fmt.Errorf("report output: context: %w", err))
-			os.Exit(1)
+		if err := os.WriteFile(reportFlags.outputPath, []byte(output), 0600); err != nil {
+			return fmt.Errorf("report output: %w", err)
 		}
 		fmt.Printf("Report written to %s\n", reportFlags.outputPath)
 	} else {
 		fmt.Println(output)
 	}
+	return nil
+}
+
+func runExport() error {
+	var since time.Time
+	if reportFlags.since != "" {
+		var err error
+		since, err = time.Parse("2006-01-02", reportFlags.since)
+		if err != nil {
+			return fmt.Errorf("invalid --since date format %q (use YYYY-MM-DD): %w", reportFlags.since, err)
+		}
+	}
+
+	entries := reporter.GetEntries(since)
+
+	out := io.Writer(os.Stdout)
+	if reportFlags.outputPath != "" {
+		f, err := os.Create(reportFlags.outputPath)
+		if err != nil {
+			return fmt.Errorf("creating output file %q: %w", reportFlags.outputPath, err)
+		}
+		defer f.Close()
+		out = f
+	}
+
+	progress := func(current, total int) {
+		if total > 0 {
+			fmt.Fprintf(os.Stderr, "\rExporting: %d/%d rows", current, total)
+		}
+		if current == total {
+			fmt.Fprintf(os.Stderr, "\n")
+		}
+	}
+
+	switch reportFlags.export {
+	case "csv":
+		if err := reporter.ExportCSV(out, entries, progress); err != nil {
+			return fmt.Errorf("exporting CSV: %w", err)
+		}
+	case "json":
+		if err := reporter.ExportJSON(out, entries, progress); err != nil {
+			return fmt.Errorf("exporting JSON: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported export format %q (use csv or json)", reportFlags.export)
+	}
+
+	if reportFlags.outputPath != "" {
+		fmt.Printf("Export written to %s\n", reportFlags.outputPath)
+	}
+	return nil
 }
 
 func buildSessionMetrics() utils.SessionMetrics {

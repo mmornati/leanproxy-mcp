@@ -54,3 +54,12 @@
 - [Review][Defer] F7: Dashboard uses `Close()` not `Shutdown()` during graceful shutdown — matches existing `metricsServer.Close()` pattern.
 - [Review][Defer] F9: No rate limiting on auth — brute-force protection for non-loopback. Out of scope for story 18-1.
 - [Review][Defer] F10: No TLS support — dashboard is HTTP-only with warning for non-loopback binds. Out of scope for this story.
+
+## Deferred from: code review of 18-3-csv-json-export (2026-07-21)
+
+- [Review][Defer] nil io.Writer panic path in ExportCSV/ExportJSON [pkg/reporter/export.go:23,51] — public API contract; callers always provide valid writer
+- [Review][Defer] Partial write on file close undetected [cmd/report.go:99-106] — write errors already caught inline; close error is extremely rare
+- [Review][Defer] float64 precision for large TokenCount [pkg/reporter/export.go:39,69] — unrealistic scenario (int64 max * $0.000002 = $18T)
+- [Review][Defer] Negative TokenCount not guarded [pkg/reporter/export.go:32-39] — internal source never produces negatives
+- [Review][Defer] Progress callback for zero entries never called [cmd/report.go:108-115] — negligible UX; export completes immediately
+- [Review][Defer] Partial JSON output on mid-export failure [pkg/reporter/export.go:52-53] — inherent to streaming design

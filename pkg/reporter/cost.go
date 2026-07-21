@@ -135,8 +135,6 @@ func newCostTracker(clock Clock) *CostTracker {
 	}
 }
 
-const maxCallLogEntries = 10000
-
 func (c *CostTracker) Track(toolName, serverName string, tokenCount int64) {
 	c.TrackAt(toolName, serverName, tokenCount, c.clock.Now())
 }
@@ -184,9 +182,6 @@ func (c *CostTracker) trackLocked(toolName, serverName string, tokenCount int64,
 		TokenCount: tokenCount,
 		Timestamp:  ts,
 	})
-	if len(c.callLog) > maxCallLogEntries {
-		c.callLog = c.callLog[len(c.callLog)-maxCallLogEntries:]
-	}
 }
 
 func (c *CostTracker) GetBreakdown() CostBreakdown {
