@@ -392,7 +392,7 @@ type mockClock struct {
 	now time.Time
 }
 
-func (m *mockClock) Now() time.Time { return m.now }
+func (m *mockClock) Now() time.Time                  { return m.now }
 func (m *mockClock) Since(t time.Time) time.Duration { return m.now.Sub(t) }
 
 func TestCostTrackerGetEntries(t *testing.T) {
