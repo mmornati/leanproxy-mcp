@@ -103,7 +103,7 @@ development_status:
   17-1-budget-config: in-progress
   17-2-auto-throttle-downgrade: ready-for-dev
   18-1-web-dashboard: done
-  18-2-drill-down: ready-for-dev
+  18-2-drill-down: done
   18-3-csv-json-export: ready-for-dev
 
 last_updated: 2026-07-21

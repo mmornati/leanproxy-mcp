@@ -1,0 +1,84 @@
+{{define "serverRows"}}
+<table class="server-table">
+  <thead>
+    <tr>
+      <th>Server</th>
+      <th>Tools</th>
+      <th>Tokens</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .}}
+    <tr class="server-row" hx-get="/api/dashboard/servers/{{.Name}}" hx-target="#drilldown-content" hx-trigger="click" hx-swap="innerHTML" role="button" tabindex="0">
+      <td class="cell-server">{{.Name}}</td>
+      <td class="cell-count">{{.ToolCount}}</td>
+      <td class="cell-tokens">{{.TokenCount}}</td>
+      <td class="cell-arrow">&rarr;</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{define "drilldown"}}
+<div class="drilldown-panel">
+  <div class="drilldown-header">
+    <h2>Server: {{.ServerName}}</h2>
+    <span class="drilldown-total">{{.TotalTokens}} total tokens</span>
+  </div>
+  {{if .Tools}}
+  <table class="drilldown-table">
+    <thead>
+      <tr>
+        <th>Tool</th>
+        <th>Calls</th>
+        <th>Tokens</th>
+        <th>Avg Tokens/Call</th>
+        <th>Last Invoked</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Tools}}
+      <tr class="tool-row" hx-get="/api/dashboard/servers/{{$.ServerName}}/tools/{{.ToolName}}/prompts" hx-target="#prompt-content" hx-trigger="click" hx-swap="innerHTML" role="button" tabindex="0">
+        <td class="cell-tool">{{.ToolName}}</td>
+        <td class="cell-count">{{.CallCount}}</td>
+        <td class="cell-tokens">{{.TokenCount}}</td>
+        <td class="cell-avg">{{printf "%.1f" .AvgTokensCall}}</td>
+        <td class="cell-time">{{.LastInvoked.Format "15:04:05"}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty-state">No tools recorded for this server.</p>
+  {{end}}
+  <div id="prompt-content"></div>
+</div>
+{{end}}
+
+{{define "prompts"}}
+<div class="prompt-panel">
+  <h3>Prompt Hashes <span class="badge">opt-in</span></h3>
+  {{if .Hashes}}
+  <table class="prompt-table">
+    <thead>
+      <tr>
+        <th>Hash</th>
+        <th>Token Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Hashes}}
+      <tr>
+        <td class="cell-hash"><code>{{.Hash}}</code></td>
+        <td class="cell-tokens">{{.TokenCost}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{else}}
+  <p class="empty-state">No prompt hashes recorded.</p>
+  {{end}}
+</div>
+{{end}}
