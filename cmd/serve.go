@@ -23,6 +23,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/embedder"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/vectordb"
+	"github.com/mmornati/leanproxy-mcp/pkg/dashboard"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
@@ -63,9 +64,12 @@ var serveFlags struct {
 	sidecarProvider    string
 	sidecarModel       string
 	sidecarURL         string
+	dashboardBind      string
+	dashboardToken     string
 }
 
 var metricsServer *http.Server
+var dashboardServer *http.Server
 
 var providerDetector atomic.Pointer[cache.ProviderDetector]
 var breakpointInjector atomic.Pointer[cache.BreakpointInjector]
@@ -116,6 +120,8 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.sidecarProvider, "sidecar-provider", "", "Sidecar provider (ollama) for local LLM redaction (empty = disabled)")
 	serveCmd.Flags().StringVar(&serveFlags.sidecarModel, "sidecar-model", "llama3.1:8b", "Sidecar model name")
 	serveCmd.Flags().StringVar(&serveFlags.sidecarURL, "sidecar-url", "http://localhost:11434", "Sidecar server URL")
+	serveCmd.Flags().StringVar(&serveFlags.dashboardBind, "dashboard-bind", "127.0.0.1:9090", "Dashboard endpoint bind address (e.g. 127.0.0.1:9090). Set to 'off' or empty to disable.")
+	serveCmd.Flags().StringVar(&serveFlags.dashboardToken, "dashboard-token", "", "Bearer token for dashboard access from non-loopback addresses")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -334,6 +340,14 @@ func runServe(cmd *cobra.Command, args []string) {
 		slog.Warn("failed to start metrics endpoint", "error", err)
 	}
 
+	dashboardServer, err = dashboard.ListenAndServe(dashboard.Config{
+		Bind:  serveFlags.dashboardBind,
+		Token: serveFlags.dashboardToken,
+	}, slog.Default())
+	if err != nil {
+		slog.Warn("failed to start dashboard endpoint", "error", err)
+	}
+
 	go startRegistryFeedSync(ctx, func(entries []registry.RegistryFeedEntry) {
 		if sc := cache.GlobalSemanticCache(); sc != nil {
 			count := sc.PurgeAll()
@@ -379,6 +393,9 @@ func runServe(cmd *cobra.Command, args []string) {
 				signal.Stop(sigChan)
 				if metricsServer != nil {
 					metricsServer.Close()
+				}
+				if dashboardServer != nil {
+					dashboardServer.Close()
 				}
 				if statusStore != nil {
 					statusStore.RemoveFile()

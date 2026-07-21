@@ -102,11 +102,13 @@ development_status:
   16-3-first-party-db-servers: review
   17-1-budget-config: in-progress
   17-2-auto-throttle-downgrade: ready-for-dev
-  18-1-web-dashboard: ready-for-dev
+  18-1-web-dashboard: done
   18-2-drill-down: ready-for-dev
   18-3-csv-json-export: ready-for-dev
 
-last_updated: 2026-07-20
+last_updated: 2026-07-21
+
+# Updated by bmad-code-review for story 18-1-web-dashboard
 
 # Updated by bmad-code-review for story 17-1-budget-config
 
