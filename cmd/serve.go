@@ -19,11 +19,11 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
-	"github.com/mmornati/leanproxy-mcp/pkg/dashboard"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/embedder"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/vectordb"
+	"github.com/mmornati/leanproxy-mcp/pkg/dashboard"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
