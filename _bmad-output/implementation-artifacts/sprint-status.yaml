@@ -104,9 +104,11 @@ development_status:
   17-2-auto-throttle-downgrade: ready-for-dev
   18-1-web-dashboard: done
   18-2-drill-down: done
-  18-3-csv-json-export: ready-for-dev
+  18-3-csv-json-export: in-progress
 
 last_updated: 2026-07-21
+
+# Updated by bmad-code-review for story 18-3-csv-json-export
 
 # Updated by bmad-code-review for story 18-1-web-dashboard
 
