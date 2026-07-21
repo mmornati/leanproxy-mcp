@@ -8,15 +8,20 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
+	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
 )
 
 //go:embed assets/*
 var assetsFS embed.FS
+
+//go:embed views/*
+var viewsFS embed.FS
 
 type Config struct {
 	Bind  string
@@ -30,6 +35,13 @@ type DashboardData struct {
 	TopTool     string
 	ServerCount int
 	ToolCount   int
+	Servers     []ServerRow
+}
+
+type ServerRow struct {
+	Name       string
+	ToolCount  int
+	TokenCount string
 }
 
 var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
@@ -68,6 +80,54 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     border: 1px solid #ef4444; text-align: center;
   }
   .error-card .value { font-size: 1rem; color: #fca5a5; }
+  .section-title {
+    font-size: 1.1rem; font-weight: 600; color: #e2e8f0;
+    margin: 1.5rem 0 0.75rem;
+  }
+  .server-table, .drilldown-table, .prompt-table {
+    width: 100%; border-collapse: collapse; margin-bottom: 1rem;
+    background: #1e293b; border-radius: 0.75rem; overflow: hidden;
+  }
+  .server-table th, .drilldown-table th, .prompt-table th {
+    text-align: left; padding: 0.75rem 1rem;
+    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
+    color: #94a3b8; border-bottom: 1px solid #334155;
+  }
+  .server-table td, .drilldown-table td, .prompt-table td {
+    padding: 0.75rem 1rem; border-bottom: 1px solid #1e293b;
+    font-size: 0.875rem;
+  }
+  .server-table tbody tr:hover, .drilldown-table tbody tr:hover {
+    background: #334155; cursor: pointer;
+  }
+  .cell-server { color: #34d399; font-weight: 600; }
+  .cell-tool { color: #f472b6; font-weight: 600; }
+  .cell-tokens { color: #a78bfa; font-family: monospace; }
+  .cell-count { color: #e2e8f0; font-family: monospace; }
+  .cell-avg { color: #94a3b8; font-family: monospace; }
+  .cell-time { color: #64748b; font-family: monospace; font-size: 0.75rem; }
+  .cell-arrow { color: #475569; text-align: right; font-size: 1.1rem; }
+  .cell-hash code { color: #facc15; font-size: 0.8rem; }
+  .drilldown-panel {
+    background: #1e293b; border-radius: 0.75rem; padding: 1.25rem;
+    border: 1px solid #334155; margin-bottom: 1rem;
+  }
+  .drilldown-header {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 1rem;
+  }
+  .drilldown-header h2 { font-size: 1.1rem; color: #38bdf8; }
+  .drilldown-total { font-size: 0.85rem; color: #a78bfa; font-family: monospace; }
+  .prompt-panel {
+    background: #0f172a; border-radius: 0.75rem; padding: 1rem;
+    border: 1px solid #334155; margin-top: 1rem;
+  }
+  .prompt-panel h3 { font-size: 0.95rem; color: #facc15; margin-bottom: 0.75rem; }
+  .badge {
+    font-size: 0.65rem; background: #334155; color: #94a3b8;
+    padding: 0.15rem 0.5rem; border-radius: 0.5rem; vertical-align: middle;
+  }
+  .empty-state { color: #64748b; text-align: center; padding: 2rem; font-style: italic; }
   @media (max-width: 600px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
   }
@@ -86,6 +146,11 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     <span>&middot;</span>
     <span>{{.ToolCount}} tools</span>
   </div>
+  <div class="section-title">Servers</div>
+  <div id="server-table" hx-get="/api/dashboard/servers" hx-trigger="every 5s" hx-swap="innerHTML">
+    {{template "serverRows" .Servers}}
+  </div>
+  <div id="drilldown-content"></div>
 </div>
 </body>
 </html>
@@ -111,6 +176,8 @@ var cardsTemplate = template.Must(template.New("cards").Parse(`
   </div>
 </div>
 `))
+
+var drilldownTemplates = template.Must(template.ParseFS(viewsFS, "views/drilldown.html"))
 
 func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 	globalLogger = logger
@@ -144,6 +211,9 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 	mux.HandleFunc("GET /api/dashboard/json", func(w http.ResponseWriter, r *http.Request) {
 		DashboardJSON(w, r)
 	})
+	mux.HandleFunc("GET /api/dashboard/servers", handleServerTable)
+	mux.HandleFunc("GET /api/dashboard/servers/{server}", handleServerDrilldown)
+	mux.HandleFunc("GET /api/dashboard/servers/{server}/tools/{tool}/prompts", handleToolPrompts)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assetsFS))))
 	mux.HandleFunc("GET /{$}", handleDashboardIndex)
 
@@ -167,6 +237,7 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 
 func collectDashboardData() DashboardData {
 	snap := metrics.Snapshot()
+	tracker := reporter.GlobalCostTracker()
 
 	sort.Slice(snap.ByServer, func(i, j int) bool {
 		return snap.ByServer[i].TokenCount > snap.ByServer[j].TokenCount
@@ -180,6 +251,7 @@ func collectDashboardData() DashboardData {
 		WTDSpend:    formatTokens(snap.TotalSpend),
 		ServerCount: len(snap.ByServer),
 		ToolCount:   len(snap.ByTool),
+		Servers:     make([]ServerRow, 0, len(snap.ByServer)),
 	}
 
 	if len(snap.ByServer) > 0 {
@@ -192,6 +264,15 @@ func collectDashboardData() DashboardData {
 		data.TopTool = snap.ByTool[0].ToolName
 	} else {
 		data.TopTool = "-"
+	}
+
+	for _, s := range snap.ByServer {
+		stats := tracker.GetServerToolStats(s.ServerName)
+		data.Servers = append(data.Servers, ServerRow{
+			Name:       s.ServerName,
+			ToolCount:  len(stats),
+			TokenCount: formatTokens(s.TokenCount),
+		})
 	}
 
 	return data
@@ -213,6 +294,75 @@ func handleDashboardJSON(w http.ResponseWriter, r *http.Request) {
 	if err := cardsTemplate.Execute(w, data); err != nil {
 		globalLogger.Error("failed to render dashboard cards", "error", err)
 	}
+}
+
+func handleServerTable(w http.ResponseWriter, r *http.Request) {
+	data := collectDashboardData()
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := drilldownTemplates.ExecuteTemplate(w, "serverRows", data.Servers); err != nil {
+		globalLogger.Error("failed to render server table", "error", err)
+	}
+}
+
+func handleServerDrilldown(w http.ResponseWriter, r *http.Request) {
+	serverName := r.PathValue("server")
+	if serverName == "" {
+		http.Error(w, "server name required", http.StatusBadRequest)
+		return
+	}
+	serverName, err := url.QueryUnescape(serverName)
+	if err != nil {
+		http.Error(w, "invalid server name", http.StatusBadRequest)
+		return
+	}
+
+	since := parseSinceParam(r)
+	dd := metrics.ServerDrilldown(serverName, since)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := drilldownTemplates.ExecuteTemplate(w, "drilldown", dd); err != nil {
+		globalLogger.Error("failed to render drilldown", "error", err)
+	}
+}
+
+func handleToolPrompts(w http.ResponseWriter, r *http.Request) {
+	serverName := r.PathValue("server")
+	toolName := r.PathValue("tool")
+	if serverName == "" || toolName == "" {
+		http.Error(w, "server and tool name required", http.StatusBadRequest)
+		return
+	}
+	var err error
+	serverName, err = url.QueryUnescape(serverName)
+	if err != nil {
+		http.Error(w, "invalid server name", http.StatusBadRequest)
+		return
+	}
+	toolName, err = url.QueryUnescape(toolName)
+	if err != nil {
+		http.Error(w, "invalid tool name", http.StatusBadRequest)
+		return
+	}
+
+	ph := metrics.ServerToolPromptHashes(serverName, toolName)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := drilldownTemplates.ExecuteTemplate(w, "prompts", ph); err != nil {
+		globalLogger.Error("failed to render prompts", "error", err)
+	}
+}
+
+func parseSinceParam(r *http.Request) time.Time {
+	daysStr := r.URL.Query().Get("days")
+	if daysStr == "" {
+		daysStr = r.URL.Query().Get("since")
+	}
+	if daysStr == "" {
+		return time.Time{}
+	}
+	var days int
+	if _, err := fmt.Sscanf(daysStr, "%d", &days); err != nil || days <= 0 {
+		return time.Time{}
+	}
+	return time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 }
 
 func formatTokens(n int64) string {

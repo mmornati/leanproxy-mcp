@@ -1,5 +1,11 @@
 # Deferred Work
 
+## Deferred from: code review of 18-2-drill-down (2026-07-21)
+
+- [Review][Defer] `TrackCostFromStrings()` always computes SHA-256 hash — even when prompt tracking not needed. Pre-existing design, not an AC requirement. [pkg/reporter/cost.go:54]
+- [Review][Defer] Dashboard double-polls `/api/dashboard` and `/api/dashboard/servers` every 5s — cosmetic optimization, not related to story scope. [pkg/dashboard/server.go:139,150]
+- [Review][Defer] Template rendering errors logged but not returned as HTTP 500 — consistent with existing handler pattern. [pkg/dashboard/server.go:302,322,339]
+
 ## Deferred from: code review of 10-3-cache-hit-rate-report (2026-06-23)
 
 - [Review][Defer] Hardcoded pricing values with no update mechanism [pkg/cache/pricing.go] — acceptable for initial release; prices change over time

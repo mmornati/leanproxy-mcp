@@ -323,6 +323,97 @@ func TestFormatTokens(t *testing.T) {
 	}
 }
 
+func TestDashboardServerTableEndpoint(t *testing.T) {
+	reporter.GlobalCostTracker().Reset()
+	defer reporter.GlobalCostTracker().Reset()
+
+	reporter.TrackCost("tool-a", "server-1", 100)
+	reporter.TrackCost("tool-b", "server-1", 200)
+	reporter.TrackCost("tool-c", "server-2", 50)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/dashboard/servers", handleServerTable)
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/dashboard/servers")
+	if err != nil {
+		t.Fatalf("GET /api/dashboard/servers failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+}
+
+func TestDashboardServerDrilldownEndpoint(t *testing.T) {
+	reporter.GlobalCostTracker().Reset()
+	defer reporter.GlobalCostTracker().Reset()
+
+	reporter.TrackCost("tool-a", "server-1", 100)
+	reporter.TrackCost("tool-b", "server-1", 200)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/dashboard/servers/{server}", handleServerDrilldown)
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/dashboard/servers/server-1")
+	if err != nil {
+		t.Fatalf("GET /api/dashboard/servers/server-1 failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestDashboardServerDrilldownEndpointInvalid(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/dashboard/servers/{server}", handleServerDrilldown)
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/dashboard/servers/")
+	if err != nil {
+		t.Fatalf("GET failed: %v", err)
+	}
+	defer resp.Body.Close()
+}
+
+func TestDashboardToolPromptsEndpoint(t *testing.T) {
+	reporter.GlobalCostTracker().Reset()
+	defer reporter.GlobalCostTracker().Reset()
+
+	reporter.TrackCostFromStrings("tool-a", "server-1", `{"q":"hi"}`, `{"a":"there"}`)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/dashboard/servers/{server}/tools/{tool}/prompts", handleToolPrompts)
+
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/dashboard/servers/server-1/tools/tool-a/prompts")
+	if err != nil {
+		t.Fatalf("GET /prompts failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
 func TestDashboardPerServerPerTool(t *testing.T) {
 	reporter.GlobalCostTracker().Reset()
 	defer reporter.GlobalCostTracker().Reset()
