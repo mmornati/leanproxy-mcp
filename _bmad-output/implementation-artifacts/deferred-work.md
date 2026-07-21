@@ -41,3 +41,10 @@
 
 - [Review][Defer] No integration wiring to proxy pipeline — Governor is created and tested but never instantiated in the proxy request handling path. Expected for a follow-up integration story.
 - [Review][Defer] Webhook dispatcher lacks retry logic — HTTP POST has no retry on transient failure; alerts are silently dropped if endpoint is unavailable. Enhancement beyond spec scope.
+
+## Deferred from: code review of 18-1-web-dashboard (2026-07-21)
+
+- [Review][Defer] F2: TodaySpend == WTDSpend — both use `snap.TotalSpend`; `pkg/metrics` has no separate daily/weekly aggregation. Pre-existing data model limitation.
+- [Review][Defer] F7: Dashboard uses `Close()` not `Shutdown()` during graceful shutdown — matches existing `metricsServer.Close()` pattern.
+- [Review][Defer] F9: No rate limiting on auth — brute-force protection for non-loopback. Out of scope for story 18-1.
+- [Review][Defer] F10: No TLS support — dashboard is HTTP-only with warning for non-loopback binds. Out of scope for this story.
