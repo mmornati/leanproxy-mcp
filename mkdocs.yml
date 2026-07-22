@@ -31,6 +31,10 @@ nav:
   - Quick Start: quickstart.md
   - Commands Reference: commands.md
   - Configuration: configuration.md
+  - Security: security.md
+  - Web Dashboard: dashboard.md
+  - Budget Management: budget.md
+  - IDE Extensions: extensions.md
   - Architecture: architecture.md
   - Troubleshooting: troubleshooting.md
   - FAQ: faq.md

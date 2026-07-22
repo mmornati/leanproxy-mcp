@@ -7,6 +7,8 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | Feature | Description |
 |---------|-------------|
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
+| **Prompt Injection Protection** | Classifies payloads against injection patterns with risk scoring and configurable actions |
+| **Sidecar LLM Redaction** | Context-aware redaction via local Ollama/MLX for sensitive data beyond regex |
 | **Token Authentication** | Optional Unix socket authentication for request-level access control |
 | **Batch Size Limits** | Prevents DoS via large JSON-RPC batch requests |
 | **ReDoS Protection** | Validates regex patterns to prevent catastrophic backtracking |
@@ -41,6 +43,146 @@ bouncer:
       pattern: "MY_SECRET=[A-Za-z0-9]{32,}"
       replacement: "MY_SECRET=REDACTED"
 ```
+
+## Prompt Injection Protection
+
+LeanProxy-MCP includes a classification engine that detects and responds to prompt injection attacks, jailbreak attempts, and system prompt extraction in tool call payloads.
+
+### How It Works
+
+The injection classifier runs against every tool call payload:
+
+1. **Pattern matching**: 14 built-in regex patterns scan the payload (e.g., `ignore-previous-instructions`, `dan-jailbreak`, `system-prompt-extraction`)
+2. **Risk scoring**: Each matched pattern contributes its weight to a total score, capped at 100
+3. **Policy action**: The dispatcher applies the configured action based on the risk score range
+
+### Risk Scoring
+
+The classifier evaluates all enabled patterns against the payload. Each match contributes its weight to a cumulative score (0-100).
+
+### Policy Configuration
+
+Configured in `leanproxy.yaml`:
+
+```yaml
+injection:
+  enabled: true
+  threshold: 70
+  policies:
+    - min_risk: 80
+      max_risk: 100
+      action: block
+    - min_risk: 50
+      max_risk: 79
+      action: quarantine
+    - min_risk: 1
+      max_risk: 49
+      action: log
+```
+
+### Dispatcher Actions
+
+| Action | Description |
+|--------|-------------|
+| `block` | Rejects the request with an error |
+| `quarantine` | Saves the payload to disk for analysis, returns quarantine ID |
+| `redact` | Replaces payload content with `[CONTENT_REDACTED]` |
+| `log` | Forwards the request but logs a warning |
+
+### Quarantine
+
+Quarantined payloads are saved to `~/.leanproxy/quarantine/<uuid>.json`:
+
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "timestamp": "2026-07-22T10:30:00Z",
+  "server": "filesystem",
+  "tool": "read_file",
+  "risk_score": 85,
+  "matched_patterns": ["ignore-previous-instructions"],
+  "payload": "{...}"
+}
+```
+
+View quarantine status:
+
+```bash
+leanproxy-mcp doctor security
+```
+
+### Built-in Patterns (14)
+
+| Pattern | Weight | Description |
+|---------|--------|-------------|
+| `ignore-previous-instructions` | 90 | Override system instructions |
+| `new-instruction-override` | 85 | Redefine assistant role |
+| `system-prompt-extraction` | 80 | Extract system prompt |
+| `dan-jailbreak` | 75 | DAN-style jailbreaks |
+| `role-impersonation` | 70 | Boundary removal |
+| `repeat-everything` | 70 | Conversation dump attempts |
+| `token-smuggling` | 65 | Encoded payloads |
+| `forget-everything` | 75 | Context reset |
+| `inject-command` | 80 | Explicit injection markers |
+| `separator-injection` | 85 | Delimiter-based injection |
+| `important-override` | 30 | Urgency-based |
+| `roleplay-context-switch` | 40 | Roleplay |
+| `hypothetical-override` | 25 | Hypothetical scenarios |
+| `ignore-above` | 50 | Selective ignoring |
+
+### Custom Patterns
+
+Add custom patterns to catch organization-specific injection attempts:
+
+```yaml
+injection:
+  custom_patterns:
+    - name: "my-pattern"
+      pattern: "(?i)ignore previous instructions"
+      weight: 90
+      enabled: true
+      description: "Detect instruction override attempts"
+```
+
+### Diagnostic CLI
+
+```bash
+# Show security policy and quarantine status
+leanproxy-mcp doctor security
+```
+
+## Sidecar LLM Redaction
+
+For context-aware redaction beyond regex patterns, deploy a sidecar LLM (Ollama or MLX). The sidecar analyzes already-redacted content and replaces any remaining sensitive data using an LLM.
+
+### How It Works
+
+1. Regex-based bouncer redaction runs first
+2. Sidecar LLM receives the redacted content
+3. LLM replaces remaining sensitive data (API keys, passwords, tokens, PII) with `[VALUE_REDACTED]`
+4. Falls back to aggressive redact if LLM is unavailable
+
+### Configuration
+
+```yaml
+sidecar:
+  provider: ollama    # "ollama" or "mlx"
+  model: llama3.1:8b
+  url: http://localhost:11434
+```
+
+### CLI
+
+```bash
+leanproxy-mcp serve --sidecar-provider ollama --sidecar-model llama3.1:8b
+```
+
+### Providers
+
+| Provider | Status | Notes |
+|----------|--------|-------|
+| Ollama | Full support | Sends redaction prompt to `/api/generate`, 30s timeout |
+| MLX | Experimental | Apple Silicon only, build with `-tags mlx` |
 
 ## Token Authentication
 
@@ -245,6 +387,8 @@ if err := server.Shutdown(ctx); err != nil {
 
 ## Next Steps
 
-- [Configuration](./configuration.md) - Full configuration options
+- [Configuration](./configuration.md) - Full configuration options including injection protection
+- [Commands Reference](./commands.md) - `doctor security` and `bouncer` CLI commands
 - [Troubleshooting](./troubleshooting.md) - Security-related issues
 - [Architecture](./architecture.md) - Security design details
+- [Budget Management](./budget.md) - Spending limits and governance

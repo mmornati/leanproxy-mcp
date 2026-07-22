@@ -1,10 +1,8 @@
 package e2e
 
 import (
-	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -55,26 +53,6 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatalf("failed to write %s: %v", path, err)
 	}
-}
-
-// readLine reads the next newline-delimited JSON-RPC message from r and
-// returns it trimmed. Useful for stdio-mode tests.
-func readLine(r *bufio.Reader) (string, error) {
-	line, err := r.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", err
-	}
-	return line, nil
-}
-
-// formatServersList returns a compact YAML list of servers (used by tests that
-// need to spin up multiple servers, e.g. dashboard drill-down).
-func formatServersList(servers []map[string]string) string {
-	out := "version: \"1.0\"\nservers:\n"
-	for _, s := range servers {
-		out += fmt.Sprintf("  - name: %s\n    transport: stdio\n    enabled: true\n    stdio:\n      command: /bin/echo\n      args: [\"hello\"]\n      env: []\n", s["name"])
-	}
-	return out
 }
 
 // startServe launches the binary as a background `serve` process, captures
@@ -179,17 +157,4 @@ func waitForHTTP(t *testing.T, url string, timeout time.Duration) (*http.Respons
 	}
 	t.Fatalf("timed out waiting for %s after %s: %v", url, timeout, lastErr)
 	return nil, ""
-}
-
-// readJSONLine reads one newline-delimited JSON object from r.
-func readJSONLine(r *bufio.Reader) (map[string]interface{}, error) {
-	line, err := r.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return nil, err
-	}
-	out := map[string]interface{}{}
-	if err := json.Unmarshal([]byte(line), &out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }

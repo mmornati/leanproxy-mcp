@@ -165,10 +165,17 @@ For most developers, GitHub has G/N ≈ 5-10% (fetch issue + create PR), making 
 | Feature | Description |
 |---------|-------------|
 | **Token Firewall** | Pre-configured redaction engine that intercepts secrets, API keys, and PII |
+| **Prompt Injection Protection** | Classifies payloads against injection patterns with risk scoring and quarantine |
+| **Sidecar LLM Redaction** | Context-aware redaction via local Ollama/MLX |
+| **Semantic Cache** | Vector-similarity caching reduces redundant LLM calls |
+| **Model Routing** | Route per-tool to different LLM models by complexity tier |
+| **MCP Registry Marketplace** | Discover, search, and install community MCP servers |
+| **Web Dashboard** | Real-time token usage monitoring with drill-down |
+| **Budget Management** | Per-team/project spending limits with webhook alerts |
+| **IDE Extensions** | VS Code and JetBrains plugins for cost monitoring |
 | **Shadow Manifesting** | Merges global and project-local MCP configurations |
 | **JIT Discovery** | On-demand tool registration to minimize context overhead |
 | **Dry-Run Mode** | Simulate proxy behavior without live execution |
-| **POSIX CLI** | Simple commands for server management |
 
 ## Getting Started
 
@@ -177,6 +184,22 @@ New to LeanProxy-MCP? Start here:
 1. [Installation Guide](./installation.md) - Download and install
 2. [Quick Start](./quickstart.md) - Basic usage
 3. [Commands Reference](./commands.md) - Full command documentation
+
+## New in v0.8.0
+
+| Feature | Description |
+|---------|-------------|
+| [MCP Registry Marketplace](./commands.md) | `marketplace` CLI — sync, search, and install servers |
+| [Prompt Injection Protection](./security.md) | Classifier engine with risk scoring and quarantine |
+| [Semantic Cache](./configuration.md) | Vector similarity caching with Ollama/OpenAI embeddings |
+| [Model Routing](./configuration.md) | Per-tool LLM routing by complexity tier |
+| [Sidecar LLM Redaction](./configuration.md) | Context-aware redaction via local LLM |
+| [Web Dashboard](./dashboard.md) | Real-time monitoring with server/tool drill-down |
+| [Budget Management](./budget.md) | Per-team/project budgets with webhooks |
+| [IDE Extensions](./extensions.md) | VS Code and JetBrains plugins |
+| [Cache Hit Rate Report](./commands.md) | `cache stats` for Anthropic prompt caching analytics |
+| [CSV/JSON Cost Export](./commands.md) | `report --export csv/json` for external analysis |
+| [Metrics Endpoint](./dashboard.md) | Prometheus-style JSON metrics for monitoring |
 
 ## Need Help?
 

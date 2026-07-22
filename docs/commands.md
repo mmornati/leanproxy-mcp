@@ -22,19 +22,98 @@ leanproxy-mcp [command] [flags]
 
 | Command | Description |
 |---------|-------------|
+| `add` | Install an MCP server from the registry |
 | `serve` | Start the JSON-RPC streaming proxy |
 | `server` | Manage MCP server configurations |
 | `bouncer` | Manage redaction settings |
 | `compactor` | Manage manifest caching |
-| `cache` | Inspect persisted tool cache |
+| `cache` | Inspect and manage the tool cache |
 | `status` | Display real-time server status |
 | `savings` | Display token savings statistics |
 | `cost` | Display token cost attribution statistics |
 | `report` | Generate token savings report |
+| `doctor` | Run diagnostic checks on the installation |
+| `marketplace` | Interact with the MCP Registry marketplace |
 | `migrate` | Import MCP configs from other tools |
 | `completion` | Generate shell completions |
 | `namespace` | Manage hierarchical namespaces |
 | `version` | Print version information |
+
+## `add` - Install Server from Registry
+
+Install an MCP server from the local MCP Registry cache. Resolves the registry entry, merges it into `leanproxy_servers.yaml`, and prints a token-cost preview.
+
+If the cache is empty or stale, run `leanproxy marketplace sync` first.
+
+### Usage
+
+```bash
+leanproxy-mcp add <server-id> [flags]
+```
+
+### Aliases
+
+`install`
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--force` | bool | false | Overwrite an existing server definition with the same name |
+| `--stop-existing` | bool | true | Gracefully stop any running server with the same name before replacing |
+| `--graceful-wait` | int | 10 | Seconds to wait for graceful stop before proceeding (0 = no wait) |
+| `-y, --yes` | bool | false | Skip the confirmation prompt when overwriting |
+| `-n, --dry-run` | bool | false | Preview the install without writing the config |
+| `--i-understand-the-risks` | bool | false | Acknowledge low-trust server warning and proceed |
+
+### Examples
+
+```bash
+# Sync the registry first
+leanproxy marketplace sync
+
+# Search for a server
+leanproxy marketplace search github
+
+# Install a server from the registry
+leanproxy add github
+
+# Force overwrite an existing server
+leanproxy add filesystem --force
+
+# Preview installation without writing config
+leanproxy add github --dry-run
+```
+
+### Output
+
+```
+Registry entry: github (41 tools, trust score: 85/100)
+Token impact:
+  Native MCP:   ~4,100 tokens per request
+  LeanProxy:    ~110 tokens per request
+  Savings:      ~3,990 tokens (97.3%)
+
+Server 'github' added successfully.
+```
+
+Low-trust servers (score < 40) require `--i-understand-the-risks`:
+
+```
+Warning: Server 'experimental-db' has a low trust score of 25/100.
+This server may be unmaintained or from an untrusted publisher.
+Use --i-understand-the-risks to install anyway.
+```
+
+### How It Works
+
+1. **Lookup**: Searches the local registry cache for the server ID
+2. **Preview**: Computes a token-cost snapshot showing savings
+3. **Trust Check**: Verifies the server's trust score; prompts if low
+4. **Install**: Merges the server definition into `leanproxy_servers.yaml`
+5. **Stop Existing**: Gracefully stops any running instance with the same name
+
+---
 
 ## `serve` - Start Proxy Server
 
@@ -52,6 +131,21 @@ leanproxy-mcp serve [flags]
 |------|------|---------|-------------|
 | `--listen` | string | `127.0.0.1:8080` | Address to listen on |
 | `--upstream` | string | `http://localhost:8081` | Upstream JSON-RPC server URL |
+| `--dashboard-bind` | string | `127.0.0.1:9090` | Dashboard bind address. Set to `off` or empty to disable |
+| `--dashboard-token` | string | `""` | Bearer token for dashboard access from non-loopback addresses |
+| `--metrics-bind` | string | `""` | Metrics endpoint bind address (e.g. `127.0.0.1:9091`). Set to `off` or empty to disable |
+| `--cache-strategy` | string | `off` | Cache breakpoint injection strategy: `off`, `aggressive`, `balanced` |
+| `--embed-provider` | string | `""` | Embedding provider for semantic cache: `ollama` or `openai` (empty = disabled) |
+| `--embed-pool-size` | int | `4` | Embedder worker pool size |
+| `--ollama-url` | string | `http://localhost:11434` | Ollama server URL |
+| `--ollama-model` | string | `nomic-embed-text` | Ollama embedding model |
+| `--openai-model` | string | `text-embedding-3-small` | OpenAI embedding model |
+| `--providers-config` | string | `""` | Path to providers config file for provider detection |
+| `--model-router` | bool | false | Enable per-tool model routing based on complexity tier |
+| `--model-router-config` | string | `""` | Path to model router YAML config |
+| `--sidecar-provider` | string | `""` | Sidecar provider (`ollama`) for local LLM redaction (empty = disabled) |
+| `--sidecar-model` | string | `llama3.1:8b` | Sidecar model name |
+| `--sidecar-url` | string | `http://localhost:11434` | Sidecar server URL |
 
 ### Examples
 
@@ -67,6 +161,31 @@ leanproxy-mcp serve --upstream http://localhost:9000
 
 # With verbose logging
 leanproxy-mcp serve --verbose
+
+# Enable web dashboard on default port
+leanproxy-mcp serve --dashboard-bind 127.0.0.1:9090
+
+# Enable metrics endpoint
+leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
+
+# Enable semantic cache with Ollama embeddings
+leanproxy-mcp serve --embed-provider ollama --ollama-url http://localhost:11434
+
+# Enable model routing with custom config
+leanproxy-mcp serve --model-router --model-router-config ./model-router.yaml
+
+# Enable sidecar LLM redaction
+leanproxy-mcp serve --sidecar-provider ollama --sidecar-model llama3.1:8b
+
+# Cache breakpoint injection (Anthropic)
+leanproxy-mcp serve --cache-strategy aggressive
+
+# Full featured server
+leanproxy-mcp serve \
+  --dashboard-bind 127.0.0.1:9090 \
+  --metrics-bind 127.0.0.1:9091 \
+  --embed-provider ollama \
+  --cache-strategy balanced
 ```
 
 ## `server` - Manage MCP Servers
@@ -544,13 +663,20 @@ leanproxy-mcp compactor rebuild github --dry-run
 
 ## `cache` - Tool Cache Inspector
 
-Inspect the persisted tool cache to see what tools have been indexed from MCP servers. The cache persists tool information from servers even when servers are stopped, allowing LLMs to search for tools without starting servers.
+Inspect and manage the persisted tool cache. The cache stores tool signatures from MCP servers, enabling offline search and fast tool listing without starting backend servers.
 
 ### Usage
 
 ```bash
 leanproxy-mcp cache [flags]
+leanproxy-mcp cache [command]
 ```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `stats` | Show Anthropic prompt cache hit rate statistics |
 
 ### Cache Location
 
@@ -572,6 +698,7 @@ Each server's tools are cached in a separate JSON file:
 | `--location` | bool | Show the cache directory location |
 | `--server` | string | Show cached tools for a specific server |
 | `--search` | string | Search cached tools by name or description |
+| `--semantic` | bool | Show semantic cache hit/miss dashboard |
 | `--clear` | bool | Clear cache for specified server (use with --server) |
 | `--json` | bool | Output in JSON format |
 
@@ -595,6 +722,63 @@ leanproxy-mcp cache --server garmin --search sleep
 
 # Clear cache for a server
 leanproxy-mcp cache --clear --server garmin
+
+# Show Anthropic prompt cache hit rate
+leanproxy-mcp cache stats
+
+# Show semantic cache hit/miss dashboard
+leanproxy-mcp cache --semantic
+
+# Show semantic cache data as JSON
+leanproxy-mcp cache --semantic --json
+```
+
+---
+
+### `cache stats` - Cache Hit Rate
+
+Show Anthropic prompt caching hit rate statistics including total requests, cache hits, hit rate percentage, tokens saved, and estimated dollar savings.
+
+#### Usage
+
+```bash
+leanproxy-mcp cache stats [flags]
+```
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool | false | Output in JSON format |
+| `--model` | string | `claude-sonnet-4-20250514` | Anthropic model for cost estimation |
+
+#### Examples
+
+```bash
+# Show cache hit rate
+leanproxy-mcp cache stats
+
+# Show for a specific model
+leanproxy-mcp cache stats --model claude-sonnet-4-20250514
+
+# JSON output
+leanproxy-mcp cache stats --json
+```
+
+#### Output
+
+```
+## Anthropic Prompt Caching Hit Rate
+
+| Metric | Value |
+|--------|-------|
+| Total Requests | 1,234 |
+| Cache Hits | 987 |
+| Cache Misses | 247 |
+| Hit Rate | 80.0% |
+| Tokens Saved | 45,678 |
+| Estimated Savings | $0.37 |
+| Model | claude-sonnet-4-20250514 |
 ```
 
 #### Output (--location)
@@ -1090,6 +1274,8 @@ leanproxy-mcp report [flags]
 | `--no-security` | bool | Exclude security events |
 | `--output` | string | Output file path |
 | `--session-id` | string | Generate for specific session |
+| `--export` | string | Export raw cost data format (`csv`, `json`) |
+| `--since` | string | Include entries since this date (YYYY-MM-DD, requires `--export`) |
 
 #### Examples
 
@@ -1105,6 +1291,18 @@ leanproxy-mcp report --json
 
 # Exclude security
 leanproxy-mcp report --no-security
+
+# Export cost data as CSV
+leanproxy-mcp report --export csv
+
+# Export cost data as JSON
+leanproxy-mcp report --export json
+
+# Export cost data since a specific date
+leanproxy-mcp report --export csv --since 2026-06-01
+
+# Export to file
+leanproxy-mcp report --export csv --output cost-report.csv
 ```
 
 #### Output (Markdown)
@@ -1214,6 +1412,155 @@ leanproxy-mcp completion zsh > ~/.zsh/completions/_leanproxy-mcp
 
 # Fish
 leanproxy-mcp completion fish > ~/.config/fish/completions/leanproxy-mcp.fish
+```
+
+---
+
+## `marketplace` - MCP Registry Marketplace
+
+Interact with the MCP Registry marketplace: sync the latest server index, search for available servers, and discover community MCP servers with trust scores and maintenance status.
+
+### Usage
+
+```bash
+leanproxy-mcp marketplace [command]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `sync` | Fetch and cache the MCP Registry index |
+| `search` | Search MCP Registry servers by name or description |
+
+---
+
+### `marketplace sync` - Sync Registry Index
+
+Download the latest MCP Registry server index and store it locally. The cached index is used by marketplace commands and kept up-to-date via periodic refresh.
+
+#### Usage
+
+```bash
+leanproxy-mcp marketplace sync
+```
+
+#### Examples
+
+```bash
+# Sync the registry index
+leanproxy-mcp marketplace sync
+```
+
+#### Output
+
+```
+Fetching registry index...
+Registry index synced successfully (1,245 entries)
+Cache stored at: ~/.config/leanproxy/registry/feed_index.json
+```
+
+---
+
+### `marketplace search` - Search Registry Servers
+
+Search the local MCP Registry cache for servers matching the query. Displays a table with trust score, maintenance status, and download metrics.
+
+#### Usage
+
+```bash
+leanproxy-mcp marketplace search <query> [flags]
+```
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--limit` | int | `25` | Maximum number of rows to display (1-200) |
+
+#### Examples
+
+```bash
+# Search for GitHub-related servers
+leanproxy-mcp marketplace search github
+
+# Search for database servers
+leanproxy-mcp marketplace search database
+
+# Limit results
+leanproxy-mcp marketplace search filesystem --limit 10
+```
+
+#### Output
+
+```
+Search results for "github" (5 matches):
+
+  NAME                      TRUST    STATUS      DOWNLOADS
+  github                    85/100   maintained  12,450
+  github-actions            72/100   maintained   3,210
+  github-project-manager    45/100   beta          890
+  githunter                 22/100   unmaintained   120
+  github-enterprise         90/100   verified    45,600
+```
+
+Scores below 40 are considered low trust and require `--i-understand-the-risks` when installing.
+
+---
+
+## `doctor` - Diagnostic Checks
+
+Run diagnostic checks on the LeanProxy installation including injection security policy, quarantine status, configuration syntax, and file permissions.
+
+### Usage
+
+```bash
+leanproxy-mcp doctor [command] [flags]
+```
+
+### Subcommands
+
+| Command | Description |
+|---------|-------------|
+| `security` | Show injection security policy and quarantine status |
+
+---
+
+### `doctor security` - Security Diagnostic
+
+Display the current injection security policy rules and quarantine status for prompt-injection protection.
+
+#### Usage
+
+```bash
+leanproxy-mcp doctor security
+```
+
+#### Examples
+
+```bash
+# Show security diagnostics
+leanproxy-mcp doctor security
+```
+
+#### Output
+
+```
+# Injection Security Diagnostic
+
+## Policy Configuration
+
+  Risk  80-100 -> block
+  Risk  50- 79 -> quarantine
+  Risk   1- 49 -> log
+
+## Quarantine Status
+
+  Quarantined payloads: 2
+    - ~/.leanproxy/quarantine/a1b2c3d4-e5f6-7890-abcd-ef1234567890.json
+    - ~/.leanproxy/quarantine/b2c3d4e5-f6a7-8901-bcde-fa1234567890.json
+
+Total quarantined payloads: 2
 ```
 
 ---
