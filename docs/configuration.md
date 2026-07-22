@@ -448,6 +448,290 @@ leanproxy-mcp namespace assign engineering github
 | `LEANPROXY_HOST` | Server host |
 | `LEANPROXY_PORT` | Server port |
 
+## Prompt Injection Protection
+
+Injection protection analyzes tool call payloads against known prompt injection patterns and applies configurable actions (block, quarantine, log) based on risk scoring.
+
+### Configuration
+
+```yaml
+injection:
+  enabled: true
+  threshold: 70
+  action: block
+  custom_patterns:
+    - name: "my-pattern"
+      pattern: "(?i)ignore previous instructions"
+      weight: 90
+      enabled: true
+      description: "Detect instruction override attempts"
+  policies:
+    - min_risk: 80
+      max_risk: 100
+      action: block
+    - min_risk: 50
+      max_risk: 79
+      action: quarantine
+    - min_risk: 1
+      max_risk: 49
+      action: log
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `true` | Enable injection protection |
+| `threshold` | int | `70` | Minimum risk score to trigger action (1-100) |
+| `action` | string | `block` | Fallback action (`block`, `quarantine`, `log`, `redact`) |
+| `custom_patterns` | array | `[]` | User-defined injection patterns |
+| `policies` | array | (see default) | Ordered risk-range rules (overrides `action`) |
+
+### Default Policy Rules
+
+| Risk Range | Default Action |
+|------------|----------------|
+| 80-100 | `block` |
+| 50-79 | `quarantine` |
+| 1-49 | `log` |
+
+### Dispatcher Actions
+
+| Action | Description |
+|--------|-------------|
+| `block` | Rejects the request outright |
+| `quarantine` | Writes payload to quarantine directory, returns quarantine ID |
+| `redact` | Replaces payload content with `[CONTENT_REDACTED]` |
+| `log` | Forwards request with debug log only |
+
+### Default Built-in Patterns (14)
+
+| Pattern | Weight | Description |
+|---------|--------|-------------|
+| `ignore-previous-instructions` | 90 | Override system instructions |
+| `new-instruction-override` | 85 | Redefine assistant role |
+| `system-prompt-extraction` | 80 | Extract system prompt |
+| `dan-jailbreak` | 75 | DAN-style jailbreaks |
+| `role-impersonation` | 70 | Boundary removal |
+| `repeat-everything` | 70 | Conversation dump attempts |
+| `token-smuggling` | 65 | Encoded payloads |
+| `forget-everything` | 75 | Context reset |
+| `inject-command` | 80 | Explicit injection markers |
+| `separator-injection` | 85 | Delimiter-based injection |
+| `important-override` | 30 | Urgency-based |
+| `roleplay-context-switch` | 40 | Roleplay |
+| `hypothetical-override` | 25 | Hypothetical scenarios |
+| `ignore-above` | 50 | Selective ignoring |
+
+## Semantic Cache
+
+Semantic caching stores and retrieves tool responses based on vector similarity, reducing redundant LLM calls for semantically similar requests.
+
+### Configuration
+
+```yaml
+cache:
+  vector_store:
+    backend: sqlite-vec  # sqlite-vec, qdrant, or pinecone
+    dimension: 1536
+    sqlite:
+      path: "~/.leanproxy/cache/vectors.db"
+    qdrant:
+      url: "http://localhost:6333"
+      api_key_env: "QDRANT_API_KEY"
+      collection: "leanproxy_cache"
+    pinecone:
+      index: "my-index"
+      api_key_env: "PINECONE_API_KEY"
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `backend` | string | `sqlite-vec` | Vector store backend (`sqlite-vec`, `qdrant`, `pinecone`) |
+| `dimension` | int | `1536` | Embedding vector dimension |
+
+### Embedder Providers
+
+Supported via `--embed-provider` flag:
+
+| Provider | Default Model | Default URL |
+|----------|---------------|-------------|
+| `ollama` | `nomic-embed-text` | `http://localhost:11434` |
+| `openai` | `text-embedding-3-small` | `https://api.openai.com/v1/embeddings` |
+
+### Similarity
+
+- Threshold: 0.92 (cosine similarity)
+- Candidates retrieved: 5
+- TTL: 24 hours
+- Eviction interval: 1 hour
+
+### CLI
+
+```bash
+# Enable with Ollama
+leanproxy-mcp serve --embed-provider ollama
+
+# Enable with OpenAI
+leanproxy-mcp serve --embed-provider openai
+
+# Show cache stats
+leanproxy-mcp cache --semantic
+leanproxy-mcp cache --semantic --json
+```
+
+## Model Routing
+
+Route tool calls to different LLM models based on complexity tier, configured per-server.
+
+### Configuration
+
+Separate YAML file referenced by `--model-router-config`:
+
+```yaml
+default_tier: medium
+tiers:
+  low:
+    provider: "anthropic"
+    model: "claude-3-haiku-20240307"
+    api_key_env: "ANTHROPIC_API_KEY"
+  medium:
+    provider: "anthropic"
+    model: "claude-3-sonnet-20240229"
+    api_key_env: "ANTHROPIC_API_KEY"
+  high:
+    provider: "anthropic"
+    model: "claude-3-opus-20240229"
+    api_key_env: "ANTHROPIC_API_KEY"
+```
+
+### Per-Server Assignment
+
+Declare the tier in each server entry within `leanproxy_servers.yaml`:
+
+```yaml
+servers:
+  - name: github
+    complexity_tier: "low"
+  - name: code-review
+    complexity_tier: "high"
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `default_tier` | string | `medium` | Fallback tier |
+| `tiers.<tier>.provider` | string | — | LLM provider |
+| `tiers.<tier>.model` | string | — | Model identifier |
+| `tiers.<tier>.api_key` | string | — | API key inline |
+| `tiers.<tier>.api_key_env` | string | — | API key from env var |
+
+### CLI
+
+```bash
+leanproxy-mcp serve --model-router --model-router-config ./model-router.yaml
+```
+
+## Sidecar LLM Redaction
+
+Offload sensitive content redaction to a local LLM (Ollama or MLX) for context-aware redaction beyond regex patterns.
+
+### Configuration
+
+```yaml
+sidecar:
+  provider: ollama    # "ollama" or "mlx"
+  model: llama3.1:8b
+  url: http://localhost:11434
+```
+
+### CLI Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--sidecar-provider` | `""` | Sidecar provider (`ollama`, `mlx`); empty = disabled |
+| `--sidecar-model` | `llama3.1:8b` | Model name |
+| `--sidecar-url` | `http://localhost:11434` | Server URL |
+
+### How It Works
+
+1. Regex-based bouncer redaction runs first
+2. Sidecar LLM receives the already-redacted content
+3. LLM replaces any remaining sensitive data (API keys, PII, tokens) with `[VALUE_REDACTED]`
+4. Falls back to aggressive redact if LLM is unavailable
+
+### Example
+
+```bash
+leanproxy-mcp serve --sidecar-provider ollama --sidecar-model llama3.1:8b
+```
+
+## Budget Management
+
+Configure spending limits per team and project with soft/hard caps and webhook alerts.
+
+### Configuration
+
+```yaml
+budgets:
+  webhook_url: "https://hooks.example.com/alert"
+  teams:
+    engineering:
+      daily: 1000000
+      monthly: 20000000
+      hard_cap: true
+      soft_cap_pct: 80.0
+      projects:
+        frontend:
+          daily: 500000
+          monthly: 10000000
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `daily` | int | 0 | Daily token budget (0 = unlimited) |
+| `monthly` | int | 0 | Monthly token budget (0 = unlimited) |
+| `hard_cap` | bool | false | Reject when exceeded |
+| `soft_cap_pct` | float | 90.0 | Downgrade threshold (0-100) |
+| `webhook_url` | string | — | Override global webhook URL |
+
+## Dashboard
+
+The web dashboard provides real-time monitoring of token usage.
+
+### Configuration
+
+Configured via CLI flags on `serve`:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--dashboard-bind` | `127.0.0.1:9090` | Dashboard bind address. Set to `off` to disable |
+| `--dashboard-token` | `""` | Bearer token for non-loopback access |
+
+### Metrics Endpoint
+
+```bash
+leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
+```
+
+### Export Cost Data
+
+```bash
+# CSV export
+leanproxy-mcp report --export csv --output costs.csv
+
+# JSON export
+leanproxy-mcp report --export json --output costs.json
+
+# Filtered by date range
+leanproxy-mcp report --export csv --since 2026-06-01
+```
+
 ## Validate Configuration
 
 ```bash

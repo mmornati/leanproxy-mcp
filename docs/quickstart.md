@@ -216,8 +216,72 @@ leanproxy-mcp server enable github
 leanproxy-mcp server disable github
 ```
 
+## Advanced Features
+
+### Discover Servers from Marketplace
+
+Browse and install community MCP servers from the MCP Registry:
+
+```bash
+# Sync the registry cache
+leanproxy-mcp marketplace sync
+
+# Search for servers
+leanproxy-mcp marketplace search github
+
+# Install from registry
+leanproxy-mcp add github
+```
+
+### Enable Web Dashboard
+
+Start the proxy with the dashboard for real-time monitoring:
+
+```bash
+leanproxy-mcp serve --dashboard-bind 127.0.0.1:9090 --metrics-bind 127.0.0.1:9091
+```
+
+Open `http://127.0.0.1:9090` in your browser.
+
+### Enable Semantic Caching
+
+Reduce redundant LLM calls with vector-similarity caching:
+
+```bash
+# Using Ollama embeddings
+leanproxy-mcp serve --embed-provider ollama
+
+# View cache stats
+leanproxy-mcp cache --semantic
+```
+
+### Set Budget Limits
+
+Control spending per team and project:
+
+```yaml
+# leanproxy.yaml
+budgets:
+  teams:
+    engineering:
+      daily: 1000000
+      monthly: 20000000
+      hard_cap: true
+```
+
+### Install IDE Extensions
+
+Real-time cost monitoring in the editor status bar:
+
+- **VS Code**: Install from Marketplace or `code --install-extension leanproxy.vsix`
+- **JetBrains**: Install from Plugin Marketplace or build from source
+
+Requires the metrics endpoint: `leanproxy-mcp serve --metrics-bind 127.0.0.1:9091`
+
 ## Next Steps
 
 - [Commands Reference](./commands.md) - Full command documentation
 - [Configuration](./configuration.md) - Customize LeanProxy-MCP
+- [Web Dashboard](./dashboard.md) - Real-time monitoring
+- [Budget Management](./budget.md) - Spending limits
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions

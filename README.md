@@ -238,17 +238,21 @@ flowchart TB
 
 ---
 
-## v0.7.0: What's New
+## v0.8.0: What's New
 
 | Feature | Description |
 |:--------|:------------|
-| 🔐 **OAuth2 Authentication** | Built-in support for HTTP MCP servers with OAuth2 |
-| 🔄 **Streamable HTTP** | Full Streamable HTTP transport implementation for MCP |
-| 👥 **Hierarchical Namespaces** | Multi-team organization with namespace assignment |
-| ⚡ **Connection Pooling** | HTTP clients with connection reuse and rate limiting |
-| 🧠 **Lazy Schema Loading** | Schemas load only when tools are actually called |
-| 🔧 **Session Re-initialization** | Fast session recovery without full restart |
-| 💰 **Cost Attribution** | Per-server cost tracking and reporting |
+| 🛒 **MCP Registry Marketplace** | Discover and install community MCP servers via `marketplace` CLI |
+| 🛡️ **Prompt Injection Protection** | Classifier engine with risk scoring, quarantine, and configurable policies |
+| 🧠 **Semantic Cache** | Vector-similarity caching with Ollama/OpenAI embeddings and SQLite/Qdrant/Pinecone |
+| 🔀 **Model Routing** | Per-tool LLM routing by complexity tier (low/medium/high) |
+| 🤖 **Sidecar LLM Redaction** | Context-aware redaction via local Ollama or MLX |
+| 📊 **Web Dashboard** | Real-time HTMX-powered dashboard with server/tool drill-down |
+| 💵 **Budget Management** | Per-team/project token budgets with hard caps, soft caps, and webhooks |
+| 🔌 **IDE Extensions** | VS Code and JetBrains plugins for status bar cost monitoring |
+| 📈 **Cache Hit Rate Report** | `cache stats` command for Anthropic prompt caching analytics |
+| 📤 **CSV/JSON Cost Export** | `report --export csv/json` for external analysis |
+| 📐 **Metrics Endpoint** | Prometheus-style JSON metrics for monitoring integrations |
 
 ---
 
