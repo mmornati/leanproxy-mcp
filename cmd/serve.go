@@ -196,6 +196,33 @@ func runServe(cmd *cobra.Command, args []string) {
 		slog.Info("no config file specified, starting in passthrough mode")
 	}
 
+	// Wire the reconnect: config block exactly like `server run --stdio` does:
+	// the block is global and must not be silently ignored in serve mode.
+	var healthChecker *pool.HealthChecker
+	var healthCancel context.CancelFunc
+	if loadedCfg != nil {
+		reconnect := loadedCfg.EffectiveReconnect()
+		stdioPool.SetReconnect(pool.ReconnectSettings{
+			Disabled:           !reconnect.Enabled,
+			MaxRestartAttempts: reconnect.MaxRestartAttempts,
+			RestartBackoff:     reconnect.RestartBackoff,
+			StableWindow:       reconnect.StableWindow,
+		})
+		if reconnect.Enabled && reconnect.HealthInterval > 0 {
+			healthChecker = pool.NewHealthChecker(stdioPool, slog.Default())
+			healthChecker.SetMaxFailures(reconnect.MaxFailures)
+			healthCtx, cancel := context.WithCancel(ctx)
+			healthCancel = cancel
+			go healthChecker.Start(healthCtx, reconnect.HealthInterval)
+			slog.Info("auto-reconnect enabled",
+				"interval", reconnect.HealthInterval,
+				"max_failures", reconnect.MaxFailures,
+				"max_restart_attempts", reconnect.MaxRestartAttempts,
+				"restart_backoff", reconnect.RestartBackoff,
+				"stable_window", reconnect.StableWindow)
+		}
+	}
+
 	modelRouterCfg := modelrouter.DefaultConfig()
 	if serveFlags.modelRouterConfig != "" {
 		mrCfg, err := modelrouter.LoadConfig(serveFlags.modelRouterConfig)
@@ -391,6 +418,15 @@ func runServe(cmd *cobra.Command, args []string) {
 				}
 				slog.Info("shutting down server")
 				signal.Stop(sigChan)
+				// Stop the health checker before closing the pools so no
+				// health-triggered restart can race the shutdown sweep and
+				// orphan a freshly spawned process.
+				if healthCancel != nil {
+					healthCancel()
+				}
+				if healthChecker != nil {
+					healthChecker.Stop()
+				}
 				if metricsServer != nil {
 					metricsServer.Close()
 				}

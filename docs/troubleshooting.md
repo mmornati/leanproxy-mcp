@@ -28,6 +28,48 @@ npx @modelcontextprotocol/server-filesystem ./  # Test standalone
 leanproxy-mcp server run --verbose --stdio
 ```
 
+### Server Disconnects or Stops Responding
+
+**Symptom:**
+An MCP server (e.g. `garmin`) stops responding mid-session. Tool calls hang or return "request timed out", and the only known fix used to be disconnecting/reconnecting the MCP in the client.
+
+**Why this happened:**
+Two bugs compounded each other:
+
+1. A freshly started `stdio` server was stopped almost immediately because its "last request" timestamp was never initialized — the idle timer fired on the first tick (~30s after startup) and shut the process down.
+2. When a `stdio` server was stopped and then restarted, the new process never got a working request loop, so it accepted connections but never answered — requests hung until timeout.
+
+**Current behavior (auto-recovery):**
+
+With auto-reconnect enabled (default), LeanProxy-MCP now handles these cases automatically:
+
+- **Crash recovery**: if a `stdio` process exits unexpectedly it is respawned with exponential backoff, and the restart budget resets after a server stays up for `stable_window`.
+- **Liveness probe**: idle/running servers are pinged every `health_check_interval`; `health_check_failures` consecutive failures trigger a restart. Pings are MCP pings and do **not** consume AI tokens.
+- **Transport recovery**: `http`/`sse` servers reconnect transparently when the connection drops, and the next tool call re-establishes a dead session.
+- **Request retry**: if a request lands on a server that is recovering, it waits briefly for the restart to finish instead of failing permanently. For `http`/`sse`, a request that fails on a genuine transport error is retried once after the reconnect.
+
+**If a server still appears stuck:**
+
+1. Check the logs for restart activity:
+```bash
+leanproxy-mcp server run --stdio --log-level debug --log-file /tmp/leanproxy.log
+# Look for "auto-reconnect", "reconnect", "restart", "crash"
+tail -f /tmp/leanproxy.log | grep -i "reconnect\|restart\|crash\|error"
+```
+
+2. Confirm the server binary works standalone:
+```bash
+garmin-mcp stdio
+```
+
+3. Tune the recovery knobs if the defaults are too aggressive or too slow (see [Auto-Reconnect configuration](./configuration.md#auto-reconnect)).
+
+4. As a last resort, disable auto-reconnect if it is interfering with a specific server:
+```yaml
+reconnect:
+  enabled: false
+```
+
 ### Redaction Not Working
 
 **Symptom:**

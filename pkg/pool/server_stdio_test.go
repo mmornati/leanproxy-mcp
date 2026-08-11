@@ -169,7 +169,7 @@ func TestStderrCaptureOnTimeout(t *testing.T) {
 		Method:  "test",
 		ID:      1,
 		Timeout: 500 * time.Millisecond,
-	})
+	}, make(chan struct{}))
 
 	if err == nil {
 		t.Fatal("expected timeout error")

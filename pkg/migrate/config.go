@@ -100,9 +100,69 @@ type ServerConfig struct {
 	SummarizeSettings   *SummarizeSettings `yaml:"summarize_settings,omitempty"`
 }
 
+type ReconnectConfig struct {
+	Enabled             *bool         `yaml:"enabled"`
+	HealthInterval      string        `yaml:"health_check_interval"`
+	HealthIntervalValue time.Duration `yaml:"-"`
+	MaxFailures         int           `yaml:"health_check_failures"`
+	MaxRestartAttempts  int           `yaml:"max_restart_attempts"`
+	RestartBackoff      string        `yaml:"restart_backoff"`
+	RestartBackoffValue time.Duration `yaml:"-"`
+	StableWindow        string        `yaml:"stable_window"`
+	StableWindowValue   time.Duration `yaml:"-"`
+}
+
+type ResolvedReconnect struct {
+	Enabled            bool
+	HealthInterval     time.Duration
+	MaxFailures        int
+	MaxRestartAttempts int
+	RestartBackoff     time.Duration
+	StableWindow       time.Duration
+}
+
+func (c *Config) EffectiveReconnect() ResolvedReconnect {
+	r := ResolvedReconnect{
+		Enabled:            true,
+		HealthInterval:     30 * time.Second,
+		MaxFailures:        3,
+		MaxRestartAttempts: 5,
+		RestartBackoff:     time.Second,
+		StableWindow:       2 * time.Minute,
+	}
+	if c == nil || c.Reconnect == nil {
+		return r
+	}
+	rc := c.Reconnect
+	if rc.Enabled != nil {
+		r.Enabled = *rc.Enabled
+	}
+	// health_check_interval is honored whenever explicitly set — including
+	// "0", which disables the proactive health check as documented. The
+	// string field (not the parsed value) is what distinguishes "unset"
+	// (fall back to the 30s default) from an explicit 0.
+	if rc.HealthInterval != "" {
+		r.HealthInterval = rc.HealthIntervalValue
+	}
+	if rc.MaxFailures > 0 {
+		r.MaxFailures = rc.MaxFailures
+	}
+	if rc.MaxRestartAttempts > 0 {
+		r.MaxRestartAttempts = rc.MaxRestartAttempts
+	}
+	if rc.RestartBackoffValue > 0 {
+		r.RestartBackoff = rc.RestartBackoffValue
+	}
+	if rc.StableWindowValue > 0 {
+		r.StableWindow = rc.StableWindowValue
+	}
+	return r
+}
+
 type Config struct {
 	Version      string              `yaml:"version"`
 	Servers      []*ServerConfig     `yaml:"servers"`
+	Reconnect    *ReconnectConfig    `yaml:"reconnect,omitempty"`
 	Optimization *OptimizationConfig `yaml:"optimization,omitempty"`
 	Cache        *CacheConfig        `yaml:"cache,omitempty"`
 	Federation   *FederationConfig   `yaml:"federation,omitempty"`
@@ -223,6 +283,55 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("validate config: %w", err)
+	}
+
+	if cfg.Reconnect != nil {
+		rc := cfg.Reconnect
+		if rc.HealthInterval != "" {
+			d, err := time.ParseDuration(rc.HealthInterval)
+			if err != nil {
+				return nil, fmt.Errorf("invalid reconnect health_check_interval duration: %w", err)
+			}
+			if d < 0 {
+				return nil, fmt.Errorf("invalid reconnect health_check_interval: must be >= 0 (0 disables the health check)")
+			}
+			rc.HealthIntervalValue = d
+		} else {
+			rc.HealthIntervalValue = 30 * time.Second
+		}
+
+		if rc.RestartBackoff != "" {
+			d, err := time.ParseDuration(rc.RestartBackoff)
+			if err != nil {
+				return nil, fmt.Errorf("invalid reconnect restart_backoff duration: %w", err)
+			}
+			if d < 0 {
+				return nil, fmt.Errorf("invalid reconnect restart_backoff: must be >= 0")
+			}
+			rc.RestartBackoffValue = d
+		} else {
+			rc.RestartBackoffValue = time.Second
+		}
+
+		if rc.StableWindow != "" {
+			d, err := time.ParseDuration(rc.StableWindow)
+			if err != nil {
+				return nil, fmt.Errorf("invalid reconnect stable_window duration: %w", err)
+			}
+			if d < 0 {
+				return nil, fmt.Errorf("invalid reconnect stable_window: must be >= 0")
+			}
+			rc.StableWindowValue = d
+		} else {
+			rc.StableWindowValue = 2 * time.Minute
+		}
+
+		if rc.MaxFailures <= 0 {
+			rc.MaxFailures = 3
+		}
+		if rc.MaxRestartAttempts <= 0 {
+			rc.MaxRestartAttempts = 5
+		}
 	}
 
 	if cfg.Optimization != nil && cfg.Optimization.LazyLoading != nil {

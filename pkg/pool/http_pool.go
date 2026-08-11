@@ -17,15 +17,14 @@ import (
 )
 
 type HTTPClientServer struct {
-	name      string
-	config    *migrate.ServerConfig
-	mcpClient *client.Client
-	state     ServerState
-	mu        sync.RWMutex
-	logger    *slog.Logger
-	initOnce  sync.Once
-	initErr   error
-	oauthOpts []transport.StreamableHTTPCOption
+	name        string
+	config      *migrate.ServerConfig
+	mcpClient   *client.Client
+	state       ServerState
+	mu          sync.RWMutex
+	reconnectMu sync.Mutex
+	logger      *slog.Logger
+	oauthOpts   []transport.StreamableHTTPCOption
 }
 
 func NewHTTPClientServer(name string, config *migrate.ServerConfig, logger *slog.Logger) *HTTPClientServer {
@@ -86,81 +85,120 @@ func (s *HTTPClientServer) setState(state ServerState) {
 	s.state = state
 }
 
+func (s *HTTPClientServer) buildClient() (*client.Client, error) {
+	baseURL := s.config.HTTP.URL
+	s.logger.Debug("http_pool: creating StreamableHTTP client", "server", s.name, "url", baseURL)
+
+	headers := make(map[string]string)
+	if s.config.HTTP != nil && s.config.HTTP.Headers != nil {
+		for k, v := range s.config.HTTP.Headers {
+			headers[k] = v
+		}
+	}
+
+	opts := []transport.StreamableHTTPCOption{transport.WithHTTPHeaders(headers)}
+	opts = append(opts, s.oauthOpts...)
+
+	c, err := client.NewStreamableHttpClient(baseURL, opts...)
+	if err != nil {
+		return nil, fmt.Errorf("http_pool: create client: %w", err)
+	}
+	return c, nil
+}
+
+func (s *HTTPClientServer) closeClient() {
+	s.mu.Lock()
+	c := s.mcpClient
+	s.mcpClient = nil
+	s.mu.Unlock()
+	if c != nil {
+		c.Close()
+	}
+}
+
+func (s *HTTPClientServer) ensureConnected(ctx context.Context) (*client.Client, error) {
+	s.reconnectMu.Lock()
+	defer s.reconnectMu.Unlock()
+
+	// Read the client and state under a single lock and use the locked local
+	// from here on: returning s.mcpClient after unlocking races a concurrent
+	// Close() (which does not hold reconnectMu) nil-ing and closing it.
+	s.mu.RLock()
+	current := s.mcpClient
+	state := s.state
+	s.mu.RUnlock()
+
+	if state == StateStopped {
+		// A deliberately closed server must never be resurrected by an
+		// in-flight request racing shutdown.
+		return nil, fmt.Errorf("http_pool: server %s is closed", s.name)
+	}
+
+	if current != nil && state != StateDisconnected && state != StateError {
+		return current, nil
+	}
+
+	s.closeClient()
+
+	c, err := s.buildClient()
+	if err != nil {
+		s.setState(StateError)
+		return nil, err
+	}
+
+	s.logger.Debug("http_pool: starting StreamableHTTP client", "server", s.name)
+	startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := c.Start(startCtx); err != nil {
+		s.setState(StateError)
+		c.Close()
+		return nil, fmt.Errorf("http_pool: start: %w", err)
+	}
+
+	s.logger.Debug("http_pool: initializing StreamableHTTP client", "server", s.name)
+	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if _, err := c.Initialize(initCtx, mcpInitializeRequest()); err != nil {
+		s.setState(StateError)
+		c.Close()
+		return nil, fmt.Errorf("http_pool: initialize: %w", err)
+	}
+
+	s.mu.Lock()
+	s.mcpClient = c
+	s.mu.Unlock()
+	s.setState(StateRunning)
+	s.logger.Info("http_pool: server initialized", "server", s.name)
+	return c, nil
+}
+
 func (s *HTTPClientServer) Initialize(ctx context.Context) error {
-	s.initOnce.Do(func() {
-		baseURL := s.config.HTTP.URL
-		s.logger.Debug("http_pool: creating StreamableHTTP client", "server", s.name, "url", baseURL)
-
-		headers := make(map[string]string)
-		if s.config.HTTP != nil && s.config.HTTP.Headers != nil {
-			for k, v := range s.config.HTTP.Headers {
-				headers[k] = v
-			}
-		}
-
-		opts := []transport.StreamableHTTPCOption{transport.WithHTTPHeaders(headers)}
-		opts = append(opts, s.oauthOpts...)
-
-		c, err := client.NewStreamableHttpClient(baseURL, opts...)
-		if err != nil {
-			s.initErr = fmt.Errorf("http_pool: create client: %w", err)
-			s.setState(StateError)
-			return
-		}
-
-		s.logger.Debug("http_pool: initializing StreamableHTTP client", "server", s.name)
-		startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-
-		if err := c.Start(startCtx); err != nil {
-			s.initErr = fmt.Errorf("http_pool: start: %w", err)
-			s.setState(StateError)
-			c.Close()
-			return
-		}
-
-		initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-
-		_, err = c.Initialize(initCtx, mcp.InitializeRequest{
-			Params: mcp.InitializeParams{
-				ProtocolVersion: "2024-11-05",
-				Capabilities:    mcp.ClientCapabilities{},
-				ClientInfo: mcp.Implementation{
-					Name:    "leanproxy-mcp",
-					Version: "1.0.0",
-				},
-			},
-		})
-		if err != nil {
-			s.initErr = fmt.Errorf("http_pool: initialize: %w", err)
-			s.setState(StateError)
-			c.Close()
-			return
-		}
-
-		s.mcpClient = c
-		s.setState(StateRunning)
-		s.logger.Info("http_pool: server initialized", "server", s.name)
-	})
-
-	return s.initErr
+	_, err := s.ensureConnected(ctx)
+	return err
 }
 
 func (s *HTTPClientServer) Close() error {
-	if s.mcpClient != nil {
-		s.mcpClient.Close()
-	}
+	s.closeClient()
 	s.setState(StateStopped)
 	return nil
 }
 
 func (s *HTTPClientServer) ListTools(ctx context.Context) ([]mcp.Tool, error) {
-	if s.mcpClient == nil {
-		return nil, fmt.Errorf("http_pool: client not initialized")
+	c, err := s.ensureConnected(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	resp, err := s.mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	resp, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil && isTransportError(err) {
+		s.logger.Warn("http_pool: list tools failed, reconnecting", "server", s.name, "error", err)
+		s.setState(StateDisconnected)
+		c, rerr := s.ensureConnected(ctx)
+		if rerr != nil {
+			return nil, fmt.Errorf("http_pool: reconnect: %w", rerr)
+		}
+		resp, err = c.ListTools(ctx, mcp.ListToolsRequest{})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("http_pool: list tools: %w", err)
 	}
@@ -169,16 +207,35 @@ func (s *HTTPClientServer) ListTools(ctx context.Context) ([]mcp.Tool, error) {
 }
 
 func (s *HTTPClientServer) CallTool(ctx context.Context, name string, args map[string]interface{}) (*mcp.CallToolResult, error) {
-	if s.mcpClient == nil {
-		return nil, fmt.Errorf("http_pool: client not initialized")
+	c, err := s.ensureConnected(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	return s.mcpClient.CallTool(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{
-			Name:      name,
-			Arguments: args,
-		},
-	})
+	call := func(c *client.Client) (*mcp.CallToolResult, error) {
+		return c.CallTool(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Name:      name,
+				Arguments: args,
+			},
+		})
+	}
+
+	result, err := call(c)
+	if err != nil && isTransportError(err) {
+		s.logger.Warn("http_pool: call tool failed, reconnecting", "server", s.name, "tool", name, "error", err)
+		s.setState(StateDisconnected)
+		c, rerr := s.ensureConnected(ctx)
+		if rerr != nil {
+			return nil, fmt.Errorf("http_pool: reconnect: %w", rerr)
+		}
+		result, err = call(c)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("http_pool: call tool: %w", err)
+	}
+
+	return result, nil
 }
 
 type HTTPClientPool struct {
@@ -295,12 +352,8 @@ func (p *HTTPClientPool) SendRequestToServerWithID(ctx context.Context, name str
 		return nil, fmt.Errorf("http_pool: server %s not found", name)
 	}
 
-	if server.mcpClient == nil {
-		initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		if err := server.Initialize(initCtx); err != nil {
-			return nil, err
-		}
+	if _, err := server.ensureConnected(ctx); err != nil {
+		return nil, err
 	}
 
 	if method == "tools/list" {
@@ -365,7 +418,11 @@ func (p *HTTPClientPool) RestartServer(ctx context.Context, name string) error {
 		return fmt.Errorf("http_pool: server %s not found", name)
 	}
 
-	server.setState(StateRunning)
+	server.setState(StateDisconnected)
+	if err := server.Initialize(ctx); err != nil {
+		p.logger.Error("http_pool: restart failed", "name", name, "error", err)
+		return err
+	}
 	p.logger.Info("http_pool: server restarted", "name", name)
 	return nil
 }
