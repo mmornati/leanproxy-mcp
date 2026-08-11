@@ -396,6 +396,18 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		slog.Warn("no servers started")
 	}
 
+	if reconnect.Enabled && reconnect.HealthInterval > 0 {
+		healthChecker := pool.NewHealthChecker(stdioPool, slog.Default())
+		healthChecker.SetMaxFailures(reconnect.MaxFailures)
+		go healthChecker.Start(context.Background(), reconnect.HealthInterval)
+		slog.Info("auto-reconnect enabled",
+			"interval", reconnect.HealthInterval,
+			"max_failures", reconnect.MaxFailures,
+			"max_restart_attempts", reconnect.MaxRestartAttempts,
+			"restart_backoff", reconnect.RestartBackoff,
+			"stable_window", reconnect.StableWindow)
+	}
+
 	var cache toolstore.Cache
 	fileCache, err := toolstore.NewFileCache(slog.Default())
 	if err != nil {

@@ -29,11 +29,13 @@ type HealthCheckResult struct {
 }
 
 type HealthChecker struct {
-	pool   *StdioPool
-	logger *slog.Logger
-	checks map[string]*healthCheck
-	mu     sync.RWMutex
-	stopCh chan struct{}
+	pool        *StdioPool
+	logger      *slog.Logger
+	checks      map[string]*healthCheck
+	mu          sync.RWMutex
+	stopCh      chan struct{}
+	maxFailures int
+	restarting  map[string]bool
 }
 
 type healthCheck struct {
@@ -52,11 +54,22 @@ func NewHealthChecker(pool *StdioPool, logger *slog.Logger) *HealthChecker {
 	}
 
 	return &HealthChecker{
-		pool:   pool,
-		logger: logger,
-		checks: make(map[string]*healthCheck),
-		stopCh: make(chan struct{}),
+		pool:        pool,
+		logger:      logger,
+		checks:      make(map[string]*healthCheck),
+		stopCh:      make(chan struct{}),
+		maxFailures: 3,
+		restarting:  make(map[string]bool),
 	}
+}
+
+func (hc *HealthChecker) SetMaxFailures(n int) {
+	if n < 1 {
+		n = 3
+	}
+	hc.mu.Lock()
+	hc.maxFailures = n
+	hc.mu.Unlock()
 }
 
 func (hc *HealthChecker) Start(ctx context.Context, interval time.Duration) {
@@ -109,15 +122,52 @@ func (hc *HealthChecker) checkAllServers(ctx context.Context) {
 			}
 			check.consecutiveFailures = 0
 		}
+		failures := check.consecutiveFailures
+		status := check.lastStatus
 		check.mu.Unlock()
 
-		if check.consecutiveFailures >= 3 && check.lastStatus != HealthHealthy {
-			hc.logger.Warn("server had consecutive failures, will attempt recovery on next request",
+		hc.mu.RLock()
+		maxFailures := hc.maxFailures
+		hc.mu.RUnlock()
+
+		if failures >= maxFailures && status != HealthHealthy {
+			hc.logger.Warn("server had consecutive failures, triggering auto-reconnect",
 				"name", name,
-				"failures", check.consecutiveFailures,
-				"last_error", check.lastError)
+				"failures", failures,
+				"last_error", result.Error)
+			hc.triggerRestart(name)
+			check.mu.Lock()
+			check.consecutiveFailures = 0
+			check.mu.Unlock()
 		}
 	}
+}
+
+func (hc *HealthChecker) triggerRestart(name string) {
+	hc.mu.Lock()
+	if hc.restarting[name] {
+		hc.mu.Unlock()
+		return
+	}
+	hc.restarting[name] = true
+	hc.mu.Unlock()
+
+	go func() {
+		defer func() {
+			hc.mu.Lock()
+			delete(hc.restarting, name)
+			hc.mu.Unlock()
+		}()
+
+		hc.logger.Info("auto-reconnecting unhealthy server", "name", name)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if err := hc.pool.RestartServer(ctx, name); err != nil {
+			hc.logger.Error("auto-reconnect failed", "name", name, "error", err)
+			return
+		}
+		hc.logger.Info("auto-reconnect complete", "name", name)
+	}()
 }
 
 func (hc *HealthChecker) CheckServer(ctx context.Context, name string) HealthCheckResult {
@@ -126,7 +176,7 @@ func (hc *HealthChecker) CheckServer(ctx context.Context, name string) HealthChe
 		CheckedAt:  time.Now(),
 	}
 
-	_, err := hc.pool.GetServer(name)
+	server, err := hc.pool.GetServer(name)
 	if err != nil {
 		result.Status = HealthUnhealthy
 		result.Error = err.Error()
@@ -157,7 +207,21 @@ func (hc *HealthChecker) CheckServer(ctx context.Context, name string) HealthChe
 		}
 	}
 
-	result.LatencyMs = stats.AvgLatencyMs
+	// Liveness probe: a process can be alive yet unresponsive. Ping healthy
+	// idle/running servers to detect wedged processes. Skip busy servers to
+	// avoid interfering with in-flight tool calls, and only probe servers
+	// that completed the MCP initialize handshake so the ping is valid.
+	if result.Status == HealthHealthy && (state == StateIdle || state == StateRunning) && server.IsMCPInitialized() {
+		ok, latency := hc.performPingCheck(ctx, server)
+		if ok {
+			result.LatencyMs = latency
+		} else {
+			result.Status = HealthUnhealthy
+			result.Error = "MCP ping failed"
+		}
+	} else {
+		result.LatencyMs = stats.AvgLatencyMs
+	}
 
 	return result
 }
