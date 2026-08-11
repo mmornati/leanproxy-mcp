@@ -361,6 +361,15 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	ssePool := pool.NewSSEPool(slog.Default())
 	unifiedPool := pool.NewUnifiedPool(stdioPool, httpPool, ssePool, slog.Default())
 
+	reconnect := cfg.EffectiveReconnect()
+	if reconnect.Enabled {
+		stdioPool.SetReconnect(pool.ReconnectSettings{
+			MaxRestartAttempts: reconnect.MaxRestartAttempts,
+			RestartBackoff:     reconnect.RestartBackoff,
+			StableWindow:       reconnect.StableWindow,
+		})
+	}
+
 	startedCount := 0
 	for _, srv := range cfg.Servers {
 		if srv.Enabled != nil && !*srv.Enabled {
