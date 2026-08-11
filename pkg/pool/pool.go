@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/concurrent"
@@ -63,15 +62,36 @@ type Response struct {
 type ServerState string
 
 const (
-	StateIdle     ServerState = "idle"
-	StateRunning  ServerState = "running"
-	StateBusy     ServerState = "busy"
-	StateStopping ServerState = "stopping"
-	StateStopped  ServerState = "stopped"
-	StateStarting ServerState = "starting"
-	StateError    ServerState = "error"
-	StateUnknown  ServerState = "unknown"
+	StateIdle         ServerState = "idle"
+	StateRunning      ServerState = "running"
+	StateBusy         ServerState = "busy"
+	StateStopping     ServerState = "stopping"
+	StateStopped      ServerState = "stopped"
+	StateStarting     ServerState = "starting"
+	StateError        ServerState = "error"
+	StateDisconnected ServerState = "disconnected"
+	StateUnknown      ServerState = "unknown"
 )
+
+// ReconnectSettings controls the automatic restart behavior of stdio servers.
+type ReconnectSettings struct {
+	MaxRestartAttempts int
+	RestartBackoff     time.Duration
+	StableWindow       time.Duration
+}
+
+func (rs ReconnectSettings) validate() ReconnectSettings {
+	if rs.MaxRestartAttempts <= 0 {
+		rs.MaxRestartAttempts = 5
+	}
+	if rs.RestartBackoff <= 0 {
+		rs.RestartBackoff = time.Second
+	}
+	if rs.StableWindow <= 0 {
+		rs.StableWindow = 2 * time.Minute
+	}
+	return rs
+}
 
 // StdioPool manages multiple stdio-based MCP server subprocesses.
 type StdioPool struct {
@@ -88,6 +108,7 @@ type StdioPool struct {
 	circuitBreakers map[string]*concurrent.CircuitBreaker
 	maxQueueSize    int
 	workerPool      *concurrent.WorkerPool
+	reconnect       ReconnectSettings
 }
 
 // NewStdioPool creates a new StdioPool with the specified maximum servers per name and idle timeout.
@@ -114,6 +135,25 @@ func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logg
 	pool.workerPool = concurrent.NewWorkerPool(maxPerServer*2, pool.maxQueueSize, logger)
 
 	return pool
+}
+
+// SetReconnect applies reconnect settings to the pool. It takes effect on
+// servers already in the pool and on every server started afterwards.
+func (p *StdioPool) SetReconnect(settings ReconnectSettings) {
+	p.mu.Lock()
+	p.reconnect = settings.validate()
+	p.mu.Unlock()
+
+	names := p.ListServers()
+	for _, name := range names {
+		p.mu.RLock()
+		server, exists := p.servers[name]
+		p.mu.RUnlock()
+		if !exists {
+			continue
+		}
+		server.applyReconnect(p.reconnect)
+	}
 }
 
 func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfig) error {
@@ -146,6 +186,7 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 	}
 
 	server := newServerV2(config.Name, serverConfig, p.logger)
+	server.applyReconnect(p.reconnect)
 	if err := server.spawn(ctx); err != nil {
 		return fmt.Errorf("pool: start %s: %w", config.Name, err)
 	}
@@ -154,8 +195,6 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 
 	p.rateLimiters[config.Name] = concurrent.NewRateLimiter(10, time.Second)
 	p.circuitBreakers[config.Name] = concurrent.NewCircuitBreaker(5, 50*time.Second, 10*time.Second)
-
-	go server.runRequestLoop(p.ctx, p)
 
 	p.logger.Info("server started in pool", "name", config.Name)
 	return nil
@@ -393,18 +432,9 @@ func (p *StdioPool) RestartServer(ctx context.Context, name string) error {
 		return fmt.Errorf("pool: server %s not found", name)
 	}
 
-	if err := server.stop(); err != nil {
-		return err
-	}
-
-	time.Sleep(200 * time.Millisecond)
-
-	currentState := atomic.LoadInt32(&server.state)
-	if currentState == stateStopping {
-		atomic.StoreInt32(&server.state, stateStopped)
-	}
-
-	if err := server.spawn(ctx); err != nil {
+	// server.restart performs the full stop→spawn cycle and guarantees a fresh
+	// request loop is running for the new process generation.
+	if err := server.restart(ctx); err != nil {
 		return err
 	}
 

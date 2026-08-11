@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand"
 	"os"
 	"os/exec"
 	"strings"
@@ -102,17 +103,20 @@ type StdioServerV2 struct {
 	restartCount    int
 	maxRestarts     int
 	backoff         time.Duration
+	initialBackoff  time.Duration
+	stableWindow    time.Duration
 	lastRequestAt   time.Time
+	lastSpawnAt     time.Time
 	idleTimeout     time.Duration
 	requestTimeout  time.Duration
 	maxConcurrent   int
 	maxResponseSize int
 	currentLoad     int
 	healthTicker    *time.Ticker
-	stopCh          chan struct{}
-	stopped         bool
+	genStopCh       chan struct{}
+	genStopOnce     *sync.Once
+	restartMu       sync.Mutex
 	logger          *slog.Logger
-	stopChOnce      sync.Once
 	wg              sync.WaitGroup
 	mcpInitialized  atomic.Bool
 	stderrLines     *stderrRing
@@ -154,12 +158,13 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 		stats:           ServerStats{},
 		maxRestarts:     5,
 		backoff:         time.Second,
+		initialBackoff:  time.Second,
+		stableWindow:    2 * time.Minute,
 		idleTimeout:     idleTimeout,
 		requestTimeout:  requestTimeout,
 		maxConcurrent:   maxConcurrent,
 		maxResponseSize: maxResponseSize,
 		healthTicker:    time.NewTicker(30 * time.Second),
-		stopCh:          make(chan struct{}),
 		logger:          logger,
 		stderrLines:     newStderrRing(50),
 	}
@@ -167,6 +172,19 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 
 func (s *StdioServerV2) getState() ServerState {
 	return toServerState(atomic.LoadInt32(&s.state))
+}
+
+// applyReconnect applies reconnect settings to this server. It only overrides
+// values that were explicitly provided (non-zero).
+func (s *StdioServerV2) applyReconnect(settings ReconnectSettings) {
+	settings = settings.validate()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.maxRestarts = settings.MaxRestartAttempts
+	s.initialBackoff = settings.RestartBackoff
+	s.backoff = settings.RestartBackoff
+	s.stableWindow = settings.StableWindow
+	s.stats.CurrentBackoff = s.backoff
 }
 
 func (s *StdioServerV2) setState(newState int32) {
@@ -206,7 +224,16 @@ func (s *StdioServerV2) SetMCPInitialized() {
 	s.mcpInitialized.Store(true)
 }
 
+// spawn starts a new process generation. It serializes against concurrent
+// restarts via restartMu so that only one process generation is ever spawned
+// at a time.
 func (s *StdioServerV2) spawn(ctx context.Context) error {
+	s.restartMu.Lock()
+	defer s.restartMu.Unlock()
+	return s.spawnLocked(ctx)
+}
+
+func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	s.mu.Lock()
 
 	currentState := atomic.LoadInt32(&s.state)
@@ -217,7 +244,12 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 
 	atomic.StoreInt32(&s.state, stateStarting)
 
-	cmd := exec.CommandContext(ctx, s.config.Command, s.config.Args...)
+	// Use a context that cannot be canceled by a short-lived request scope so
+	// the spawned process is never killed because the caller that triggered a
+	// restart timed out.
+	genCtx := context.WithoutCancel(ctx)
+
+	cmd := exec.CommandContext(genCtx, s.config.Command, s.config.Args...)
 	// Build environment: inherit current env, apply user config, then ensure
 	// PYTHONUNBUFFERED=1 so Python-based MCP servers don't buffer stdout.
 	env := os.Environ()
@@ -234,6 +266,7 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		atomic.StoreInt32(&s.state, stateError)
 		s.mu.Unlock()
 		return fmt.Errorf("pool: stdin pipe: %w", err)
 	}
@@ -241,6 +274,7 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 
 	stdoutR, err := cmd.StdoutPipe()
 	if err != nil {
+		atomic.StoreInt32(&s.state, stateError)
 		s.mu.Unlock()
 		return fmt.Errorf("pool: stdout pipe: %w", err)
 	}
@@ -248,11 +282,13 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 
 	stderrR, err := cmd.StderrPipe()
 	if err != nil {
+		atomic.StoreInt32(&s.state, stateError)
 		s.mu.Unlock()
 		return fmt.Errorf("pool: stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
+		atomic.StoreInt32(&s.state, stateError)
 		s.mu.Unlock()
 		s.logger.Error("failed to start server process",
 			"name", s.name,
@@ -265,21 +301,32 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	s.process = cmd
 	s.pgid = cmd.Process.Pid
 	atomic.StoreInt32(&s.state, stateIdle)
-	s.restartCount = 0
-	s.backoff = time.Second
+	s.backoff = s.initialBackoff
+	s.lastSpawnAt = time.Now()
+	s.lastRequestAt = time.Now()
 	s.mcpInitialized.Store(false)
 	s.stats.RestartCount++
 	s.stats.CurrentBackoff = s.backoff
+
+	// Each spawn gets a fresh lifecycle generation: a dedicated stop channel
+	// (guarded by its own once) so that closing the previous generation can
+	// never leak into a newly spawned process.
+	genStopCh := make(chan struct{})
+	genStopOnce := &sync.Once{}
+	s.genStopCh = genStopCh
+	s.genStopOnce = genStopOnce
 
 	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", s.config.Args)
 
 	s.mu.Unlock()
 
-	go s.readStderr(stderrR)
+	go s.readStderr(stderrR, genStopCh)
 	s.wg.Add(1)
-	go s.waitForExit(ctx)
+	go s.waitForExit(genCtx, genStopCh, genStopOnce)
 	s.wg.Add(1)
-	go s.readResponses()
+	go s.readResponses(genStopCh)
+	s.wg.Add(1)
+	go s.runRequestLoop(genCtx, genStopCh)
 
 	// Post-spawn verification: confirm process is alive.
 	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
@@ -289,8 +336,12 @@ func (s *StdioServerV2) spawn(ctx context.Context) error {
 	return nil
 }
 
-func (s *StdioServerV2) waitForExit(ctx context.Context) {
+func (s *StdioServerV2) waitForExit(ctx context.Context, stopCh chan struct{}, stopOnce *sync.Once) {
 	err := s.process.Wait()
+
+	// Signal the rest of this generation that the process is gone so readers
+	// and the request loop exit and never serve a dead process.
+	stopOnce.Do(func() { close(stopCh) })
 
 	s.mu.Lock()
 	currentState := atomic.LoadInt32(&s.state)
@@ -299,6 +350,13 @@ func (s *StdioServerV2) waitForExit(ctx context.Context) {
 		s.mu.Unlock()
 		s.wg.Done()
 		return
+	}
+
+	// If the previous generation lived for a stable period, the restart
+	// budget resets so a single healthy run grants fresh restart attempts
+	// instead of inheriting a stale budget from an earlier crash loop.
+	if !s.lastSpawnAt.IsZero() && time.Since(s.lastSpawnAt) > s.stableWindow {
+		s.restartCount = 0
 	}
 
 	atomic.StoreInt32(&s.state, stateError)
@@ -310,17 +368,25 @@ func (s *StdioServerV2) waitForExit(ctx context.Context) {
 		s.stats.LastErrorAt = time.Now()
 		s.stats.ErrorCount++
 	}
+	restartCount := s.restartCount
+	pid := 0
+	if s.process != nil && s.process.Process != nil {
+		pid = s.process.Process.Pid
+	}
 
 	s.mu.Unlock()
 
 	s.logger.Error("server process crashed",
 		"name", s.name,
 		"error", errorMsg,
-		"pid", s.process.Process.Pid,
+		"pid", pid,
 		"state", currentState,
-		"restart_count", s.restartCount)
+		"restart_count", restartCount)
 
-	s.scheduleRestart(ctx)
+	// Run the restart loop in its own goroutine so that a concurrent
+	// request-triggered restart (which holds restartMu across stop+spawn) can
+	// never deadlock against the crash path waiting on this goroutine.
+	go s.scheduleRestart(ctx)
 	s.wg.Done()
 }
 
@@ -349,33 +415,78 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 
 	s.logger.Info("scheduled restart", "name", s.name, "backoff", backoff, "attempt", s.restartCount)
 
+	// Add jitter so a fleet of crashed servers does not restart in lockstep.
+	wait := backoff + time.Duration(rand.Int63n(int64(backoff/4))+1)
+
 	select {
-	case <-time.After(backoff):
+	case <-time.After(wait):
 	case <-ctx.Done():
 		return
 	}
 
-	s.mu.Lock()
-	currentState = atomic.LoadInt32(&s.state)
-	if currentState == stateStopping {
-		s.mu.Unlock()
+	// Serialize the respawn against request-triggered restarts (server.restart
+	// holds restartMu across stop+spawn). Only respawn while the server is
+	// still in the error state set by waitForExit; if another path already
+	// recovered the server, there is nothing left to do. Holding restartMu
+	// around the check makes the decision atomic, which also removes the
+	// deadlock window where stop() waited for this goroutine while we waited
+	// for the mutex it held.
+	s.restartMu.Lock()
+	defer s.restartMu.Unlock()
+
+	if atomic.LoadInt32(&s.state) != stateError {
 		return
 	}
-	s.mu.Unlock()
 
-	if err := s.spawn(ctx); err != nil {
+	if err := s.spawnLocked(ctx); err != nil {
 		s.logger.Error("restart failed", "name", s.name, "error", err)
+		// Re-arm the retry so a transient spawn failure (e.g. port/temp dir
+		// contention) does not strand the server in a dead state.
+		s.mu.Lock()
+		currentState = atomic.LoadInt32(&s.state)
+		if currentState != stateStopping && currentState != stateStopped {
+			s.mu.Unlock()
+			go s.scheduleRestart(ctx)
+			return
+		}
+		s.mu.Unlock()
 	}
 }
 
-func (s *StdioServerV2) readResponses() {
+// restart tears down the current process generation and spawns a fresh one.
+// It is serialized via restartMu so concurrent callers never create more than
+// one generation at a time.
+func (s *StdioServerV2) restart(ctx context.Context) error {
+	s.restartMu.Lock()
+	defer s.restartMu.Unlock()
+
+	if err := s.stopLocked(); err != nil {
+		return err
+	}
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Force the state machine through stopping→stopped (waitForExit normally
+	// performs this transition, but it may not have run yet).
+	if atomic.LoadInt32(&s.state) == stateStopping {
+		atomic.StoreInt32(&s.state, stateStopped)
+	}
+
+	if err := s.spawnLocked(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *StdioServerV2) readResponses(stopCh chan struct{}) {
 	defer s.wg.Done()
 	scanner := bufio.NewScanner(s.stdout)
 	scanner.Buffer(make([]byte, 1024), s.maxResponseSize)
 
 	for {
 		select {
-		case <-s.stopCh:
+		case <-stopCh:
 			return
 		default:
 			if scanner.Scan() {
@@ -421,12 +532,12 @@ func (s *StdioServerV2) readResponses() {
 	}
 }
 
-func (s *StdioServerV2) readStderr(stderr io.Reader) {
+func (s *StdioServerV2) readStderr(stderr io.Reader, stopCh chan struct{}) {
 	scanner := bufio.NewScanner(stderr)
 
 	for {
 		select {
-		case <-s.stopCh:
+		case <-stopCh:
 			return
 		default:
 			if scanner.Scan() {
@@ -448,6 +559,16 @@ func (s *StdioServerV2) readStderr(stderr io.Reader) {
 }
 
 func (s *StdioServerV2) stop() error {
+	// Serialize against spawnLocked (which registers goroutines on s.wg). If a
+	// concurrent respawn were to call wg.Add while this call waits on s.wg, the
+	// WaitGroup would be used concurrently — a data race.
+	s.restartMu.Lock()
+	defer s.restartMu.Unlock()
+	return s.stopLocked()
+}
+
+// stopLocked is stop() and must only be called while holding restartMu.
+func (s *StdioServerV2) stopLocked() error {
 	s.mu.Lock()
 	currentState := atomic.LoadInt32(&s.state)
 	if currentState == stateStopping || currentState == stateStopped {
@@ -455,14 +576,18 @@ func (s *StdioServerV2) stop() error {
 		return nil
 	}
 	atomic.StoreInt32(&s.state, stateStopping)
+
+	stopCh := s.genStopCh
+	stopOnce := s.genStopOnce
+	proc := s.process
 	s.mu.Unlock()
 
-	s.stopChOnce.Do(func() {
-		close(s.stopCh)
-	})
+	if stopCh != nil && stopOnce != nil {
+		stopOnce.Do(func() { close(stopCh) })
+	}
 
-	if s.process != nil && s.process.Process != nil {
-		s.process.Process.Signal(syscall.SIGTERM)
+	if proc != nil && proc.Process != nil {
+		proc.Process.Signal(syscall.SIGTERM)
 	}
 
 	s.wg.Wait()
@@ -515,7 +640,8 @@ func (s *StdioServerV2) enqueueRequest(req Request) bool {
 	}
 }
 
-func (s *StdioServerV2) runRequestLoop(ctx context.Context, pool *StdioPool) {
+func (s *StdioServerV2) runRequestLoop(ctx context.Context, stopCh chan struct{}) {
+	defer s.wg.Done()
 	for {
 		select {
 		case req := <-s.requestCh:
@@ -526,7 +652,7 @@ func (s *StdioServerV2) runRequestLoop(ctx context.Context, pool *StdioPool) {
 
 		case <-ctx.Done():
 			return
-		case <-s.stopCh:
+		case <-stopCh:
 			return
 		}
 	}
