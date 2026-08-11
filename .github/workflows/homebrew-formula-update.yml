@@ -35,24 +35,39 @@ jobs:
           fi
           echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
 
-      - name: Download and verify release binaries
+      - name: Download release checksums.txt
         id: sha256
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          declare -A shas
+          checksums_url="https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/checksums.txt"
 
-          for arch in amd64 arm64; do
-            for os in darwin linux; do
-              url="https://github.com/mmornati/leanproxy-mcp/releases/download/v${VERSION}/leanproxy-mcp_${VERSION}_${os}_${arch}.tar.gz"
-              echo "Downloading $url..."
-              curl -sL "$url" -o /tmp/archive.tar.gz
-              sha=$(sha256sum /tmp/archive.tar.gz | cut -d' ' -f1)
-              key="${os}_${arch}"
-              echo "${key}=${sha}" >> $GITHUB_OUTPUT
-              rm -f /tmp/archive.tar.gz
-            done
+          for i in $(seq 1 30); do
+            if curl -fsL "$checksums_url" -o /tmp/checksums.txt; then
+              echo "checksums.txt downloaded (attempt ${i})"
+              break
+            fi
+            echo "checksums.txt not yet available (attempt ${i}/30), retrying in 15s..."
+            sleep 15
           done
+
+          if [ ! -s /tmp/checksums.txt ]; then
+            echo "::error::checksums.txt not available for v${VERSION} after 30 attempts (~7.5 min). Is the release finished?"
+            exit 1
+          fi
+
+          get_sha() { grep "leanproxy-mcp_${VERSION}_${1}_${2}.tar.gz" /tmp/checksums.txt | awk '{print $1}'; }
+
+          echo "darwin_amd64=$(get_sha darwin amd64)" >> $GITHUB_OUTPUT
+          echo "darwin_arm64=$(get_sha darwin arm64)" >> $GITHUB_OUTPUT
+          echo "linux_amd64=$(get_sha linux amd64)" >> $GITHUB_OUTPUT
+          echo "linux_arm64=$(get_sha linux arm64)" >> $GITHUB_OUTPUT
+
+          if [ -z "$(get_sha darwin amd64)" ] || [ -z "$(get_sha darwin arm64)" ] || \
+             [ -z "$(get_sha linux amd64)" ] || [ -z "$(get_sha linux arm64)" ]; then
+            echo "::error::One or more checksums missing from checksums.txt"
+            exit 1
+          fi
 
       - name: Update Homebrew formula
         env:
