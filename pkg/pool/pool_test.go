@@ -1,9 +1,12 @@
 package pool
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"log/slog"
+	"os"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -834,4 +837,248 @@ func TestServerSourceInterface(t *testing.T) {
 	_ = source.ListServers()
 	_, _ = source.GetServerState("test")
 	_ = source.Close()
+}
+
+// TestHelperProcess is a fake stdio MCP server. When the test binary is
+// re-invoked with GO_WANT_HELPER_PROCESS=1 it behaves as a minimal MCP server
+// that answers every request with a result.
+func TestHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
+		return
+	}
+
+	// Simulate a wedged process: never read stdin, stay alive forever. A busy
+	// loop (rather than a blocking channel) is used so the Go runtime's
+	// deadlock detector does not terminate the helper while it is "hanging".
+	if os.Getenv("GO_HELPER_HANG") == "1" {
+		for {
+			runtime.Gosched()
+		}
+	}
+
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var msg map[string]interface{}
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+			continue
+		}
+		if _, ok := msg["id"]; !ok {
+			continue
+		}
+
+		var result interface{}
+		switch msg["method"] {
+		case "initialize":
+			result = map[string]interface{}{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]interface{}{},
+				"serverInfo":      map[string]interface{}{"name": "fake-mcp", "version": "1.0.0"},
+			}
+		case "tools/list":
+			result = map[string]interface{}{"tools": []interface{}{}}
+		default:
+			result = map[string]interface{}{}
+		}
+
+		resp := map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      msg["id"],
+			"result":  result,
+		}
+		data, _ := json.Marshal(resp)
+		os.Stdout.Write(append(data, '\n'))
+	}
+	os.Exit(0)
+}
+
+func fakeMCPConfig(name string) *migrate.ServerConfig {
+	return &migrate.ServerConfig{
+		Name:      name,
+		Transport: registry.TransportStdio,
+		Stdio: &migrate.StdioConfig{
+			Command: os.Args[0],
+			Args:    []string{"-test.run=TestHelperProcess"},
+			Env:     []string{"GO_WANT_HELPER_PROCESS=1"},
+		},
+		TimeoutValue: 30 * time.Second,
+	}
+}
+
+// TestStdioPoolRequestAfterRestart is the regression test for the zombie
+// server bug: after a RestartServer the new process must have a live request
+// loop so requests still get a response (previously they hung until timeout).
+func TestStdioPoolRequestAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	config := fakeMCPConfig("test-server")
+	require.NoError(t, pool.StartServer(ctx, config))
+
+	resp, err := pool.SendRequestToServer(ctx, "test-server", "ping", nil, 5*time.Second)
+	require.NoError(t, err, "request before restart should succeed")
+	require.NotNil(t, resp)
+
+	require.NoError(t, pool.RestartServer(ctx, "test-server"))
+
+	resp, err = pool.SendRequestToServer(ctx, "test-server", "ping", nil, 5*time.Second)
+	require.NoError(t, err, "request after restart should succeed")
+	require.NotNil(t, resp)
+}
+
+// TestStdioPoolAutoRestartOnCrash verifies that a killed subprocess is
+// automatically restarted and the next request succeeds.
+func TestStdioPoolAutoRestartOnCrash(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	defer pool.Close()
+
+	config := fakeMCPConfig("test-server")
+	require.NoError(t, pool.StartServer(ctx, config))
+
+	server, err := pool.GetServer("test-server")
+	require.NoError(t, err)
+
+	// Kill the child process out from under the pool (SIGKILL so it cannot
+	// clean up). The pool should notice and respawn automatically.
+	require.NoError(t, server.process.Process.Kill())
+
+	deadline := time.Now().Add(15 * time.Second)
+	var resp *Response
+	for time.Now().Before(deadline) {
+		resp, err = pool.SendRequestToServer(ctx, "test-server", "ping", nil, 5*time.Second)
+		if err == nil && resp != nil {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	require.NoError(t, err, "request after crash should eventually succeed")
+	require.NotNil(t, resp)
+
+	// After a successful request the server must have recovered out of the
+	// error state. Poll rather than assert once: a background crash-restart
+	// may still be in flight for a few milliseconds.
+	stateDeadline := time.Now().Add(10 * time.Second)
+	var state ServerState
+	for time.Now().Before(stateDeadline) {
+		state, err = pool.GetServerState("test-server")
+		require.NoError(t, err)
+		if state != StateError {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	require.NotEqual(t, StateError, state, "server should not be stranded in error state")
+}
+
+// TestStdioPoolRestartBudgetReset verifies that a process which survives a
+// stable window resets the restart budget (crash loops early on, long-lived
+// processes keep their budget).
+func TestStdioPoolRestartBudgetReset(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	pool.SetReconnect(ReconnectSettings{
+		MaxRestartAttempts: 2,
+		RestartBackoff:     time.Millisecond,
+		StableWindow:       100 * time.Millisecond,
+	})
+	defer pool.Close()
+
+	config := fakeMCPConfig("test-server")
+	require.NoError(t, pool.StartServer(ctx, config))
+
+	server, err := pool.GetServer("test-server")
+	require.NoError(t, err)
+	_ = server
+
+	killProc := func() {
+		pool.mu.RLock()
+		srv := pool.servers["test-server"]
+		pool.mu.RUnlock()
+		require.NotNil(t, srv, "server should still exist in pool")
+		srv.mu.Lock()
+		proc := srv.process.Process
+		srv.mu.Unlock()
+		require.NotNil(t, proc)
+		require.NoError(t, proc.Kill())
+	}
+
+	// Let it live past the stable window, then kill it repeatedly.
+	time.Sleep(300 * time.Millisecond)
+
+	for i := 0; i < 3; i++ {
+		killProc()
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	state, _ := pool.GetServerState("test-server")
+	for state != StateIdle && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		state, _ = pool.GetServerState("test-server")
+	}
+	require.Equal(t, StateIdle, state, "server should have recovered after kill")
+}
+
+// TestHealthCheckerAutoRestartOnPingFailure verifies that the health checker
+// detects a process that is alive but unresponsive (MCP ping fails) and
+// proactively restarts it.
+func TestHealthCheckerAutoRestartOnPingFailure(t *testing.T) {
+	ctx := context.Background()
+	pool := NewStdioPool(5, 5*time.Minute, nil)
+	pool.SetReconnect(ReconnectSettings{
+		MaxRestartAttempts: 5,
+		RestartBackoff:     100 * time.Millisecond,
+		StableWindow:       time.Minute,
+	})
+	defer pool.Close()
+
+	config := fakeMCPConfig("test-server")
+	config.Stdio.Env = append(config.Stdio.Env, "GO_HELPER_HANG=1")
+	require.NoError(t, pool.StartServer(ctx, config))
+
+	// Simulate the initialize handshake having happened (the ping probe only
+	// runs against initialized servers).
+	pool.MarkServerMCPInitialized("test-server")
+
+	server, err := pool.GetServer("test-server")
+	require.NoError(t, err)
+	originalPid := func() int {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		return server.process.Process.Pid
+	}()
+
+	hc := NewHealthChecker(pool, nil)
+	hc.SetMaxFailures(1)
+
+	// checkAllServers runs a ping against the wedged process; it times out and
+	// triggers a background restart.
+	hc.checkAllServers(ctx)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		pool.mu.RLock()
+		srv := pool.servers["test-server"]
+		pool.mu.RUnlock()
+		if srv != nil {
+			srv.mu.Lock()
+			pid := srv.process.Process.Pid
+			srv.mu.Unlock()
+			if pid != originalPid {
+				break
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	pool.mu.RLock()
+	srv := pool.servers["test-server"]
+	pool.mu.RUnlock()
+	require.NotNil(t, srv)
+	srv.mu.Lock()
+	currentPid := srv.process.Process.Pid
+	srv.mu.Unlock()
+	require.NotEqual(t, originalPid, currentPid,
+		"health checker should have restarted the wedged server")
 }

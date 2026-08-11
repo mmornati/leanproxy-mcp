@@ -366,9 +366,11 @@ func TestSSEPoolRestartServer(t *testing.T) {
 
 	pool.StartServer(context.Background(), config)
 
+	// RestartServer now performs a real reconnect; with no server listening on
+	// the configured URL it must fail instead of pretending to succeed.
 	err := pool.RestartServer(context.Background(), "test-sse-server")
-	if err != nil {
-		t.Fatalf("RestartServer failed: %v", err)
+	if err == nil {
+		t.Fatalf("expected RestartServer to fail when no server is reachable")
 	}
 }
 

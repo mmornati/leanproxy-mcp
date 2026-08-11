@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestLoadConfigMinimal(t *testing.T) {
@@ -422,5 +423,106 @@ func TestLoadConfigPathTraversal(t *testing.T) {
 				t.Errorf("LoadConfig() error = %v, want error containing %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLoadConfigReconnectBlock(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: test-server
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+reconnect:
+  enabled: false
+  health_check_interval: 15s
+  health_check_failures: 2
+  max_restart_attempts: 8
+  restart_backoff: 500ms
+  stable_window: 5m
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+
+	ctx := context.Background()
+	cfg, err := LoadConfig(ctx, configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+	if cfg.Reconnect == nil {
+		t.Fatal("Reconnect block should be parsed")
+	}
+
+	rc := cfg.Reconnect
+	if rc.Enabled == nil || *rc.Enabled {
+		t.Errorf("Enabled = %v, want false", rc.Enabled)
+	}
+	if rc.HealthIntervalValue != 15*time.Second {
+		t.Errorf("HealthIntervalValue = %v, want 15s", rc.HealthIntervalValue)
+	}
+	if rc.MaxFailures != 2 {
+		t.Errorf("MaxFailures = %d, want 2", rc.MaxFailures)
+	}
+	if rc.MaxRestartAttempts != 8 {
+		t.Errorf("MaxRestartAttempts = %d, want 8", rc.MaxRestartAttempts)
+	}
+	if rc.RestartBackoffValue != 500*time.Millisecond {
+		t.Errorf("RestartBackoffValue = %v, want 500ms", rc.RestartBackoffValue)
+	}
+	if rc.StableWindowValue != 5*time.Minute {
+		t.Errorf("StableWindowValue = %v, want 5m", rc.StableWindowValue)
+	}
+}
+
+func TestEffectiveReconnectDefaults(t *testing.T) {
+	cfg := &Config{}
+	got := cfg.EffectiveReconnect()
+
+	want := ResolvedReconnect{
+		Enabled:            true,
+		HealthInterval:     30 * time.Second,
+		MaxFailures:        3,
+		MaxRestartAttempts: 5,
+		RestartBackoff:     time.Second,
+		StableWindow:       2 * time.Minute,
+	}
+	if got != want {
+		t.Errorf("EffectiveReconnect() = %+v, want %+v", got, want)
+	}
+
+	var nilCfg *Config
+	gotNil := nilCfg.EffectiveReconnect()
+	if gotNil != want {
+		t.Errorf("EffectiveReconnect() on nil config = %+v, want defaults %+v", gotNil, want)
+	}
+}
+
+func TestEffectiveReconnectOverrides(t *testing.T) {
+	disabled := false
+	cfg := &Config{
+		Reconnect: &ReconnectConfig{
+			Enabled:             &disabled,
+			HealthIntervalValue: 10 * time.Second,
+			MaxFailures:         1,
+			MaxRestartAttempts:  3,
+			RestartBackoffValue: 2 * time.Second,
+			StableWindowValue:   1 * time.Minute,
+		},
+	}
+	got := cfg.EffectiveReconnect()
+
+	want := ResolvedReconnect{
+		Enabled:            false,
+		HealthInterval:     10 * time.Second,
+		MaxFailures:        1,
+		MaxRestartAttempts: 3,
+		RestartBackoff:     2 * time.Second,
+		StableWindow:       1 * time.Minute,
+	}
+	if got != want {
+		t.Errorf("EffectiveReconnect() = %+v, want %+v", got, want)
 	}
 }
