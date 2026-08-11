@@ -75,6 +75,10 @@ const (
 
 // ReconnectSettings controls the automatic restart behavior of stdio servers.
 type ReconnectSettings struct {
+	// Disabled is the reconnect.enabled=false master switch: crashed servers
+	// are left in the error state instead of being auto-restarted. Explicit
+	// restarts (request- or operator-triggered) still work.
+	Disabled           bool
 	MaxRestartAttempts int
 	RestartBackoff     time.Duration
 	StableWindow       time.Duration
@@ -86,6 +90,15 @@ func (rs ReconnectSettings) validate() ReconnectSettings {
 	}
 	if rs.RestartBackoff <= 0 {
 		rs.RestartBackoff = time.Second
+	}
+	// Clamp into a sane range: below the floor the jitter math could panic
+	// and a crash loop would spin; above the cap the documented 1m maximum
+	// backoff would not hold.
+	if rs.RestartBackoff < minRestartBackoff {
+		rs.RestartBackoff = minRestartBackoff
+	}
+	if rs.RestartBackoff > maxRestartBackoff {
+		rs.RestartBackoff = maxRestartBackoff
 	}
 	if rs.StableWindow <= 0 {
 		rs.StableWindow = 2 * time.Minute
@@ -345,6 +358,10 @@ func (p *StdioPool) Close() error {
 	defer p.mu.Unlock()
 
 	for name, server := range p.servers {
+		// Mark closed before stopping so that a concurrent in-flight restart
+		// (e.g. health-triggered) aborts instead of respawning a process the
+		// pool will never see again.
+		server.closed.Store(true)
 		server.stop()
 		p.logger.Info("server stopped", "name", name)
 	}

@@ -137,7 +137,11 @@ func (c *Config) EffectiveReconnect() ResolvedReconnect {
 	if rc.Enabled != nil {
 		r.Enabled = *rc.Enabled
 	}
-	if rc.HealthIntervalValue > 0 {
+	// health_check_interval is honored whenever explicitly set — including
+	// "0", which disables the proactive health check as documented. The
+	// string field (not the parsed value) is what distinguishes "unset"
+	// (fall back to the 30s default) from an explicit 0.
+	if rc.HealthInterval != "" {
 		r.HealthInterval = rc.HealthIntervalValue
 	}
 	if rc.MaxFailures > 0 {
@@ -288,6 +292,9 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid reconnect health_check_interval duration: %w", err)
 			}
+			if d < 0 {
+				return nil, fmt.Errorf("invalid reconnect health_check_interval: must be >= 0 (0 disables the health check)")
+			}
 			rc.HealthIntervalValue = d
 		} else {
 			rc.HealthIntervalValue = 30 * time.Second
@@ -298,6 +305,9 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid reconnect restart_backoff duration: %w", err)
 			}
+			if d < 0 {
+				return nil, fmt.Errorf("invalid reconnect restart_backoff: must be >= 0")
+			}
 			rc.RestartBackoffValue = d
 		} else {
 			rc.RestartBackoffValue = time.Second
@@ -307,6 +317,9 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 			d, err := time.ParseDuration(rc.StableWindow)
 			if err != nil {
 				return nil, fmt.Errorf("invalid reconnect stable_window duration: %w", err)
+			}
+			if d < 0 {
+				return nil, fmt.Errorf("invalid reconnect stable_window: must be >= 0")
 			}
 			rc.StableWindowValue = d
 		} else {

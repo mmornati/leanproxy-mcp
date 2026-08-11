@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -60,12 +62,33 @@ func (s *SSEServer) buildClient() (*client.Client, error) {
 	baseURL := s.config.HTTP.URL
 	s.logger.Debug("sse_pool: creating SSE client", "server", s.name, "url", baseURL)
 
-	c, err := client.NewSSEMCPClient(baseURL, client.WithHeaders(headers))
+	// Bound the TCP connect phase: mcp-go's default http.Client has no dial
+	// timeout, so a blackholed endpoint would block Start (holding
+	// reconnectMu) for the OS TCP timeout. No http.Client.Timeout is set on
+	// purpose — that would also kill the long-lived SSE stream.
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext: (&net.Dialer{Timeout: 15 * time.Second}).DialContext,
+		},
+	}
+
+	c, err := client.NewSSEMCPClient(baseURL, client.WithHeaders(headers), client.WithHTTPClient(httpClient))
 	if err != nil {
 		return nil, fmt.Errorf("sse_pool: create client: %w", err)
 	}
 
 	c.OnConnectionLost(func(err error) {
+		// mcp-go invokes this handler on ANY read-loop exit, including the
+		// deliberate Close() of a previous client generation, and it does so
+		// asynchronously. Ignore callbacks from any client that is no longer
+		// the current one, or a stale notification would clobber the state of
+		// a freshly reconnected client and cause a reconnect storm.
+		s.mu.RLock()
+		current := s.mcpClient
+		s.mu.RUnlock()
+		if current != c {
+			return
+		}
 		s.logger.Warn("sse_pool: connection lost", "server", s.name, "error", err)
 		s.setState(StateDisconnected)
 	})
@@ -87,11 +110,22 @@ func (s *SSEServer) ensureConnected(ctx context.Context) (*client.Client, error)
 	s.reconnectMu.Lock()
 	defer s.reconnectMu.Unlock()
 
+	// Read the client and state under a single lock and use the locked local
+	// from here on: returning s.mcpClient after unlocking races a concurrent
+	// Close() (which does not hold reconnectMu) nil-ing and closing it.
 	s.mu.RLock()
-	connected := s.mcpClient != nil && s.state != StateDisconnected && s.state != StateError
+	current := s.mcpClient
+	state := s.state
 	s.mu.RUnlock()
-	if connected {
-		return s.mcpClient, nil
+
+	if state == StateStopped {
+		// A deliberately closed server must never be resurrected by an
+		// in-flight request racing shutdown.
+		return nil, fmt.Errorf("sse_pool: server %s is closed", s.name)
+	}
+
+	if current != nil && state != StateDisconnected && state != StateError {
+		return current, nil
 	}
 
 	s.closeClient()

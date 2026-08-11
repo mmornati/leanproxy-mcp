@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"os/signal"
 	"runtime"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -851,6 +853,15 @@ func TestHelperProcess(t *testing.T) {
 	// loop (rather than a blocking channel) is used so the Go runtime's
 	// deadlock detector does not terminate the helper while it is "hanging".
 	if os.Getenv("GO_HELPER_HANG") == "1" {
+		for {
+			runtime.Gosched()
+		}
+	}
+
+	// Simulate a process that ignores SIGTERM: the pool's stop path must
+	// escalate to SIGKILL instead of wedging forever.
+	if os.Getenv("GO_HELPER_IGNORE_SIGTERM") == "1" {
+		signal.Ignore(syscall.SIGTERM)
 		for {
 			runtime.Gosched()
 		}

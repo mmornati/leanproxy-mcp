@@ -505,6 +505,7 @@ func TestEffectiveReconnectOverrides(t *testing.T) {
 	cfg := &Config{
 		Reconnect: &ReconnectConfig{
 			Enabled:             &disabled,
+			HealthInterval:      "10s",
 			HealthIntervalValue: 10 * time.Second,
 			MaxFailures:         1,
 			MaxRestartAttempts:  3,
@@ -524,5 +525,20 @@ func TestEffectiveReconnectOverrides(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("EffectiveReconnect() = %+v, want %+v", got, want)
+	}
+}
+
+func TestEffectiveReconnectHealthIntervalZeroDisables(t *testing.T) {
+	// An explicit health_check_interval: "0" must be honored as "disabled"
+	// (documented behavior), not silently rewritten to the 30s default.
+	cfg := &Config{
+		Reconnect: &ReconnectConfig{
+			HealthInterval:      "0",
+			HealthIntervalValue: 0,
+		},
+	}
+	got := cfg.EffectiveReconnect()
+	if got.HealthInterval != 0 {
+		t.Errorf("HealthInterval = %v, want 0 (disabled)", got.HealthInterval)
 	}
 }

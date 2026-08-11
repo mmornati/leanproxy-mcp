@@ -34,8 +34,12 @@ type HealthChecker struct {
 	checks      map[string]*healthCheck
 	mu          sync.RWMutex
 	stopCh      chan struct{}
+	stopOnce    sync.Once
 	maxFailures int
 	restarting  map[string]bool
+	// ctx is the context passed to Start; in-flight restarts derive their
+	// timeout from it so a shutdown cancels them.
+	ctx context.Context
 }
 
 type healthCheck struct {
@@ -73,6 +77,10 @@ func (hc *HealthChecker) SetMaxFailures(n int) {
 }
 
 func (hc *HealthChecker) Start(ctx context.Context, interval time.Duration) {
+	hc.mu.Lock()
+	hc.ctx = ctx
+	hc.mu.Unlock()
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -88,12 +96,27 @@ func (hc *HealthChecker) Start(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// Stop signals the checker loop to exit. It is idempotent.
 func (hc *HealthChecker) Stop() {
-	close(hc.stopCh)
+	hc.stopOnce.Do(func() { close(hc.stopCh) })
 }
 
 func (hc *HealthChecker) checkAllServers(ctx context.Context) {
 	servers := hc.pool.ListServers()
+
+	// Drop health entries for servers that left the pool so the map (and
+	// GetAllHealth reporting) does not grow monotonically with ghosts.
+	hc.mu.Lock()
+	known := make(map[string]struct{}, len(servers))
+	for _, name := range servers {
+		known[name] = struct{}{}
+	}
+	for name := range hc.checks {
+		if _, ok := known[name]; !ok {
+			delete(hc.checks, name)
+		}
+	}
+	hc.mu.Unlock()
 
 	for _, name := range servers {
 		result := hc.CheckServer(ctx, name)
@@ -112,7 +135,12 @@ func (hc *HealthChecker) checkAllServers(ctx context.Context) {
 		check.lastLatencyMs = result.LatencyMs
 		check.lastError = result.Error
 
-		if result.Status == HealthUnhealthy || result.Status == HealthError {
+		// Only genuine liveness failures (HealthUnhealthy: ping failures,
+		// wedged processes) count toward a restart. Stopped servers are
+		// deliberately off (idle_timeout) and error-state servers are owned
+		// by crash recovery — counting those would restart-churn servers the
+		// health checker is not responsible for.
+		if result.Status == HealthUnhealthy {
 			check.consecutiveFailures++
 		} else {
 			if check.consecutiveFailures > 0 {
@@ -130,7 +158,7 @@ func (hc *HealthChecker) checkAllServers(ctx context.Context) {
 		maxFailures := hc.maxFailures
 		hc.mu.RUnlock()
 
-		if failures >= maxFailures && status != HealthHealthy {
+		if failures >= maxFailures && status == HealthUnhealthy {
 			hc.logger.Warn("server had consecutive failures, triggering auto-reconnect",
 				"name", name,
 				"failures", failures,
@@ -150,6 +178,10 @@ func (hc *HealthChecker) triggerRestart(name string) {
 		return
 	}
 	hc.restarting[name] = true
+	parentCtx := hc.ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
 	hc.mu.Unlock()
 
 	go func() {
@@ -159,8 +191,23 @@ func (hc *HealthChecker) triggerRestart(name string) {
 			hc.mu.Unlock()
 		}()
 
+		// Re-validate at trigger time: the failure count may be stale by the
+		// time we get here. Never restart a server that is busy (a long tool
+		// call can starve the ping behind it and look like a wedge), already
+		// stopped (idle_timeout), or in an error state owned by crash
+		// recovery — GetServer only succeeds for healthy-state servers.
+		server, err := hc.pool.GetServer(name)
+		if err != nil {
+			hc.logger.Debug("auto-reconnect skipped, server not in a healthy state", "name", name)
+			return
+		}
+		if !server.isIdle() {
+			hc.logger.Info("auto-reconnect skipped, server is busy", "name", name)
+			return
+		}
+
 		hc.logger.Info("auto-reconnecting unhealthy server", "name", name)
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(parentCtx, 60*time.Second)
 		defer cancel()
 		if err := hc.pool.RestartServer(ctx, name); err != nil {
 			hc.logger.Error("auto-reconnect failed", "name", name, "error", err)
@@ -176,28 +223,39 @@ func (hc *HealthChecker) CheckServer(ctx context.Context, name string) HealthChe
 		CheckedAt:  time.Now(),
 	}
 
-	server, err := hc.pool.GetServer(name)
+	state, err := hc.pool.GetServerState(name)
 	if err != nil {
 		result.Status = HealthUnhealthy
 		result.Error = err.Error()
 		return result
 	}
 
-	state, _ := hc.pool.GetServerState(name)
 	stats, _ := hc.pool.GetServerStats(name)
 
 	switch state {
-	case StateIdle, StateRunning, StateBusy:
-		result.Status = HealthHealthy
-	case StateError:
-		result.Status = HealthUnhealthy
-		result.Error = "server in error state"
-	case StateStopping:
-		result.Status = HealthDegraded
-		result.Error = "server is stopping"
-	default:
+	case StateStopped, StateStopping:
+		// Deliberately stopped (idle_timeout or operator action): not a
+		// failure. The server must NOT be restarted by the health checker —
+		// it revives lazily on its next request.
 		result.Status = HealthUnknown
+		result.Error = "server is stopped"
+		return result
+	case StateStarting:
+		result.Status = HealthUnknown
+		result.Error = "server is starting"
+		return result
+	case StateError:
+		// Crash recovery owns this state, including the terminal
+		// budget-exhausted case. Report it, but never count it as a
+		// health-check failure and never restart it from here.
+		result.Status = HealthError
+		result.Error = "server in error state"
+		return result
 	}
+
+	// States idle/running/busy: the process is supposed to be alive.
+	result.Status = HealthHealthy
+	result.LatencyMs = stats.AvgLatencyMs
 
 	if stats.ErrorCount > 0 {
 		errorRate := float64(stats.ErrorCount) / float64(stats.RequestCount+stats.ErrorCount)
@@ -207,20 +265,42 @@ func (hc *HealthChecker) CheckServer(ctx context.Context, name string) HealthChe
 		}
 	}
 
+	server, err := hc.pool.GetServer(name)
+	if err != nil {
+		// Raced with a state transition between the two lookups; report
+		// unknown rather than counting a spurious failure.
+		result.Status = HealthUnknown
+		result.Error = err.Error()
+		return result
+	}
+
+	// A process alive but wedged before the first initialize handshake is
+	// invisible to the ping probe (pings are only valid on an initialized
+	// session). If requests are already failing in this generation, that is
+	// a liveness failure: restart the server.
+	if !server.IsMCPInitialized() {
+		if server.failedSinceSpawn() {
+			result.Status = HealthUnhealthy
+			result.Error = "server not initialized and requests are failing"
+		}
+		return result
+	}
+
 	// Liveness probe: a process can be alive yet unresponsive. Ping healthy
 	// idle/running servers to detect wedged processes. Skip busy servers to
-	// avoid interfering with in-flight tool calls, and only probe servers
-	// that completed the MCP initialize handshake so the ping is valid.
-	if result.Status == HealthHealthy && (state == StateIdle || state == StateRunning) && server.IsMCPInitialized() {
+	// avoid interfering with in-flight tool calls.
+	if result.Status == HealthHealthy && (state == StateIdle || state == StateRunning) {
 		ok, latency := hc.performPingCheck(ctx, server)
 		if ok {
 			result.LatencyMs = latency
-		} else {
+		} else if server.isIdle() {
 			result.Status = HealthUnhealthy
 			result.Error = "MCP ping failed"
+		} else {
+			// The ping starved behind a long in-flight request and timed
+			// out: an artifact of the probe, not a liveness signal.
+			hc.logger.Debug("ping inconclusive, server became busy", "name", name)
 		}
-	} else {
-		result.LatencyMs = stats.AvgLatencyMs
 	}
 
 	return result
@@ -302,7 +382,11 @@ func (hc *HealthChecker) performPingCheck(ctx context.Context, server *StdioServ
 			return false, latency
 		}
 		return true, latency
-	case <-time.After(5 * time.Second):
+	case <-time.After(7 * time.Second):
+		// The outer timeout deliberately exceeds the request's own 5s
+		// timeout: if we land here, the ping never even got processed (e.g.
+		// it starved behind a long in-flight tool call), which is an
+		// artifact of probing a busy server — not a liveness signal.
 		return false, time.Since(start).Seconds() * 1000
 	case <-ctx.Done():
 		return false, 0

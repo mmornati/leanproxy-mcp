@@ -120,11 +120,22 @@ func (s *HTTPClientServer) ensureConnected(ctx context.Context) (*client.Client,
 	s.reconnectMu.Lock()
 	defer s.reconnectMu.Unlock()
 
+	// Read the client and state under a single lock and use the locked local
+	// from here on: returning s.mcpClient after unlocking races a concurrent
+	// Close() (which does not hold reconnectMu) nil-ing and closing it.
 	s.mu.RLock()
-	connected := s.mcpClient != nil && s.state != StateDisconnected && s.state != StateError
+	current := s.mcpClient
+	state := s.state
 	s.mu.RUnlock()
-	if connected {
-		return s.mcpClient, nil
+
+	if state == StateStopped {
+		// A deliberately closed server must never be resurrected by an
+		// in-flight request racing shutdown.
+		return nil, fmt.Errorf("http_pool: server %s is closed", s.name)
+	}
+
+	if current != nil && state != StateDisconnected && state != StateError {
+		return current, nil
 	}
 
 	s.closeClient()

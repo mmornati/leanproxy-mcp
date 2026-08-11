@@ -2,6 +2,7 @@ package pool
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	errstd "errors"
@@ -120,6 +121,23 @@ type StdioServerV2 struct {
 	wg              sync.WaitGroup
 	mcpInitialized  atomic.Bool
 	stderrLines     *stderrRing
+	// autoRestartDisabled is the reconnect.enabled=false master switch: the
+	// crash path (scheduleRestart) leaves the server in the error state
+	// instead of respawning it. Explicit restarts (request/manual) still work.
+	autoRestartDisabled bool
+	// autoRestartExhausted is set when the crash-restart budget is spent; the
+	// server then stays in the error state until a deliberate restart resets
+	// the budget.
+	autoRestartExhausted atomic.Bool
+	// closed is set by the pool before stopping the server for good; restart
+	// aborts on it so a late respawn can never orphan a process.
+	closed atomic.Bool
+	// generation increments on every spawn; restart uses it to skip redundant
+	// stop+spawn cycles when a concurrent caller already recovered the server.
+	generation atomic.Uint64
+	// nextRequestID generates the internal wire IDs used toward the child
+	// process so responses can be matched to the exact in-flight request.
+	nextRequestID atomic.Int64
 }
 
 func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *StdioServerV2 {
@@ -180,6 +198,7 @@ func (s *StdioServerV2) applyReconnect(settings ReconnectSettings) {
 	settings = settings.validate()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.autoRestartDisabled = settings.Disabled
 	s.maxRestarts = settings.MaxRestartAttempts
 	s.initialBackoff = settings.RestartBackoff
 	s.backoff = settings.RestartBackoff
@@ -189,6 +208,18 @@ func (s *StdioServerV2) applyReconnect(settings ReconnectSettings) {
 
 func (s *StdioServerV2) setState(newState int32) {
 	atomic.StoreInt32(&s.state, newState)
+}
+
+// drainResponses discards any responses buffered in responseCh. Called at
+// spawn time so a fresh generation starts with an empty channel.
+func (s *StdioServerV2) drainResponses() {
+	for {
+		select {
+		case <-s.responseCh:
+		default:
+			return
+		}
+	}
 }
 
 func (s *StdioServerV2) compareAndSwapState(oldState, newState int32) bool {
@@ -316,6 +347,13 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	s.genStopCh = genStopCh
 	s.genStopOnce = genStopOnce
 
+	// Drop responses buffered by previous generations (late answers to
+	// timed-out or killed requests) so the new generation can never consume
+	// a stale response. Belt-and-braces on top of the wire-ID matching in
+	// sendRequest.
+	s.drainResponses()
+	s.generation.Add(1)
+
 	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", s.config.Args)
 
 	s.mu.Unlock()
@@ -330,6 +368,13 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 
 	// Post-spawn verification: confirm process is alive.
 	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		// Tear down the generation we just started so a failed spawn never
+		// leaks a process and its goroutines outside the pool's view.
+		// waitForExit observes the kill and drives the normal crash-recovery
+		// path (bounded by the restart budget).
+		genStopOnce.Do(func() { close(genStopCh) })
+		_ = cmd.Process.Kill()
+		atomic.StoreInt32(&s.state, stateError)
 		return fmt.Errorf("pool: server %s process not alive after spawn: %w (recent stderr: %s)", s.name, err, s.stderrLines.String())
 	}
 
@@ -390,6 +435,17 @@ func (s *StdioServerV2) waitForExit(ctx context.Context, stopCh chan struct{}, s
 	s.wg.Done()
 }
 
+const (
+	// maxRestartBackoff caps the exponential crash-restart backoff.
+	maxRestartBackoff = time.Minute
+	// minRestartBackoff floors the configured backoff so the jitter math can
+	// never panic and a crash loop cannot spin faster than this.
+	minRestartBackoff = 10 * time.Millisecond
+	// stopGracePeriod is how long stopLocked waits for a SIGTERMed process
+	// generation to wind down before escalating to SIGKILL.
+	stopGracePeriod = 5 * time.Second
+)
+
 func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 	currentState := atomic.LoadInt32(&s.state)
 	if currentState == stateStopping || currentState == stateStopped {
@@ -397,18 +453,34 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 	}
 
 	s.mu.Lock()
+	if s.autoRestartDisabled {
+		s.mu.Unlock()
+		s.logger.Warn("auto-reconnect disabled, leaving crashed server in error state", "name", s.name)
+		atomic.StoreInt32(&s.state, stateError)
+		return
+	}
 	s.restartCount++
 	if s.restartCount > s.maxRestarts {
+		s.autoRestartExhausted.Store(true)
 		s.mu.Unlock()
-		s.logger.Error("max restarts exceeded", "name", s.name, "restarts", s.restartCount)
+		s.logger.Error("max restarts exceeded, leaving server in error state until next use", "name", s.name, "restarts", s.restartCount)
 		atomic.StoreInt32(&s.state, stateError)
 		return
 	}
 
 	backoff := s.backoff
-	s.backoff *= 2
-	if s.backoff > time.Minute {
-		s.backoff = time.Minute
+	// Defensive clamp: config validation bounds the initial backoff, but the
+	// doubling below must also be overflow-safe for pathological values.
+	if backoff < minRestartBackoff {
+		backoff = minRestartBackoff
+	}
+	if backoff > maxRestartBackoff {
+		backoff = maxRestartBackoff
+	}
+	if s.backoff > maxRestartBackoff/2 {
+		s.backoff = maxRestartBackoff
+	} else {
+		s.backoff *= 2
 	}
 	s.stats.CurrentBackoff = s.backoff
 	s.mu.Unlock()
@@ -416,7 +488,11 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 	s.logger.Info("scheduled restart", "name", s.name, "backoff", backoff, "attempt", s.restartCount)
 
 	// Add jitter so a fleet of crashed servers does not restart in lockstep.
-	wait := backoff + time.Duration(rand.Int63n(int64(backoff/4))+1)
+	quarter := int64(backoff / 4)
+	if quarter < 1 {
+		quarter = 1
+	}
+	wait := backoff + time.Duration(rand.Int63n(quarter)+1)
 
 	select {
 	case <-time.After(wait):
@@ -455,10 +531,35 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 
 // restart tears down the current process generation and spawns a fresh one.
 // It is serialized via restartMu so concurrent callers never create more than
-// one generation at a time.
+// one generation at a time. A deliberate restart (request- or health-triggered)
+// grants a fresh crash-restart budget.
 func (s *StdioServerV2) restart(ctx context.Context) error {
+	gen0 := s.generation.Load()
+
 	s.restartMu.Lock()
 	defer s.restartMu.Unlock()
+
+	// The pool closed this server while we were waiting on the mutex; spawning
+	// now would orphan a process that no Close sweep will ever see.
+	if s.closed.Load() {
+		return fmt.Errorf("pool: server %s is closed", s.name)
+	}
+
+	// Another caller already restarted the server while we were waiting and
+	// it is healthy again: skip the redundant stop+spawn cycle.
+	if s.generation.Load() != gen0 && s.isHealthy() {
+		return nil
+	}
+
+	// A deliberate restart resets the crash-restart budget: active use (or an
+	// operator action) grants the server a fresh set of attempts instead of
+	// carrying stale credit from an earlier crash loop.
+	s.mu.Lock()
+	s.restartCount = 0
+	s.backoff = s.initialBackoff
+	s.stats.CurrentBackoff = s.backoff
+	s.mu.Unlock()
+	s.autoRestartExhausted.Store(false)
 
 	if err := s.stopLocked(); err != nil {
 		return err
@@ -590,7 +691,24 @@ func (s *StdioServerV2) stopLocked() error {
 		proc.Process.Signal(syscall.SIGTERM)
 	}
 
-	s.wg.Wait()
+	// Wait for the generation's goroutines to wind down, but escalate to
+	// SIGKILL if the child ignores SIGTERM — otherwise a wedged process (the
+	// exact case the health checker exists to recover from) would hang this
+	// wait forever with restartMu held, blocking all future restarts.
+	wgDone := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(wgDone)
+	}()
+	select {
+	case <-wgDone:
+	case <-time.After(stopGracePeriod):
+		if proc != nil && proc.Process != nil {
+			s.logger.Warn("server ignored SIGTERM, escalating to SIGKILL", "name", s.name)
+			_ = proc.Process.Kill()
+		}
+		<-wgDone
+	}
 
 	return nil
 }
@@ -611,6 +729,15 @@ func (s *StdioServerV2) isIdle() bool {
 	defer s.mu.Unlock()
 	currentState := atomic.LoadInt32(&s.state)
 	return s.currentLoad == 0 && (currentState == stateIdle || currentState == stateRunning)
+}
+
+// failedSinceSpawn reports whether a request has failed in the current
+// process generation. The health checker uses it to detect servers that are
+// alive but wedged before completing the MCP initialize handshake.
+func (s *StdioServerV2) failedSinceSpawn() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.stats.LastErrorAt.IsZero() && s.stats.LastErrorAt.After(s.lastSpawnAt)
 }
 
 func (s *StdioServerV2) getStats() ServerStats {
@@ -645,7 +772,7 @@ func (s *StdioServerV2) runRequestLoop(ctx context.Context, stopCh chan struct{}
 	for {
 		select {
 		case req := <-s.requestCh:
-			s.processRequest(ctx, req)
+			s.processRequest(ctx, req, stopCh)
 
 		case <-s.healthTicker.C:
 			s.checkIdleTimeout(ctx)
@@ -658,7 +785,7 @@ func (s *StdioServerV2) runRequestLoop(ctx context.Context, stopCh chan struct{}
 	}
 }
 
-func (s *StdioServerV2) processRequest(ctx context.Context, req Request) {
+func (s *StdioServerV2) processRequest(ctx context.Context, req Request, stopCh chan struct{}) {
 	startTime := time.Now()
 
 	s.mu.Lock()
@@ -669,11 +796,13 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request) {
 
 	atomic.StoreInt32(&s.state, stateBusy)
 
-	result, sendErr := s.sendRequest(ctx, req)
+	result, sendErr := s.sendRequest(ctx, req, stopCh)
 	if sendErr != nil {
 		resp.Error = &errs.JSONRPCError{Code: errs.ErrCodeServerError, Message: sendErr.Error()}
 		s.mu.Lock()
 		s.stats.ErrorCount++
+		s.stats.LastError = sendErr.Error()
+		s.stats.LastErrorAt = time.Now()
 		s.mu.Unlock()
 	} else {
 		resp.Result = result
@@ -704,13 +833,21 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request) {
 	}
 }
 
-func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawMessage, error) {
-	encoded, err := json.Marshal(req)
+func (s *StdioServerV2) sendRequest(ctx context.Context, req Request, stopCh chan struct{}) (json.RawMessage, error) {
+	// Give the request a unique internal wire ID so the response can be
+	// matched to this exact in-flight request. Callers across generations and
+	// retries routinely reuse the same JSON-RPC ID (handlers default to id 1),
+	// so without this a stale or cross-generation response could be delivered
+	// to an unrelated caller.
+	wireID := s.nextRequestID.Add(1)
+	wireReq := req
+	wireReq.ID = wireID
+	encoded, err := json.Marshal(wireReq)
 	if err != nil {
 		return nil, fmt.Errorf("pool: marshal request: %w", err)
 	}
 
-	s.logger.Debug("sending request to server", "name", s.name, "method", req.Method, "id", req.ID, "encoded", string(encoded))
+	s.logger.Debug("sending request to server", "name", s.name, "method", req.Method, "id", wireID, "encoded", string(encoded))
 
 	s.mu.Lock()
 	if s.stdin == nil {
@@ -729,19 +866,49 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 	if req.Timeout > 0 {
 		timeout = req.Timeout
 	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
-	select {
-	case resp := <-s.responseCh:
-		s.logger.Debug("received raw response from server", "name", s.name, "response", fmt.Sprintf("%+v", resp))
-		if resp.Error != nil {
-			return nil, resp.Error
+	for {
+		select {
+		case resp := <-s.responseCh:
+			if !jsonIDEqual(resp.ID, wireID) {
+				// Stale or cross-generation response: belongs to a timed-out
+				// or killed request. Drop it and keep waiting for ours.
+				s.logger.Warn("discarding stale response", "name", s.name, "got_id", resp.ID, "want_id", wireID)
+				continue
+			}
+			s.logger.Debug("received raw response from server", "name", s.name, "response", fmt.Sprintf("%+v", resp))
+			if resp.Error != nil {
+				return nil, resp.Error
+			}
+			return resp.Result, nil
+		case <-timer.C:
+			return nil, fmt.Errorf("pool: request timeout after %v (recent stderr: %s)", timeout, s.stderrLines.String())
+		case <-stopCh:
+			// The process generation is being torn down (restart/shutdown):
+			// fail fast instead of hanging until the request timeout while the
+			// stop path waits on this goroutine.
+			return nil, fmt.Errorf("pool: server %s is stopping", s.name)
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
-		return resp.Result, nil
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("pool: request timeout after %v (recent stderr: %s)", timeout, s.stderrLines.String())
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
+}
+
+// jsonIDEqual compares two JSON-RPC IDs by their canonical JSON encoding so
+// that numeric equality holds across decoder types (e.g. int64(1) vs the
+// float64(1) produced by unmarshalling into interface{}).
+func jsonIDEqual(a, b interface{}) bool {
+	ab, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	bb, err := json.Marshal(b)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(ab, bb)
 }
 
 func (s *StdioServerV2) sendNotification(ctx context.Context, method string, params map[string]interface{}) error {
@@ -783,6 +950,14 @@ func (s *StdioServerV2) checkIdleTimeout(ctx context.Context) {
 
 	if shouldStop {
 		s.logger.Info("idle timeout reached, stopping server", "name", s.name)
-		s.stop()
+		// Must run asynchronously: checkIdleTimeout executes on the
+		// runRequestLoop goroutine, which is registered in s.wg. stopLocked
+		// waits on s.wg, so a synchronous call would wait on itself and
+		// deadlock the server (and every later restart) permanently.
+		go func() {
+			if err := s.stop(); err != nil {
+				s.logger.Warn("idle stop failed", "name", s.name, "error", err)
+			}
+		}()
 	}
 }

@@ -46,7 +46,7 @@ With auto-reconnect enabled (default), LeanProxy-MCP now handles these cases aut
 - **Crash recovery**: if a `stdio` process exits unexpectedly it is respawned with exponential backoff, and the restart budget resets after a server stays up for `stable_window`.
 - **Liveness probe**: idle/running servers are pinged every `health_check_interval`; `health_check_failures` consecutive failures trigger a restart. Pings are MCP pings and do **not** consume AI tokens.
 - **Transport recovery**: `http`/`sse` servers reconnect transparently when the connection drops, and the next tool call re-establishes a dead session.
-- **Request retry**: if a request lands on a server that is recovering, it is retried once instead of failing permanently.
+- **Request retry**: if a request lands on a server that is recovering, it waits briefly for the restart to finish instead of failing permanently. For `http`/`sse`, a request that fails on a genuine transport error is retried once after the reconnect.
 
 **If a server still appears stuck:**
 
