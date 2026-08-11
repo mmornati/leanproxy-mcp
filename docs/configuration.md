@@ -635,6 +635,54 @@ servers:
 leanproxy-mcp serve --model-router --model-router-config ./model-router.yaml
 ```
 
+## Auto-Reconnect
+
+LeanProxy-MCP monitors proxied MCP servers and reconnects them automatically when a server crashes, hangs, or loses its transport connection. This applies to all transports (`stdio`, `http`, `sse`).
+
+Auto-reconnect is enabled by default. Configure it with a top-level `reconnect` block in `leanproxy_servers.yaml`:
+
+```yaml
+servers:
+  - name: garmin
+    enabled: true
+    transport: stdio
+    stdio:
+      command: garmin-mcp
+      args: [stdio]
+    timeout: 30s
+    connect_timeout: 10s
+    # idle_timeout: 30m   # empty/absent defaults to 30m; "0" disables
+
+# Optional global auto-reconnect settings
+reconnect:
+  enabled: true
+  health_check_interval: 30s
+  health_check_failures: 3
+  max_restart_attempts: 5
+  restart_backoff: 1s
+  stable_window: 2m
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `true` | Master switch for auto-reconnect |
+| `health_check_interval` | duration | `30s` | How often idle/running servers are pinged. Set to `0` to disable the proactive health check |
+| `health_check_failures` | int | `3` | Consecutive failed pings before a server is restarted automatically |
+| `max_restart_attempts` | int | `5` | Max crash-restarts before a server is left in an error state |
+| `restart_backoff` | duration | `1s` | Initial delay before restarting a crashed server (grows exponentially, capped at 1 minute) |
+| `stable_window` | duration | `2m` | If a server survives this long, its restart budget resets |
+
+### How It Works
+
+1. **Crash detection**: when a `stdio` process exits unexpectedly it is respawned automatically with exponential backoff. A process that stays up past `stable_window` resets the restart budget, so long-running servers keep their full budget.
+2. **Liveness probe**: every `health_check_interval`, idle/running servers are sent an MCP `ping` (which does **not** consume AI/LLM tokens). `health_check_failures` consecutive failures trigger a restart. This catches processes that are alive but unresponsive.
+3. **Transport recovery**: `http`/`sse` servers reconnect automatically when the connection drops, and the next tool call transparently re-establishes a dead session.
+4. **Stop-then-restart**: when a server is idle and times out, or is explicitly restarted, the process is fully torn down and a fresh one with a working request loop is spawned. Requests issued during recovery wait briefly and are then retried.
+
+> **Note**: `idle_timeout` still defaults to `30m` when left empty. Set it to `0` (or `"0"`) to keep a server running indefinitely. With auto-reconnect enabled, an idle-stop is now fully recoverable — the server simply restarts on its next use.
+
 ## Sidecar LLM Redaction
 
 Offload sensitive content redaction to a local LLM (Ollama or MLX) for context-aware redaction beyond regex patterns.
