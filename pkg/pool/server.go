@@ -492,7 +492,7 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 	if quarter < 1 {
 		quarter = 1
 	}
-	wait := backoff + time.Duration(rand.Int63n(quarter)+1)
+	wait := backoff + time.Duration(rand.Int63n(quarter)+1) // #nosec G404 -- jitter only de-synchronizes restart timers; not security-sensitive
 
 	select {
 	case <-time.After(wait):
