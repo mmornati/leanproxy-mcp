@@ -1,0 +1,35 @@
+# Default live-snapshot config for tests/bench/live_snapshot.
+#
+# This config intentionally includes only the 3 MCP servers that are
+# documented in docs/index.md. The Stitch server is no longer available
+# (see ../fixtures/live-snapshot.json for the canonical snapshot).
+#
+# To refresh the snapshot with live data, run:
+#   go run ./tests/bench/live_snapshot \
+#     -config tests/bench/fixtures/live-snapshot.yaml \
+#     -out   tests/bench/fixtures/live-snapshot.json
+#
+# Each server entry must provide a working stdio command. The tool spawns
+# each server, performs an MCP initialize handshake, calls `tools/list`,
+# and records the tool count + total schema JSON size.
+
+servers:
+  # GitHub MCP server (npx-based; falls back to a stub when offline)
+  - name: github
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env: []
+
+  # Garmin MCP server (HTTP — currently unreachable from this snapshot tool,
+  # so the snapshot will mark it as not reachable and exclude it from totals).
+  - name: garmin
+    transport: http
+    url: https://garmin-mcp.example.com/mcp
+    env: []
+
+  # Intervals.icu MCP server (HTTP).
+  - name: intervals
+    transport: http
+    url: https://intervals-mcp.example.com/mcp
+    env: []

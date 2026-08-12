@@ -37,46 +37,45 @@ When you run multiple MCP servers, each adds tool schemas to every LLM request. 
 
 | MCP Servers | Tools | Tokens per Request |
 |-------------|-------|-------------------|
-| Garmin | 100 | ~10,000 tokens |
-| GitHub | 41 | ~4,100 tokens |
-| Stitch | 12 | ~1,200 tokens |
-| Intervals.icu | 10 | ~1,000 tokens |
-| **All 4 combined** | **163** | **~16,300+ tokens** |
+| Garmin | 100 | ~11,130 tokens |
+| GitHub | 41 | ~4,570 tokens |
+| Intervals.icu | 10 | ~1,130 tokens |
+| **All 3 combined** | **151** | **~16,830 tokens** |
 
-> These tool counts come from live MCP servers queried via LeanProxy. Each tool adds ~100 tokens of schema + arguments. With 163 tools configured, that's the "schema tax" on every prompt.
+> These tool counts come from the canonical live snapshot at `tests/bench/fixtures/live-snapshot.json` (refreshable with `go run ./tests/bench/live_snapshot`). The Stitch server is no longer available, so the canonical production shape is 3 servers. Each tool adds ~100 tokens of schema + arguments.
 
-For a 7-prompt mixed session where all 4 MCP servers are configured but only 2-3 actually invoked, Native MCP wastes **~16,300 tokens** on schemas never used.
+For a 7-prompt mixed session where all 3 MCP servers are configured but only 2-3 actually invoked, Native MCP wastes **~16,830 tokens** on schemas never used.
 
-### Real Examples: Working Sessions
+### Real Examples: Working Sessions (Measured v0.9.0)
 
-Based on live MCP tool invocations:
+Reproduced by `tests/bench/token_economy_bench_test.go` using the same Estimator as the runtime cost tracker:
 
 | Session | Description | Prompts | Native MCP | LeanProxy | Savings |
 |---------|-------------|--------|------------|----------|---------|
-| A | Sport (Garmin + Intervals.icu) | 4 | ~21,000 | ~2,000 | **90%+** |
-| B | Dev (GitHub + Stitch) | 5 | ~10,600 | ~2,400 | **77%+** |
-| C | Full Day (all 4) | 7 | ~49,600 | ~3,500 | **93%+** |
+| A | Sport (Garmin + Intervals.icu) | 4 | ~12,260 | ~740 | **94.0%** |
+| B | Dev (GitHub + Intervals.icu) | 5 | ~7,120 | ~925 | **87.0%** |
+| C | Full Day (all 3) | 7 | ~29,450 | ~1,295 | **95.6%** |
 
 #### Session A: Morning Sport (Garmin + Intervals.icu)
 
-| Prompt | Tool Invoked | Native MCP | LeanProxy |
-|--------|-------------|------------|----------|
-| 1 | `garmin_get_stats` | 10,000 | ~500 |
-| 2 | `intervals_get_events` | 11,000 | ~500 |
-| 3 | `intervals_get_activity_intervals` | cached | ~500 |
-| 4 | `intervals_add_or_update_event` | cached | ~500 |
-| **Total** | | **~21,000** | **~2,000** |
+| Prompt | Tool Invoked | Native MCP (raw) | LeanProxy |
+|--------|-------------|-----------------|----------|
+| 1 | `garmin_get_stats` | ~11,130 | ~184 |
+| 2 | `intervals_get_events` | ~2,780 | ~184 |
+| 3 | `intervals_get_activity_intervals` | ~2,780 | ~184 |
+| 4 | `intervals_add_or_update_event` | ~2,780 | ~184 |
+| **Total** | | **~12,260** | **~740** |
 
-#### Session B: Dev Session (GitHub + Stitch)
+#### Session B: Dev Session (GitHub + Intervals.icu)
 
-| Prompt | Tool Invoked | Native MCP | LeanProxy |
-|--------|-------------|------------|----------|
-| 1 | `github_search_repositories` | 4,100 | ~600 |
-| 2 | `github_get_file_contents` | cached | cached |
-| 3 | `stitch_list_projects` | 5,300 | ~600 |
-| 4 | `stitch_generate_screen_from_text` | cached | ~600 |
-| 5 | `github_create_pull_request` | cached | ~600 |
-| **Total** | | **~10,600** | **~2,400** |
+| Prompt | Tool Invoked | Native MCP (raw) | LeanProxy |
+|--------|-------------|-----------------|----------|
+| 1 | `github_search_repositories` | ~4,570 | ~184 |
+| 2 | `github_get_file_contents` | ~1,140 | ~184 |
+| 3 | `intervals_get_events` | ~1,420 | ~184 |
+| 4 | `intervals_add_or_update_event` | ~1,420 | ~184 |
+| 5 | `github_create_pull_request` | ~1,420 | ~184 |
+| **Total** | | **~7,120** | **~925** |
 
 ### The Cache Read Cost Fallacy
 
@@ -84,25 +83,25 @@ Based on live MCP tool invocations:
 
 When a prompt cache hit occurs, you still pay for reading from cache:
 - **OpenAI**: Cache reads at **0.25x** input token price
-- **Anthropic**: Cache reads at **0.25x** input token price  
+- **Anthropic**: Cache reads at **0.25x** input token price
 - **DeepSeek**: Cache reads at **0.25x** input token price
 - **Google Gemini**: Cache reads at ~**0.25x** input token price
 
-This means **100% cache hit doesn't mean 100% free**. A 16,300-token MCP schema at 100% cache hit still costs:
+This means **100% cache hit doesn't mean 100% free**. A 16,830-token MCP schema at 100% cache hit still costs:
 ```
-16,300 tokens × 0.25x = 4,075 "effective" tokens worth of money
+16,830 tokens × 0.25x = 4,208 "effective" tokens worth of money
 ```
 
-#### Real Comparison: Native MCP vs LeanProxy
+#### Real Comparison: Native MCP vs LeanProxy (Measured v0.9.0)
 
-| MCP Servers | Tools | Native MCP (100% cache hit) | LeanProxy | Savings |
-|-------------|-------|----------------------------|----------|---------|
-| 1 (GitHub) | 41 | 1,025 tokens | 27.5 | **97.3%** |
-| 2 (GitHub + Stitch) | 53 | 1,325 tokens | 27.5 | **97.9%** |
-| 3 (+ Intervals.icu) | 63 | 1,575 tokens | 27.5 | **98.2%** |
-| 4 (all) | 163 | 4,075 tokens | 27.5 | **99.3%** |
+| MCP Servers | Tools | Native MCP (100% cache hit, 0.25x) | LeanProxy | Savings |
+|-------------|-------|-----------------------------------|----------|---------|
+| 1 (GitHub) | 41 | 1,143 tokens | 158 | **86.2%** |
+| 1 (Garmin) | 100 | 2,783 tokens | 158 | **94.3%** |
+| 2 (Garmin + GitHub) | 141 | 3,925 tokens | 158 | **96.0%** |
+| 3 (all) | 151 | 4,208 tokens | 158 | **96.2%** |
 
-*Native MCP sends tool schemas every prompt at 0.25x cache read. LeanProxy sends only ~110 router tokens regardless of backend servers.*
+*Native MCP sends tool schemas every prompt at 0.25x cache read. LeanProxy sends only the 158-token router payload (3 tools: list_servers, invoke_tool, list_tools) regardless of backend servers.*
 
 **The key insight**: With Native MCP + caching, you pay for every tool schema on every request (at 0.25x). LeanProxy sends only the router schema — the backend tool schemas only load when actually invoked.
 
@@ -111,25 +110,24 @@ This means **100% cache hit doesn't mean 100% free**. A 16,300-token MCP schema 
 For MCP tool schemas that are **identical every request**, caching only reduces cost by 75% — you're still paying for the read. The "same input context" scenario:
 
 | Scenario | Input Tokens | Cache Rate | Cache Cost (0.25x) | LeanProxy | Savings |
-|----------|-------------|-----------|-------------------|----------|---------|
-| 1 server (GitHub) | 4,100 | 100% hit | 1,025 | **27.5** | 97% |
-| 2 servers | 5,300 | 100% hit | 1,325 | 27.5 | 98% |
-| 3 servers | 15,200 | 100% hit | 3,800 | 27.5 | 99% |
-| **4 servers (all)** | **16,300** | 100% hit | **4,075** | **27.5** | **99.3%** |
+|----------|--------------|-----------|-------------------|----------|---------|
+| 1 server (Garmin) | 11,130 | 100% hit | 2,783 | **158** | 94% |
+| 2 servers (Garmin + GitHub) | 15,700 | 100% hit | 3,925 | 158 | 96% |
+| **3 servers (all)** | **16,830** | 100% hit | **4,208** | **158** | **96.2%** |
 
-> **Critical insight**: With "same input context" caching, 100% cache hit STILL costs at 0.25x. LeanProxy sends only ~110 tokens, making cache read cost negligible (27.5 tokens). This is the real advantage.
+> **Critical insight**: With "same input context" caching, 100% cache hit STILL costs at 0.25x. LeanProxy sends only 158 tokens, making the cache-read cost negligible. This is the real advantage.
 
 ### Monthly Total Token Savings (100 sessions/month)
 
-Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy only sends router schema.
+Measured on v0.9.0 with 3 servers. Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy only sends the 158-token router schema.
 
 | Servers | Tools | GPT-4o-mini ($0.0375/M) | Anthropic Sonnet ($0.40/M) |
 |---------|-------|--------------------------|----------------------------|
-| 1 | 41 | $1.03 → **$1.02 saved** | $10.93 → **$10.90 saved** |
-| 2 | 53 | $1.33 → **$1.32 saved** | $14.13 → **$14.10 saved** |
-| 4 | 163 | $4.08 → **$4.07 saved** | $43.47 → **$43.44 saved** |
+| 1 (GitHub) | 41 | $1.14 → **$1.14 saved** | $12.19 → **$12.17 saved** |
+| 1 (Garmin) | 100 | $2.78 → **$2.78 saved** | $29.68 → **$29.64 saved** |
+| 3 (all) | 151 | $4.21 → **$4.21 saved** | $44.88 → **$44.84 saved** |
 
-*Formula: 16,300 tokens × 100 sessions × 0.25x cache read / 1M (GPT-4o-mini) or / 1M (Sonnet)*
+*Formula: native_tokens × 0.25x × 100 sessions / 1M × price. LeanProxy cost: 158 × 100 / 1M × price (negligible).*
 
 ### Should You Use Caching with MCP?
 
@@ -146,9 +144,11 @@ Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy onl
 
 LeanProxy uses a **gateway pattern** with JIT (Just-In-Time) schema loading:
 
-1. **Single router schema**: Only 2 tools (`invoke_tool`, `list_tools`) = **~110 tokens** vs 16,300+ for Native MCP
-2. **On-demand tool registration**: Backend server schemas only load when actually needed (~500 tokens per invocation)
+1. **Single router schema**: Only 3 tools (`list_servers`, `invoke_tool`, `list_tools`) = **158 tokens** (measured) vs 16,830 for Native MCP
+2. **On-demand tool registration**: Backend server schemas only load when actually needed (~26 tokens per stub)
 3. **Session-aware caching**: Tool schemas persist across the session without per-request overhead
+
+For full benchmark methodology and raw numbers, see [benchmark-results.md](./benchmark-results.md).
 
 ### Decision Framework
 

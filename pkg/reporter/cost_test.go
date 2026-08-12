@@ -1,11 +1,16 @@
 package reporter
 
 import (
+	"encoding/json"
 	"sort"
 	"sync"
 	"testing"
 	"time"
 )
+
+func jsonMarshal(v any) ([]byte, error) {
+	return json.Marshal(v)
+}
 
 func TestCostTrackerTrack(t *testing.T) {
 	tracker := NewCostTracker()
@@ -439,6 +444,132 @@ func TestCostTrackerGetEntriesEmpty(t *testing.T) {
 	entries := tracker.GetEntries(time.Now())
 	if len(entries) != 0 {
 		t.Errorf("expected empty, got %d", len(entries))
+	}
+}
+
+func TestEstimatorDefaultRatio(t *testing.T) {
+	e := NewEstimator()
+	if got := e.CharsPerToken(); got != DefaultCharsPerToken {
+		t.Errorf("CharsPerToken=%v, want %v", got, DefaultCharsPerToken)
+	}
+}
+
+func TestEstimatorEstimateTokens(t *testing.T) {
+	e := NewEstimator()
+	cases := []struct {
+		name    string
+		content string
+		want    int
+	}{
+		{"empty", "", 0},
+		{"one char", "a", 1},
+		{"four chars", "abcd", 1},
+		{"five chars", "abcde", 2},
+		{"eight chars", "abcdefgh", 2},
+		{"zero string literal", `""`, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := e.EstimateTokens(tc.content); got != tc.want {
+				t.Errorf("EstimateTokens(%q) = %d, want %d", tc.content, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEstimatorEstimateJSON(t *testing.T) {
+	e := NewEstimator()
+	payload := map[string]any{
+		"name":        "github_search_repositories",
+		"description": "Search GitHub repositories",
+	}
+	tokens := e.EstimateJSON(payload)
+	if tokens <= 0 {
+		t.Errorf("EstimateJSON returned %d, want > 0", tokens)
+	}
+	// Marshal + call EstimateTokens directly should match.
+	jsonBytes, err := jsonMarshal(payload)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+	if got := e.EstimateTokens(string(jsonBytes)); got != tokens {
+		t.Errorf("EstimateJSON=%d, EstimateTokens(marshaled)=%d (must match)", tokens, got)
+	}
+}
+
+func TestEstimatorEstimateJSONNil(t *testing.T) {
+	e := NewEstimator()
+	if got := e.EstimateJSON(nil); got != 0 {
+		t.Errorf("EstimateJSON(nil) = %d, want 0", got)
+	}
+}
+
+func TestEstimatorWithCustomRatio(t *testing.T) {
+	e := NewEstimatorWithRatio(2)
+	if got := e.CharsPerToken(); got != 2 {
+		t.Errorf("CharsPerToken=%v, want 2", got)
+	}
+	if got := e.EstimateTokens("abcd"); got != 2 {
+		t.Errorf("EstimateTokens with ratio=2 = %d, want 2", got)
+	}
+}
+
+func TestEstimatorWithInvalidRatio(t *testing.T) {
+	e := NewEstimatorWithRatio(0)
+	if got := e.CharsPerToken(); got != DefaultCharsPerToken {
+		t.Errorf("CharsPerToken with invalid input = %v, want fallback %v", got, DefaultCharsPerToken)
+	}
+	e2 := NewEstimatorWithRatio(-1)
+	if got := e2.CharsPerToken(); got != DefaultCharsPerToken {
+		t.Errorf("CharsPerToken with negative input = %v, want fallback %v", got, DefaultCharsPerToken)
+	}
+}
+
+func TestEstimatorConsistencyWithRuntime(t *testing.T) {
+	// The runtime cost tracker (TrackCostFromStrings) and the public
+	// Estimator must compute the same per-request token count, otherwise
+	// the README's "token savings" claims would not match what the user
+	// sees in `leanproxy-mcp savings --json`.
+	tracker := NewCostTracker()
+	estimator := NewEstimator()
+
+	req := `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"x"}}`
+	resp := `{"jsonrpc":"2.0","result":{"ok":true}}`
+	expectedTokens := int64(estimator.EstimateTokens(req) + estimator.EstimateTokens(resp))
+
+	tracker.TrackWithPromptHash("x", "demo", expectedTokens, "hash", defaultClock)
+
+	if got := tracker.GetTotal(); got != expectedTokens {
+		t.Errorf("runtime tracker=%d, estimator=%d (must match)", got, expectedTokens)
+	}
+}
+
+func BenchmarkEstimateTokens(b *testing.B) {
+	e := NewEstimator()
+	content := `{"name":"github_search_repositories","description":"Search GitHub repositories by query, with optional language filter and sort options for results pagination."}`
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e.EstimateTokens(content)
+	}
+}
+
+func BenchmarkEstimateJSON(b *testing.B) {
+	e := NewEstimator()
+	payload := map[string]any{
+		"name":        "github_search_repositories",
+		"description": "Search GitHub repositories by query",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query":    map[string]any{"type": "string"},
+				"language": map[string]any{"type": "string"},
+				"limit":    map[string]any{"type": "integer"},
+			},
+		},
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		e.EstimateJSON(payload)
 	}
 }
 

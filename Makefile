@@ -99,6 +99,32 @@ test-e2e-short: ## Run E2E tests (short mode, requires built binary)
 	@echo "Running E2E tests (short mode)..."
 	$(GO) test -v -short -timeout 2m ./tests/e2e/...
 
+.PHONY: bench
+bench: ## Run token-economy + NFR benchmarks, capture into bench-results/
+	@echo "Running token-economy benchmarks..."
+	@mkdir -p bench-results
+	$(GO) test -run=^$ -bench=. -benchmem -benchtime=3s -count=1 \
+		./tests/bench/... | tee bench-results/bench-$(shell date +%Y%m%d-%H%M%S).txt
+	@echo ""
+	@echo "Results written to bench-results/"
+	@ls -la bench-results/
+
+.PHONY: bench-compare
+bench-compare: ## Compare two bench result files (FILES=old.txt new.txt)
+ifndef FILES
+	$(error FILES=path/to/old.txt,path/to/new.txt is required)
+endif
+	@echo "Comparing benchmark files: $(FILES)"
+	@command -v benchstat >/dev/null 2>&1 || $(GO) install golang.org/x/perf/cmd/benchstat@latest
+	@$(GOPATH)/bin/benchstat $(FILES)
+
+.PHONY: bench-snapshot
+bench-snapshot: ## Refresh live MCP snapshot (requires reachable MCP servers)
+	@echo "Querying live MCP servers (see tests/bench/fixtures/live-snapshot.yaml)..."
+	$(GO) run ./tests/bench/live_snapshot \
+		-config tests/bench/fixtures/live-snapshot.yaml \
+		-out   tests/bench/fixtures/live-snapshot.json
+
 .PHONY: test-all
 test-all: lint test test-e2e ## Run lint, unit tests, and E2E tests
 
