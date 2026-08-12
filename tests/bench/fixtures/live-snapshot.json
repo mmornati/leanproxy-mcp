@@ -1,0 +1,39 @@
+{
+  "queried_at": "2026-08-12T00:00:00Z",
+  "source": "seeded-from-docs-index-md (live refresh pending; run tests/bench/live_snapshot)",
+  "estimator": {
+    "chars_per_token": 4.0,
+    "router_tokens": 168
+  },
+  "servers": [
+    {
+      "name": "github",
+      "transport": "stdio",
+      "tool_count": 41,
+      "schema_bytes": 16400,
+      "reachable": true,
+      "error": ""
+    },
+    {
+      "name": "garmin",
+      "transport": "http",
+      "tool_count": 100,
+      "schema_bytes": 40000,
+      "reachable": true,
+      "error": ""
+    },
+    {
+      "name": "intervals",
+      "transport": "http",
+      "tool_count": 10,
+      "schema_bytes": 4000,
+      "reachable": true,
+      "error": ""
+    }
+  ],
+  "totals": {
+    "servers": 3,
+    "tools": 151,
+    "schema_bytes": 60400
+  }
+}
