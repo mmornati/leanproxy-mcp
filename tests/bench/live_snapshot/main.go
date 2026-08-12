@@ -141,7 +141,7 @@ func main() {
 	}
 	snapshot.EstimatorRT.CharsPerToken = 4.0
 
-	if err := os.MkdirAll(filepath.Dir(*outPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(*outPath), 0o750); err != nil {
 		fatal("mkdir: %v", err)
 	}
 	out, err := json.MarshalIndent(snapshot, "", "  ")
