@@ -55,3 +55,6 @@ graphify-out/
 _bmad-output/implementation-artifacts/loop-status.yaml
 .bmad-loop/runs/
 .bmad-loop/cache/
+
+# Bench results (regenerated on demand via `make bench`)
+bench-results/
