@@ -46,7 +46,7 @@ func GetEntries(since time.Time) []CallLogEntry {
 }
 
 func TrackCostFromStrings(toolName, serverName, requestJSON, responseJSON string) {
-	estimator := &tokenEstimator{charsPerToken: 4}
+	estimator := NewEstimator()
 	inputTokens := estimator.EstimateTokens(requestJSON)
 	outputTokens := estimator.EstimateTokens(responseJSON)
 	totalTokens := inputTokens + outputTokens
@@ -61,15 +61,66 @@ func promptHash(requestJSON, responseJSON string) string {
 	return fmt.Sprintf("%x", h[:])
 }
 
-type tokenEstimator struct {
+// DefaultCharsPerToken is the heuristic constant used by Estimator: roughly
+// 1 token per 4 characters of content, matching the OpenAI/Anthropic guidance
+// for English text. This is the same primitive the runtime cost tracker uses
+// (TrackCostFromStrings) and the same primitive the benchmark suite uses
+// (tests/bench/token_economy_bench_test.go), so internal cost-tracker
+// accounting and benchmarked savings numbers are computed identically.
+const DefaultCharsPerToken = 4
+
+// Estimator counts tokens from raw string or JSON-marshalable values using a
+// deterministic character-length heuristic. It is intentionally side-effect
+// free and safe for concurrent use.
+type Estimator struct {
 	charsPerToken float64
 }
 
-func (e *tokenEstimator) EstimateTokens(content string) int {
+// NewEstimator returns an Estimator configured with DefaultCharsPerToken.
+// Callers can construct alternative ratios via NewEstimatorWithRatio if they
+// need to match a specific tokenizer profile.
+func NewEstimator() *Estimator {
+	return &Estimator{charsPerToken: DefaultCharsPerToken}
+}
+
+// NewEstimatorWithRatio returns an Estimator with a custom chars/token ratio.
+// Useful for benchmarks that want to assert savings against a fixed
+// tokenizer-independent baseline.
+func NewEstimatorWithRatio(charsPerToken float64) *Estimator {
+	if charsPerToken <= 0 {
+		charsPerToken = DefaultCharsPerToken
+	}
+	return &Estimator{charsPerToken: charsPerToken}
+}
+
+// EstimateTokens returns the estimated token count for the given content
+// using the configured chars/token ratio. Empty content returns 0.
+func (e *Estimator) EstimateTokens(content string) int {
 	if content == "" {
 		return 0
 	}
 	return int(math.Ceil(float64(len(content)) / e.charsPerToken))
+}
+
+// EstimateJSON marshals the value to JSON and returns the estimated token
+// count of the resulting JSON. Returns 0 if marshalling fails (to keep
+// benchmarks best-effort). We deliberately swallow the marshal error so the
+// estimator surface is `int` only — callers needing strict error handling
+// should marshal themselves and call EstimateTokens directly.
+func (e *Estimator) EstimateJSON(v any) int {
+	if v == nil {
+		return 0
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return 0
+	}
+	return e.EstimateTokens(string(b))
+}
+
+// CharsPerToken exposes the configured ratio for diagnostics.
+func (e *Estimator) CharsPerToken() float64 {
+	return e.charsPerToken
 }
 
 type ToolCost struct {
