@@ -1,8 +1,11 @@
 // mockmcp can be used as a library (Server type in server.go) or as a
 // standalone stdio MCP server (this file). Build with:
-//   go build ./tests/bench/mockmcp/cmd
+//
+//	go build ./tests/bench/mockmcp/cmd
+//
 // Run with:
-//   ./cmd --tools=41 --response-bytes=256
+//
+//	./cmd --tools=41 --response-bytes=256
 package main
 
 import (
@@ -18,10 +21,10 @@ import (
 
 func main() {
 	var (
-		tools      = flag.Int("tools", 41, "number of tools to advertise")
-		prefix     = flag.String("prefix", "tool", "tool name prefix")
-		desc       = flag.String("description", "Mock MCP tool used for benchmarking LeanProxy.", "description for every tool")
-		respBytes  = flag.Int("response-bytes", 256, "canned tools/call response size in bytes")
+		tools     = flag.Int("tools", 41, "number of tools to advertise")
+		prefix    = flag.String("prefix", "tool", "tool name prefix")
+		desc      = flag.String("description", "Mock MCP tool used for benchmarking LeanProxy.", "description for every tool")
+		respBytes = flag.Int("response-bytes", 256, "canned tools/call response size in bytes")
 	)
 	flag.Parse()
 

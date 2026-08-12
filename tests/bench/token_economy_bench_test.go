@@ -38,9 +38,9 @@ var _ = buildMockMCP // keep the helper around
 
 // snapshot represents the canonical MCP server shape used by the suite.
 type snapshot struct {
-	QueriedAt   string `json:"queried_at"`
-	Source      string `json:"source"`
-	Servers     []struct {
+	QueriedAt string `json:"queried_at"`
+	Source    string `json:"source"`
+	Servers   []struct {
 		Name        string `json:"name"`
 		ToolCount   int    `json:"tool_count"`
 		SchemaBytes int    `json:"schema_bytes"`
@@ -415,8 +415,8 @@ func benchmarkSessionReplay(b *testing.B, spec sessionSpec) {
 }
 
 func BenchmarkSessionReplay_MorningSport(b *testing.B) { benchmarkSessionReplay(b, morningSport) }
-func BenchmarkSessionReplay_Dev(b *testing.B)           { benchmarkSessionReplay(b, devWorkflow) }
-func BenchmarkSessionReplay_FullDay(b *testing.B)       { benchmarkSessionReplay(b, fullDay) }
+func BenchmarkSessionReplay_Dev(b *testing.B)          { benchmarkSessionReplay(b, devWorkflow) }
+func BenchmarkSessionReplay_FullDay(b *testing.B)      { benchmarkSessionReplay(b, fullDay) }
 
 // --- E. Proxy overhead (NFR1: <50ms p95) --------------------------------
 
@@ -531,37 +531,6 @@ func buildMockMCP(b *testing.B) string {
 		b.Fatalf("build mockmcp: %v\n%s", err, out)
 	}
 	return binPath
-}
-
-// readLine reads one newline-terminated line from r. We use a small
-// buffered reader inline to keep the mockmcp benchmark self-contained.
-func readLine(r interface{ Read([]byte) (int, error) }) (string, error) {
-	buf := make([]byte, 64*1024)
-	var line []byte
-	for {
-		n, err := r.Read(buf)
-		if n > 0 {
-			line = append(line, buf[:n]...)
-			if idx := indexNewline(line); idx >= 0 {
-				return string(line[:idx]), nil
-			}
-		}
-		if err != nil {
-			if len(line) > 0 {
-				return string(line), nil
-			}
-			return "", err
-		}
-	}
-}
-
-func indexNewline(b []byte) int {
-	for i, c := range b {
-		if c == '\n' {
-			return i
-		}
-	}
-	return -1
 }
 
 // --- H. Binary size (NFR3: <20MB) --------------------------------------
@@ -688,15 +657,6 @@ func defaultTools() []gateway.Tool {
 }
 
 // --- RunInfo helpers ----------------------------------------------------
-
-// runInfo captures the runtime context once per benchmark run so the
-// results file can attribute numbers to a specific Go version, OS, and
-// commit.
-type runInfo struct {
-	GoVersion string `json:"go_version"`
-	GOOS      string `json:"goos"`
-	GOARCH    string `json:"goarch"`
-}
 
 func init() {
 	// Make sure the gateway package compiles. This catches the case where

@@ -19,7 +19,6 @@ package mockmcp
 import (
 	"encoding/json"
 	"fmt"
-	"sync"
 	"sync/atomic"
 )
 
@@ -52,7 +51,6 @@ func DefaultConfig() Config {
 type Server struct {
 	cfg      Config
 	toolJSON []byte
-	hist     sync.Map // map[uint64]bool — for the throughput benchmark, used purely for atomicity
 	count    atomic.Uint64
 }
 
@@ -72,7 +70,7 @@ func New(cfg Config) *Server {
 	return s
 }
 
-// ToolsListJSON returns the marshalled `tools/list` response. Useful for
+// ToolsListJSON returns the marshaled `tools/list` response. Useful for
 // benchmarks that want to compare token counts.
 func (s *Server) ToolsListJSON() []byte {
 	return s.toolJSON
@@ -158,7 +156,7 @@ func (s *Server) respondRaw(id json.RawMessage, result json.RawMessage) (string,
 
 func (s *Server) respondErr(id json.RawMessage, code int, msg string) (string, error) {
 	resp := struct {
-		JSONRPC string `json:"jsonrpc"`
+		JSONRPC string          `json:"jsonrpc"`
 		ID      json.RawMessage `json:"id"`
 		Error   struct {
 			Code    int    `json:"code"`

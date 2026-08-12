@@ -103,7 +103,7 @@ func (e *Estimator) EstimateTokens(content string) int {
 }
 
 // EstimateJSON marshals the value to JSON and returns the estimated token
-// count of the resulting JSON. Returns 0 if marshalling fails (to keep
+// count of the resulting JSON. Returns 0 if marshaling fails (to keep
 // benchmarks best-effort). We deliberately swallow the marshal error so the
 // estimator surface is `int` only — callers needing strict error handling
 // should marshal themselves and call EstimateTokens directly.

@@ -148,7 +148,7 @@ func main() {
 	if err != nil {
 		fatal("marshal: %v", err)
 	}
-	if err := os.WriteFile(*outPath, append(out, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(*outPath, append(out, '\n'), 0o600); err != nil {
 		fatal("write: %v", err)
 	}
 
@@ -244,6 +244,9 @@ func queryToolsList(s serverConfig, timeoutSecs int) (*mcToolsList, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSecs)*time.Second)
 	defer cancel()
 
+	// #nosec G204 -- This CLI is driven by an explicit YAML config the
+	// user authored; subprocess launch is the intended behavior, not an
+	// injection vector.
 	cmd := exec.CommandContext(ctx, s.Command, s.Args...)
 	cmd.Env = append(os.Environ(), s.Env...)
 
