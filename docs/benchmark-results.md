@@ -1,7 +1,7 @@
 # Benchmark Results
 
 This document is the **single source of truth** for the token-economy and
-NFR performance numbers in [README.md](../README.md) and
+NFR performance numbers in the [README](https://github.com/mmornati/leanproxy-mcp/blob/main/README.md) and
 [index.md](./index.md). Every number below is produced by an executable
 test in `tests/bench/token_economy_bench_test.go` and re-validated by
 `make bench`. No number here is hand-edited.

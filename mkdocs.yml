@@ -36,6 +36,8 @@ nav:
   - Budget Management: budget.md
   - IDE Extensions: extensions.md
   - Architecture: architecture.md
+  - Benchmark Results: benchmark-results.md
+  - Graceful Shutdown: shutdown.md
   - Troubleshooting: troubleshooting.md
   - FAQ: faq.md
 
