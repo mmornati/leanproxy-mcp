@@ -255,7 +255,8 @@ while IFS= read -r line; do
   esac
 done
 `
-	must(os.WriteFile(path, []byte(src), 0o755))
+	must(os.WriteFile(path, []byte(src), 0o600))
+	must(os.Chmod(path, 0o755))
 }
 
 func writeReq(w io.Writer, id interface{}, method string, params interface{}) error {
@@ -281,19 +282,6 @@ func mustReadResp(r io.Reader) []byte {
 	line, err := br.ReadBytes('\n')
 	must(err)
 	return line
-}
-
-func readRespAsync(r io.Reader) <-chan []byte {
-	ch := make(chan []byte, 1)
-	go func() {
-		defer close(ch)
-		br := bufio.NewReader(r)
-		line, err := br.ReadBytes('\n')
-		if err == nil {
-			ch <- line
-		}
-	}()
-	return ch
 }
 
 func must(err error) {
