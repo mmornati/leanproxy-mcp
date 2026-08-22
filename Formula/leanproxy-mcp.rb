@@ -3,27 +3,27 @@ class LeanproxyMcp < Formula
   homepage "https://github.com/mmornati/leanproxy-mcp"
   license "MIT"
 
-  version "0.9.0"
+  version "0.9.1"
 
   on_macos do
     on_arm do
-      url "https://github.com/mmornati/leanproxy-mcp/releases/download/v0.9.0/leanproxy-mcp_0.9.0_darwin_arm64.tar.gz"
-      sha256 "93d828c391141b289145e3a0830e298ef316638384379938b85d04c5b74cd8a0"
+      url "https://github.com/mmornati/leanproxy-mcp/releases/download/v0.9.1/leanproxy-mcp_0.9.1_darwin_arm64.tar.gz"
+      sha256 "3c724c53885753c23071ae71c70826ae1e505eee1ccfa4f1190fa8b5c8d1b6ce"
     end
     on_intel do
-      url "https://github.com/mmornati/leanproxy-mcp/releases/download/v0.9.0/leanproxy-mcp_0.9.0_darwin_amd64.tar.gz"
-      sha256 "180c198dc94b9d3f7039603b1ac894b83ea836e738b3caa83c38560a6c7fee17"
+      url "https://github.com/mmornati/leanproxy-mcp/releases/download/v0.9.1/leanproxy-mcp_0.9.1_darwin_amd64.tar.gz"
+      sha256 "4ebfaf2da22183304371e24f8c1e62ff82ddfa0accf7773aa3bf6d0e4e3baa0c"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/mmornati/leanproxy-mcp/releases/download/v0.9.0/leanproxy-mcp_0.9.0_linux_arm64.tar.gz"
-      sha256 "e60629b25184520ec958184fa25da30555f82aa63eed8e85601900581f3a3e69"
+      url "https://github.com/mmornati/leanproxy-mcp/releases/download/v0.9.1/leanproxy-mcp_0.9.1_linux_arm64.tar.gz"
+      sha256 "ea3fc4c6eb3398f667a0db53caea91ae70fab07c744d867bbd13bf7be89b52c6"
     end
     on_intel do
-      url "https://github.com/mmornati/leanproxy-mcp/releases/download/v0.9.0/leanproxy-mcp_0.9.0_linux_amd64.tar.gz"
-      sha256 "61ee65fe2222a3cc3aa97b0d86c474fbdd4cab6422e7765e5bd7210febcc27a2"
+      url "https://github.com/mmornati/leanproxy-mcp/releases/download/v0.9.1/leanproxy-mcp_0.9.1_linux_amd64.tar.gz"
+      sha256 "b356f71a501a6c5034800822029480eea452f2f8aecdce30e233a82f3c4fe389"
     end
   end
 
