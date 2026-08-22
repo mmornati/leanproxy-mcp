@@ -66,7 +66,7 @@ watch:
 |--------|------|---------|-------------|
 | `server.host` | string | `"127.0.0.1"` | Listen host |
 | `server.port` | int | `8080` | Listen port |
-| `server.timeout` | duration | `30s` | Request timeout |
+| `servers[].timeout` | duration | `30s` | **Per-server** request timeout. Each server entry in `servers:` can set its own `timeout` (e.g. `timeout: 60s` for `garmin`). The proxy honors the per-server value end-to-end: the handler dispatches with it and the worker uses `min(per-server, caller)`. Use a larger value for servers that return slow / large payloads (FIT data, big search results). |
 | `server.max_batch_size` | int | `100` | Maximum batch size for JSON-RPC batch requests (0 = unlimited) |
 
 ### Socket Options

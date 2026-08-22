@@ -468,6 +468,11 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	}
 
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), cache)
+	for _, srv := range cfg.Servers {
+		if srv.TimeoutValue > 0 {
+			handler.SetTimeout(srv.Name, srv.TimeoutValue)
+		}
+	}
 
 	return handleStdio(ctx, handler, stdioPool, statusStore)
 }

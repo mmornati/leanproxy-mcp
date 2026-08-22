@@ -17,10 +17,11 @@ import (
 )
 
 type mockPool struct {
-	servers       map[string]string
-	tools         map[string][]Tool
-	requestResult *MockRequestResult
-	requestError  error
+	servers         map[string]string
+	tools           map[string][]Tool
+	requestResult   *MockRequestResult
+	requestError    error
+	sendRequestFunc func(ctx context.Context, name, method string, params json.RawMessage, timeout time.Duration) (*pool.Response, error)
 }
 
 type MockRequestResult struct {
@@ -36,6 +37,9 @@ func newMockPool() *mockPool {
 }
 
 func (m *mockPool) SendRequestToServer(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration) (*pool.Response, error) {
+	if m.sendRequestFunc != nil {
+		return m.sendRequestFunc(ctx, name, method, params, timeout)
+	}
 	if m.requestError != nil {
 		return nil, m.requestError
 	}
@@ -128,6 +132,62 @@ func TestNewHandler(t *testing.T) {
 	assert.Equal(t, logger, h.logger)
 	assert.Equal(t, 30*time.Second, h.timeout)
 	assert.NotNil(t, h.toolCache)
+}
+
+func TestHandlerTimeoutFor_PerServer(t *testing.T) {
+	h := NewHandler(newMockPool(), nil)
+
+	// default fallback applies for unknown servers
+	assert.Equal(t, 30*time.Second, h.timeoutFor("missing"))
+
+	// per-server override wins
+	h.SetTimeout("garmin", 60*time.Second)
+	assert.Equal(t, 60*time.Second, h.timeoutFor("garmin"))
+	assert.Equal(t, 30*time.Second, h.timeoutFor("intervals"))
+
+	// zero/negative durations clear the override (and fall back to default)
+	h.SetTimeout("garmin", 0)
+	assert.Equal(t, 30*time.Second, h.timeoutFor("garmin"))
+}
+
+func TestHandlerSetDefaultTimeout(t *testing.T) {
+	h := NewHandler(newMockPool(), nil)
+
+	h.SetDefaultTimeout(45 * time.Second)
+	assert.Equal(t, 45*time.Second, h.timeoutFor("any"))
+
+	// non-positive values are ignored (default remains)
+	h.SetDefaultTimeout(0)
+	assert.Equal(t, 45*time.Second, h.timeoutFor("any"))
+	h.SetDefaultTimeout(-1 * time.Second)
+	assert.Equal(t, 45*time.Second, h.timeoutFor("any"))
+
+	// per-server still wins over the custom default
+	h.SetTimeout("garmin", 60*time.Second)
+	assert.Equal(t, 60*time.Second, h.timeoutFor("garmin"))
+	assert.Equal(t, 45*time.Second, h.timeoutFor("intervals"))
+}
+
+func TestHandlerToolsCallUsesPerServerTimeout(t *testing.T) {
+	mp := newMockPool()
+	var capturedTimeout time.Duration
+	mp.sendRequestFunc = func(_ context.Context, name, _ string, _ json.RawMessage, timeout time.Duration) (*pool.Response, error) {
+		capturedTimeout = timeout
+		return &pool.Response{ID: 1, Result: json.RawMessage(`{"ok":true}`)}, nil
+	}
+	h := NewHandler(mp, nil)
+	h.SetTimeout("garmin", 60*time.Second)
+
+	resp, err := h.HandleRequest(context.Background(), &Request{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodToolsCall,
+		ID:      1,
+		Params:  json.RawMessage(`{"name":"garmin_get_activity_fit_data","arguments":{}}`),
+	})
+	assert.NoError(t, err)
+	assert.Nil(t, resp.Error)
+	assert.Equal(t, 60*time.Second, capturedTimeout,
+		"per-server timeout must be honored end-to-end (regression: handler used to hardcode 30s)")
 }
 
 func TestNewHandlerWithNilLogger(t *testing.T) {

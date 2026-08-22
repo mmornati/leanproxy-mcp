@@ -172,9 +172,17 @@ func runServe(cmd *cobra.Command, args []string) {
 					"name", srv.Name,
 					"transport", srv.Transport,
 					"enabled", srv.Enabled != nil && *srv.Enabled,
+					"timeout", srv.TimeoutValue,
 				)
 				if srv.Enabled == nil || !*srv.Enabled {
 					continue
+				}
+				if regErr := serverReg.Register(ctx, registry.ServerEntry{
+					ID:        srv.Name,
+					Transport: srv.Transport,
+					Timeout:   srv.TimeoutValue,
+				}); regErr != nil {
+					slog.Warn("failed to register server in registry", "name", srv.Name, "error", regErr)
 				}
 				switch srv.Transport {
 				case registry.TransportStdio:
@@ -557,10 +565,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
-	timeout := GetConfig().RequestTimeout
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
+	timeout := serverTimeout(server)
 
 	redactWithSidecar(ctx, req)
 
@@ -614,10 +619,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		return
 	}
 
-	timeout := GetConfig().RequestTimeout
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
+	timeout := serverTimeout(server)
 
 	redactWithSidecar(ctx, req)
 
@@ -636,7 +638,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 }
 
 func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, r Router, gt gateway.GatewayTools, p Pool) {
-	reqs, err := proxy.ParseJSONRPCBatchRequest(line, GetConfig().MaxBatchSize)
+	reqs, err := proxy.ParseJSONRPCBatchRequest(line, maxBatchSize)
 	if err != nil {
 		writeError(writer, errors.ErrCodeParseError, "Parse error")
 		return
@@ -687,10 +689,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 			continue
 		}
 
-		timeout := GetConfig().RequestTimeout
-		if timeout == 0 {
-			timeout = 30 * time.Second
-		}
+		timeout := serverTimeout(server)
 
 		redactWithSidecar(ctx, req)
 
@@ -1059,27 +1058,22 @@ func writeError(writer *bufio.Writer, code int, message string) {
 	fmt.Fprintln(writer, string(data))
 }
 
-type ServeConfig struct {
-	RequestTimeout time.Duration
-	MaxBatchSize   int
-}
+// maxBatchSize caps the number of JSON-RPC requests accepted in a single
+// batch. The per-request timeout is now sourced from the routed
+// registry.ServerEntry (see serverTimeout below).
+const maxBatchSize = 100
 
-var serveConfig = &ServeConfig{
-	RequestTimeout: 30 * time.Second,
-	MaxBatchSize:   100,
-}
+const defaultRequestTimeout = 30 * time.Second
 
-func GetConfig() *ServeConfig {
-	return serveConfig
-}
-
-func SetConfig(cfg *ServeConfig) {
-	if cfg != nil && cfg.RequestTimeout > 0 {
-		serveConfig.RequestTimeout = cfg.RequestTimeout
+// serverTimeout returns the per-server timeout from a routed entry, falling
+// back to the documented default when the entry has no explicit value
+// (e.g. legacy or hand-registered servers). Zero or negative values are
+// treated as "use default".
+func serverTimeout(server *registry.ServerEntry) time.Duration {
+	if server == nil || server.Timeout <= 0 {
+		return defaultRequestTimeout
 	}
-	if cfg != nil && cfg.MaxBatchSize > 0 {
-		serveConfig.MaxBatchSize = cfg.MaxBatchSize
-	}
+	return server.Timeout
 }
 
 func writeResponseAsync(writer *bufio.Writer, mu *sync.Mutex, resp *proxy.JSONRPCResponse) {
@@ -1112,7 +1106,7 @@ func writeErrorAsync(writer *bufio.Writer, mu *sync.Mutex, code int, message str
 }
 
 func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Writer, writerMu *sync.Mutex, r Router, gt gateway.GatewayTools, p Pool) {
-	reqs, err := proxy.ParseJSONRPCBatchRequest(line, GetConfig().MaxBatchSize)
+	reqs, err := proxy.ParseJSONRPCBatchRequest(line, maxBatchSize)
 	if err != nil {
 		writeErrorAsync(writer, writerMu, errors.ErrCodeParseError, "Parse error")
 		return
@@ -1163,10 +1157,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 			continue
 		}
 
-		timeout := GetConfig().RequestTimeout
-		if timeout == 0 {
-			timeout = 30 * time.Second
-		}
+		timeout := serverTimeout(server)
 
 		redactWithSidecar(ctx, req)
 
