@@ -67,7 +67,7 @@ servers:
 	ctx, cancel := context.WithTimeout(context.Background(), 70*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, binary, "server", "run", "--stdio",
+	cmd := exec.CommandContext(ctx, binary, "server", "run", "--stdio", // #nosec G702 -- 'binary' is the path passed by the developer on the command line (os.Args[1]); not user input
 		"--config", cfgPath,
 		"--log-level", "debug",
 		"--log-file", filepath.Join(tmpDir, "leanproxy.log"),
@@ -256,7 +256,7 @@ while IFS= read -r line; do
 done
 `
 	must(os.WriteFile(path, []byte(src), 0o600))
-	must(os.Chmod(path, 0o755))
+	must(os.Chmod(path, 0o755)) // #nosec G302 -- the fake server is a shell script; it must be executable to be exec'd by leanproxy
 }
 
 func writeReq(w io.Writer, id interface{}, method string, params interface{}) error {
