@@ -47,8 +47,14 @@ type ServerEntry struct {
 	Health         HealthStatus
 	Stats          ServerStats
 	ComplexityTier string
-	RegisteredAt   time.Time
-	LastSeenAt     time.Time
+	// Timeout is the per-server request timeout (sourced from the
+	// `timeout` field of the server's stanza in leanproxy_servers.yaml).
+	// Zero means no override; callers should fall back to a documented
+	// default. This is the timeout the request layer uses when dispatching
+	// to this server — see cmd/serve.go handlers and pkg/pool/server.go.
+	Timeout      time.Duration
+	RegisteredAt time.Time
+	LastSeenAt   time.Time
 }
 
 type EventType int

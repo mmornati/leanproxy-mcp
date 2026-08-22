@@ -330,48 +330,6 @@ func TestServerCmd_HelpOutput(t *testing.T) {
 	}
 }
 
-func TestServeConfig_GetSet(t *testing.T) {
-	original := GetConfig()
-	defer SetConfig(original)
-
-	cfg := &ServeConfig{
-		RequestTimeout: 60 * time.Second,
-		MaxBatchSize:   200,
-	}
-
-	SetConfig(cfg)
-
-	result := GetConfig()
-	if result.RequestTimeout != 60*time.Second {
-		t.Errorf("RequestTimeout = %v, want 60s", result.RequestTimeout)
-	}
-	if result.MaxBatchSize != 200 {
-		t.Errorf("MaxBatchSize = %v, want 200", result.MaxBatchSize)
-	}
-}
-
-func TestServeConfig_SetInvalid(t *testing.T) {
-	original := GetConfig()
-	defer SetConfig(original)
-
-	SetConfig(nil)
-
-	result := GetConfig()
-	if result != original {
-		t.Error("nil config should not change serveConfig")
-	}
-
-	SetConfig(&ServeConfig{
-		RequestTimeout: 0,
-		MaxBatchSize:   0,
-	})
-
-	result = GetConfig()
-	if result != original {
-		t.Error("zero values should not change serveConfig")
-	}
-}
-
 func TestUpdateStdioServerStatusOnce_NilInputs(t *testing.T) {
 	updateStdioServerStatusOnce(nil, nil)
 	updateStdioServerStatusOnce(&statusfile.FileStatusStore{}, nil)

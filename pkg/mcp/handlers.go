@@ -32,6 +32,7 @@ type Handler struct {
 	pool            pool.ServerSource
 	logger          *slog.Logger
 	timeout         time.Duration
+	timeouts        map[string]time.Duration
 	toolCache       *ToolCache
 	toolStore       toolstore.Cache
 	manifest        *AggregatedManifest
@@ -74,6 +75,37 @@ func NewHandlerWithToolStore(p pool.ServerSource, logger *slog.Logger, store too
 		},
 		toolStore: store,
 	}
+}
+
+// SetTimeout registers a per-server request timeout. The handler falls back
+// to its default timeout (30s unless changed via SetDefaultTimeout) for any
+// server that has no explicit entry. A zero duration clears the entry.
+func (h *Handler) SetTimeout(serverName string, timeout time.Duration) {
+	if h.timeouts == nil {
+		h.timeouts = make(map[string]time.Duration)
+	}
+	if timeout <= 0 {
+		delete(h.timeouts, serverName)
+		return
+	}
+	h.timeouts[serverName] = timeout
+}
+
+// SetDefaultTimeout overrides the fallback timeout used when a server has no
+// explicit per-server entry. A zero or negative value is ignored (the 30s
+// default remains in effect).
+func (h *Handler) SetDefaultTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		return
+	}
+	h.timeout = timeout
+}
+
+func (h *Handler) timeoutFor(serverName string) time.Duration {
+	if d, ok := h.timeouts[serverName]; ok && d > 0 {
+		return d
+	}
+	return h.timeout
 }
 
 func (h *Handler) EnableLazyLoading(ttl time.Duration) {
@@ -324,7 +356,7 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 	}
 	paramsBytes, _ := json.Marshal(newParams)
 
-	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeout)
+	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
 	if err != nil {
 		return &Response{
 			JSONRPC: JSONRPCVersion,
@@ -780,7 +812,7 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	}
 	paramsBytes, _ := json.Marshal(newParams)
 
-	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeout)
+	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
 	if err != nil {
 		h.logger.Error("invoke_tool failed", "server", serverName, "tool", toolName, "error", err)
 		schema := h.lookupToolSchema(serverName, toolName)

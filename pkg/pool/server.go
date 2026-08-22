@@ -863,7 +863,7 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request, stopCh cha
 	}
 
 	timeout := s.requestTimeout
-	if req.Timeout > 0 {
+	if req.Timeout > 0 && req.Timeout < timeout {
 		timeout = req.Timeout
 	}
 	timer := time.NewTimer(timeout)
