@@ -8,10 +8,21 @@ import (
 	"io"
 	"log/slog"
 	"regexp"
+	"sort"
 	"time"
 )
 
 const SecretRedacted = "[SECRET_REDACTED]"
+
+// defaultMaxOverlap is the number of trailing bytes held back between
+// streaming scans so that a secret straddling a read boundary is still seen
+// as a whole. It must be at least as long as the longest secret any built-in
+// pattern can match; JWTs are routinely several hundred bytes.
+const defaultMaxOverlap = 1024
+
+// maxPendingMatch bounds how long a match touching the end of the buffer is
+// held back waiting for more input before it is emitted as-is.
+const maxPendingMatch = 64 * 1024
 
 type RedactionMeta struct {
 	MessageID string
@@ -22,12 +33,14 @@ type Redactor struct {
 	patterns     []*regexp.Regexp
 	alertManager *AlertManager
 	bufferSize   int
+	maxOverlap   int
 }
 
 func NewRedactor(patterns []*regexp.Regexp) *Redactor {
 	return &Redactor{
 		patterns:   patterns,
 		bufferSize: 4096,
+		maxOverlap: defaultMaxOverlap,
 	}
 }
 
@@ -36,69 +49,137 @@ func NewRedactorWithAlerts(patterns []*regexp.Regexp, alertManager *AlertManager
 		patterns:     patterns,
 		alertManager: alertManager,
 		bufferSize:   4096,
+		maxOverlap:   defaultMaxOverlap,
 	}
 }
 
+// span is a half-open [start, end) byte range of a pattern match.
+type span struct{ start, end int }
+
+// findSpans returns the merged, ordered set of byte ranges matched by any
+// pattern. Overlapping or adjacent matches from different patterns are
+// coalesced so each byte of input is redacted at most once.
+func (r *Redactor) findSpans(data []byte) []span {
+	var spans []span
+	for _, pattern := range r.patterns {
+		for _, loc := range pattern.FindAllIndex(data, -1) {
+			if loc[1] > loc[0] {
+				spans = append(spans, span{loc[0], loc[1]})
+			}
+		}
+	}
+	if len(spans) == 0 {
+		return nil
+	}
+	sort.Slice(spans, func(i, j int) bool {
+		if spans[i].start != spans[j].start {
+			return spans[i].start < spans[j].start
+		}
+		return spans[i].end > spans[j].end
+	})
+	merged := spans[:1]
+	for _, s := range spans[1:] {
+		last := &merged[len(merged)-1]
+		if s.start < last.end {
+			if s.end > last.end {
+				last.end = s.end
+			}
+			continue
+		}
+		merged = append(merged, s)
+	}
+	return merged
+}
+
+// applySpans writes data[:limit] to out with every span replaced by the
+// redaction marker. All spans must end at or before limit.
+func applySpans(out []byte, data []byte, spans []span, limit int) []byte {
+	pos := 0
+	for _, s := range spans {
+		out = append(out, data[pos:s.start]...)
+		out = append(out, SecretRedacted...)
+		pos = s.end
+	}
+	return append(out, data[pos:limit]...)
+}
+
+// RedactStream copies reader to writer, replacing secrets as they pass
+// through. Input is accumulated before scanning and a tail of up to
+// maxOverlap bytes after the last match is held back until more input (or
+// EOF) arrives, so a secret split across arbitrary read boundaries — including
+// very small reads from a pipe — is still redacted as a whole.
 func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*RedactionMeta) error {
 	readerBuf := bufio.NewReaderSize(reader, r.bufferSize)
 	writerBuf := bufio.NewWriterSize(writer, r.bufferSize)
 	defer writerBuf.Flush()
 
+	maxOverlap := r.maxOverlap
+	if maxOverlap <= 0 {
+		maxOverlap = defaultMaxOverlap
+	}
+	// Scan once we hold a full buffer beyond the hold-back window, so steady
+	// state emits bufferSize bytes per scan rather than stalling.
+	scanThreshold := r.bufferSize + maxOverlap
+
 	var totalRead, totalWritten int64
 	matchCount := 0
+	carry := make([]byte, 0, scanThreshold+r.bufferSize)
+	out := make([]byte, 0, scanThreshold)
 
-	const maxOverlap = 128
-	var overlap []byte
+	buf := GetBuffer()
+	defer ReturnBuffer(buf)
 
 	for {
-		buf := GetBuffer()
-
 		n, err := readerBuf.Read(buf)
 		if n > 0 {
-			chunk := append(overlap, buf[:n]...)
-
-			var toRedact []byte
-			if err == io.EOF || len(chunk) <= maxOverlap {
-				toRedact = chunk
-				overlap = nil
-			} else {
-				splitIdx := len(chunk) - maxOverlap
-				toRedact = chunk[:splitIdx]
-				overlap = make([]byte, maxOverlap)
-				copy(overlap, chunk[splitIdx:])
-			}
-
-			redacted, count := r.redactChunkWithCount(toRedact)
-
-			_, writeErr := writerBuf.Write(redacted)
-			if writeErr != nil {
-				ReturnBuffer(buf)
-				return fmt.Errorf("bouncer redact: %w", writeErr)
-			}
+			carry = append(carry, buf[:n]...)
 			totalRead += int64(n)
-			totalWritten += int64(len(redacted))
-			matchCount += count
-			slog.Debug("processing chunk", "size", len(toRedact))
 		}
 
-		ReturnBuffer(buf)
-
-		if err == io.EOF {
-			if len(overlap) > 0 {
-				redacted, count := r.redactChunkWithCount(overlap)
-				_, writeErr := writerBuf.Write(redacted)
-				if writeErr != nil {
-					return fmt.Errorf("bouncer redact: %w", writeErr)
-				}
-				totalWritten += int64(len(redacted))
-				matchCount += count
-				overlap = nil
-			}
-			slog.Info("streaming redaction complete", "bytes_read", totalRead, "bytes_written", totalWritten)
-			break
-		}
-		if err != nil {
+		atEOF := err == io.EOF
+		if err != nil && !atEOF {
 			return fmt.Errorf("bouncer redact: %w", err)
+		}
+
+		if !atEOF && len(carry) < scanThreshold {
+			continue
+		}
+
+		spans := r.findSpans(carry)
+		hold := 0
+		if !atEOF {
+			// A match that runs right up to the end of what we have read may be
+			// a truncated prefix of a longer secret (open-ended patterns such as
+			// github_pat_…{22,} match partial tokens). Hold it back from its
+			// start and rescan once more input arrives, unless it has grown
+			// beyond any plausible secret length.
+			if n := len(spans); n > 0 && spans[n-1].end == len(carry) && len(carry)-spans[n-1].start <= maxPendingMatch {
+				hold = len(carry) - spans[n-1].start
+				spans = spans[:n-1]
+			}
+			lastEnd := 0
+			if len(spans) > 0 {
+				lastEnd = spans[len(spans)-1].end
+			}
+			if h := min(maxOverlap, len(carry)-lastEnd); h > hold {
+				hold = h
+			}
+		}
+		emitEnd := len(carry) - hold
+
+		out = applySpans(out[:0], carry, spans, emitEnd)
+		if _, writeErr := writerBuf.Write(out); writeErr != nil {
+			return fmt.Errorf("bouncer redact: %w", writeErr)
+		}
+		totalWritten += int64(len(out))
+		matchCount += len(spans)
+		slog.Debug("processing chunk", "size", emitEnd, "held", hold)
+
+		carry = append(carry[:0], carry[emitEnd:]...)
+
+		if atEOF {
+			slog.Debug("streaming redaction complete", "bytes_read", totalRead, "bytes_written", totalWritten, "secrets_found", matchCount)
+			break
 		}
 	}
 
@@ -116,79 +197,44 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 	return nil
 }
 
+// redactChunkWithCount redacts a self-contained byte slice and reports how
+// many distinct secret spans were replaced.
 func (r *Redactor) redactChunkWithCount(chunk []byte) ([]byte, int) {
-	result := make([]byte, 0, len(chunk))
-	remaining := chunk
-	matchCount := 0
-
-	for len(remaining) > 0 {
-		matchIndex := -1
-		matchEnd := -1
-
-		for _, pattern := range r.patterns {
-			loc := pattern.FindIndex(remaining)
-			if loc != nil && (matchIndex == -1 || loc[0] < matchIndex) {
-				matchIndex = loc[0]
-				matchEnd = loc[1]
-			}
-		}
-
-		if matchIndex == -1 {
-			result = append(result, remaining...)
-			break
-		}
-
-		result = append(result, remaining[:matchIndex]...)
-		result = append(result, SecretRedacted...)
-		remaining = remaining[matchEnd:]
-		matchCount++
+	spans := r.findSpans(chunk)
+	if len(spans) == 0 {
+		out := make([]byte, len(chunk))
+		copy(out, chunk)
+		return out, 0
 	}
-
-	return result, matchCount
+	return applySpans(make([]byte, 0, len(chunk)), chunk, spans, len(chunk)), len(spans)
 }
 
 func (r *Redactor) redactChunk(chunk []byte) []byte {
-	result := make([]byte, 0, len(chunk))
-	remaining := chunk
-
-	for len(remaining) > 0 {
-		matchIndex := -1
-		matchEnd := -1
-
-		for _, pattern := range r.patterns {
-			loc := pattern.FindIndex(remaining)
-			if loc != nil && (matchIndex == -1 || loc[0] < matchIndex) {
-				matchIndex = loc[0]
-				matchEnd = loc[1]
-			}
-		}
-
-		if matchIndex == -1 {
-			result = append(result, remaining...)
-			break
-		}
-
-		result = append(result, remaining[:matchIndex]...)
-		result = append(result, SecretRedacted...)
-		remaining = remaining[matchEnd:]
-	}
-
-	return result
+	out, _ := r.redactChunkWithCount(chunk)
+	return out
 }
 
+// RedactJSON redacts every string value in a JSON document. If the input is
+// not valid JSON it falls back to a byte-level scan of the raw input rather
+// than passing it through unchanged, so a malformed or truncated payload can
+// never be used to smuggle a secret past the redactor.
 func (r *Redactor) RedactJSON(data []byte) ([]byte, int, error) {
 	slog.Debug("redacting message", "size", len(data))
 
 	var raw interface{}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Warn("invalid JSON input, passing through unchanged")
-		return data, 0, nil
+		slog.Warn("invalid JSON input, falling back to byte-level redaction", "error", err)
+		redacted, count := r.redactChunkWithCount(data)
+		if count > 0 {
+			slog.Info("redaction complete", "secrets_found", count, "mode", "bytes")
+		}
+		return redacted, count, nil
 	}
 
 	redactedRaw, count := r.redactInterface(raw)
 	redacted, err := json.Marshal(redactedRaw)
 	if err != nil {
-		return data, 0, err
+		return nil, 0, fmt.Errorf("bouncer redact: marshal: %w", err)
 	}
 
 	if count > 0 {
@@ -237,10 +283,7 @@ func (r *Redactor) redactString(data string) (string, int) {
 }
 
 func NewRedactorFromLoaded(loaded *LoadedPatterns) *Redactor {
-	return &Redactor{
-		patterns:   loaded.All,
-		bufferSize: 4096,
-	}
+	return NewRedactor(loaded.All)
 }
 
 type SidecarClient interface {
@@ -251,19 +294,29 @@ type SidecarClient interface {
 	Healthy(ctx context.Context) bool
 }
 
+// RedactJSONWithSidecar applies the regex redactor first and then, if a
+// sidecar is configured, hands the already-redacted content to the sidecar
+// for a second pass. The sidecar therefore never sees a secret the regex
+// layer could catch, and its output is only accepted if it is valid JSON.
 func RedactJSONWithSidecar(ctx context.Context, data []byte, r *Redactor, sidecar SidecarClient) ([]byte, error) {
 	if r != nil {
-		redacted, count, err := r.RedactJSON(data)
+		redacted, _, err := r.RedactJSON(data)
 		if err != nil {
 			return nil, err
 		}
-		if count > 0 {
-			return redacted, nil
-		}
+		data = redacted
 	}
 	if sidecar != nil {
-		sidecarResult := sidecar.Redact(ctx, string(data))
-		return []byte(sidecarResult), nil
+		sidecarResult := []byte(sidecar.Redact(ctx, string(data)))
+		if !json.Valid(sidecarResult) {
+			return nil, fmt.Errorf("bouncer redact: sidecar returned invalid JSON")
+		}
+		return sidecarResult, nil
 	}
 	return data, nil
+}
+
+// Patterns returns the compiled patterns this redactor applies.
+func (r *Redactor) Patterns() []*regexp.Regexp {
+	return r.patterns
 }

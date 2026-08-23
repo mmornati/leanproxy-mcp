@@ -21,14 +21,12 @@ server:
   host: "127.0.0.1"
   port: 8080
 
-# Redaction (Bouncer)
+# Redaction (Bouncer) — enabled by default; the block is optional
 bouncer:
   enabled: true
   patterns:
     - name: "custom-pattern"
-      type: "regex"
       pattern: "API_KEY=[A-Za-z0-9]+"
-      replacement: "API_KEY=REDACTED"
 
 # Logging
 logging:
@@ -297,10 +295,10 @@ bouncer:
   enabled: true
   patterns:
     - name: "my-api-key"
-      type: "regex"
       pattern: "MY_API_KEY=[A-Za-z0-9]{32,}"
-      replacement: "MY_API_KEY=REDACTED"
 ```
+
+Custom patterns are Go (RE2) regular expressions and are applied alongside the built-in set. Matches are replaced with `[SECRET_REDACTED]`. `custom_patterns` is accepted as an alias for `patterns`.
 
 ### Pattern Safety (ReDoS Protection)
 
@@ -326,23 +324,16 @@ Check if your patterns are safe before deploying:
 leanproxy-mcp bouncer validate-patterns
 ```
 
-### Pattern Types
-
-| Type | Description |
-|------|-------------|
-| `regex` | Regular expression match |
-| `literal` | Exact string match |
-| `glob` | Glob pattern match |
-
 ### Enable/Disable Bouncer
 
-```bash
-# Disable redaction
-leanproxy-mcp bouncer disable
+Redaction is on by default, even with no `bouncer:` block. To turn it off explicitly:
 
-# Enable redaction
-leanproxy-mcp bouncer enable
+```yaml
+bouncer:
+  enabled: false
 ```
+
+The proxy logs a warning at startup when redaction is disabled.
 
 ## Path Traversal Protection
 
