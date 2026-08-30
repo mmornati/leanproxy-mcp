@@ -106,12 +106,6 @@ func TestBuiltInPatterns(t *testing.T) {
 			wantMatch: true,
 		},
 		{
-			name:      "JSON sensitive field",
-			pattern:   patternByName("json-sensitive-field"),
-			input:     `{"api_key": "abcdefghijklmnop"}`,
-			wantMatch: true,
-		},
-		{
 			name:      "Generic API Key case insensitive",
 			pattern:   patternByName("generic-api-key"),
 			input:     "api_key=abcdefghijklmnopqrstuvwxyz123456",
@@ -139,8 +133,8 @@ func TestBuiltInPatterns(t *testing.T) {
 }
 
 func TestPatternCount(t *testing.T) {
-	if len(BuiltInPatterns) != 17 {
-		t.Errorf("expected 17 built-in patterns, got %d", len(BuiltInPatterns))
+	if len(BuiltInPatterns) != 16 {
+		t.Errorf("expected 16 built-in patterns, got %d", len(BuiltInPatterns))
 	}
 }
 

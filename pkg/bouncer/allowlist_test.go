@@ -442,7 +442,7 @@ func TestAllowlistIntegration(t *testing.T) {
 }
 
 func TestPEMPrivateKeyPattern(t *testing.T) {
-	pem := BuiltInPatterns[5].Pattern
+	pem := GetPatternByName("pem-private-key").Pattern
 	valid := []string{
 		"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ\n-----END PRIVATE KEY-----",
 		"-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n-----END RSA PRIVATE KEY-----",
@@ -471,7 +471,7 @@ func TestPEMPrivateKeyPattern(t *testing.T) {
 }
 
 func TestPEMCertificatePattern(t *testing.T) {
-	cert := BuiltInPatterns[6].Pattern
+	cert := GetPatternByName("pem-certificate").Pattern
 	valid := []string{
 		"-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIBAgIJ\n-----END CERTIFICATE-----",
 		"prefix stuff\n-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIJA\n-----END CERTIFICATE-----\nsuffix",
@@ -495,7 +495,7 @@ func TestPEMCertificatePattern(t *testing.T) {
 }
 
 func TestGCPServiceAccountMarkerPattern(t *testing.T) {
-	p := BuiltInPatterns[7].Pattern
+	p := GetPatternByName("gcp-service-account").Pattern
 	valid := []string{
 		`{"type": "service_account", "project_id": "my-proj"}`,
 		`{"type":"service_account"}`,
@@ -521,7 +521,7 @@ func TestGCPServiceAccountMarkerPattern(t *testing.T) {
 }
 
 func TestGCPOAuthTokenPattern(t *testing.T) {
-	p := BuiltInPatterns[8].Pattern
+	p := GetPatternByName("gcp-oauth-token").Pattern
 	valid := []string{
 		"ya29.XXXXXXXXXXXXXXXXXXXX" + strings.Repeat("a", 20),
 		"ya29." + strings.Repeat("X", 40),
@@ -550,7 +550,7 @@ func TestGCPOAuthTokenPattern(t *testing.T) {
 }
 
 func TestSlackTokenPattern(t *testing.T) {
-	p := BuiltInPatterns[9].Pattern
+	p := GetPatternByName("slack-token").Pattern
 	valid := []string{
 		"xoxb-XXXXXXXXXXXXXXXX-XXXXXXXXXXXXXXXX-" + strings.Repeat("X", 24),
 		"xoxp-XXXX-XXXX-" + strings.Repeat("X", 20),
@@ -578,7 +578,7 @@ func TestSlackTokenPattern(t *testing.T) {
 }
 
 func TestGitLabPATPattern(t *testing.T) {
-	p := BuiltInPatterns[10].Pattern
+	p := GetPatternByName("gitlab-pat").Pattern
 	valid := []string{
 		"glpat-" + strings.Repeat("X", 20),
 		"glpat-ABCDEFGHIJKLMNOPQRST",
@@ -604,7 +604,7 @@ func TestGitLabPATPattern(t *testing.T) {
 }
 
 func TestOpenAIAPIKeyPattern(t *testing.T) {
-	p := BuiltInPatterns[11].Pattern
+	p := GetPatternByName("openai-api-key").Pattern
 	valid := []string{
 		"sk-" + strings.Repeat("a", 40),
 		"sk-" + strings.Repeat("a", 48),
@@ -634,7 +634,7 @@ func TestOpenAIAPIKeyPattern(t *testing.T) {
 }
 
 func TestAnthropicAPIKeyPattern(t *testing.T) {
-	p := BuiltInPatterns[12].Pattern
+	p := GetPatternByName("anthropic-api-key").Pattern
 	valid := []string{
 		"sk-ant-api03-" + strings.Repeat("a", 32),
 		"sk-ant-" + strings.Repeat("a", 40),
@@ -656,40 +656,6 @@ func TestAnthropicAPIKeyPattern(t *testing.T) {
 	for _, inv := range invalid {
 		if p.MatchString(inv) {
 			t.Errorf("Anthropic API key pattern should NOT match: %q", inv)
-		}
-	}
-}
-
-func TestJSONSensitiveFieldPattern(t *testing.T) {
-	p := BuiltInPatterns[13].Pattern
-	valid := []string{
-		`{"api_key": "abc123"}`,
-		`{"apiKey": "xyz789"}`,
-		`{"api-key": "value"}`,
-		`{"token": "abc"}`,
-		`{"password": "hunter2"}`,
-		`{"private_key": "-----BEGIN PRIVATE KEY-----\nxxx\n-----END PRIVATE KEY-----"}`,
-		`{"client_secret": "abc"}`,
-		`prefix {"token": "abc"} suffix`,
-		`{"nested": {"api_key": "abc"}}`,
-	}
-	invalid := []string{
-		`{"token": ""}`,                         // empty value
-		`{"my_token": "abc"}`,                   // not in our list
-		`token: abc`,                            // not JSON-quoted
-		`{"apiKey": null}`,                      // not a quoted value
-		`{"api_key": 123}`,                      // numeric value
-		`{"user": "no_sensitive_field_here"}`,
-	}
-
-	for _, v := range valid {
-		if !p.MatchString(v) {
-			t.Errorf("JSON sensitive field pattern should match: %q", v)
-		}
-	}
-	for _, inv := range invalid {
-		if p.MatchString(inv) {
-			t.Errorf("JSON sensitive field pattern should NOT match: %q", inv)
 		}
 	}
 }
@@ -718,5 +684,72 @@ func TestWiderGitHubClassicPAT(t *testing.T) {
 		if gh.MatchString(inv) {
 			t.Errorf("Wider GitHub classic PAT should NOT match: %q", inv)
 		}
+	}
+}
+
+func TestSensitiveJSONFieldNamesLookup(t *testing.T) {
+	cases := map[string]bool{
+		"api_key":       true,
+		"apikey":        true,
+		"api-key":       true,
+		"token":         true,
+		"password":      true,
+		"private_key":   true,
+		"client_secret": true,
+		"my_api_key":    false, // contains "api_key" but is not exactly it
+		"authorization": false,
+		"data":          false,
+		"":             false,
+	}
+	for k, want := range cases {
+		if got := sensitiveJSONFieldLookup(k); got != want {
+			t.Errorf("sensitiveJSONFieldLookup(%q) = %v, want %v", k, got, want)
+		}
+	}
+}
+
+func TestRedactJSON_SensitiveFieldNames(t *testing.T) {
+	// The field-name pass redacts the value of any key in
+	// SensitiveJSONFieldNames regardless of whether the value matches a
+	// built-in regex. This is the JSON-aware counterpart of the regex-
+	// driven streaming path; it is sound because RedactJSON walks the
+	// parsed structure and visits each value in isolation.
+	r := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	cases := []struct {
+		name    string
+		input   string
+		wantKey string
+	}{
+		{
+			name:    "unknown token behind api_key",
+			input:   `{"api_key": "internalplatformtoken-noregexmatch", "other": "v"}`,
+			wantKey: `"api_key":"[SECRET_REDACTED]"`,
+		},
+		{
+			name:    "private_key with embedded PEM",
+			input:   `{"private_key": "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----"}`,
+			wantKey: `"private_key":"[SECRET_REDACTED]"`,
+		},
+		{
+			name:    "nested at depth 2",
+			input:   `{"outer": {"apiKey": "totally-bogus-value"}}`,
+			wantKey: `"apiKey":"[SECRET_REDACTED]"`,
+		},
+		{
+			name:    "non-sensitive key untouched",
+			input:   `{"description": "user typed hunter2 in a doc"}`,
+			wantKey: `"description":"user typed hunter2 in a doc"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, err := r.RedactJSON([]byte(tc.input))
+			if err != nil {
+				t.Fatalf("RedactJSON: %v", err)
+			}
+			if !strings.Contains(string(got), tc.wantKey) {
+				t.Errorf("output %q does not contain %q", got, tc.wantKey)
+			}
+		})
 	}
 }

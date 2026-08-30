@@ -112,15 +112,7 @@ func TestRedactJSONStructurePreservation(t *testing.T) {
 
 func TestRedactStreamBasic(t *testing.T) {
 	input := `{"api_key": "AKIAIOSFODNN7EXAMPLE"}`
-	// As of #279, the json-sensitive-field pattern redacts the whole
-	// `"api_key": "..."` substring whenever the field name is in the
-	// sensitive set, regardless of whether the value matches another
-	// pattern. The byte-level redactor (streaming path) cannot preserve
-	// the surrounding quotes because the matched span is replaced with a
-	// single marker, so the resulting structure loses the key/value
-	// framing. The JSON-aware path (RedactJSON) walks the structure and
-	// only redacts the value, preserving the field; see TestRedactJSON*.
-	expected := `{` + SecretRedacted + `}`
+	expected := `{"api_key": "[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	reader := strings.NewReader(input)

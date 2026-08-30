@@ -17,8 +17,10 @@ const SecretRedacted = "[SECRET_REDACTED]"
 
 // defaultMaxOverlap is the number of trailing bytes held back between
 // streaming scans so that a secret straddling a read boundary is still seen
-// as a whole. It must be at least as long as the longest secret any built-in
-// pattern can match; JWTs are routinely several hundred bytes.
+// as a whole. It must be at least as long as the longest single-token
+// span any built-in pattern can match (JWTs are routinely several hundred
+// bytes; multi-line patterns like pem-private-key and pem-certificate are
+// handled by the no-match hold-back path below, not by this constant).
 const defaultMaxOverlap = 1024
 
 // maxPendingMatch bounds how long a match touching the end of the buffer is
@@ -385,6 +387,20 @@ func (r *Redactor) redactInterface(val interface{}) (interface{}, int) {
 	case map[string]interface{}:
 		totalCount := 0
 		for k, val := range v {
+			// Sensitive-field-name pass: a value sitting behind a key
+			// in SensitiveJSONFieldNames (e.g. "api_key", "private_key",
+			// "client_secret") is always treated as a credential,
+			// regardless of whether the value matches any built-in
+			// regex. This catches tokens whose value the operator has
+			// not enumerated, and is the documented behavior for #279
+			// acceptance criterion (sensitive JSON fields at any depth).
+			// The field-name pass is JSON-aware, so it preserves the
+			// surrounding key/value framing: only the value is redacted.
+			if _, ok := val.(string); ok && sensitiveJSONFieldLookup(k) {
+				v[k] = SecretRedacted
+				totalCount++
+				continue
+			}
 			newVal, count := r.redactInterface(val)
 			v[k] = newVal
 			totalCount += count

@@ -32,7 +32,7 @@ var BuiltInPatterns = []SecretPattern{
 	{
 		Name:        "github-fine-grained-pat",
 		Pattern:     regexp.MustCompile(`github_pat_[A-Za-z0-9_]{22,}`),
-		Example:     "github_pat_11abcdefghIJ9xsQ_xxxxxxxxxxxxxxxxx",
+		Example:     "github_pat_11XXXXXXXXXXXXXXXX_XXXXXXXXXXXXXXXXXXXX",
 		Description: "GitHub Fine-grained PAT (starts with github_pat_)",
 	},
 	{
@@ -96,12 +96,6 @@ var BuiltInPatterns = []SecretPattern{
 		Description: "Anthropic API key (starts with sk-ant-, 32+ chars after prefix)",
 	},
 	{
-		Name:        "json-sensitive-field",
-		Pattern:     regexp.MustCompile(`"(?:api[_-]?key|apiKey|token|password|private[_-]?key|client[_-]?secret)"\s*:\s*"[^"]+"`),
-		Example:     `{"api_key": "abc123...", "token": "xyz789..."}`,
-		Description: "Sensitive JSON field-value pair at any depth (api_key/apiKey/api-key, token, password, private_key, client_secret)",
-	},
-	{
 		Name:        "generic-api-key",
 		Pattern:     regexp.MustCompile(`(?i)(api[_-]?key)[_-]?[=]?[A-Za-z0-9]{16,}`),
 		Example:     "api_key=abcdefghijklmnopqrstuvwx",
@@ -119,6 +113,46 @@ var BuiltInPatterns = []SecretPattern{
 		Example:     "$API_KEY=secret123",
 		Description: "Environment variable assignment",
 	},
+}
+
+// SensitiveJSONFieldNames is the set of JSON keys whose value must be
+// redacted regardless of pattern match, when walking a parsed JSON
+// document in RedactJSON. It is keyed lowercase; case-insensitive lookup
+// is performed by sensitiveJSONFieldLookup. The field-name pass catches
+// tokens whose value no built-in regex recognizes (an internal platform
+// token sitting behind a key called "api_key", for example).
+//
+// The field-name pass is intentionally kept out of the byte-level
+// streaming regex set: a regex matching `"<key>": "<value>"` would
+// either swallow the surrounding quotes (emitting invalid JSON for the
+// common case), or terminate at the first unescaped quote inside the
+// value (silently leaking the tail of a value containing `\"`). The
+// JSON-aware walker already visits every string value in isolation,
+// which is the only context where field-name-based redaction is sound.
+var SensitiveJSONFieldNames = []string{
+	"api_key",
+	"apikey",
+	"api-key",
+	"token",
+	"password",
+	"passwd",
+	"private_key",
+	"privatekey",
+	"private-key",
+	"client_secret",
+	"clientsecret",
+	"client-secret",
+	"secret",
+}
+
+func sensitiveJSONFieldLookup(key string) bool {
+	lower := strings.ToLower(key)
+	for _, name := range SensitiveJSONFieldNames {
+		if lower == name {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidatePatterns() error {
