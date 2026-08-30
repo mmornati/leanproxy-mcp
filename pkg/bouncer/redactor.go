@@ -90,51 +90,57 @@ func NewRedactorWithAlerts(patterns []*regexp.Regexp, alertManager *AlertManager
 type span struct{ start, end int }
 
 // scanSpansPool amortises the per-scan []span allocation across calls to
-// RedactStream and redactChunkWithCount. Each findSpans call appends into a
-// pooled buffer instead of allocating a fresh slice, and the same buffer is
-// reused across the many scans inside one RedactStream. Tracked separately
-// from carry/out buffers because it stores no sensitive data and never
-// needs zeroing.
+// RedactStream. findSpansInto appends into a pooled buffer instead of
+// allocating a fresh slice, and RedactStream reuses the same buffer across
+// every scan inside one call — pre-fix, a 1 MB stream triggered ~190 scans
+// and ~190 []span allocations. redactChunkWithCount still allocates a fresh
+// span slice per call (its output escapes to the caller, so the per-message
+// hot path is a separate design). Tracked separately from carry/out buffers
+// because spans contain only integer offsets, no sensitive data, and never
+// need zeroing.
 //
-// Initial cap of 16 covers the typical case (a 4–16 KB scan chunk sees at
-// most a handful of matches); larger match counts grow the underlying array
-// in place via append and the larger buffer stays associated with the slot.
+// Initial cap of 64 covers a 4 KB scan chunk dense with matches (e.g. an
+// array of short API keys) without an immediate append-growth reallocation.
+// Larger match counts grow the underlying array in place via append and the
+// larger buffer stays associated with the slot.
 var scanSpansPool = sync.Pool{
 	New: func() interface{} {
-		s := make([]span, 0, 16)
+		s := make([]span, 0, 64)
 		return &s
 	},
 }
 
-// carryBufPool provides reusable carry/out buffers for RedactStream. Pre-#277
-// each call allocated two byte slices per request (~9 KB and ~5 KB at
-// default thresholds). With 1 000 concurrent streams that was ~14 MB of
-// short-lived heap that the GC had to churn through. Pooling keeps it flat.
+// carryBufPool provides a reusable carry buffer for RedactStream. Pre-#277
+// each call allocated a ~9 KB carry slice per request; with 1 000 concurrent
+// streams that was ~9 MB of short-lived heap that the GC had to churn
+// through. Pooling keeps it flat.
 //
-// Both buffers may contain raw secret bytes from upstream before the regex
-// layer scrubs them, so callers MUST zero the underlying array (see
-// releaseCarryBuf / releaseOutBuf) before returning the slice to the pool.
-// sync.Pool hands buffers out to any goroutine; a single unscrubbed reuse
-// would leak a previous request's secret.
-var (
-	carryBufPool = sync.Pool{
-		New: func() interface{} {
-			// Initial capacity matches the default steady-state size of
-			// carry (bufferSize + maxOverlap + one more bufferSize ~= 9 KB)
-			// so most streams never trigger an append-growth reallocation.
-			b := make([]byte, 0, defaultMaxOverlap+2*defaultBufferSize)
-			return &b
-		},
-	}
-	outBufPool = sync.Pool{
-		New: func() interface{} {
-			// Default scanThreshold (bufferSize + maxOverlap ~= 5 KB) plus
-			// slack for the redaction marker expansion.
-			b := make([]byte, 0, defaultMaxOverlap+defaultBufferSize+len(SecretRedacted)*2)
-			return &b
-		},
-	}
-)
+// The carry buffer may contain raw secret bytes from upstream before the
+// regex layer scrubs them, so releaseCarryBuf MUST zero the underlying array
+// before returning the slice to the pool. sync.Pool hands buffers out to any
+// goroutine; a single unscrubbed reuse would leak a previous request's
+// secret. The initial capacity matches the default steady-state size
+// (bufferSize + maxOverlap + one more bufferSize ~= 9 KB) so most streams
+// never trigger an append-growth reallocation.
+var carryBufPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 0, defaultMaxOverlap+2*defaultBufferSize)
+		return &b
+	},
+}
+
+// outBufPool provides a reusable redaction-output buffer for RedactStream.
+// The output buffer holds redacted data (non-secret slices of carry plus
+// SecretRedacted markers), never raw secrets, so releaseOutBuf does not
+// need to scrub. The initial capacity matches the default scanThreshold
+// (bufferSize + maxOverlap ~= 5 KB) plus slack for the redaction marker
+// expansion so most streams never trigger an append-growth reallocation.
+var outBufPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 0, defaultMaxOverlap+defaultBufferSize+len(SecretRedacted)*2)
+		return &b
+	},
+}
 
 // acquireSpansBuf returns a fresh length-0 spans slice from the pool.
 // Callers append into it via findSpansInto and must release it with
@@ -169,15 +175,14 @@ func acquireCarryBuf() []byte {
 // pool. The carry buffer holds raw secret bytes between the moment they
 // are read and the moment findSpans/applySpans process them; zeroing here
 // is what stops a previous request's secrets from being reused by another
-// goroutine that pulls the same buffer.
+// goroutine that pulls the same buffer. Uses constantTimeZero (the same
+// primitive buffer_pool.go uses for the read buffer) so the scrub matches
+// the existing constant-time pattern.
 func releaseCarryBuf(b []byte) {
 	if cap(b) == 0 {
 		return
 	}
-	full := b[:cap(b)]
-	for i := range full {
-		full[i] = 0
-	}
+	constantTimeZero(b[:cap(b)])
 	b = b[:0]
 	carryBufPool.Put(&b)
 }
@@ -188,17 +193,13 @@ func acquireOutBuf() []byte {
 	return (*b)[:0]
 }
 
-// releaseOutBuf zeroes the underlying array of b and returns it to the
-// pool. applySpans writes the redacted chunk into b, including any
-// SecretRedacted markers that replaced real secret bytes — zeroing is the
-// last defensive scrub.
+// releaseOutBuf returns b to the pool without scrubbing. The output buffer
+// holds redacted data only (non-secret slices of carry plus SecretRedacted
+// markers), so leaving its backing array intact is safe and saves the O(cap)
+// zero pass on every release.
 func releaseOutBuf(b []byte) {
 	if cap(b) == 0 {
 		return
-	}
-	full := b[:cap(b)]
-	for i := range full {
-		full[i] = 0
 	}
 	b = b[:0]
 	outBufPool.Put(&b)
@@ -216,7 +217,10 @@ func (r *Redactor) findSpans(data []byte) []span {
 
 // findSpansInto appends the merged, ordered set of byte ranges matched by
 // any pattern into dst. The returned slice aliases into dst, so callers
-// must not retain the result past the next findSpansInto call.
+// must not retain the result past the next findSpansInto call. The result
+// is always dst (with len 0 when no spans were found) so the caller can
+// safely re-pass the same dst on the next call without first reassigning
+// it from the return value.
 //
 // Passing a fresh dst from the scanSpansPool keeps the per-scan allocation
 // flat: the same backing array is reused across all scans inside one
@@ -231,7 +235,7 @@ func (r *Redactor) findSpansInto(data []byte, dst []span) []span {
 		}
 	}
 	if len(dst) == 0 {
-		return nil
+		return dst
 	}
 	return mergeSpans(dst)
 }
@@ -380,7 +384,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 			// count bytes that actually reached the underlying writer.
 			if len(carry) > 0 {
 				flushSpans := r.findSpansInto(carry, spansBuf)
-				flushOut := applySpans(make([]byte, 0, len(carry)), carry, flushSpans, len(carry))
+				flushOut := applySpans(out[:0], carry, flushSpans, len(carry))
 				if _, writeErr := writerBuf.Write(flushOut); writeErr != nil {
 					slog.Warn("bouncer redact: final flush after read error failed", "write_error", writeErr, "carry_len", len(carry))
 				} else {

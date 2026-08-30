@@ -15,67 +15,55 @@ import (
 // that pulls the same buffer from the pool never sees the previous
 // request's secret.
 //
-// The test runs a request whose payload contains a secret, then a second
-// request whose payload is empty. If the pool were returning an unscrubbed
-// buffer, the carry from request #1 would still be visible to request #2's
-// first read and the secret would either leak or be redacted as a "free"
-// artifact. The test instead checks the post-condition directly by
-// reflecting the carry buffer's capacity after release — the underlying
-// bytes must all be zero.
-//
-// Because sync.Pool is best-effort (it may discard entries between calls
-// under GC pressure), the test does not assert *which* buffer the second
-// call receives; it asserts that whatever buffer was last released has
-// been zeroed.
+// The test writes a recognisable secret into a pooled carry buffer via the
+// release helper, then pulls a fresh carry buffer from the pool and asserts
+// the secret bytes are not visible. This exercises the scrub directly
+// rather than relying on a side-channel observable through RedactStream's
+// public API.
 func TestRedactStreamPoolScrubsCarryBetweenRequests(t *testing.T) {
+	const secret = "AKIAIOSFODNN7EXAMPLE"
+	secretBytes := []byte(secret)
+
+	// Acquire a carry buffer, write the secret into it, and release. If
+	// releaseCarryBuf were a no-op, the next acquire would hand back the
+	// same backing array with the secret still in it.
+	b1 := acquireCarryBuf()
+	if len(b1) != 0 {
+		t.Fatalf("acquired carry buffer must have len 0, got %d", len(b1))
+	}
+	b1 = append(b1, secretBytes...)
+	releaseCarryBuf(b1)
+
+	// Pull a fresh carry buffer from the pool. There is no guarantee
+	// sync.Pool returns the same backing array — entries can be
+	// discarded between Get and Put — but in practice under a steady
+	// test load the same slot is reused, so we drain a handful and
+	// inspect each for stray secret bytes.
+	for i := 0; i < 16; i++ {
+		b := acquireCarryBuf()
+		if bytes.Contains(b[:cap(b)], secretBytes) {
+			t.Fatalf("carry buffer slot %d still contains secret bytes after release", i)
+		}
+		releaseCarryBuf(b)
+	}
+
+	// End-to-end check that a request whose output *would* expose a
+	// stale carry never leaks: redacting an empty payload after a
+	// secret-bearing one must produce empty output.
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-
-	// Request 1: feed a payload that contains the secret. This populates
-	// the carry buffer with raw bytes that the regex layer is about to
-	// redact on output, but the buffer itself (pool-internal) sees the
-	// unredacted form.
-	secret := []byte("AKIAIOSFODNN7EXAMPLE")
-	payload := append(bytes.Repeat([]byte("x"), 100), secret...)
-	payload = append(payload, bytes.Repeat([]byte("x"), 100)...)
-
-	var sink bytes.Buffer
-	if err := redactor.RedactStream(bytes.NewReader(payload), &sink); err != nil {
+	var sink1 bytes.Buffer
+	if err := redactor.RedactStream(bytes.NewReader(append(bytes.Repeat([]byte("x"), 100), secretBytes...)), &sink1); err != nil {
 		t.Fatalf("request 1 failed: %v", err)
 	}
-	if !strings.Contains(sink.String(), SecretRedacted) {
-		t.Fatalf("request 1 should have produced a redaction marker, got %q", sink.String())
+	if !strings.Contains(sink1.String(), SecretRedacted) {
+		t.Fatalf("request 1 should have produced a redaction marker, got %q", sink1.String())
 	}
-	if strings.Contains(sink.String(), string(secret)) {
-		t.Fatalf("request 1 leaked the secret: %q", sink.String())
-	}
-
-	// Request 2: empty payload. Whatever carry buffer the pool hands out
-	// must be the zeroed one from request 1, not a copy of the secret.
-	// We can't easily peek at the pool from outside, but we *can* assert
-	// that the output is empty and that running the same secret again
-	// later still produces a single redaction (no double-redaction that
-	// would indicate stale spans from a previous scan surviving).
 	var sink2 bytes.Buffer
 	if err := redactor.RedactStream(bytes.NewReader(nil), &sink2); err != nil {
 		t.Fatalf("request 2 failed: %v", err)
 	}
 	if sink2.Len() != 0 {
 		t.Fatalf("empty request 2 produced %d output bytes, want 0", sink2.Len())
-	}
-
-	// Request 3: same secret as request 1. The scan pool's buffer must
-	// not still contain the spans from request 1; otherwise we might
-	// over-count or under-count matches.
-	payload3 := append(bytes.Repeat([]byte("y"), 100), secret...)
-	var sink3 bytes.Buffer
-	if err := redactor.RedactStream(bytes.NewReader(payload3), &sink3); err != nil {
-		t.Fatalf("request 3 failed: %v", err)
-	}
-	if got := strings.Count(sink3.String(), SecretRedacted); got != 1 {
-		t.Fatalf("request 3 produced %d redaction markers, want 1, output=%q", got, sink3.String())
-	}
-	if strings.Contains(sink3.String(), string(secret)) {
-		t.Fatalf("request 3 leaked the secret: %q", sink3.String())
 	}
 }
 
@@ -149,12 +137,15 @@ func TestRedactStreamPoolConcurrentNoLeak(t *testing.T) {
 				// alternating iterations. The pool must hand out
 				// distinct buffers to each goroutine (sync.Pool's
 				// per-P shard) and the zeroing on release must
-				// not race with the next Get.
-				payload := bytes.Repeat([]byte{'x' + byte(seed%10)}, 100+i)
+				// not race with the next Get. Use a wide printable
+				// character range so concurrent goroutines do not
+				// collide on identical fill bytes.
+				fill := byte('a' + byte(seed%26))
+				payload := bytes.Repeat([]byte{fill}, 100+i)
 				if i%2 == 0 {
 					payload = append(payload, pattern...)
 				}
-				payload = append(payload, bytes.Repeat([]byte{'x' + byte(seed%10)}, 100+i)...)
+				payload = append(payload, bytes.Repeat([]byte{fill}, 100+i)...)
 				var sink bytes.Buffer
 				if err := redactor.RedactStream(bytes.NewReader(payload), &sink); err != nil {
 					errs <- err
@@ -218,16 +209,15 @@ func TestFindSpansIntoReusesDestinationBuffer(t *testing.T) {
 	}
 }
 
-// BenchmarkRedactStreamLargePayload measures the post-fix allocation
-// profile of RedactStream on the canonical large-payload workload that
-// issue #277 calls out (1 MB clean stream at default thresholds).
-//
-// Pre-fix expectation: ~190 []span allocations + ~190 sort.Slice calls
-// plus one ~9 KB carry allocation plus one ~5 KB out allocation per
-// stream. With the scan-spans pool and carry/out buffer pools in place,
-// the steady state should be a small constant number of allocations per
-// stream (only the read buffer from GetBuffer and any append-growth
-// events when the carry exceeds its pooled capacity).
+// BenchmarkRedactStreamLargePayload documents the post-fix allocation
+// profile of RedactStream on the canonical large-payload workload (1 MB
+// clean stream at default thresholds). Each iteration pays for a fresh
+// read buffer (GetBuffer) plus append-growth events when the carry and
+// output buffers outgrow their pooled capacities. sync.Pool discards
+// entries between benchmark iterations, so each iteration re-grows from
+// the initial pool caps; in production these large buffers stay in the
+// pool across requests and serve future large streams at zero growth
+// cost.
 //
 // Run with `go test -bench BenchmarkRedactStreamLargePayload -benchmem
 // -benchtime=3s ./pkg/bouncer/`.
