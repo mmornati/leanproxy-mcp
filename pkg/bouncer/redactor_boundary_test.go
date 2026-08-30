@@ -35,7 +35,7 @@ func (c *chunkedReader) Read(p []byte) (int, error) {
 // length, open-ended ({22,}), long multi-segment (JWT), and delimiter-bounded.
 var boundarySecrets = []string{
 	"AKIAIOSFODNN7EXAMPLE",
-	"github_pat_11abcdefghIJ9xsQ_xxxxxxxxxxxxxxxxx",
+	"github_pat_11XXXXXXXXXXXXXXXX_XXXXXXXXXXXXXXXXXXXX",
 	"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
 	"$API_KEY=secret123",
 }
@@ -121,7 +121,7 @@ func TestRedactStreamPreservesCleanBytes(t *testing.T) {
 // secrets matched by more than one pattern are each redacted exactly once.
 func TestRedactStreamAdjacentSecrets(t *testing.T) {
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	payload := []byte("AKIAIOSFODNN7EXAMPLEAKIAIOSFODNN7EXAMPLE ghp_abcdefghijklmnopqrstuvwxyz1234567890")
+	payload := []byte("AKIAIOSFODNN7EXAMPLEAKIAIOSFODNN7EXAMPLE ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
 	var out bytes.Buffer
 	if err := redactor.RedactStream(bytes.NewReader(payload), &out); err != nil {
 		t.Fatal(err)
@@ -199,5 +199,85 @@ func TestRedactJSONWithSidecarRejectsNonJSON(t *testing.T) {
 	_, err := RedactJSONWithSidecar(context.Background(), []byte(`{"k":"v"}`), r, sc, false)
 	if err == nil {
 		t.Fatal("expected error for non-JSON sidecar output")
+	}
+}
+
+// TestRedactStreamPEMAcrossReadBoundaries covers the multi-line and
+// cross-boundary patterns introduced by #279: PEM private keys, PEM
+// certificates, JSON sensitive-field payloads, and long single-line tokens
+// (OpenAI, Anthropic, Slack, GitHub PAT). Each secret is padded with
+// filler, split into small reads, and must come out fully redacted - no
+// fragment may survive at any (offset, read-size) pair. Exercises the
+// streaming hold-back paths for long prefixes (PEM blocks are several KB).
+func TestRedactStreamPEMAcrossReadBoundaries(t *testing.T) {
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	filler := []byte(" ")
+
+	pemBody := strings.Repeat("MIIEowIBAAKCAQEAAoIBAQD\n", 30) // ~1KB of base64-ish rows
+	secrets := []struct {
+		name   string
+		secret string
+	}{
+		{
+			name:   "PEM RSA private key",
+			secret: "-----BEGIN RSA PRIVATE KEY-----\n" + pemBody + "-----END RSA PRIVATE KEY-----",
+		},
+		{
+			name:   "PEM PKCS8 private key",
+			secret: "-----BEGIN PRIVATE KEY-----\n" + pemBody + "-----END PRIVATE KEY-----",
+		},
+		{
+			name:   "PEM certificate",
+			secret: "-----BEGIN CERTIFICATE-----\n" + pemBody + "-----END CERTIFICATE-----",
+		},
+		{
+			name:   "JSON sensitive field (long value)",
+			secret: `{"api_key":"` + strings.Repeat("AbCd1234", 200) + `"}`,
+		},
+		{
+			name:   "OpenAI key (long)",
+			secret: "sk-" + strings.Repeat("a", 200),
+		},
+		{
+			name:   "Anthropic key (long)",
+			secret: "sk-ant-" + strings.Repeat("Z", 200),
+		},
+		{
+			name:   "Slack token",
+			secret: "xoxb-XXXXXXXXXXXXXXXX-XXXXXXXXXXXXXXXX-" + strings.Repeat("X", 50),
+		},
+	}
+
+	boundaries := []int{0, 13, 27, 100, 256, defaultMaxOverlap, defaultMaxOverlap + 16}
+	readSizes := []int{1, 7, 4096}
+
+	for _, s := range secrets {
+		for _, readSize := range readSizes {
+			for _, offset := range boundaries {
+				payload := bytes.Repeat(filler, offset)
+				payload = append(payload, s.secret...)
+				payload = append(payload, bytes.Repeat(filler, 64)...)
+
+				var out bytes.Buffer
+				if err := redactor.RedactStream(&chunkedReader{data: payload, n: readSize}, &out); err != nil {
+					t.Fatalf("%s readSize=%d offset=%d: %v", s.name, readSize, offset, err)
+				}
+				got := out.String()
+				if strings.Contains(got, s.secret) {
+					t.Fatalf("%s readSize=%d offset=%d: full secret leaked (%q)", s.name, readSize, offset, got)
+				}
+				if !strings.Contains(got, SecretRedacted) {
+					t.Fatalf("%s readSize=%d offset=%d: no redaction marker (%q)", s.name, readSize, offset, got)
+				}
+				// A 16-char tail is enough for every secret above; picking a
+				// tail this large catches both partial leaks and
+				// pattern-fusion glitches (e.g. the PEM pattern matching only
+				// the BEGIN ... header).
+				tail := s.secret[len(s.secret)-16:]
+				if strings.Contains(got, tail) {
+					t.Fatalf("%s readSize=%d offset=%d: partial secret leaked (%q)", s.name, readSize, offset, tail)
+				}
+			}
+		}
 	}
 }

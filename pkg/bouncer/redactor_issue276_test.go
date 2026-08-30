@@ -254,8 +254,12 @@ func TestRedactStreamYieldsOnMisbehavingReader(t *testing.T) {
 	// must be redacted as if the redactor had seen it cold. This catches
 	// regressions where the back-off accidentally swallows bytes from
 	// carry, returns early, or otherwise short-circuits the redaction.
+	// As of #279, the json-sensitive-field pattern redacts the whole
+	// field-value pair when the key is in {api_key, apiKey, api-key,
+	// token, password, private_key, client_secret}, so the entire
+	// `"api_key":"..."` substring becomes the redaction marker.
 	got := result.out.String()
-	want := `{"api_key":"` + SecretRedacted + `"}`
+	want := `{` + SecretRedacted + `}`
 	if got != want {
 		t.Fatalf("RedactStream output %q, want %q", got, want)
 	}

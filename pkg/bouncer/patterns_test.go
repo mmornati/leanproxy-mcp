@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func patternByName(name string) *SecretPattern {
+	for i := range BuiltInPatterns {
+		if BuiltInPatterns[i].Name == name {
+			return &BuiltInPatterns[i]
+		}
+	}
+	return nil
+}
+
 func TestBuiltInPatterns(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -14,49 +23,103 @@ func TestBuiltInPatterns(t *testing.T) {
 	}{
 		{
 			name:      "AWS Access Key",
-			pattern:   &BuiltInPatterns[0],
+			pattern:   patternByName("aws-access-key"),
 			input:     "AKIAIOSFODNN7EXAMPLE",
 			wantMatch: true,
 		},
 		{
 			name:      "AWS Access Key invalid",
-			pattern:   &BuiltInPatterns[0],
+			pattern:   patternByName("aws-access-key"),
 			input:     "AKIA1234",
 			wantMatch: false,
 		},
 		{
 			name:      "GitHub Personal Token",
-			pattern:   &BuiltInPatterns[1],
+			pattern:   patternByName("github-classic-pat"),
 			input:     "ghp_123456789012345678901234567890123456",
 			wantMatch: true,
 		},
 		{
 			name:      "GitHub Fine-grained PAT",
-			pattern:   &BuiltInPatterns[2],
+			pattern:   patternByName("github-fine-grained-pat"),
 			input:     "github_pat_11AAAAAAAAAAAAAAA_BBBBBBBBBBBBBBBBBBB",
 			wantMatch: true,
 		},
 		{
 			name:      "Stripe Live Secret Key",
-			pattern:   &BuiltInPatterns[3],
+			pattern:   patternByName("stripe-secret-key"),
 			input:     "sk_live_" + strings.Repeat("A", 24),
 			wantMatch: true,
 		},
 		{
 			name:      "Stripe Live Publishable Key",
-			pattern:   &BuiltInPatterns[4],
+			pattern:   patternByName("stripe-publishable-key"),
 			input:     "pk_live_" + strings.Repeat("A", 24),
 			wantMatch: true,
 		},
 		{
+			name:      "OpenAI API Key",
+			pattern:   patternByName("openai-api-key"),
+			input:     "sk-" + strings.Repeat("a", 48),
+			wantMatch: true,
+		},
+		{
+			name:      "Anthropic API Key",
+			pattern:   patternByName("anthropic-api-key"),
+			input:     "sk-ant-api03-" + strings.Repeat("a", 40),
+			wantMatch: true,
+		},
+		{
+			name:      "GitLab PAT",
+			pattern:   patternByName("gitlab-pat"),
+			input:     "glpat-" + strings.Repeat("a", 20),
+			wantMatch: true,
+		},
+		{
+			name:      "Slack Token (bot)",
+			pattern:   patternByName("slack-token"),
+			input:     "xoxb-1234567890-1234567890123-" + strings.Repeat("a", 20),
+			wantMatch: true,
+		},
+		{
+			name:      "GCP OAuth Token",
+			pattern:   patternByName("gcp-oauth-token"),
+			input:     "ya29." + strings.Repeat("a", 20),
+			wantMatch: true,
+		},
+		{
+			name:      "GCP Service Account marker",
+			pattern:   patternByName("gcp-service-account"),
+			input:     `{"type": "service_account", "project_id": "x"}`,
+			wantMatch: true,
+		},
+		{
+			name:      "PEM Private Key",
+			pattern:   patternByName("pem-private-key"),
+			input:     "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQ\n-----END RSA PRIVATE KEY-----",
+			wantMatch: true,
+		},
+		{
+			name:      "PEM Certificate",
+			pattern:   patternByName("pem-certificate"),
+			input:     "-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+g\n-----END CERTIFICATE-----",
+			wantMatch: true,
+		},
+		{
+			name:      "JSON sensitive field",
+			pattern:   patternByName("json-sensitive-field"),
+			input:     `{"api_key": "abcdefghijklmnop"}`,
+			wantMatch: true,
+		},
+		{
 			name:      "Generic API Key case insensitive",
-			pattern:   &BuiltInPatterns[5],
+			pattern:   patternByName("generic-api-key"),
 			input:     "api_key=abcdefghijklmnopqrstuvwxyz123456",
 			wantMatch: true,
 		},
 		{
 			name:      "Bearer Token",
-			pattern:   &BuiltInPatterns[6],
+			pattern:   patternByName("bearer-token"),
 			input:     "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
 			wantMatch: true,
 		},
@@ -64,6 +127,9 @@ func TestBuiltInPatterns(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.pattern == nil {
+				t.Fatalf("pattern not found")
+			}
 			got := tt.pattern.Pattern.MatchString(tt.input)
 			if got != tt.wantMatch {
 				t.Errorf("pattern match = %v, want %v for input %q", got, tt.wantMatch, tt.input)
@@ -73,8 +139,8 @@ func TestBuiltInPatterns(t *testing.T) {
 }
 
 func TestPatternCount(t *testing.T) {
-	if len(BuiltInPatterns) != 8 {
-		t.Errorf("expected 8 built-in patterns, got %d", len(BuiltInPatterns))
+	if len(BuiltInPatterns) != 17 {
+		t.Errorf("expected 17 built-in patterns, got %d", len(BuiltInPatterns))
 	}
 }
 

@@ -25,9 +25,9 @@ var BuiltInPatterns = []SecretPattern{
 	},
 	{
 		Name:        "github-classic-pat",
-		Pattern:     regexp.MustCompile(`ghp_[A-Za-z0-9]{36}`),
-		Example:     "ghp_abcdefghijklmnopqrstuvwxyz1234567890abcd",
-		Description: "GitHub Classic Personal Access Token (starts with ghp_)",
+		Pattern:     regexp.MustCompile(`ghp_[A-Za-z0-9]{36,}`),
+		Example:     "ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+		Description: "GitHub Classic Personal Access Token (starts with ghp_, 36+ chars after prefix)",
 	},
 	{
 		Name:        "github-fine-grained-pat",
@@ -46,6 +46,60 @@ var BuiltInPatterns = []SecretPattern{
 		Pattern:     regexp.MustCompile(`pk_live_[A-Za-z0-9]{24}`),
 		Example:     "[Stripe Publishable Key - 24 chars after pk_live_]",
 		Description: "Stripe Live Publishable Key (starts with pk_live_)",
+	},
+	{
+		Name:        "pem-private-key",
+		Pattern:     regexp.MustCompile(`-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]+?-----END (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----`),
+		Example:     "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQ...\n-----END RSA PRIVATE KEY-----",
+		Description: "Multi-line PEM-encoded private keys (RSA, EC, DSA, OpenSSH, PKCS8, encrypted)",
+	},
+	{
+		Name:        "pem-certificate",
+		Pattern:     regexp.MustCompile(`-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----`),
+		Example:     "-----BEGIN CERTIFICATE-----\nMIIDdzCCAl+gAwIBAgI...\n-----END CERTIFICATE-----",
+		Description: "Multi-line PEM-encoded X.509 certificates",
+	},
+	{
+		Name:        "gcp-service-account",
+		Pattern:     regexp.MustCompile(`"type"\s*:\s*"service_account"`),
+		Example:     `{"type": "service_account", "project_id": "...", "private_key": "..."}`,
+		Description: "GCP service account JSON key marker (\"type\": \"service_account\")",
+	},
+	{
+		Name:        "gcp-oauth-token",
+		Pattern:     regexp.MustCompile(`ya29\.[A-Za-z0-9_-]{20,}`),
+		Example:     "ya29.XXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+		Description: "GCP OAuth2 access / refresh token (starts with ya29., 20+ alphanumeric/_/- chars after)",
+	},
+	{
+		Name:        "slack-token",
+		Pattern:     regexp.MustCompile(`xox[bpars]-[A-Za-z0-9-]{20,}`),
+		Example:     "xoxb-XXXXXXXXXXXXXXXX-XXXXXXXXXXXXXXXX-XXXXXXXXXXXXXXXXXXXXXXXX",
+		Description: "Slack bot/user/app/refresh token (xoxb-, xoxp-, xoxa-, xoxr-, xoxs-, 20+ chars after prefix)",
+	},
+	{
+		Name:        "gitlab-pat",
+		Pattern:     regexp.MustCompile(`glpat-[A-Za-z0-9_-]{20,}`),
+		Example:     "glpat-XXXXXXXXXXXXXXXXXXXX",
+		Description: "GitLab Personal Access Token (starts with glpat-, 20+ chars after prefix)",
+	},
+	{
+		Name:        "openai-api-key",
+		Pattern:     regexp.MustCompile(`sk-[A-Za-z0-9]{40,}`),
+		Example:     "sk-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+		Description: "OpenAI API key (sk- followed by 40+ alphanumeric chars)",
+	},
+	{
+		Name:        "anthropic-api-key",
+		Pattern:     regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{32,}`),
+		Example:     "sk-ant-api03-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+		Description: "Anthropic API key (starts with sk-ant-, 32+ chars after prefix)",
+	},
+	{
+		Name:        "json-sensitive-field",
+		Pattern:     regexp.MustCompile(`"(?:api[_-]?key|apiKey|token|password|private[_-]?key|client[_-]?secret)"\s*:\s*"[^"]+"`),
+		Example:     `{"api_key": "abc123...", "token": "xyz789..."}`,
+		Description: "Sensitive JSON field-value pair at any depth (api_key/apiKey/api-key, token, password, private_key, client_secret)",
 	},
 	{
 		Name:        "generic-api-key",

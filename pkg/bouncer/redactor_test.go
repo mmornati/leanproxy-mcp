@@ -25,7 +25,7 @@ func TestRedactAWSKey(t *testing.T) {
 }
 
 func TestRedactGitHubToken(t *testing.T) {
-	input := `{"token": "ghp_123456789012345678901234567890123456"}`
+	input := `{"token": "ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"}`
 	expected := `{"token":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
@@ -40,7 +40,7 @@ func TestRedactGitHubToken(t *testing.T) {
 }
 
 func TestRedactGitHubFineGrainedPAT(t *testing.T) {
-	input := `{"token": "github_pat_11AAAAAAAAAAAAAAA_BBBBBBBBBBBBBBBBBBB"}`
+	input := `{"token": "github_pat_11XXXXXXXXXXXXXXXX_XXXXXXXXXXXXXXXXXXXX"}`
 	expected := `{"token":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
@@ -59,7 +59,7 @@ func TestRedactStripeKey(t *testing.T) {
 }
 
 func TestRedactMultipleSecrets(t *testing.T) {
-	input := `{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_123456789012345678901234567890123456"}`
+	input := `{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"}`
 	expected := `{"aws":"[SECRET_REDACTED]","github":"[SECRET_REDACTED]"}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
@@ -112,7 +112,15 @@ func TestRedactJSONStructurePreservation(t *testing.T) {
 
 func TestRedactStreamBasic(t *testing.T) {
 	input := `{"api_key": "AKIAIOSFODNN7EXAMPLE"}`
-	expected := `{"api_key": "[SECRET_REDACTED]"}`
+	// As of #279, the json-sensitive-field pattern redacts the whole
+	// `"api_key": "..."` substring whenever the field name is in the
+	// sensitive set, regardless of whether the value matches another
+	// pattern. The byte-level redactor (streaming path) cannot preserve
+	// the surrounding quotes because the matched span is replaced with a
+	// single marker, so the resulting structure loses the key/value
+	// framing. The JSON-aware path (RedactJSON) walks the structure and
+	// only redacts the value, preserving the field; see TestRedactJSON*.
+	expected := `{` + SecretRedacted + `}`
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	reader := strings.NewReader(input)
@@ -299,7 +307,7 @@ func TestStreamingRedactorLargePayload(t *testing.T) {
 	for i := range largeData {
 		largeData[i] = byte('A' + (i % 26))
 	}
-	copy(largeData[1000:1040], []byte(`"token": "ghp_123456789012345678901234567890123456"`))
+	copy(largeData[1000:1040], []byte(`"token": "ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"`))
 
 	r := bytes.NewReader(largeData)
 	var w bytes.Buffer
@@ -332,7 +340,7 @@ func TestStreamingRedactorNoSecrets(t *testing.T) {
 }
 
 func TestStreamingRedactorMultipleSecrets(t *testing.T) {
-	input := `{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_123456789012345678901234567890123456"}`
+	input := `{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"}`
 	expected := `{"aws": "[SECRET_REDACTED]", "github": "[SECRET_REDACTED]"}`
 
 	redactor := NewStreamingRedactor(PatternsToRegexps(BuiltInPatterns))
@@ -462,7 +470,7 @@ func TestRedactJSONWithSidecar_CountTracking(t *testing.T) {
 			return content
 		},
 	}
-	input := []byte(`{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_123456789012345678901234567890123456"}`)
+	input := []byte(`{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"}`)
 	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar, false)
 	if err != nil {
 		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
