@@ -22,8 +22,39 @@ const SecretRedacted = "[SECRET_REDACTED]"
 const defaultMaxOverlap = 1024
 
 // maxPendingMatch bounds how long a match touching the end of the buffer is
-// held back waiting for more input before it is emitted as-is.
+// held back waiting for more input before it is emitted as-is. When the
+// regex cannot yet match a secret prefix we hold this much back anyway, so
+// a long-prefix secret that needs more bytes to complete the regex does not
+// have its prefix emitted unredacted before the tail arrives.
 const maxPendingMatch = 64 * 1024
+
+// maxCarryWithoutMatch caps how much we will buffer when the regex has not
+// found any spans in carry. Without a cap, a long clean stream delivered in
+// small chunks would grow carry without bound (the redactor never emits
+// because the regex cannot match what is not there). With the cap, anything
+// beyond this size is emitted on a "no match" scan under the assumption that
+// repeated scans of the same bytes are overwhelmingly likely to indicate
+// clean data; a true secret longer than the cap is beyond the regex layer's
+// threat model anyway and is the documented limit.
+const maxCarryWithoutMatch = 4 * maxPendingMatch
+
+// rescanInterval is how many new bytes of carry may arrive before we
+// re-run findSpans. The interval is the maximum length any built-in
+// pattern can match; scanning more often than that would re-do work
+// without changing the result, scanning less often risks missing a
+// secret whose regex only completes after a long prefix has accumulated.
+const rescanInterval = maxPendingMatch
+
+// emptyReadBackoffThreshold is how many consecutive (0, nil) reads we
+// tolerate from a misbehaving io.Reader before sleeping briefly to yield
+// CPU. Without this, a reader that returns (0, nil) instead of blocking
+// spins the redactor at 100% CPU.
+const emptyReadBackoffThreshold = 1024
+
+// emptyReadBackoff is the duration we sleep after every
+// emptyReadBackoffThreshold consecutive empty reads. Kept small so a real
+// misbehaving reader cannot stall the proxy for long.
+const emptyReadBackoff = time.Millisecond
 
 type RedactionMeta struct {
 	MessageID string
@@ -72,6 +103,16 @@ func (r *Redactor) findSpans(data []byte) []span {
 	if len(spans) == 0 {
 		return nil
 	}
+	return mergeSpans(spans)
+}
+
+// mergeSpans coalesces overlapping or adjacent spans in place. The input
+// may be in any order; the result is sorted by start and any spans that
+// touch or overlap are merged into one.
+func mergeSpans(spans []span) []span {
+	if len(spans) <= 1 {
+		return spans
+	}
 	sort.Slice(spans, func(i, j int) bool {
 		if spans[i].start != spans[j].start {
 			return spans[i].start < spans[j].start
@@ -93,13 +134,28 @@ func (r *Redactor) findSpans(data []byte) []span {
 }
 
 // applySpans writes data[:limit] to out with every span replaced by the
-// redaction marker. All spans must end at or before limit.
+// redaction marker. All spans must end at or before limit; a span that
+// crosses the limit would silently emit raw secret bytes to the writer, so
+// we panic instead of letting that happen. The invariant is enforced by
+// the hold-back logic in RedactStream and the tests in
+// redactor_boundary_test.go; the runtime check is defense in depth so a
+// future change to either side that breaks the contract fails loudly rather
+// than leaking.
 func applySpans(out []byte, data []byte, spans []span, limit int) []byte {
 	pos := 0
 	for _, s := range spans {
+		if s.start < pos {
+			panic(fmt.Sprintf("applySpans: span start %d rewinds current pos %d (limit=%d, data_len=%d)", s.start, pos, limit, len(data)))
+		}
+		if s.end > limit {
+			panic(fmt.Sprintf("applySpans: span end %d exceeds limit %d (data_len=%d)", s.end, limit, len(data)))
+		}
 		out = append(out, data[pos:s.start]...)
 		out = append(out, SecretRedacted...)
 		pos = s.end
+	}
+	if pos > limit {
+		panic(fmt.Sprintf("applySpans: trailing pos %d exceeds limit %d (data_len=%d)", pos, limit, len(data)))
 	}
 	return append(out, data[pos:limit]...)
 }
@@ -130,15 +186,58 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 	buf := GetBuffer()
 	defer ReturnBuffer(buf)
 
+	// Tracks consecutive (0, nil) reads so we can yield CPU instead of
+	// spinning when an io.Reader returns no bytes and no error.
+	emptyReads := 0
+
+	// Tracks the length of carry at the most recent scan, so we can avoid
+	// re-running findSpans on every iteration when the regex has nothing
+	// new to evaluate. The full carry is re-scanned only after it grows
+	// by rescanInterval bytes (or at EOF). Without this throttle, a slow
+	// trickle of small reads would re-scan the entire carry on every
+	// iteration and turn the loop into O(N²) on the regex engine — which
+	// is exactly the regression the no-span hold-back introduces for
+	// long clean streams.
+	lastScanCarryLen := 0
+
 	for {
 		n, err := readerBuf.Read(buf)
 		if n > 0 {
 			carry = append(carry, buf[:n]...)
 			totalRead += int64(n)
+			emptyReads = 0
+		} else if err == nil {
+			// (0, nil) is permitted by io.Reader but means "no data right
+			// now, try again". A misbehaving reader that loops on this
+			// would otherwise spin RedactStream at 100% CPU. Yield
+			// periodically so the goroutine cooperates with the scheduler.
+			emptyReads++
+			if emptyReads >= emptyReadBackoffThreshold {
+				time.Sleep(emptyReadBackoff)
+				emptyReads = 0
+			}
+			continue
+		} else {
+			emptyReads = 0
 		}
 
 		atEOF := err == io.EOF
 		if err != nil && !atEOF {
+			// Flush whatever we accumulated before bailing. A partial read
+			// followed by an error used to silently discard the carry,
+			// leaving the downstream client with a truncated stream and no
+			// signal that something went wrong. Best-effort flush: a write
+			// error here does not mask the original read error.
+			if len(carry) > 0 {
+				flushSpans := r.findSpans(carry)
+				flushOut := applySpans(make([]byte, 0, len(carry)), carry, flushSpans, len(carry))
+				if _, writeErr := writerBuf.Write(flushOut); writeErr != nil {
+					slog.Warn("bouncer redact: final flush after read error failed", "write_error", writeErr, "carry_len", len(carry))
+				} else {
+					totalWritten += int64(len(flushOut))
+					matchCount += len(flushSpans)
+				}
+			}
 			return fmt.Errorf("bouncer redact: %w", err)
 		}
 
@@ -146,7 +245,17 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 			continue
 		}
 
-		spans := r.findSpans(carry)
+		// Re-scan the regex only when carry has grown enough to make the
+		// cost worthwhile. A scan at lastScanCarryLen + rescanInterval
+		// is sufficient to catch any span that starts at most
+		// rescanInterval bytes back from the current end of carry, which
+		// is the maximum range any of the built-in patterns can produce.
+		// At EOF we always do a final scan so nothing is left unredacted.
+		var spans []span
+		if atEOF || lastScanCarryLen == 0 || len(carry)-lastScanCarryLen >= rescanInterval {
+			spans = r.findSpans(carry)
+			lastScanCarryLen = len(carry)
+		}
 		hold := 0
 		if !atEOF {
 			// A match that runs right up to the end of what we have read may be
@@ -164,6 +273,23 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 			}
 			if h := min(maxOverlap, len(carry)-lastEnd); h > hold {
 				hold = h
+			}
+			// If the regex returned no spans and we are still streaming, the
+			// carry may contain the prefix of a long secret whose terminator
+			// or required length has not arrived yet. The match-touching-end
+			// branch above only fires when the regex already found something
+			// — without a span it never engages and hold reverts to
+			// maxOverlap, which is far smaller than a legitimate secret.
+			// Hold the entire carry so the prefix is not emitted unredacted
+			// before its tail arrives, and only relax the hold once carry
+			// exceeds maxCarryWithoutMatch so a long clean stream does not
+			// grow carry without bound.
+			if len(spans) == 0 {
+				if len(carry) > maxCarryWithoutMatch {
+					hold = len(carry) - maxCarryWithoutMatch
+				} else {
+					hold = len(carry)
+				}
 			}
 		}
 		emitEnd := len(carry) - hold
