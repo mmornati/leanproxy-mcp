@@ -39,6 +39,11 @@ func (sr *StreamingRedactor) redactChunk(chunk []byte) []byte {
 	return sr.inner.redactChunk(chunk)
 }
 
+// RedactToWriter is an alias for RedactStream kept for backwards
+// compatibility with callers that pre-date the RedactStream rename. Both
+// methods share the same code path — fixing one fixes both — so any future
+// change to streaming redaction must update the single implementation in
+// Redactor.RedactStream. See issue #277 for the rationale.
 func (sr *StreamingRedactor) RedactToWriter(r io.Reader, w io.Writer) error {
 	return sr.RedactStream(r, w)
 }
