@@ -13,8 +13,30 @@ import (
 // Config defines the bouncer configuration, including whether the bouncer
 // is enabled and any custom regex patterns for secret detection.
 type Config struct {
-	Enabled        bool         `yaml:"enabled"`
-	CustomPatterns []PatternDef `yaml:"custom_patterns"`
+	// Enabled defaults to true when omitted; set `enabled: false` to turn the
+	// regex redactor off explicitly.
+	Enabled *bool `yaml:"enabled,omitempty"`
+	// Patterns is the documented key for custom patterns; CustomPatterns is
+	// accepted as an alias for older configs. Both lists are compiled.
+	Patterns       []PatternDef `yaml:"patterns,omitempty"`
+	CustomPatterns []PatternDef `yaml:"custom_patterns,omitempty"`
+}
+
+// IsEnabled reports whether the redactor should run. A nil Config or an
+// omitted `enabled` key means enabled.
+func (c *Config) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// allPatternDefs returns the documented and legacy custom pattern lists.
+func (c *Config) allPatternDefs() []PatternDef {
+	if c == nil {
+		return nil
+	}
+	return append(append([]PatternDef{}, c.Patterns...), c.CustomPatterns...)
 }
 
 // PatternDef defines a custom regex pattern for secret detection.
@@ -45,12 +67,11 @@ func (c *Config) CompilePatterns() (*LoadedPatterns, error) {
 		BuiltIn: BuiltInPatterns,
 	}
 
-	for _, p := range c.CustomPatterns {
+	for _, p := range c.allPatternDefs() {
 		re, err := SafeCompile(p.Pattern)
 		if err != nil {
 			slog.Warn("invalid custom pattern, skipping",
 				"name", p.Name,
-				"pattern", p.Pattern,
 				"error", err)
 			continue
 		}

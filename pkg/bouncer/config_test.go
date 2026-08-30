@@ -18,7 +18,7 @@ custom_patterns:
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
-	if !cfg.Enabled {
+	if !cfg.IsEnabled() {
 		t.Error("expected Enabled to be true")
 	}
 	if len(cfg.CustomPatterns) != 2 {
@@ -34,7 +34,7 @@ enabled: false
 	if err != nil {
 		t.Fatalf("LoadConfig failed: %v", err)
 	}
-	if cfg.Enabled {
+	if cfg.IsEnabled() {
 		t.Error("expected Enabled to be false")
 	}
 	if len(cfg.CustomPatterns) != 0 {
@@ -311,5 +311,44 @@ func TestCompilePatterns_ValidRejectsDangerous(t *testing.T) {
 	}
 	if loaded.Custom[0].Name != "safe" {
 		t.Errorf("expected only 'safe' pattern, got %s", loaded.Custom[0].Name)
+	}
+}
+
+func TestConfigEnabledDefaultsToTrue(t *testing.T) {
+	var nilCfg *Config
+	if !nilCfg.IsEnabled() {
+		t.Error("nil config must report enabled")
+	}
+	cfg, err := LoadConfig(strings.NewReader("patterns: []\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if !cfg.IsEnabled() {
+		t.Error("omitted enabled key must report enabled")
+	}
+}
+
+func TestCompilePatternsAcceptsDocumentedPatternsKey(t *testing.T) {
+	yamlContent := `
+patterns:
+  - name: "documented"
+    pattern: "doc_[a-f0-9]{32}"
+custom_patterns:
+  - name: "legacy"
+    pattern: "leg_[a-f0-9]{32}"
+`
+	cfg, err := LoadConfig(strings.NewReader(yamlContent))
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	loaded, err := cfg.CompilePatterns()
+	if err != nil {
+		t.Fatalf("CompilePatterns failed: %v", err)
+	}
+	if len(loaded.Custom) != 2 {
+		t.Fatalf("expected both pattern lists compiled, got %d", len(loaded.Custom))
+	}
+	if len(loaded.All) != len(BuiltInPatterns)+2 {
+		t.Errorf("expected %d total patterns, got %d", len(BuiltInPatterns)+2, len(loaded.All))
 	}
 }

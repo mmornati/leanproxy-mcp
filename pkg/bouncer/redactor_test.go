@@ -169,17 +169,24 @@ func TestRedactStreamLargePayload(t *testing.T) {
 }
 
 func TestRedactInvalidJSON(t *testing.T) {
-	input := `{invalid json}`
+	// Malformed JSON must not be a bypass: the redactor falls back to a
+	// byte-level scan instead of passing the input through unchanged.
+	input := `{"a":"AKIAIOSFODNN7EXAMPLE"` // truncated, unparseable
 
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
-	result, _, err := redactor.RedactJSON([]byte(input))
+	result, count, err := redactor.RedactJSON([]byte(input))
 
 	if err != nil {
 		t.Fatalf("RedactJSON should not fail on invalid JSON, got: %v", err)
 	}
-
-	if string(result) != input {
-		t.Errorf("invalid JSON should pass through unchanged, got %q", string(result))
+	if count != 1 {
+		t.Errorf("expected 1 secret redacted in fallback mode, got %d", count)
+	}
+	if strings.Contains(string(result), "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("secret leaked through invalid-JSON fallback: %q", string(result))
+	}
+	if !strings.Contains(string(result), SecretRedacted) {
+		t.Errorf("expected redaction marker in output, got %q", string(result))
 	}
 }
 
@@ -359,9 +366,13 @@ func (m *mockSidecarClient) Healthy(ctx context.Context) bool { return true }
 
 func TestRedactJSONWithSidecar_RegexMatches(t *testing.T) {
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	// The sidecar runs after the regex pass and must only ever see
+	// already-redacted content.
 	sidecar := &mockSidecarClient{
 		redactFunc: func(ctx context.Context, content string) string {
-			t.Error("sidecar should not be called when regex matches")
+			if strings.Contains(content, "AKIAIOSFODNN7EXAMPLE") {
+				t.Error("sidecar received unredacted secret")
+			}
 			return content
 		},
 	}
@@ -445,7 +456,9 @@ func TestRedactJSONWithSidecar_CountTracking(t *testing.T) {
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	sidecar := &mockSidecarClient{
 		redactFunc: func(ctx context.Context, content string) string {
-			t.Error("sidecar should not be called when regex matches already")
+			if strings.Contains(content, "AKIA") || strings.Contains(content, "ghp_") {
+				t.Error("sidecar received unredacted secret")
+			}
 			return content
 		},
 	}
