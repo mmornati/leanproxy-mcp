@@ -227,7 +227,11 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 			// followed by an error used to silently discard the carry,
 			// leaving the downstream client with a truncated stream and no
 			// signal that something went wrong. Best-effort flush: a write
-			// error here does not mask the original read error.
+			// error here does not mask the original read error, but is
+			// surfaced through the warning log so an operator can spot a
+			// downstream that is failing while we are reading. We flush
+			// explicitly (the deferred Flush swallows its error) and only
+			// count bytes that actually reached the underlying writer.
 			if len(carry) > 0 {
 				flushSpans := r.findSpans(carry)
 				flushOut := applySpans(make([]byte, 0, len(carry)), carry, flushSpans, len(carry))
@@ -237,6 +241,9 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 					totalWritten += int64(len(flushOut))
 					matchCount += len(flushSpans)
 				}
+			}
+			if flushErr := writerBuf.Flush(); flushErr != nil {
+				slog.Warn("bouncer redact: flush after read error failed", "write_error", flushErr)
 			}
 			return fmt.Errorf("bouncer redact: %w", err)
 		}

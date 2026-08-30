@@ -45,11 +45,12 @@ func TestRedactStreamLongSecretPrefixNoLeak(t *testing.T) {
 	payload := append(append([]byte{}, filler...), secret...)
 	payload = append(payload, bytes.Repeat([]byte(" "), 256)...)
 
-	// readSize=1 path scans the whole carry on every byte and is O(N²) on
-	// top of the regex engine — too slow for a 65 KB test. The boundary
-	// contract is the same at any read size; we exercise the realistic
-	// streaming sizes (bufio's default + small-but-not-bytewise).
-	for _, readSize := range []int{4096, 512} {
+	// readSize=1 is exercised too: the rescan-throttle added in this fix
+	// bounds the regex calls to one per rescanInterval of new carry, so a
+	// 65 KB payload at readSize=1 only triggers a handful of scans. The
+	// boundary contract is the same at every read size; bytewise reads are
+	// the hardest case for any per-iteration optimization.
+	for _, readSize := range []int{4096, 512, 1} {
 		t.Run("", func(t *testing.T) {
 			var out bytes.Buffer
 			if err := redactor.RedactStream(&chunkedReader{data: append([]byte{}, payload...), n: readSize}, &out); err != nil {
@@ -199,9 +200,12 @@ func (s *spinningReader) Read(p []byte) (int, error) {
 
 // TestRedactStreamYieldsOnMisbehavingReader verifies acceptance criterion
 // #3: a reader that returns (0, nil) repeatedly must not pin a CPU core at
-// 100%. We assert that the redactor returns within a small multiple of the
-// backoff window while the reader is still emitting empty reads, and that
-// it completes successfully once the reader starts producing data.
+// 100%, AND once the reader finally produces real data the redactor must
+// produce a correctly redacted output (the back-off must not corrupt the
+// pipeline — for example by dropping the carry). We assert both: the
+// redactor returns within a small multiple of the back-off window while
+// the reader is still emitting empty reads, and the final output is
+// byte-for-byte the expected redacted JSON.
 func TestRedactStreamYieldsOnMisbehavingReader(t *testing.T) {
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 
@@ -211,17 +215,27 @@ func TestRedactStreamYieldsOnMisbehavingReader(t *testing.T) {
 		real:           []byte(`{"api_key":"AKIAIOSFODNN7EXAMPLE"}`),
 	}
 
-	done := make(chan error, 1)
+	done := make(chan struct {
+		out bytes.Buffer
+		err error
+	}, 1)
 	start := time.Now()
 	go func() {
 		var out bytes.Buffer
-		done <- redactor.RedactStream(reader, &out)
+		done <- struct {
+			out bytes.Buffer
+			err error
+		}{out, redactor.RedactStream(reader, &out)}
 	}()
 
+	var result struct {
+		out bytes.Buffer
+		err error
+	}
 	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("RedactStream returned error: %v", err)
+	case result = <-done:
+		if result.err != nil {
+			t.Fatalf("RedactStream returned error: %v", result.err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("RedactStream did not return within 5s — back-off not yielding (reader reported %d empty reads remaining)", atomic.LoadInt64(&reader.emptyReadsLeft))
@@ -234,6 +248,16 @@ func TestRedactStreamYieldsOnMisbehavingReader(t *testing.T) {
 	maxExpected := time.Duration(emptyReads/emptyReadBackoffThreshold+2) * emptyReadBackoff * 50
 	if elapsed > maxExpected {
 		t.Fatalf("RedactStream took %v, expected at most ~%v (back-off too coarse?)", elapsed, maxExpected)
+	}
+
+	// Output correctness: after the back-off window, the real payload
+	// must be redacted as if the redactor had seen it cold. This catches
+	// regressions where the back-off accidentally swallows bytes from
+	// carry, returns early, or otherwise short-circuits the redaction.
+	got := result.out.String()
+	want := `{"api_key":"` + SecretRedacted + `"}`
+	if got != want {
+		t.Fatalf("RedactStream output %q, want %q", got, want)
 	}
 }
 
@@ -360,4 +384,30 @@ func (s *sequenceReader) Read(p []byte) (int, error) {
 	n := copy(p, s.chunks[s.off])
 	s.off++
 	return n, nil
+}
+
+// TestRedactStreamScanThrottle is a timing-based proxy for the rescan
+// throttle: a clean ~65 KB stream delivered in 1-byte chunks must finish
+// quickly. Without the throttle, every byte triggers a full regex scan
+// and the test takes seconds; with the throttle, only a handful of scans
+// run and the test is sub-second. If this ever regresses past the
+// generous bound below, the throttle has been disabled or set too small.
+func TestRedactStreamScanThrottle(t *testing.T) {
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+
+	payload := bytes.Repeat([]byte("a"), 65_000)
+
+	var out bytes.Buffer
+	start := time.Now()
+	if err := redactor.RedactStream(&chunkedReader{data: payload, n: 1}, &out); err != nil {
+		t.Fatalf("RedactStream failed: %v", err)
+	}
+	elapsed := time.Since(start)
+
+	if elapsed > 2*time.Second {
+		t.Fatalf("rescan throttle ineffective: 65KB bytewise stream took %v (expected sub-second)", elapsed)
+	}
+	if !bytes.Equal(out.Bytes(), payload) {
+		t.Fatalf("clean stream altered: got %d bytes, want %d", out.Len(), len(payload))
+	}
 }
