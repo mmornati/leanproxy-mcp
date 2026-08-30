@@ -328,6 +328,46 @@ func TestConfigEnabledDefaultsToTrue(t *testing.T) {
 	}
 }
 
+func TestSidecarAlwaysCallDefaultsFalse(t *testing.T) {
+	var nilCfg *Config
+	if nilCfg.ShouldAlwaysCallSidecar() {
+		t.Error("nil config must report sidecar_always_call=false")
+	}
+	cfg, err := LoadConfig(strings.NewReader("enabled: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ShouldAlwaysCallSidecar() {
+		t.Error("omitted sidecar_always_call must default to false")
+	}
+}
+
+func TestSidecarAlwaysCallRespectsExplicitValue(t *testing.T) {
+	yamlContent := `
+enabled: true
+sidecar_always_call: true
+`
+	cfg, err := LoadConfig(strings.NewReader(yamlContent))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ShouldAlwaysCallSidecar() {
+		t.Error("explicit sidecar_always_call: true must round-trip")
+	}
+
+	yamlOff := `
+enabled: true
+sidecar_always_call: false
+`
+	cfgOff, err := LoadConfig(strings.NewReader(yamlOff))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfgOff.ShouldAlwaysCallSidecar() {
+		t.Error("explicit sidecar_always_call: false must round-trip")
+	}
+}
+
 func TestCompilePatternsAcceptsDocumentedPatternsKey(t *testing.T) {
 	yamlContent := `
 patterns:

@@ -85,6 +85,28 @@ watch:
 |--------|------|---------|-------------|
 | `bouncer.enabled` | bool | `true` | Enable/disable redaction |
 | `bouncer.patterns` | array | (see below) | Custom patterns |
+| `bouncer.sidecar_always_call` | bool | `false` | When `false`, the sidecar LLM is consulted only when the regex layer matched zero secrets. When `true`, the sidecar runs on every request regardless of regex outcome. |
+
+#### `bouncer.sidecar_always_call`
+
+When `false` (the default), the sidecar LLM is consulted only when the
+regex layer matched **zero** secrets in the request. This is the
+recommended default: the regex-cleaned payload is forwarded without an
+extra LLM round-trip on already-cleaned requests.
+
+When `true`, the sidecar runs on every request regardless of regex
+outcome. Use this if you need LLM coverage of secrets the regex may have
+missed (e.g. novel token formats, multi-segment bearer tokens), accepting
+the per-request latency / cost of one extra LLM call.
+
+```yaml
+bouncer:
+  enabled: true
+  sidecar_always_call: false   # default — skip sidecar when regex already redacted
+  patterns:
+    - name: github_pat
+      pattern: 'ghp_[A-Za-z0-9]{36}'
+```
 
 ### Logging Options
 

@@ -377,7 +377,7 @@ func TestRedactJSONWithSidecar_RegexMatches(t *testing.T) {
 		},
 	}
 	input := []byte(`{"key": "AKIAIOSFODNN7EXAMPLE"}`)
-	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar)
+	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar, false)
 	if err != nil {
 		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
 	}
@@ -396,7 +396,7 @@ func TestRedactJSONWithSidecar_RegexNoMatch_SidecarCalled(t *testing.T) {
 		},
 	}
 	input := []byte(`{"key": "safe_value"}`)
-	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar)
+	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar, false)
 	if err != nil {
 		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
 	}
@@ -417,7 +417,7 @@ func TestRedactJSONWithSidecar_NilRedactor_CallsSidecar(t *testing.T) {
 		},
 	}
 	input := []byte(`{"key": "value"}`)
-	result, err := RedactJSONWithSidecar(context.Background(), input, nil, sidecar)
+	result, err := RedactJSONWithSidecar(context.Background(), input, nil, sidecar, false)
 	if err != nil {
 		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestRedactJSONWithSidecar_NilRedactor_CallsSidecar(t *testing.T) {
 
 func TestRedactJSONWithSidecar_NilBoth(t *testing.T) {
 	input := []byte(`{"key": "value"}`)
-	result, err := RedactJSONWithSidecar(context.Background(), input, nil, nil)
+	result, err := RedactJSONWithSidecar(context.Background(), input, nil, nil, false)
 	if err != nil {
 		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestRedactJSONWithSidecar_NilBoth(t *testing.T) {
 func TestRedactJSONWithSidecar_NoSidecar_Passthrough(t *testing.T) {
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	input := []byte(`{"key": "safe_value"}`)
-	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, nil)
+	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, nil, false)
 	if err != nil {
 		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
 	}
@@ -463,12 +463,82 @@ func TestRedactJSONWithSidecar_CountTracking(t *testing.T) {
 		},
 	}
 	input := []byte(`{"aws": "AKIAIOSFODNN7EXAMPLE", "github": "ghp_123456789012345678901234567890123456"}`)
-	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar)
+	result, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar, false)
 	if err != nil {
 		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
 	}
 	c := strings.Count(string(result), SecretRedacted)
 	if c != 2 {
 		t.Errorf("expected 2 redacted tokens, got %d", c)
+	}
+}
+
+// TestRedactJSONWithSidecar_AcceptsValueRedactedSentinel: when the LLM is
+// unreachable / errors out, the sidecar falls back to returning the literal
+// "[VALUE_REDACTED]" sentinel. That is not valid JSON but it must NOT cause
+// every request to be rejected — the regex layer has already cleaned the
+// input by this point, so the regex-redacted payload is forwarded.
+func TestRedactJSONWithSidecar_AcceptsValueRedactedSentinel(t *testing.T) {
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	sidecar := &mockSidecarClient{
+		redactFunc: func(ctx context.Context, content string) string {
+			return SidecarFallback
+		},
+	}
+	input := []byte(`{"key": "value"}`)
+	out, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar, false)
+	if err != nil {
+		t.Fatalf("RedactJSONWithSidecar should accept the fallback sentinel, got: %v", err)
+	}
+	if string(out) != `{"key":"value"}` {
+		t.Errorf("expected regex-redacted passthrough, got %q", string(out))
+	}
+}
+
+// TestRedactJSONWithSidecar_AcceptsEmptyOutput: a sidecar that returns an
+// empty string (e.g. empty `response` field from Ollama) is treated the
+// same as the sentinel fallback.
+func TestRedactJSONWithSidecar_AcceptsEmptyOutput(t *testing.T) {
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	sidecar := &mockSidecarClient{
+		redactFunc: func(ctx context.Context, content string) string {
+			return ""
+		},
+	}
+	input := []byte(`{"key": "value"}`)
+	out, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar, false)
+	if err != nil {
+		t.Fatalf("RedactJSONWithSidecar should accept empty output, got: %v", err)
+	}
+	if string(out) != `{"key":"value"}` {
+		t.Errorf("expected regex-redacted passthrough, got %q", string(out))
+	}
+}
+
+// TestRedactJSONWithSidecar_AlwaysCallCallsSidecarOnRegexMatch: when the
+// operator opts in via alwaysCallSidecar=true, the sidecar runs even
+// though the regex layer matched.
+func TestRedactJSONWithSidecar_AlwaysCallCallsSidecarOnRegexMatch(t *testing.T) {
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	var sidecarCalled bool
+	sidecar := &mockSidecarClient{
+		redactFunc: func(ctx context.Context, content string) string {
+			sidecarCalled = true
+			if strings.Contains(content, "AKIAIOSFODNN7EXAMPLE") {
+				t.Error("sidecar received unredacted secret in always-call mode")
+			}
+			return `{"key":"sidecar_value"}`
+		},
+	}
+	input := []byte(`{"key": "AKIAIOSFODNN7EXAMPLE"}`)
+	out, err := RedactJSONWithSidecar(context.Background(), input, redactor, sidecar, true)
+	if err != nil {
+		t.Fatalf("RedactJSONWithSidecar failed: %v", err)
+	}
+	if !sidecarCalled {
+		t.Fatal("sidecar must be called when alwaysCallSidecar=true even after regex match")
+	}
+	if string(out) != `{"key":"sidecar_value"}` {
+		t.Errorf("expected sidecar output, got %q", string(out))
 	}
 }

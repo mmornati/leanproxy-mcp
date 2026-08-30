@@ -151,18 +151,37 @@ func (f *fakeSidecar) Provider() string               { return "fake" }
 func (f *fakeSidecar) Model() string                  { return "fake" }
 func (f *fakeSidecar) Healthy(_ context.Context) bool { return true }
 
-// TestRedactJSONWithSidecarChainsRegexFirst: the sidecar must only ever see
-// content the regex layer has already redacted, and must be called even when
-// the regex layer found something.
+// TestRedactJSONWithSidecarChainsRegexFirst: when the regex layer matches a
+// secret the sidecar must be skipped by default (the regex-redacted payload
+// is already safe), and what is forwarded must contain no secret bytes.
 func TestRedactJSONWithSidecarChainsRegexFirst(t *testing.T) {
 	r := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	sc := &fakeSidecar{}
-	out, err := RedactJSONWithSidecar(context.Background(), []byte(`{"k":"AKIAIOSFODNN7EXAMPLE"}`), r, sc)
+	out, err := RedactJSONWithSidecar(context.Background(), []byte(`{"k":"AKIAIOSFODNN7EXAMPLE"}`), r, sc, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.called {
+		t.Fatal("sidecar must NOT be called when regex matched and alwaysCallSidecar=false")
+	}
+	if strings.Contains(string(out), "AKIAIOSFODNN7EXAMPLE") {
+		t.Fatalf("output leaked secret: %s", out)
+	}
+}
+
+// TestRedactJSONWithSidecarChainsRegexFirst_AlwaysCall: when the operator
+// opts in to `bouncer.sidecar_always_call: true`, the sidecar runs even on
+// regex matches. The regex pass still runs first, so the sidecar only sees
+// redacted content.
+func TestRedactJSONWithSidecarChainsRegexFirst_AlwaysCall(t *testing.T) {
+	r := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	sc := &fakeSidecar{}
+	out, err := RedactJSONWithSidecar(context.Background(), []byte(`{"k":"AKIAIOSFODNN7EXAMPLE"}`), r, sc, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !sc.called {
-		t.Fatal("sidecar not called after regex match")
+		t.Fatal("sidecar must be called when alwaysCallSidecar=true")
 	}
 	if strings.Contains(sc.seen, "AKIAIOSFODNN7EXAMPLE") {
 		t.Fatalf("sidecar received unredacted secret: %s", sc.seen)
@@ -177,7 +196,7 @@ func TestRedactJSONWithSidecarChainsRegexFirst(t *testing.T) {
 func TestRedactJSONWithSidecarRejectsNonJSON(t *testing.T) {
 	r := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 	sc := &fakeSidecar{reply: "Sure! Here is the redacted content."}
-	_, err := RedactJSONWithSidecar(context.Background(), []byte(`{"k":"v"}`), r, sc)
+	_, err := RedactJSONWithSidecar(context.Background(), []byte(`{"k":"v"}`), r, sc, false)
 	if err == nil {
 		t.Fatal("expected error for non-JSON sidecar output")
 	}

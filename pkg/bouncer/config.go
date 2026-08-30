@@ -20,6 +20,12 @@ type Config struct {
 	// accepted as an alias for older configs. Both lists are compiled.
 	Patterns       []PatternDef `yaml:"patterns,omitempty"`
 	CustomPatterns []PatternDef `yaml:"custom_patterns,omitempty"`
+	// SidecarAlwaysCall opts in to the per-request sidecar LLM behavior
+	// introduced (and then reverted) around #274. When false (the default),
+	// the sidecar is consulted only when the regex layer matched zero
+	// secrets, which keeps the per-request cost to one regex pass for the
+	// common case.
+	SidecarAlwaysCall *bool `yaml:"sidecar_always_call,omitempty"`
 }
 
 // IsEnabled reports whether the redactor should run. A nil Config or an
@@ -29,6 +35,16 @@ func (c *Config) IsEnabled() bool {
 		return true
 	}
 	return *c.Enabled
+}
+
+// ShouldAlwaysCallSidecar reports whether the sidecar LLM must run on every
+// request, even when the regex layer already matched a secret. Defaults to
+// false (the regex-cleaned payload is forwarded without the LLM round-trip).
+func (c *Config) ShouldAlwaysCallSidecar() bool {
+	if c == nil || c.SidecarAlwaysCall == nil {
+		return false
+	}
+	return *c.SidecarAlwaysCall
 }
 
 // allPatternDefs returns the documented and legacy custom pattern lists.
@@ -72,6 +88,7 @@ func (c *Config) CompilePatterns() (*LoadedPatterns, error) {
 		if err != nil {
 			slog.Warn("invalid custom pattern, skipping",
 				"name", p.Name,
+				"pattern", p.Pattern,
 				"error", err)
 			continue
 		}
