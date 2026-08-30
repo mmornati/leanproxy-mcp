@@ -1316,8 +1316,20 @@ func canonicalToolMethod(ref string) string {
 }
 
 // bareToolName strips the server prefix from a tool reference, turning
-// `server.tool` or `server_tool` into `tool`.
-func bareToolName(ref string) string {
+// `server.tool` or `server_tool` into `tool`. When serverID is known it is
+// preferred for the prefix match so names that themselves contain dots or
+// underscores (a server literally named `my_server` or a tool named `a.b`)
+// are split at the correct boundary; the generic fallbacks only apply when
+// the reference does not carry the routed server's prefix.
+func bareToolName(ref, serverID string) string {
+	if serverID != "" {
+		if rest, ok := strings.CutPrefix(ref, serverID+"."); ok {
+			return rest
+		}
+		if rest, ok := strings.CutPrefix(ref, serverID+"_"); ok {
+			return rest
+		}
+	}
 	if i := strings.LastIndex(ref, "."); i >= 0 {
 		return ref[i+1:]
 	}
@@ -1344,7 +1356,7 @@ func forwardableRequest(req *proxy.JSONRPCRequest, serverID string) *proxy.JSONR
 			Arguments json.RawMessage `json:"arguments"`
 		}
 		if json.Unmarshal(req.Params, &p) == nil {
-			tool = bareToolName(p.Name)
+			tool = bareToolName(p.Name, serverID)
 			if len(p.Arguments) > 0 && string(p.Arguments) != "null" {
 				args = p.Arguments
 			} else {
@@ -1353,7 +1365,7 @@ func forwardableRequest(req *proxy.JSONRPCRequest, serverID string) *proxy.JSONR
 		}
 	}
 	if tool == "" {
-		tool = bareToolName(req.Method)
+		tool = bareToolName(req.Method, serverID)
 	}
 	if len(args) == 0 || string(args) == "null" {
 		args = json.RawMessage("{}")

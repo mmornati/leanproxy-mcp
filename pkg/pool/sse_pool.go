@@ -312,6 +312,29 @@ func (p *SSEPool) SendRequest(ctx context.Context, serverName string, req *proxy
 		return nil, fmt.Errorf("sse_pool: server %s not found", serverName)
 	}
 
+	if req.Method == "tools/call" {
+		var toolParams struct {
+			Name      string                 `json:"name"`
+			Arguments map[string]interface{} `json:"arguments"`
+		}
+		if err := json.Unmarshal(req.Params, &toolParams); err != nil {
+			return nil, fmt.Errorf("sse_pool: invalid tools/call params: %w", err)
+		}
+		if _, err := server.ensureConnected(ctx); err != nil {
+			return nil, err
+		}
+		result, err := server.CallTool(ctx, toolParams.Name, toolParams.Arguments)
+		if err != nil {
+			return nil, err
+		}
+		resultBytes, _ := json.Marshal(result)
+		return &proxy.JSONRPCResponse{
+			JSONRPC: "2.0",
+			Result:  resultBytes,
+			ID:      req.ID,
+		}, nil
+	}
+
 	toolArgs := make(map[string]interface{})
 	if req.Params != nil {
 		_ = json.Unmarshal(req.Params, &toolArgs)
