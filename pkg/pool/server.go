@@ -794,7 +794,17 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request, stopCh 
 
 	resp := &Response{ID: req.ID}
 
-	atomic.StoreInt32(&s.state, stateBusy)
+	// Only a live (idle/running) server transitions to busy, and only a
+	// server we moved to busy is moved back to idle afterwards. An
+	// unconditional store here used to overwrite the error state set by
+	// waitForExit when the child died mid-request, leaving a dead process
+	// reported healthy and never restarted.
+	priorState := stateIdle
+	claimed := atomic.CompareAndSwapInt32(&s.state, stateIdle, stateBusy)
+	if !claimed {
+		priorState = stateRunning
+		claimed = atomic.CompareAndSwapInt32(&s.state, stateRunning, stateBusy)
+	}
 
 	result, sendErr := s.sendRequest(ctx, req, stopCh)
 	if sendErr != nil {
@@ -812,9 +822,10 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request, stopCh 
 	s.mu.Lock()
 	s.stats.RequestCount++
 	s.stats.AvgLatencyMs = (s.stats.AvgLatencyMs*float64(s.stats.RequestCount-1) + latency) / float64(s.stats.RequestCount)
-	currentState := atomic.LoadInt32(&s.state)
-	if currentState != stateStopping {
-		atomic.StoreInt32(&s.state, stateIdle)
+	if claimed {
+		// If the state is no longer busy, something else (crash, stop)
+		// changed it while the request was in flight; leave that alone.
+		atomic.CompareAndSwapInt32(&s.state, stateBusy, priorState)
 	}
 	s.mu.Unlock()
 

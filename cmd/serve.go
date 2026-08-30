@@ -623,10 +623,12 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 	}
 
 	if isGatewayTool(req.Method) {
-		handleGatewayTool(ctx, req, writer, gt)
-		writerMu.Lock()
-		writer.Flush()
-		writerMu.Unlock()
+		// Must go through writeResponseAsync: this runs concurrently with
+		// other requests on the same connection and the bufio.Writer is
+		// shared.
+		if resp := handleGatewayToolSync(ctx, req, gt); resp != nil {
+			writeResponseAsync(writer, writerMu, resp)
+		}
 		return
 	}
 
