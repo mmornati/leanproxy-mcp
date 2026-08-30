@@ -389,9 +389,11 @@ func (s *sequenceReader) Read(p []byte) (int, error) {
 // TestRedactStreamScanThrottle is a timing-based proxy for the rescan
 // throttle: a clean ~65 KB stream delivered in 1-byte chunks must finish
 // quickly. Without the throttle, every byte triggers a full regex scan
-// and the test takes seconds; with the throttle, only a handful of scans
-// run and the test is sub-second. If this ever regresses past the
-// generous bound below, the throttle has been disabled or set too small.
+// and the test takes many seconds (with eight built-in patterns this is
+// tens of thousands of full regex passes). With the throttle, only a
+// handful of scans run and the test finishes well under the bound below.
+// The bound is generous to accommodate slow CI runners; the un-throttled
+// implementation would take >30s.
 func TestRedactStreamScanThrottle(t *testing.T) {
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 
@@ -404,8 +406,8 @@ func TestRedactStreamScanThrottle(t *testing.T) {
 	}
 	elapsed := time.Since(start)
 
-	if elapsed > 2*time.Second {
-		t.Fatalf("rescan throttle ineffective: 65KB bytewise stream took %v (expected sub-second)", elapsed)
+	if elapsed > 10*time.Second {
+		t.Fatalf("rescan throttle ineffective: 65KB bytewise stream took %v (expected well under 10s on any reasonable runner)", elapsed)
 	}
 	if !bytes.Equal(out.Bytes(), payload) {
 		t.Fatalf("clean stream altered: got %d bytes, want %d", out.Len(), len(payload))
