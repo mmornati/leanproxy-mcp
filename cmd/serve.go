@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -377,6 +378,8 @@ func runServe(cmd *cobra.Command, args []string) {
 	defer cancel()
 	handler.PopulateToolCache(cacheCtx)
 
+	populateRouterTools(ctx, handler, toolReg)
+
 	slog.Info("starting server", "listen", serveFlags.listenAddr, "upstream", serveFlags.upstreamURL)
 
 	ln, err := net.Listen("tcp", serveFlags.listenAddr)
@@ -578,7 +581,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
-	server, err := r.Route(ctx, req.Method)
+	server, err := routeRequest(ctx, r, req)
 	if err != nil {
 		writeError(writer, req.ID, errors.ErrCodeMethodNotFound, "Method not found")
 		return
@@ -607,7 +610,7 @@ func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer,
 		return
 	}
 
-	resp, err := p.SendRequest(ctx, server.ID, req, timeout)
+	resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
 	if err != nil {
 		slog.Warn("upstream send failed", "server", server.ID, "error", err)
 		writeError(writer, req.ID, errors.ErrCodeInternalError, redactErrorMessage(err.Error()))
@@ -654,7 +657,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		return
 	}
 
-	server, err := r.Route(ctx, req.Method)
+	server, err := routeRequest(ctx, r, req)
 	if err != nil {
 		writeErrorAsync(writer, writerMu, req.ID, errors.ErrCodeMethodNotFound, "Method not found")
 		return
@@ -683,7 +686,7 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		return
 	}
 
-	resp, err := p.SendRequest(ctx, server.ID, req, timeout)
+	resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
 	if err != nil {
 		slog.Warn("upstream send failed", "server", server.ID, "error", err)
 		writeErrorAsync(writer, writerMu, req.ID, errors.ErrCodeInternalError, redactErrorMessage(err.Error()))
@@ -744,7 +747,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 			continue
 		}
 
-		server, err := r.Route(ctx, req.Method)
+		server, err := routeRequest(ctx, r, req)
 		if err != nil {
 			responses = append(responses, &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
@@ -785,7 +788,7 @@ func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, 
 			continue
 		}
 
-		resp, err := p.SendRequest(ctx, server.ID, req, timeout)
+		resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
 		if err != nil {
 			slog.Warn("upstream send failed", "server", server.ID, "error", err)
 			responses = append(responses, &proxy.JSONRPCResponse{
@@ -1245,6 +1248,129 @@ func isToolCallMethod(method string) bool {
 	return method == "tools/call" || method == "invoke_tool"
 }
 
+// populateRouterTools registers every tool discovered by PopulateToolCache
+// with the router's tool registry. Without this the router has nothing to
+// resolve `namespace.tool` (or `tools/call` carrying a namespaced name)
+// against and every backend tool call fails with -32601 Method not found.
+// ServerID uses the server name because that is the ID serverReg entries
+// were registered under.
+func populateRouterTools(ctx context.Context, handler *mcp.Handler, toolReg router.ToolRegistry) {
+	cached := handler.CachedTools()
+	registered := 0
+	for serverName, tools := range cached {
+		for _, tool := range tools {
+			entry := router.ToolEntry{
+				Name:      serverName + "." + tool.Name,
+				Namespace: serverName,
+				ServerID:  serverName,
+			}
+			if err := toolReg.RegisterTool(ctx, entry); err != nil {
+				slog.Warn("failed to register tool for routing", "server", serverName, "tool", tool.Name, "error", err)
+				continue
+			}
+			registered++
+		}
+	}
+	slog.Info("registered backend tools for routing", "count", registered)
+}
+
+// routeRequest resolves the backend server that owns a tool call. Standard
+// MCP clients always address tools through a generic `tools/call` request
+// whose params.name carries the namespaced tool reference, so the routing
+// method is derived from params.name; every other method is routed verbatim.
+func routeRequest(ctx context.Context, r Router, req *proxy.JSONRPCRequest) (*registry.ServerEntry, error) {
+	method := req.Method
+	if name := toolCallName(req); name != "" {
+		method = canonicalToolMethod(name)
+	}
+	return r.Route(ctx, method)
+}
+
+// toolCallName returns the namespaced tool reference carried by a
+// `tools/call` (or `invoke_tool`) request, or "" when the request does not
+// address a tool.
+func toolCallName(req *proxy.JSONRPCRequest) string {
+	if req == nil || !isToolCallMethod(req.Method) {
+		return ""
+	}
+	var p struct {
+		Name string `json:"name"`
+	}
+	if len(req.Params) > 0 && json.Unmarshal(req.Params, &p) == nil {
+		return p.Name
+	}
+	return ""
+}
+
+// canonicalToolMethod normalizes a tool reference to the namespace.tool form
+// the router resolves. Both `server.tool` and `server_tool` (the convention
+// used by the handler's lazy-loading stubs) are accepted.
+func canonicalToolMethod(ref string) string {
+	if strings.Contains(ref, ".") {
+		return ref
+	}
+	if i := strings.Index(ref, "_"); i > 0 {
+		return ref[:i] + "." + ref[i+1:]
+	}
+	return ref
+}
+
+// bareToolName strips the server prefix from a tool reference, turning
+// `server.tool` or `server_tool` into `tool`.
+func bareToolName(ref string) string {
+	if i := strings.LastIndex(ref, "."); i >= 0 {
+		return ref[i+1:]
+	}
+	if i := strings.Index(ref, "_"); i >= 0 {
+		return ref[i+1:]
+	}
+	return ref
+}
+
+// forwardableRequest rewrites a client request into the form the backend MCP
+// server expects: method `tools/call` with params {"name": <bare tool>,
+// "arguments": {…}}. The client may address a backend either through the
+// generic tools/call form (params.name = namespace.tool) or through a
+// namespaced method (method = namespace.tool). The original request is left
+// untouched so the upstream redaction, embedding and caching pipeline keeps
+// seeing the unmodified (but already redacted) payload.
+func forwardableRequest(req *proxy.JSONRPCRequest, serverID string) *proxy.JSONRPCRequest {
+	fwd := *req
+	tool := ""
+	args := req.Params
+	if isToolCallMethod(req.Method) {
+		var p struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if json.Unmarshal(req.Params, &p) == nil {
+			tool = bareToolName(p.Name)
+			if len(p.Arguments) > 0 && string(p.Arguments) != "null" {
+				args = p.Arguments
+			} else {
+				args = json.RawMessage("{}")
+			}
+		}
+	}
+	if tool == "" {
+		tool = bareToolName(req.Method)
+	}
+	if len(args) == 0 || string(args) == "null" {
+		args = json.RawMessage("{}")
+	}
+	params, err := json.Marshal(struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}{Name: tool, Arguments: args})
+	if err != nil {
+		slog.Warn("failed to build forwardable request", "error", err)
+		return &fwd
+	}
+	fwd.Method = "tools/call"
+	fwd.Params = params
+	return &fwd
+}
+
 func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {
 	data, err := json.Marshal(resp)
 	if err != nil {
@@ -1356,7 +1482,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 			continue
 		}
 
-		server, err := r.Route(ctx, req.Method)
+		server, err := routeRequest(ctx, r, req)
 		if err != nil {
 			responses = append(responses, &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
@@ -1397,7 +1523,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 			continue
 		}
 
-		resp, err := p.SendRequest(ctx, server.ID, req, timeout)
+		resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
 		if err != nil {
 			slog.Warn("upstream send failed", "server", server.ID, "error", err)
 			responses = append(responses, &proxy.JSONRPCResponse{
