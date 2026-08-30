@@ -132,6 +132,32 @@ bouncer:
 	}
 }
 
+// TestValidatePatternsCmd_LegacyCustomPatternsAlias asserts that the
+// documented `patterns:` key and the legacy `custom_patterns:` alias are
+// both walked by Config.Validate. Without this, an operator who moved a
+// dangerous pattern into the legacy key would see it slip through and the
+// redactor would silently downgrade to built-ins only.
+func TestValidatePatternsCmd_LegacyCustomPatternsAlias(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "leanproxy.yaml")
+	if err := os.WriteFile(cfgPath, []byte(`
+bouncer:
+  enabled: true
+  custom_patterns:
+    - name: legacy-redos
+      pattern: "(a+)+"
+`), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	_, err := runRootForTest(t, []string{"bouncer", "validate-patterns", "--config", cfgPath})
+	if err == nil {
+		t.Fatal("validate-patterns should reject a dangerous pattern under the legacy custom_patterns key")
+	}
+	if !strings.Contains(err.Error(), "legacy-redos") {
+		t.Errorf("error should mention the offending pattern name, got %v", err)
+	}
+}
+
 // runRootForTest runs RootCmd with the provided args, capturing stdout and
 // stderr so the test can assert on both. Cobra's ExecuteC re-routes child
 // commands through the root, so tests that exercise a subcommand must drive

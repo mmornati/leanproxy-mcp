@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
@@ -49,7 +48,6 @@ var validatePatternsCmd = &cobra.Command{
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Valid patterns: %d (custom: %d, built-in: %d)\n",
 			len(loaded.All), len(loaded.Custom), len(loaded.BuiltIn))
-		_ = slog.Default() // keep slog import used; messages still go to the default logger
 		return nil
 	},
 }
