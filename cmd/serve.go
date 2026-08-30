@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 
+	stderrors "errors"
+
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
@@ -184,7 +186,9 @@ func runServe(cmd *cobra.Command, args []string) {
 		var err error
 		loadedCfg, err = migrate.LoadConfig(ctx, configPath)
 		if err != nil {
-			slog.Warn("failed to load config", "path", configPath, "error", err)
+			if !stderrors.Is(err, migrate.ErrConfigNotFound) {
+				slog.Warn("failed to load config", "path", configPath, "error", err)
+			}
 		} else if loadedCfg != nil {
 			loadedServeConfig.Store(loadedCfg)
 			slog.Info("loaded server config", "path", configPath, "server_count", len(loadedCfg.Servers))

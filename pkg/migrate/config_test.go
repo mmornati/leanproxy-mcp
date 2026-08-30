@@ -2,11 +2,14 @@ package migrate
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 )
 
 func TestLoadConfigMinimal(t *testing.T) {
@@ -143,11 +146,14 @@ servers:
 func TestLoadConfigMissingFile(t *testing.T) {
 	ctx := context.Background()
 	cfg, err := LoadConfig(ctx, "/nonexistent/path/config.yaml")
-	if err != nil {
-		t.Fatalf("LoadConfig() should not fail for missing file, got error: %v", err)
+	if err == nil {
+		t.Fatal("LoadConfig() should fail for missing file")
+	}
+	if !errors.Is(err, ErrConfigNotFound) {
+		t.Errorf("LoadConfig() missing-file error should wrap ErrConfigNotFound, got %v", err)
 	}
 	if cfg != nil {
-		t.Error("LoadConfig() should return nil for missing file")
+		t.Error("LoadConfig() should return nil config for missing file")
 	}
 }
 
@@ -540,5 +546,85 @@ func TestEffectiveReconnectHealthIntervalZeroDisables(t *testing.T) {
 	got := cfg.EffectiveReconnect()
 	if got.HealthInterval != 0 {
 		t.Errorf("HealthInterval = %v, want 0 (disabled)", got.HealthInterval)
+	}
+}
+
+func TestConfigValidateBouncerSafePattern(t *testing.T) {
+	cfg := &Config{
+		Bouncer: &bouncer.Config{
+			Patterns: []bouncer.PatternDef{
+				{Name: "ok", Pattern: `sk-[A-Za-z0-9]{20,}`},
+			},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil for safe custom pattern", err)
+	}
+}
+
+func TestConfigValidateBouncerRejectsDangerousPattern(t *testing.T) {
+	// ReDoS-prone pattern: nested quantifier (.+)+. The bouncer SafeCompile
+	// layer would skip this silently and ship built-ins only; Validate() must
+	// surface the failure so the redactor is never quietly downgraded.
+	cfg := &Config{
+		Bouncer: &bouncer.Config{
+			Enabled: ptr(true),
+			Patterns: []bouncer.PatternDef{
+				{Name: "redos", Pattern: `(.+)+secret`},
+			},
+		},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() should reject dangerous nested-quantifier pattern")
+	}
+	if !strings.Contains(err.Error(), "redos") {
+		t.Errorf("Validate() error = %v, want it to mention the offending pattern name", err)
+	}
+}
+
+func TestConfigValidateBouncerWalksBothLists(t *testing.T) {
+	// CustomPatterns is the legacy alias for Patterns; both must be checked.
+	cfg := &Config{
+		Bouncer: &bouncer.Config{
+			Patterns: []bouncer.PatternDef{
+				{Name: "ok1", Pattern: `token-[A-Za-z0-9]+`},
+			},
+			CustomPatterns: []bouncer.PatternDef{
+				{Name: "bad", Pattern: `(a+)+`},
+			},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("Validate() should reject dangerous CustomPatterns entry")
+	}
+}
+
+func TestConfigValidateBouncerNilIsOK(t *testing.T) {
+	cfg := &Config{Servers: nil, Bouncer: nil}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil when Bouncer is absent", err)
+	}
+}
+
+func TestLoadConfigBouncerDangerousPatternFails(t *testing.T) {
+	yamlContent := `
+bouncer:
+  enabled: true
+  patterns:
+    - name: redos
+      pattern: "(.+)+secret"
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "leanproxy.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+	_, err := LoadConfig(context.Background(), configPath)
+	if err == nil {
+		t.Fatal("LoadConfig() should reject dangerous bouncer pattern at load time")
+	}
+	if !strings.Contains(err.Error(), "redos") {
+		t.Errorf("LoadConfig() error = %v, want it to mention the offending pattern name", err)
 	}
 }

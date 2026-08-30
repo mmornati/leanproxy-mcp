@@ -241,10 +241,14 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 // loadExistingEntry returns a non-nil pointer (true presence) when the config
 // already has a server with name, nil otherwise. Errors are returned for
-// I/O / parse failures only.
+// I/O / parse failures only. A missing config file is not an error: callers
+// that bootstrap a new config treat it the same as an empty one.
 func loadExistingEntry(path, name string) (*migrate.ServerConfig, error) {
 	cfg, err := migrate.LoadConfig(context.Background(), path)
 	if err != nil {
+		if errors.Is(err, migrate.ErrConfigNotFound) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if cfg == nil {

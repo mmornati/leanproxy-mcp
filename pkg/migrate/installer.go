@@ -210,7 +210,10 @@ func (i *Installer) Install(ctx context.Context, entry CacheEntry, opts InstallO
 
 	cfg, err := LoadConfig(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("installer: load config %s: %w", path, err)
+		if !errors.Is(err, ErrConfigNotFound) {
+			return nil, fmt.Errorf("installer: load config %s: %w", path, err)
+		}
+		cfg = nil
 	}
 	if cfg == nil {
 		cfg = &Config{Version: "1.0", Servers: []*ServerConfig{}}

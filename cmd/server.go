@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -83,7 +84,10 @@ func runServerAdd(cmd *cobra.Command, args []string) error {
 
 	cfg, err := migrate.LoadConfig(context.Background(), userConfigPath())
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil {
 		cfg = &migrate.Config{
@@ -148,7 +152,10 @@ func runServerRemove(cmd *cobra.Command, args []string) error {
 
 	cfg, err := migrate.LoadConfig(context.Background(), userConfigPath())
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {
 		return fmt.Errorf("no servers configured")
@@ -202,7 +209,10 @@ func init() {
 func runServerList(cmd *cobra.Command, args []string) error {
 	cfg, err := migrate.LoadConfig(context.Background(), userConfigPath())
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {
 		fmt.Println("No servers configured.")
@@ -251,7 +261,10 @@ func runServerEnable(cmd *cobra.Command, args []string) error {
 
 	cfg, err := migrate.LoadConfig(context.Background(), userConfigPath())
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil {
 		return fmt.Errorf("no servers configured")
@@ -350,7 +363,10 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 
 	cfg, err := migrate.LoadConfig(ctx, configPath)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {
 		return fmt.Errorf("no servers configured in %s", configPath)
@@ -564,7 +580,10 @@ func runServerDisable(cmd *cobra.Command, args []string) error {
 
 	cfg, err := migrate.LoadConfig(context.Background(), userConfigPath())
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil {
 		return fmt.Errorf("no servers configured")
@@ -727,7 +746,10 @@ func runServerHealth(cmd *cobra.Command, args []string) error {
 
 	cfg, err := migrate.LoadConfig(ctx, configPath)
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil {
 		return fmt.Errorf("no servers configured in %s", configPath)

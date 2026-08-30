@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -67,7 +68,10 @@ func rebuildServer(ctx context.Context, name string) error {
 
 	cfg, err := migrate.LoadConfig(ctx, userConfigPath())
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil {
 		return fmt.Errorf("no servers configured")
@@ -131,7 +135,10 @@ func rebuildServer(ctx context.Context, name string) error {
 func rebuildAllServers(ctx context.Context) error {
 	cfg, err := migrate.LoadConfig(ctx, userConfigPath())
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {
 		return fmt.Errorf("no servers configured")
