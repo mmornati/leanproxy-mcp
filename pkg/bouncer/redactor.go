@@ -2,6 +2,7 @@ package bouncer
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -294,26 +295,57 @@ type SidecarClient interface {
 	Healthy(ctx context.Context) bool
 }
 
+// SidecarFallback is the sentinel string the sidecar LLM emits when its
+// primary path fails (Ollama down, decode error, empty response). The
+// redactor treats it as "I could not redact anything; do whatever you did
+// without me" rather than as a hard error, so a single Ollama hiccup does
+// not reject every request. See pkg/sidecar.Client.aggressiveRedact.
+const SidecarFallback = "[VALUE_REDACTED]"
+
 // RedactJSONWithSidecar applies the regex redactor first and then, if a
-// sidecar is configured, hands the already-redacted content to the sidecar
-// for a second pass. The sidecar therefore never sees a secret the regex
-// layer could catch, and its output is only accepted if it is valid JSON.
-func RedactJSONWithSidecar(ctx context.Context, data []byte, r *Redactor, sidecar SidecarClient) ([]byte, error) {
+// sidecar is configured and either the regex matched nothing or
+// alwaysCallSidecar is true, hands the already-redacted content to the
+// sidecar for a second pass. The sidecar therefore never sees a secret the
+// regex layer could catch (the regex pass runs first regardless), and its
+// output is accepted only if it is valid JSON or matches the sidecar's
+// documented fallback sentinel.
+func RedactJSONWithSidecar(ctx context.Context, data []byte, r *Redactor, sidecar SidecarClient, alwaysCallSidecar bool) ([]byte, error) {
 	if r != nil {
-		redacted, _, err := r.RedactJSON(data)
+		redacted, count, err := r.RedactJSON(data)
 		if err != nil {
 			return nil, err
 		}
 		data = redacted
+		if count > 0 && !alwaysCallSidecar {
+			// Regex caught something and the operator did not opt in to
+			// the per-request sidecar path: skip the LLM round-trip and
+			// forward the regex-cleaned payload.
+			return redacted, nil
+		}
 	}
 	if sidecar != nil {
 		sidecarResult := []byte(sidecar.Redact(ctx, string(data)))
+		if isSidecarFallback(sidecarResult) {
+			slog.Warn("sidecar: redaction fallback in use; relying on regex layer",
+				"output_len", len(sidecarResult))
+			return data, nil
+		}
 		if !json.Valid(sidecarResult) {
 			return nil, fmt.Errorf("bouncer redact: sidecar returned invalid JSON")
 		}
 		return sidecarResult, nil
 	}
 	return data, nil
+}
+
+// isSidecarFallback reports whether the sidecar output is one of the
+// documented fallback forms (empty string, or the SidecarFallback sentinel)
+// rather than a real redaction.
+func isSidecarFallback(out []byte) bool {
+	if len(out) == 0 {
+		return true
+	}
+	return bytes.Equal(out, []byte(SidecarFallback))
 }
 
 // Patterns returns the compiled patterns this redactor applies.

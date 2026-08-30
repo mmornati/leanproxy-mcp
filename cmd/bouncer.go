@@ -35,6 +35,9 @@ var validatePatternsCmd = &cobra.Command{
 		if !cfg.IsEnabled() {
 			fmt.Println("Warning: bouncer.enabled is false; secret redaction is OFF")
 		}
+		if cfg.ShouldAlwaysCallSidecar() {
+			fmt.Println("Note: bouncer.sidecar_always_call is true; the sidecar LLM will run on every request")
+		}
 		loaded, err := cfg.CompilePatterns()
 		if err != nil {
 			slog.Error("failed to compile patterns", "error", err)

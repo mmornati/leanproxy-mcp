@@ -168,7 +168,7 @@ func TestWriteError(t *testing.T) {
 	readBuf := &bytes.Buffer{}
 	writer := bufio.NewWriter(readBuf)
 
-	writeError(writer, errors.ErrCodeMethodNotFound, "Method not found")
+	writeError(writer, 42, errors.ErrCodeMethodNotFound, "Method not found")
 	writer.Flush()
 
 	output := readBuf.String()
@@ -188,6 +188,10 @@ func TestWriteError(t *testing.T) {
 
 	if parsed.Error.Message != "Method not found" {
 		t.Errorf("expected message 'Method not found', got %q", parsed.Error.Message)
+	}
+
+	if id, ok := parsed.ID.(float64); !ok || id != 42 {
+		t.Errorf("expected ID 42 preserved, got %v", parsed.ID)
 	}
 }
 
