@@ -46,10 +46,10 @@ func TestGitHubClassicPATPattern(t *testing.T) {
 		"ghp_" + strings.Repeat("X", 40),
 	}
 	invalid := []string{
-		"ghx_" + strings.Repeat("X", 36),       // wrong prefix
-		"GHP_" + strings.Repeat("X", 36),       // uppercase prefix
-		"ghp " + strings.Repeat("X", 36),       // space in prefix
-		"ghp_" + strings.Repeat("X", 35),       // too short
+		"ghx_" + strings.Repeat("X", 36), // wrong prefix
+		"GHP_" + strings.Repeat("X", 36), // uppercase prefix
+		"ghp " + strings.Repeat("X", 36), // space in prefix
+		"ghp_" + strings.Repeat("X", 35), // too short
 	}
 
 	for _, v := range valid {
@@ -72,7 +72,7 @@ func TestGitHubFineGrainedPATPattern(t *testing.T) {
 	}
 	invalid := []string{
 		"github_pat_1XXXXXXXXXX", // too short
-		"github_pat_11",                // too short
+		"github_pat_11",          // too short
 		"Github_pat_11XXXXXXXXXXXXXXXX_XXXXX",
 		"github_pat_11XXXXXXXXXXXXXXXX_", // underscore at end ok, but pattern requires more
 	}
@@ -248,7 +248,7 @@ func TestNoFalsePositives(t *testing.T) {
 		"ya29.shortvalue",
 		"xoxc-111-222-" + strings.Repeat("a", 30), // xoxc not in [abprs]
 		"glpat-" + strings.Repeat("a", 10),
-		"sk-" + strings.Repeat("a", 39),  // OpenAI too short
+		"sk-" + strings.Repeat("a", 39),     // OpenAI too short
 		"sk-ant-" + strings.Repeat("a", 30), // Anthropic too short
 		`{"api_key": ""}`,
 		`{"foo": "bar"}`,
@@ -526,7 +526,7 @@ func TestGCPOAuthTokenPattern(t *testing.T) {
 		"ya29.XXXXXXXXXXXXXXXXXXXX" + strings.Repeat("a", 20),
 		"ya29." + strings.Repeat("X", 40),
 		"ya29." + strings.Repeat("0", 60),
-		"ya29." + strings.Repeat("-", 25), // GCP tokens may contain hyphens
+		"ya29." + strings.Repeat("-", 25),  // GCP tokens may contain hyphens
 		"ya29." + strings.Repeat("a", 500), // any longer token fully redacted
 	}
 	invalid := []string{
@@ -642,9 +642,9 @@ func TestAnthropicAPIKeyPattern(t *testing.T) {
 		"sk-ant-" + strings.Repeat("k", 200),
 	}
 	invalid := []string{
-		"sk-ant-" + strings.Repeat("a", 31), // one short
+		"sk-ant-" + strings.Repeat("a", 31),  // one short
 		"sk-anti-" + strings.Repeat("a", 40), // "anti-" not "ant-"
-		"skANTI-" + strings.Repeat("a", 40), // case sensitive
+		"skANTI-" + strings.Repeat("a", 40),  // case sensitive
 		"random_text_sk-ant-",
 	}
 
@@ -699,7 +699,7 @@ func TestSensitiveJSONFieldNamesLookup(t *testing.T) {
 		"my_api_key":    false, // contains "api_key" but is not exactly it
 		"authorization": false,
 		"data":          false,
-		"":             false,
+		"":              false,
 	}
 	for k, want := range cases {
 		if got := sensitiveJSONFieldLookup(k); got != want {
