@@ -28,6 +28,21 @@ type ToolCache struct {
 	tools map[string][]Tool
 }
 
+// CachedTools returns a snapshot of the tools known per server name. It is
+// used by the serve listener to register backend tools with the router so
+// tool calls can be routed to the owning server.
+func (h *Handler) CachedTools() map[string][]Tool {
+	h.toolCache.mu.RLock()
+	defer h.toolCache.mu.RUnlock()
+	out := make(map[string][]Tool, len(h.toolCache.tools))
+	for name, tools := range h.toolCache.tools {
+		snapshot := make([]Tool, len(tools))
+		copy(snapshot, tools)
+		out[name] = snapshot
+	}
+	return out
+}
+
 type Handler struct {
 	pool            pool.ServerSource
 	logger          *slog.Logger

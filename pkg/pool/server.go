@@ -362,7 +362,7 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	s.wg.Add(1)
 	go s.waitForExit(genCtx, genStopCh, genStopOnce)
 	s.wg.Add(1)
-	go s.readResponses(genStopCh)
+	go s.readResponses(stdoutR, genStopCh)
 	s.wg.Add(1)
 	go s.runRequestLoop(genCtx, genStopCh)
 
@@ -580,9 +580,9 @@ func (s *StdioServerV2) restart(ctx context.Context) error {
 	return nil
 }
 
-func (s *StdioServerV2) readResponses(stopCh chan struct{}) {
+func (s *StdioServerV2) readResponses(stdout io.Reader, stopCh chan struct{}) {
 	defer s.wg.Done()
-	scanner := bufio.NewScanner(s.stdout)
+	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 1024), s.maxResponseSize)
 
 	for {
