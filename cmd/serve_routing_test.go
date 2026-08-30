@@ -249,7 +249,9 @@ func (f *fakeToolSource) SendServerNotification(context.Context, string, string,
 
 func (f *fakeToolSource) ListServers() []string { return f.names }
 
-func (f *fakeToolSource) GetServerState(string) (pool.ServerState, error) { return pool.StateRunning, nil }
+func (f *fakeToolSource) GetServerState(string) (pool.ServerState, error) {
+	return pool.StateRunning, nil
+}
 
 func (f *fakeToolSource) RestartServer(context.Context, string) error { return nil }
 
