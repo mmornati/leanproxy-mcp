@@ -89,7 +89,7 @@ func NewRedactorWithAlerts(patterns []*regexp.Regexp, alertManager *AlertManager
 // span is a half-open [start, end) byte range of a pattern match.
 type span struct{ start, end int }
 
-// scanSpansPool amortises the per-scan []span allocation across calls to
+// scanSpansPool amortizes the per-scan []span allocation across calls to
 // RedactStream. findSpansInto appends into a pooled buffer instead of
 // allocating a fresh slice, and RedactStream reuses the same buffer across
 // every scan inside one call — pre-fix, a 1 MB stream triggered ~190 scans

@@ -15,7 +15,7 @@ import (
 // that pulls the same buffer from the pool never sees the previous
 // request's secret.
 //
-// The test writes a recognisable secret into a pooled carry buffer via the
+// The test writes a recognizable secret into a pooled carry buffer via the
 // release helper, then pulls a fresh carry buffer from the pool and asserts
 // the secret bytes are not visible. This exercises the scrub directly
 // rather than relying on a side-channel observable through RedactStream's
@@ -189,7 +189,7 @@ func TestFindSpansIntoReusesDestinationBuffer(t *testing.T) {
 
 	// Reusing dst for a second scan must truncate to length 0 and rewrite
 	// the backing array — not append to the previous scan's result. The
-	// capacity must stay within the initial 4 so the pool's amortisation
+	// capacity must stay within the initial 4 so the pool's amortization
 	// is observable in steady state.
 	dst = redactor.findSpansInto([]byte("SECRET_BBB SECRET_CCC"), dst)
 	if len(dst) != 2 {
