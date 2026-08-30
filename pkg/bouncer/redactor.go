@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"regexp"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -88,22 +89,151 @@ func NewRedactorWithAlerts(patterns []*regexp.Regexp, alertManager *AlertManager
 // span is a half-open [start, end) byte range of a pattern match.
 type span struct{ start, end int }
 
+// scanSpansPool amortises the per-scan []span allocation across calls to
+// RedactStream and redactChunkWithCount. Each findSpans call appends into a
+// pooled buffer instead of allocating a fresh slice, and the same buffer is
+// reused across the many scans inside one RedactStream. Tracked separately
+// from carry/out buffers because it stores no sensitive data and never
+// needs zeroing.
+//
+// Initial cap of 16 covers the typical case (a 4–16 KB scan chunk sees at
+// most a handful of matches); larger match counts grow the underlying array
+// in place via append and the larger buffer stays associated with the slot.
+var scanSpansPool = sync.Pool{
+	New: func() interface{} {
+		s := make([]span, 0, 16)
+		return &s
+	},
+}
+
+// carryBufPool provides reusable carry/out buffers for RedactStream. Pre-#277
+// each call allocated two byte slices per request (~9 KB and ~5 KB at
+// default thresholds). With 1 000 concurrent streams that was ~14 MB of
+// short-lived heap that the GC had to churn through. Pooling keeps it flat.
+//
+// Both buffers may contain raw secret bytes from upstream before the regex
+// layer scrubs them, so callers MUST zero the underlying array (see
+// releaseCarryBuf / releaseOutBuf) before returning the slice to the pool.
+// sync.Pool hands buffers out to any goroutine; a single unscrubbed reuse
+// would leak a previous request's secret.
+var (
+	carryBufPool = sync.Pool{
+		New: func() interface{} {
+			// Initial capacity matches the default steady-state size of
+			// carry (bufferSize + maxOverlap + one more bufferSize ~= 9 KB)
+			// so most streams never trigger an append-growth reallocation.
+			b := make([]byte, 0, defaultMaxOverlap+2*defaultBufferSize)
+			return &b
+		},
+	}
+	outBufPool = sync.Pool{
+		New: func() interface{} {
+			// Default scanThreshold (bufferSize + maxOverlap ~= 5 KB) plus
+			// slack for the redaction marker expansion.
+			b := make([]byte, 0, defaultMaxOverlap+defaultBufferSize+len(SecretRedacted)*2)
+			return &b
+		},
+	}
+)
+
+// acquireSpansBuf returns a fresh length-0 spans slice from the pool.
+// Callers append into it via findSpansInto and must release it with
+// releaseSpansBuf exactly once, regardless of path.
+func acquireSpansBuf() []span {
+	s := scanSpansPool.Get().(*[]span)
+	return (*s)[:0]
+}
+
+func releaseSpansBuf(s []span) {
+	if cap(s) == 0 {
+		// A zero-cap slice (e.g. from a default-valued struct field) is
+		// unusable: putting it back would let the next caller pull a
+		// stale array that doesn't match the pooled shape.
+		return
+	}
+	// Truncate to length 0. span entries contain only integer offsets, no
+	// sensitive data, so we do not zero the backing array.
+	s = s[:0]
+	scanSpansPool.Put(&s)
+}
+
+// acquireCarryBuf returns a length-0 carry buffer from the pool. The
+// returned slice's underlying array may contain non-zero bytes from a
+// previous request; callers must overwrite (via append) before reading.
+func acquireCarryBuf() []byte {
+	b := carryBufPool.Get().(*[]byte)
+	return (*b)[:0]
+}
+
+// releaseCarryBuf zeroes the underlying array of b and returns it to the
+// pool. The carry buffer holds raw secret bytes between the moment they
+// are read and the moment findSpans/applySpans process them; zeroing here
+// is what stops a previous request's secrets from being reused by another
+// goroutine that pulls the same buffer.
+func releaseCarryBuf(b []byte) {
+	if cap(b) == 0 {
+		return
+	}
+	full := b[:cap(b)]
+	for i := range full {
+		full[i] = 0
+	}
+	b = b[:0]
+	carryBufPool.Put(&b)
+}
+
+// acquireOutBuf returns a length-0 redaction-output buffer from the pool.
+func acquireOutBuf() []byte {
+	b := outBufPool.Get().(*[]byte)
+	return (*b)[:0]
+}
+
+// releaseOutBuf zeroes the underlying array of b and returns it to the
+// pool. applySpans writes the redacted chunk into b, including any
+// SecretRedacted markers that replaced real secret bytes — zeroing is the
+// last defensive scrub.
+func releaseOutBuf(b []byte) {
+	if cap(b) == 0 {
+		return
+	}
+	full := b[:cap(b)]
+	for i := range full {
+		full[i] = 0
+	}
+	b = b[:0]
+	outBufPool.Put(&b)
+}
+
 // findSpans returns the merged, ordered set of byte ranges matched by any
 // pattern. Overlapping or adjacent matches from different patterns are
 // coalesced so each byte of input is redacted at most once.
+//
+// Allocates a fresh slice; callers that operate in a hot loop (RedactStream)
+// should use findSpansInto with a pooled buffer instead.
 func (r *Redactor) findSpans(data []byte) []span {
-	var spans []span
+	return r.findSpansInto(data, nil)
+}
+
+// findSpansInto appends the merged, ordered set of byte ranges matched by
+// any pattern into dst. The returned slice aliases into dst, so callers
+// must not retain the result past the next findSpansInto call.
+//
+// Passing a fresh dst from the scanSpansPool keeps the per-scan allocation
+// flat: the same backing array is reused across all scans inside one
+// RedactStream invocation and across calls.
+func (r *Redactor) findSpansInto(data []byte, dst []span) []span {
+	dst = dst[:0]
 	for _, pattern := range r.patterns {
 		for _, loc := range pattern.FindAllIndex(data, -1) {
 			if loc[1] > loc[0] {
-				spans = append(spans, span{loc[0], loc[1]})
+				dst = append(dst, span{loc[0], loc[1]})
 			}
 		}
 	}
-	if len(spans) == 0 {
+	if len(dst) == 0 {
 		return nil
 	}
-	return mergeSpans(spans)
+	return mergeSpans(dst)
 }
 
 // mergeSpans coalesces overlapping or adjacent spans in place. The input
@@ -165,6 +295,12 @@ func applySpans(out []byte, data []byte, spans []span, limit int) []byte {
 // maxOverlap bytes after the last match is held back until more input (or
 // EOF) arrives, so a secret split across arbitrary read boundaries — including
 // very small reads from a pipe — is still redacted as a whole.
+//
+// All per-request scratch buffers (carry, output, scan spans) come from
+// package-level sync.Pools; the defer block returns each one with its
+// backing array zeroed (where it holds sensitive bytes) before this
+// function returns. See issue #277 for the allocation profile this is
+// meant to flatten.
 func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*RedactionMeta) error {
 	readerBuf := bufio.NewReaderSize(reader, r.bufferSize)
 	writerBuf := bufio.NewWriterSize(writer, r.bufferSize)
@@ -180,8 +316,18 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 
 	var totalRead, totalWritten int64
 	matchCount := 0
-	carry := make([]byte, 0, scanThreshold+r.bufferSize)
-	out := make([]byte, 0, scanThreshold)
+
+	// Pooled scratch buffers; each is zeroed (or, for spans, truncated) on
+	// release so secrets do not survive across requests. The spans buffer
+	// is reused across every scan inside this call — the central win of
+	// issue #277: pre-fix, findSpans allocated a fresh slice every scan
+	// (≈190 scans for a 1 MB stream at default thresholds).
+	carry := acquireCarryBuf()
+	defer releaseCarryBuf(carry)
+	out := acquireOutBuf()
+	defer releaseOutBuf(out)
+	spansBuf := acquireSpansBuf()
+	defer releaseSpansBuf(spansBuf)
 
 	buf := GetBuffer()
 	defer ReturnBuffer(buf)
@@ -233,7 +379,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 			// explicitly (the deferred Flush swallows its error) and only
 			// count bytes that actually reached the underlying writer.
 			if len(carry) > 0 {
-				flushSpans := r.findSpans(carry)
+				flushSpans := r.findSpansInto(carry, spansBuf)
 				flushOut := applySpans(make([]byte, 0, len(carry)), carry, flushSpans, len(carry))
 				if _, writeErr := writerBuf.Write(flushOut); writeErr != nil {
 					slog.Warn("bouncer redact: final flush after read error failed", "write_error", writeErr, "carry_len", len(carry))
@@ -260,7 +406,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 		// At EOF we always do a final scan so nothing is left unredacted.
 		var spans []span
 		if atEOF || lastScanCarryLen == 0 || len(carry)-lastScanCarryLen >= rescanInterval {
-			spans = r.findSpans(carry)
+			spans = r.findSpansInto(carry, spansBuf)
 			lastScanCarryLen = len(carry)
 		}
 		hold := 0
