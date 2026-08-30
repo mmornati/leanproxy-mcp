@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -126,7 +127,9 @@ func getRealStatusList() proxy.ServerStatusList {
 	configPath := statusConfigPath()
 	cfg, err := migrate.LoadConfig(ctx, configPath)
 	if err != nil {
-		fmt.Printf("Error loading config: %v\n", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			fmt.Printf("Error loading config: %v\n", err)
+		}
 		return proxy.ServerStatusList{}
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {

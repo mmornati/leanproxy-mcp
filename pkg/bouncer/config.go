@@ -47,12 +47,20 @@ func (c *Config) ShouldAlwaysCallSidecar() bool {
 	return *c.SidecarAlwaysCall
 }
 
-// allPatternDefs returns the documented and legacy custom pattern lists.
-func (c *Config) allPatternDefs() []PatternDef {
+// AllPatternDefs returns the documented and legacy custom pattern lists in a
+// single slice (Patterns followed by CustomPatterns). Exported so external
+// packages (e.g. migrate.Config.Validate) can walk the configured patterns
+// without re-implementing the merge logic.
+func (c *Config) AllPatternDefs() []PatternDef {
 	if c == nil {
 		return nil
 	}
 	return append(append([]PatternDef{}, c.Patterns...), c.CustomPatterns...)
+}
+
+// allPatternDefs returns the documented and legacy custom pattern lists.
+func (c *Config) allPatternDefs() []PatternDef {
+	return c.AllPatternDefs()
 }
 
 // PatternDef defines a custom regex pattern for secret detection.

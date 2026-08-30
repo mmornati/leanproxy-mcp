@@ -2,6 +2,7 @@ package migrate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,15 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
+
+// ErrConfigNotFound is returned by LoadConfig when the config file does not
+// exist on disk. Callers that need to distinguish "operator pointed at a
+// missing file" from "operator pointed at an unreadable / unparseable file"
+// (or a file that exists but is empty) can use errors.Is to detect this
+// sentinel. Callers that want to fall back to defaults should treat this as a
+// non-error and either branch on the sentinel explicitly or rely on the
+// nil-config / nil-error return contract.
+var ErrConfigNotFound = errors.New("config file not found")
 
 type CacheSettings struct {
 	Enabled  bool   `yaml:"enabled"`
@@ -209,12 +219,40 @@ func (c *ServerConfig) Validate() error {
 }
 
 func (c *Config) Validate() error {
-	if c.Servers == nil {
+	if c == nil {
 		return nil
 	}
-	for _, server := range c.Servers {
-		if err := server.Validate(); err != nil {
+	if c.Servers != nil {
+		for _, server := range c.Servers {
+			if err := server.Validate(); err != nil {
+				return err
+			}
+		}
+	}
+	if c.Bouncer != nil {
+		if err := validateBouncerPatterns(c.Bouncer); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateBouncerPatterns returns the first dangerous-pattern violation found
+// in the bouncer block. Patterns here that fail SafeCompile are rejected at
+// load time so the redactor never silently falls back to built-ins only — a
+// behavior that previously let ReDoS-prone custom patterns ship to production
+// without any startup signal.
+func validateBouncerPatterns(cfg *bouncer.Config) error {
+	if cfg == nil {
+		return nil
+	}
+	for _, p := range cfg.AllPatternDefs() {
+		if err := bouncer.ValidatePattern(p.Pattern); err != nil {
+			name := p.Name
+			if name == "" {
+				name = "<unnamed>"
+			}
+			return fmt.Errorf("bouncer pattern %q: %w", name, err)
 		}
 	}
 	return nil
@@ -229,7 +267,7 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- path validated via ValidatePath above
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return nil, fmt.Errorf("read config file %q: %w", path, ErrConfigNotFound)
 		}
 		return nil, fmt.Errorf("read config file: %w", err)
 	}

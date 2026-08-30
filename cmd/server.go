@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -83,7 +84,10 @@ func runServerAdd(cmd *cobra.Command, args []string) error {
 
 	cfg, err := migrate.LoadConfig(context.Background(), userConfigPath())
 	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
+		if !errors.Is(err, migrate.ErrConfigNotFound) {
+			return fmt.Errorf("failed to load config: %w", err)
+		}
+		cfg = nil
 	}
 	if cfg == nil {
 		cfg = &migrate.Config{
