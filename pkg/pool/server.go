@@ -566,8 +566,9 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 	s.restartCount++
 	if s.restartCount > s.maxRestarts {
 		s.autoRestartExhausted.Store(true)
+		restarts := s.restartCount
 		s.mu.Unlock()
-		s.logger.Error("max restarts exceeded, leaving server in error state until next use", "name", s.name, "restarts", s.restartCount)
+		s.logger.Error("max restarts exceeded, leaving server in error state until next use", "name", s.name, "restarts", restarts)
 		atomic.StoreInt32(&s.state, stateError)
 		return
 	}
@@ -587,9 +588,10 @@ func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
 		s.backoff *= 2
 	}
 	s.stats.CurrentBackoff = s.backoff
+	attempt := s.restartCount
 	s.mu.Unlock()
 
-	s.logger.Info("scheduled restart", "name", s.name, "backoff", backoff, "attempt", s.restartCount)
+	s.logger.Info("scheduled restart", "name", s.name, "backoff", backoff, "attempt", attempt)
 
 	// Add jitter so a fleet of crashed servers does not restart in lockstep.
 	quarter := int64(backoff / 4)
