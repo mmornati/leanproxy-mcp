@@ -14,6 +14,35 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | **Path Validation** | Prevents path traversal attacks on configuration files |
 | **Graceful Shutdown** | Ensures all goroutines are properly terminated |
 
+## Which modes are protected
+
+Secret redaction and the prompt-injection guard (together, the **Token
+Firewall**) run as one shared middleware pipeline (`pkg/mcp`) in **both**
+front ends:
+
+| Mode | Redaction | Injection guard |
+|------|-----------|-----------------|
+| `leanproxy-mcp server run --stdio` (what IDEs run) | Yes, on by default | Yes, when an `injection:` block enables it |
+| `leanproxy-mcp serve` | Yes, on by default | Yes, when an `injection:` block enables it |
+
+Pipeline order for every request:
+
+```
+client → redact request params → injection check → dispatch/upstream → redact response → client
+```
+
+- **Request redaction** covers every nested value of `params`, including the
+  `arguments` of `tools/call` and the nested `arguments` of an `invoke_tool`
+  call. If params cannot be redacted the request is rejected with
+  `Secret redaction failed; request not forwarded` and never forwarded.
+- **Response redaction** covers `result`, `error.message` and `error.data`
+  of every response, including `list_tools` text (upstream tool descriptions)
+  and error hints/schemas.
+- Redaction is **on by default** with the built-in patterns when there is no
+  `bouncer:` block. Only `bouncer.enabled: false` turns it off (in both
+  modes). At startup the proxy logs one line such as
+  `redaction enabled, 16 patterns; injection disabled`.
+
 ## In-Memory Redaction
 
 LeanProxy-MCP intercepts all data flowing through the proxy and redacts sensitive information before it reaches LLM providers. This operates entirely in-memory—no data is persisted or logged.
@@ -83,10 +112,13 @@ injection:
 
 | Action | Description |
 |--------|-------------|
-| `block` | Rejects the request with an error |
-| `quarantine` | Saves the payload to disk for analysis, returns quarantine ID |
-| `redact` | Replaces payload content with `[CONTENT_REDACTED]` |
-| `log` | Forwards the request but logs a warning |
+| `block` | Rejects the request with a JSON-RPC error; the upstream is not called |
+| `quarantine` | Saves the payload to disk for analysis and returns a tool result with `isError: true` telling the model the call was quarantined; the upstream is not called |
+| `redact` | Replaces every string value in the tool `arguments` with `[CONTENT_REDACTED]` (params stay valid JSON; `invoke_tool` routing fields `server`/`tool` are kept) and forwards the call |
+| `log` | Forwards the request unchanged and logs it |
+
+The injection guard runs only when the config has an `injection:` block with
+`enabled: true`.
 
 ### Quarantine
 
