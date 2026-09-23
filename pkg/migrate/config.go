@@ -369,6 +369,9 @@ func (c *Config) Validate() error {
 	if err := c.ToolSearch.Validate(); err != nil {
 		return err
 	}
+	if err := c.Injection.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 

@@ -28,7 +28,12 @@ func NewFirewall(bouncerCfg *bouncer.Config, injectionCfg *injection.Config) *Fi
 // Middlewares returns the firewall stages in pipeline order, outermost
 // first:
 //
-//	client → RedactResponse( RedactRequest → InjectionCheck → next ) → client
+//	client → RedactResponse( RedactRequest → Injection( next ) ) → client
+//
+// The injection stage classifies the (already redacted) request before next
+// and the response next returns before it is redacted and written; a
+// warning or block notice it adds therefore also passes the response
+// redactor.
 //
 // The response redactor is outermost so it also covers responses produced
 // by the other stages (e.g. a quarantine notice) and by any middleware added
@@ -46,7 +51,8 @@ func (f *Firewall) Middlewares() []Middleware {
 }
 
 // Summary is the one-line startup status of the firewall, e.g.
-// "redaction enabled, 42 patterns; injection disabled".
+// "redaction enabled, 42 patterns; injection disabled" or
+// "... ; injection enabled (requests and responses)".
 func (f *Firewall) Summary() string {
 	var red *Redaction
 	var inj *InjectionGuard
@@ -59,7 +65,10 @@ func (f *Firewall) Summary() string {
 	}
 	inject := "injection disabled"
 	if inj.Enabled() {
-		inject = "injection enabled"
+		inject = "injection enabled (requests only)"
+		if inj.ScansResponses() {
+			inject = "injection enabled (requests and responses)"
+		}
 	}
 	return redaction + "; " + inject
 }
