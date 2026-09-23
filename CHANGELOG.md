@@ -23,6 +23,33 @@
     passed to it. Configs imported via `leanproxy-mcp migrate` are unaffected: they
     already write each server's env as explicit `stdio.env` entries.
 
+- **Dashboard & metrics hardening: no unauthenticated non-loopback bind, no loopback token bypass, Host/Origin validation** ([#316](https://github.com/mmornati/leanproxy-mcp/issues/316)).
+  - **What.** `pkg/dashboard`'s `requireBearerToken` let *every* request through when no token was
+    configured, even on a `0.0.0.0` bind (only a warning was logged), and let any loopback client
+    skip a configured token entirely — a reverse proxy or any other local process on the same host
+    could read server names, tool names, token counts and prompt hashes. Neither the dashboard nor
+    the metrics endpoint (`--metrics-bind`) validated the `Host` header, so a malicious web page
+    could reach `127.0.0.1:9090`/`9091` via DNS rebinding from a victim's browser. `--metrics-bind`
+    had no authentication at all.
+  - **Now.** `serve` **refuses to start** if `--dashboard-bind` or the new `--metrics-bind` is bound
+    to a non-loopback address without a token (`--dashboard-token` / new `--metrics-token`), instead
+    of warning and serving the data unauthenticated. A configured token is required from **every**
+    client, loopback included — the loopback bypass is removed. For browser use, the dashboard
+    supports exchanging the token for an `HttpOnly`, `SameSite=Strict` cookie (`Secure` over TLS) via
+    `GET /login?token=…`. Both endpoints validate the `Host` header against the bind host,
+    `localhost`, `127.0.0.1`, `[::1]` and the new `--dashboard-allowed-hosts` /
+    `--metrics-allowed-hosts`, and reject a state-changing request whose `Origin` does not match
+    (`403 Forbidden`). The dashboard now sends `Content-Security-Policy`, `X-Frame-Options: DENY`,
+    `Referrer-Policy: no-referrer` and `X-Content-Type-Options: nosniff` on every response. New
+    shared package `pkg/httpsec` holds the Host/Origin validation and security-header middleware for
+    both `pkg/dashboard` and `pkg/metrics`, which otherwise stay independent of each other.
+  - **Migration.** A `serve` invocation that binds `--dashboard-bind`/`--metrics-bind` to a
+    non-loopback address (e.g. `0.0.0.0:9090`) must now also pass a token, or `serve` exits with an
+    error naming the missing flag. A deployment that relied on the loopback bypass while a token was
+    set must now send the token (header or `/login` cookie) from loopback too. See
+    [`docs/dashboard.md`](docs/dashboard.md#authentication) and
+    [`docs/security.md`](docs/security.md#dashboard--metrics-hardening-316).
+
 ## Added in v0.11
 
 - **`search_tools`: ranked tool search across every server** ([#305](https://github.com/mmornati/leanproxy-mcp/issues/305)).

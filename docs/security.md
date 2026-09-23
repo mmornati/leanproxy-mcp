@@ -7,6 +7,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | Feature | Description |
 |---------|-------------|
 | **Least-Privilege Child Environment** | Stdio MCP servers get a minimal environment by default instead of the proxy's full environment (#311) |
+| **Dashboard & Metrics Hardening** | Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
 | **Prompt Injection Protection** | Classifies payloads against injection patterns with risk scoring and configurable actions |
 | **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model for sensitive data beyond regex |
@@ -36,6 +37,33 @@ for migration; LeanProxy logs one warning per server that sets it, and at
 start also warns when a well-known server package (e.g.
 `@modelcontextprotocol/server-github`) likely needs a variable that is
 present in the proxy's environment but not being passed to it.
+
+## Dashboard & metrics hardening (#316)
+
+`leanproxy-mcp serve`'s dashboard (`--dashboard-bind`) and metrics
+(`--metrics-bind`) endpoints:
+
+- **Refuse to start** on a non-loopback bind with no token configured
+  (`--dashboard-token` / `--metrics-token`), instead of only logging a
+  warning and serving the data unauthenticated.
+- **No loopback bypass.** Once a token is configured, it is required from
+  *every* client, including `127.0.0.1` — a reverse proxy or any other local
+  process on the same host can no longer skip it. The dashboard supports an
+  `HttpOnly`, `SameSite=Strict` cookie (`Secure` over TLS) obtained via
+  `GET /login?token=…`, so a browser session doesn't need to attach the
+  header to every request.
+- **Validate the `Host` header** against the bind host, `localhost`,
+  `127.0.0.1`, `[::1]` and any `--dashboard-allowed-hosts` /
+  `--metrics-allowed-hosts` entries, closing the DNS-rebinding path where a
+  malicious web page makes a victim's browser send requests to
+  `127.0.0.1:9090` under an attacker-controlled hostname. A state-changing
+  request whose `Origin` does not match the request's own host is rejected
+  the same way (`403 Forbidden`).
+- **Security headers** on every dashboard response: `Content-Security-Policy:
+  default-src 'self'; script-src 'self'`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`.
+
+See [Dashboard](dashboard.md#authentication) for the full flag reference.
 
 ## `serve` listener authentication
 

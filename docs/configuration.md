@@ -889,14 +889,41 @@ Configured via CLI flags on `serve`:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--dashboard-bind` | `127.0.0.1:9090` | Dashboard bind address. Set to `off` to disable |
-| `--dashboard-token` | `""` | Bearer token for non-loopback access |
+| `--dashboard-bind` | `127.0.0.1:9090` | Dashboard bind address. Set to `off` to disable. A non-loopback bind refuses to start without `--dashboard-token` |
+| `--dashboard-token` | `""` | Bearer token for dashboard access. Once set, required from **every** client, loopback included — there is no loopback bypass. A browser exchanges it for an `HttpOnly`, `SameSite=Strict` cookie via `GET /login?token=…` (also `Secure` when served over TLS) |
+| `--dashboard-allowed-hosts` | (none) | Extra `Host` header values accepted, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` |
+
+See [Dashboard hardening](#dashboard-hardening-host-and-origin-validation) below for the Host/Origin and security-header details.
 
 ### Metrics Endpoint
 
 ```bash
 leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 ```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--metrics-bind` | `""` | Metrics endpoint bind address. Set to `off` or empty to disable. A non-loopback bind refuses to start without `--metrics-token` |
+| `--metrics-token` | `""` | Bearer token for the metrics endpoint (`Authorization: Bearer <token>`); required on a non-loopback bind |
+| `--metrics-allowed-hosts` | (none) | Extra `Host` header values accepted, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` |
+
+### Dashboard hardening: Host and Origin validation
+
+Both the dashboard and the metrics endpoint (issue #316) reject any request
+whose `Host` header is not the bind host, `localhost`, `127.0.0.1` or
+`[::1]` (each with the listening port) or one of `--dashboard-allowed-hosts`
+/ `--metrics-allowed-hosts` — closing the DNS-rebinding path where a
+malicious web page tricks a browser into sending requests to
+`127.0.0.1:9090` under a hostname it controls. A state-changing request
+(anything but GET/HEAD/OPTIONS) whose `Origin` header does not match the
+request's own host is rejected the same way. Both get `403 Forbidden`.
+
+The dashboard additionally sends these headers on every response:
+
+- `Content-Security-Policy: default-src 'self'; script-src 'self'`
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: no-referrer`
+- `X-Content-Type-Options: nosniff`
 
 ### Export Cost Data
 

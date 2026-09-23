@@ -27,7 +27,26 @@ func TestRequireBearerTokenNoToken(t *testing.T) {
 	}
 }
 
-func TestRequireBearerTokenLoopbackBypass(t *testing.T) {
+// TestRequireBearerTokenLoopbackNoLongerBypasses covers issue #316: when a
+// token is configured, it is required from every client, loopback included.
+// The previous version of requireBearerToken let any loopback process (a
+// reverse proxy, or any other local user) skip the token entirely.
+func TestRequireBearerTokenLoopbackNoLongerBypasses(t *testing.T) {
+	handler := requireBearerToken("secret", slog.Default())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called for loopback without the token")
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:12345"
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 for loopback without token", w.Code)
+	}
+}
+
+func TestRequireBearerTokenLoopbackWithValidToken(t *testing.T) {
 	called := false
 	handler := requireBearerToken("secret", slog.Default())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
@@ -36,14 +55,114 @@ func TestRequireBearerTokenLoopbackBypass(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "127.0.0.1:12345"
+	req.Header.Set("Authorization", "Bearer secret")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	if !called {
-		t.Error("expected handler to be called for loopback with token configured")
+		t.Error("expected handler to be called for loopback with a valid token")
 	}
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestRequireBearerTokenCookie(t *testing.T) {
+	called := false
+	handler := requireBearerToken("secret", slog.Default())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	req.AddCookie(&http.Cookie{Name: dashboardCookieName, Value: "secret"})
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if !called {
+		t.Error("expected handler to be called with a valid cookie")
+	}
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", w.Code)
+	}
+}
+
+func TestRequireBearerTokenWrongCookie(t *testing.T) {
+	handler := requireBearerToken("secret", slog.Default())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("handler should not be called with a wrong cookie")
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	req.AddCookie(&http.Cookie{Name: dashboardCookieName, Value: "wrong"})
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+}
+
+func TestHandleLoginSetsCookie(t *testing.T) {
+	handler := handleLogin("secret")
+
+	req := httptest.NewRequest("GET", "/login?token=secret", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	resp := w.Result()
+	defer resp.Body.Close()
+	var found *http.Cookie
+	for _, c := range resp.Cookies() {
+		if c.Name == dashboardCookieName {
+			found = c
+		}
+	}
+	if found == nil {
+		t.Fatal("expected dashboard cookie to be set")
+	}
+	if found.Value != "secret" {
+		t.Errorf("cookie value = %q, want %q", found.Value, "secret")
+	}
+	if !found.HttpOnly {
+		t.Error("expected cookie to be HttpOnly")
+	}
+	if found.SameSite != http.SameSiteStrictMode {
+		t.Errorf("SameSite = %v, want Strict", found.SameSite)
+	}
+	if found.Secure {
+		t.Error("expected cookie to not be Secure over plain HTTP")
+	}
+}
+
+func TestHandleLoginWrongToken(t *testing.T) {
+	handler := handleLogin("secret")
+
+	req := httptest.NewRequest("GET", "/login?token=wrong", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", w.Code)
+	}
+	if len(w.Result().Cookies()) != 0 {
+		t.Error("expected no cookie to be set for a wrong token")
+	}
+}
+
+func TestHandleLoginNoTokenConfigured(t *testing.T) {
+	handler := handleLogin("")
+
+	req := httptest.NewRequest("GET", "/login?token=anything", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 when no token is configured", w.Code)
 	}
 }
 

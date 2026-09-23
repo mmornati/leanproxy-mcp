@@ -129,9 +129,12 @@ leanproxy-mcp serve [flags]
 | `--auth-token` | string | `""` | Token every client must send in its first line. Default: `$LEANPROXY_SERVE_TOKEN`, else `~/.config/leanproxy/serve.token` (generated on first start). At least 16 characters, no whitespace |
 | `--no-auth` | bool | false | Disable the auth handshake. Only allowed when `--listen` is a loopback address (`127.0.0.0/8`, `::1`, `localhost`); `serve` refuses to start otherwise. Logs a warning |
 | `--upstream` | string | `http://localhost:8081` | Upstream JSON-RPC server URL |
-| `--dashboard-bind` | string | `127.0.0.1:9090` | Dashboard bind address. Set to `off` or empty to disable |
-| `--dashboard-token` | string | `""` | Bearer token for dashboard access from non-loopback addresses |
-| `--metrics-bind` | string | `""` | Metrics endpoint bind address (e.g. `127.0.0.1:9091`). Set to `off` or empty to disable |
+| `--dashboard-bind` | string | `127.0.0.1:9090` | Dashboard bind address. Set to `off` or empty to disable. A non-loopback bind without `--dashboard-token` refuses to start |
+| `--dashboard-token` | string | `""` | Bearer token for dashboard access. Required on a non-loopback `--dashboard-bind`; once set, required from every client including loopback (no bypass). A browser can exchange it for an `HttpOnly` cookie via `GET /login?token=…` |
+| `--dashboard-allowed-hosts` | strings | (none) | Extra `Host` header values the dashboard accepts, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` |
+| `--metrics-bind` | string | `""` | Metrics endpoint bind address (e.g. `127.0.0.1:9091`). Set to `off` or empty to disable. A non-loopback bind without `--metrics-token` refuses to start |
+| `--metrics-token` | string | `""` | Bearer token for the metrics endpoint. Required on a non-loopback `--metrics-bind` |
+| `--metrics-allowed-hosts` | strings | (none) | Extra `Host` header values the metrics endpoint accepts, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` |
 | `--cache-strategy` | string | `off` | Cache breakpoint injection strategy: `off`, `aggressive`, `balanced` |
 | `--embed-provider` | string | `""` | Embedding provider for semantic cache: `ollama` or `openai` (empty = disabled) |
 | `--embed-pool-size` | int | `4` | Embedder worker pool size |

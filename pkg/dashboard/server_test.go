@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -235,7 +236,9 @@ func TestDashboardAuthRequiredNonLoopback(t *testing.T) {
 	}
 }
 
-func TestDashboardAuthSkippedLoopback(t *testing.T) {
+// TestDashboardAuthLoopbackRequiresTokenToo covers issue #316: a configured
+// token is required from every client, including loopback ones.
+func TestDashboardAuthLoopbackRequiresTokenToo(t *testing.T) {
 	reporter.GlobalCostTracker().Reset()
 	defer reporter.GlobalCostTracker().Reset()
 
@@ -248,8 +251,8 @@ func TestDashboardAuthSkippedLoopback(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200 for loopback", w.Code)
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 for loopback without token", w.Code)
 	}
 }
 
@@ -447,5 +450,183 @@ func TestDashboardPerServerPerTool(t *testing.T) {
 	perTool, ok := data["per_tool"].([]interface{})
 	if !ok || len(perTool) != 3 {
 		t.Fatalf("per_tool = %v, want 3 entries", data["per_tool"])
+	}
+}
+
+// The following tests cover issue #316 (dashboard hardening): Host/Origin
+// validation, refusing to start a non-loopback bind without a token,
+// security headers on every response, and the /login cookie exchange.
+
+func TestListenAndServeNonLoopbackBindRefusesWithoutToken(t *testing.T) {
+	srv, err := ListenAndServe(Config{Bind: "0.0.0.0:0"}, slog.Default())
+	if err == nil {
+		if srv != nil {
+			srv.Close()
+		}
+		t.Fatal("expected an error starting a non-loopback dashboard bind without a token")
+	}
+	if !strings.Contains(err.Error(), "token") {
+		t.Errorf("error %q does not mention the missing token", err.Error())
+	}
+}
+
+func TestListenAndServeNonLoopbackBindStartsWithToken(t *testing.T) {
+	srv, err := ListenAndServe(Config{Bind: "0.0.0.0:0", Token: "mytoken"}, slog.Default())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if srv == nil {
+		t.Fatal("expected a non-nil server")
+	}
+	defer srv.Close()
+}
+
+func TestDashboardRejectsUnknownHostHeader(t *testing.T) {
+	reporter.GlobalCostTracker().Reset()
+	defer reporter.GlobalCostTracker().Reset()
+
+	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0"}, slog.Default())
+	if err != nil {
+		t.Fatalf("ListenAndServe failed: %v", err)
+	}
+	defer srv.Close()
+	if !waitForServer(srv.Addr) {
+		t.Fatal("server did not start within timeout")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+srv.Addr+"/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "evil.example"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET / failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 for Host: evil.example", resp.StatusCode)
+	}
+}
+
+func TestDashboardAllowsConfiguredHostHeader(t *testing.T) {
+	reporter.GlobalCostTracker().Reset()
+	defer reporter.GlobalCostTracker().Reset()
+
+	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0"}, slog.Default())
+	if err != nil {
+		t.Fatalf("ListenAndServe failed: %v", err)
+	}
+	defer srv.Close()
+	if !waitForServer(srv.Addr) {
+		t.Fatal("server did not start within timeout")
+	}
+
+	resp, err := http.Get("http://" + srv.Addr + "/")
+	if err != nil {
+		t.Fatalf("GET / failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200 for the server's own host:port", resp.StatusCode)
+	}
+}
+
+func TestDashboardSecurityHeaders(t *testing.T) {
+	reporter.GlobalCostTracker().Reset()
+	defer reporter.GlobalCostTracker().Reset()
+
+	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0"}, slog.Default())
+	if err != nil {
+		t.Fatalf("ListenAndServe failed: %v", err)
+	}
+	defer srv.Close()
+	if !waitForServer(srv.Addr) {
+		t.Fatal("server did not start within timeout")
+	}
+
+	for _, path := range []string{"/", "/api/dashboard", "/api/dashboard/servers"} {
+		resp, err := http.Get("http://" + srv.Addr + path)
+		if err != nil {
+			t.Fatalf("GET %s failed: %v", path, err)
+		}
+		resp.Body.Close()
+
+		checks := map[string]string{
+			"Content-Security-Policy": "default-src 'self'; script-src 'self'",
+			"X-Frame-Options":         "DENY",
+			"Referrer-Policy":         "no-referrer",
+			"X-Content-Type-Options":  "nosniff",
+		}
+		for header, want := range checks {
+			if got := resp.Header.Get(header); got != want {
+				t.Errorf("%s: %s = %q, want %q", path, header, got, want)
+			}
+		}
+	}
+}
+
+func TestDashboardLoginCookieFlow(t *testing.T) {
+	reporter.GlobalCostTracker().Reset()
+	defer reporter.GlobalCostTracker().Reset()
+
+	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0", Token: "mytoken"}, slog.Default())
+	if err != nil {
+		t.Fatalf("ListenAndServe failed: %v", err)
+	}
+	defer srv.Close()
+	if !waitForServer(srv.Addr) {
+		t.Fatal("server did not start within timeout")
+	}
+
+	base := "http://" + srv.Addr
+
+	// No credentials at all: even a loopback client must now be rejected
+	// once a token is configured (issue #316 removes the loopback bypass).
+	resp, err := http.Get(base + "/")
+	if err != nil {
+		t.Fatalf("GET / failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status without credentials = %d, want 401", resp.StatusCode)
+	}
+
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Jar: jar}
+
+	loginResp, err := client.Get(base + "/login?token=mytoken")
+	if err != nil {
+		t.Fatalf("GET /login failed: %v", err)
+	}
+	loginResp.Body.Close()
+	if loginResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /login status = %d, want 200", loginResp.StatusCode)
+	}
+
+	// The cookie the client jar now holds should authenticate subsequent
+	// requests without an Authorization header.
+	resp2, err := client.Get(base + "/")
+	if err != nil {
+		t.Fatalf("GET / with cookie failed: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("status with cookie = %d, want 200", resp2.StatusCode)
+	}
+
+	// A wrong token at /login gets 401 and no cookie is set.
+	badResp, err := http.Get(base + "/login?token=wrongtoken")
+	if err != nil {
+		t.Fatalf("GET /login (wrong token) failed: %v", err)
+	}
+	badResp.Body.Close()
+	if badResp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status for wrong login token = %d, want 401", badResp.StatusCode)
 	}
 }

@@ -226,23 +226,75 @@ servers: []
 	}
 	defer stopServe(t, pidFile, logFile)
 
-	// Wait for the dashboard to be up.
-	waitForHTTP(t, fmt.Sprintf("http://127.0.0.1:%d/api/dashboard", port), 10*time.Second)
+	// Wait for the dashboard to be up (using the token: issue #316 removed
+	// the loopback bypass, so an unauthenticated request no longer works
+	// even from 127.0.0.1 once a token is configured).
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/api/dashboard", port), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer supersecret")
+	waitForAuthedHTTP(t, req, 10*time.Second)
 
-	// Loopback request without token: should succeed (no auth required from loopback).
+	// Loopback request without a token: issue #316 requires the token from
+	// every client once one is configured, loopback included.
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/", port))
 	if err != nil {
 		t.Fatalf("request to loopback dashboard failed: %v", err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("expected 200 from loopback without token, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401 from loopback without token, got %d", resp.StatusCode)
 	}
 
-	// Note: non-loopback auth is exercised in pkg/dashboard/auth_test.go
-	// (TestIsLoopbackRemoteAddr + TestRequireBearerToken). Real E2E requires
-	// a second host or network namespace; we confirm only the loopback path
-	// here, and that the --dashboard-token flag is accepted.
+	// Loopback request with the token in the Authorization header succeeds.
+	req2, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
+	req2.Header.Set("Authorization", "Bearer supersecret")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("authenticated request to loopback dashboard failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 from loopback with token, got %d", resp2.StatusCode)
+	}
+
+	// A forged Host header is rejected even with a valid token.
+	req3, _ := http.NewRequest(http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
+	req3.Header.Set("Authorization", "Bearer supersecret")
+	req3.Host = "evil.example"
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatalf("request with forged Host header failed: %v", err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 403 for Host: evil.example, got %d", resp3.StatusCode)
+	}
+}
+
+// waitForAuthedHTTP polls req (cloned per attempt) until it returns 2xx or
+// timeout elapses. Like waitForHTTP, but for requests that need headers
+// (e.g. Authorization) that http.Get cannot set.
+func waitForAuthedHTTP(t *testing.T, req *http.Request, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		attempt := req.Clone(req.Context())
+		resp, err := http.DefaultClient.Do(attempt)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode < 300 {
+				return
+			}
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
+		} else {
+			lastErr = err
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s after %s: %v", req.URL, timeout, lastErr)
 }
 
 func TestStory_18_1_Dashboard_DisabledByFlag(t *testing.T) {
@@ -313,6 +365,119 @@ servers: []
 	ct := resp.Header.Get("Content-Type")
 	if !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("drill-down endpoint should serve text/html, got %q", ct)
+	}
+}
+
+// Story 20.12 (issue #316): dashboard & metrics hardening. A non-loopback
+// bind without a token refuses to start the whole `serve` process, rather
+// than just skipping the endpoint with a warning.
+
+func TestStory_20_12_Dashboard_NonLoopbackBindRefusesWithoutToken(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	port := freePort(t)
+	testDir := t.TempDir()
+	configPath := filepath.Join(testDir, "leanproxy_servers.yaml")
+	writeFile(t, configPath, `version: "1.0"
+servers: []
+`)
+
+	stdout, stderr, exitCode := runBinaryWithTimeout([]string{
+		"serve",
+		"--config", configPath,
+		"--listen", "127.0.0.1:0",
+		"--metrics-bind", "off",
+		"--dashboard-bind", fmt.Sprintf("0.0.0.0:%d", port),
+	}, 10*time.Second)
+
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit code, got 0. stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout+stderr, "without a token") {
+		t.Errorf("expected a message about the missing token, got stdout=%s stderr=%s", stdout, stderr)
+	}
+}
+
+func TestStory_20_12_Metrics_NonLoopbackBindRefusesWithoutToken(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	port := freePort(t)
+	testDir := t.TempDir()
+	configPath := filepath.Join(testDir, "leanproxy_servers.yaml")
+	writeFile(t, configPath, `version: "1.0"
+servers: []
+`)
+
+	stdout, stderr, exitCode := runBinaryWithTimeout([]string{
+		"serve",
+		"--config", configPath,
+		"--listen", "127.0.0.1:0",
+		"--dashboard-bind", "off",
+		"--metrics-bind", fmt.Sprintf("0.0.0.0:%d", port),
+	}, 10*time.Second)
+
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit code, got 0. stdout=%s stderr=%s", stdout, stderr)
+	}
+	if !strings.Contains(stdout+stderr, "without a token") {
+		t.Errorf("expected a message about the missing token, got stdout=%s stderr=%s", stdout, stderr)
+	}
+}
+
+func TestStory_20_12_Metrics_TokenRequired(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	port := freePort(t)
+	testDir := t.TempDir()
+	configPath := filepath.Join(testDir, "leanproxy_servers.yaml")
+	writeFile(t, configPath, `version: "1.0"
+servers: []
+`)
+
+	pidFile := filepath.Join(testDir, "leanproxy.pid")
+	logFile := filepath.Join(testDir, "leanproxy.log")
+	if err := startServe(t, []string{
+		"--config", configPath,
+		"--listen", "127.0.0.1:0",
+		"--metrics-bind", fmt.Sprintf("127.0.0.1:%d", port),
+		"--metrics-token", "metricssecret",
+		"--dashboard-bind", "off",
+		"--upstream", "http://127.0.0.1:1",
+	}, pidFile, logFile); err != nil {
+		t.Fatalf("failed to start serve: %v", err)
+	}
+	defer stopServe(t, pidFile, logFile)
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/metrics", port)
+
+	req, _ := http.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Authorization", "Bearer metricssecret")
+	waitForAuthedHTTP(t, req, 10*time.Second)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatalf("GET /metrics failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status without token = %d, want 401", resp.StatusCode)
+	}
+
+	req2, _ := http.NewRequest(http.MethodGet, url, nil)
+	req2.Header.Set("Authorization", "Bearer metricssecret")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("GET /metrics with token failed: %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("status with token = %d, want 200", resp2.StatusCode)
 	}
 }
 
