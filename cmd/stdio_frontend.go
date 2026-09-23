@@ -49,6 +49,26 @@ type jsonRPCNotification struct {
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
+// jsonRPCServerRequest is a server-to-client request (issue #308).
+type jsonRPCServerRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      string          `json:"id"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+// marshalServerRequest encodes a server-to-client request.
+func marshalServerRequest(id, method string, params json.RawMessage) ([]byte, error) {
+	return json.Marshal(jsonRPCServerRequest{JSONRPC: mcp.JSONRPCVersion, ID: id, Method: method, Params: params})
+}
+
+// isClientResponse reports whether a decoded message is the client's
+// answer to a server-to-client request: an id, no method, and a result or
+// an error.
+func isClientResponse(method string, id, result json.RawMessage, rpcErr *mcp.Error) bool {
+	return method == "" && len(id) > 0 && (len(result) > 0 || rpcErr != nil)
+}
+
 // stdioFrontendOptions configures serveStdio. Zero values mean defaults.
 type stdioFrontendOptions struct {
 	// MaxConcurrent caps the requests handled in parallel
@@ -71,6 +91,10 @@ type stdioEnvelope struct {
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 	ID      json.RawMessage `json:"id"`
+	// Result and Error are set on the client's answers to server-to-client
+	// requests (issue #308).
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *mcp.Error      `json:"error,omitempty"`
 }
 
 // inflightRequest is one request being handled.
@@ -116,6 +140,11 @@ type stdioFrontend struct {
 
 	mu       sync.Mutex
 	inflight map[string]*inflightRequest
+
+	// session is the client's MCP session (nil when the handler keeps
+	// none); it receives the client's answers to server-to-client
+	// requests.
+	session *mcp.ClientSession
 }
 
 // serveStdio reads newline-delimited JSON-RPC messages from r and writes
@@ -154,9 +183,15 @@ func serveStdio(ctx context.Context, r io.Reader, w io.Writer, handler requestHa
 	// One MCP session for the lifetime of this client: every request
 	// carries it (negotiated protocol version), and the handler writes its
 	// notifications through the same serialized writer as the responses.
+	closeSession := func() {}
 	if opener, ok := handler.(sessionOpener); ok {
-		session, closeSession := opener.OpenSession(f.writeNotification)
+		var session *mcp.ClientSession
+		session, closeSession = opener.OpenSession(f.writeNotification)
 		defer closeSession()
+		// stdio is bidirectional: the relay may send this client
+		// server-to-client requests (sampling, elicitation, roots).
+		session.EnableRequests(f.writeRequest)
+		f.session = session
 		ctx = mcp.WithClientSession(ctx, session)
 	}
 
@@ -173,6 +208,10 @@ func serveStdio(ctx context.Context, r io.Reader, w io.Writer, handler requestHa
 
 	shutdownReq, readErr := f.readLoop(reqCtx, bufio.NewReader(r))
 	close(f.queue)
+	// Nothing more is read from the client: a server-to-client request
+	// still waiting for its answer never gets one, so fail it now rather
+	// than make the call that triggered it wait for the grace period.
+	closeSession()
 
 	f.drain(cancelAll)
 	select {
@@ -265,6 +304,15 @@ func (f *stdioFrontend) handleLine(ctx context.Context, line []byte) *mcp.Reques
 			Error:   mcp.NewError(mcp.ErrCodeParseError, "invalid JSON-RPC request"),
 			ID:      nil,
 		})
+		return nil
+	}
+
+	if isClientResponse(env.Method, env.ID, env.Result, env.Error) {
+		// Handled inline, never queued: the request it answers may be
+		// what the busy concurrency slots are waiting for.
+		if !f.session.DeliverResponse(env.ID, env.Result, env.Error) {
+			f.logger.Debug("dropping a response to an unknown or canceled server-to-client request")
+		}
 		return nil
 	}
 
@@ -485,6 +533,19 @@ func (f *stdioFrontend) writeNotification(method string, params json.RawMessage)
 	if err := f.w.Flush(); err != nil {
 		f.logger.Debug("failed to flush notification", "method", method, "error", err)
 	}
+}
+
+// writeRequest writes one server-to-client request, serialized with the
+// responses and notifications.
+func (f *stdioFrontend) writeRequest(id, method string, params json.RawMessage) error {
+	data, err := marshalServerRequest(id, method, params)
+	if err != nil {
+		return err
+	}
+	f.writeMu.Lock()
+	defer f.writeMu.Unlock()
+	writeJSONLine(f.w, data)
+	return f.w.Flush()
 }
 
 // requestIDKey normalizes a decoded JSON-RPC id (a JSON number decodes as

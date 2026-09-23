@@ -305,17 +305,25 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 	// One MCP client session per connection (#307): it carries the
 	// protocol version this client negotiated, and receives the
 	// list_changed notifications through the connection's writer.
+	var session *mcp.ClientSession
 	if h := serveMCPHandler.Load(); h != nil {
-		session, closeSession := h.OpenSession(func(method string, params json.RawMessage) {
+		var closeSession func()
+		session, closeSession = h.OpenSession(func(method string, params json.RawMessage) {
 			writeNotificationAsync(writer, writerMu, method, params)
 		})
 		defer closeSession()
+		// The connection is bidirectional: the relay may send this client
+		// server-to-client requests (sampling, elicitation, roots; #308).
+		session.EnableRequests(func(id, method string, params json.RawMessage) error {
+			return writeServerRequestAsync(writer, writerMu, id, method, params)
+		})
 		connCtx = mcp.WithClientSession(connCtx, session)
 	}
 
 	sem := make(chan struct{}, opts.MaxConcurrent)
 	var active atomic.Int64
 	var wg sync.WaitGroup
+	inflight := &serveInflight{entries: make(map[string]*inflightRequest)}
 
 	dispatch := func(line []byte) bool {
 		select {
@@ -337,7 +345,7 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 			if isBatchRequest(line) {
 				handleBatchRequestAsync(connCtx, line, writer, writerMu, r, gt, p)
 			} else {
-				handleSingleRequestAsync(connCtx, line, writer, writerMu, r, gt, p)
+				handleCancelableRequest(connCtx, line, inflight, writer, writerMu, r, gt, p)
 			}
 		}()
 		return true
@@ -365,6 +373,13 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
+		// The client's answers to server-to-client requests and its
+		// cancel notifications are handled inline, never behind the
+		// concurrency cap: the requests holding every slot may be the
+		// ones waiting for them (#308).
+		if handleControlLine(line, session, inflight) {
+			continue
+		}
 		if !dispatch(line) {
 			break
 		}
@@ -374,6 +389,109 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 	// then wait for the handlers to return.
 	connCancel()
 	wg.Wait()
+}
+
+// serveInflight is the per-connection registry of requests a client may
+// cancel (with the MCP cancel notification), keyed by requestIDKey.
+type serveInflight struct {
+	mu      sync.Mutex
+	entries map[string]*inflightRequest
+}
+
+// handleControlLine handles a line that must not wait for a concurrency
+// slot: the client's answer to a server-to-client request, or a cancel
+// notification. It reports whether line was one.
+func handleControlLine(line []byte, session *mcp.ClientSession, inflight *serveInflight) bool {
+	if isBatchRequest(line) {
+		return false
+	}
+	// Cheap pre-filter so an ordinary request (possibly megabytes of
+	// params) is not decoded twice: a control line is either a response
+	// (no "method" member) or a cancel notification.
+	if bytes.Contains(line, []byte(`"method"`)) && !bytes.Contains(line, []byte(methodCancelled)) {
+		return false
+	}
+	var env stdioEnvelope
+	if json.Unmarshal(line, &env) != nil {
+		return false
+	}
+	if isClientResponse(env.Method, env.ID, env.Result, env.Error) {
+		if !session.DeliverResponse(env.ID, env.Result, env.Error) {
+			slog.Debug("dropping a response to an unknown or canceled server-to-client request")
+		}
+		return true
+	}
+	if env.Method != methodCancelled || len(env.ID) != 0 {
+		return false
+	}
+	var p struct {
+		RequestID interface{} `json:"requestId"`
+	}
+	if len(env.Params) == 0 || json.Unmarshal(env.Params, &p) != nil {
+		return true
+	}
+	key, ok := requestIDKey(p.RequestID)
+	if !ok {
+		return true
+	}
+	inflight.mu.Lock()
+	entry := inflight.entries[key]
+	inflight.mu.Unlock()
+	if entry != nil {
+		slog.Info("canceling in-flight serve request", "id", p.RequestID)
+		entry.canceledByClient.Store(true)
+		entry.cancel()
+	}
+	return true
+}
+
+// handleCancelableRequest is handleSingleRequestAsync for a request the
+// client may cancel: it runs under its own context, registered by id, and
+// its response is dropped when the client canceled it (per the MCP spec,
+// a canceled request gets no answer).
+func handleCancelableRequest(ctx context.Context, line []byte, inflight *serveInflight, writer *bufio.Writer, writerMu *sync.Mutex, r Router, gt gateway.GatewayTools, p Pool) {
+	req, err := proxy.ParseJSONRPCRequest(line)
+	if err != nil {
+		writeErrorAsync(writer, writerMu, nil, lperrors.ErrCodeParseError, "Parse error")
+		return
+	}
+	rctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	entry := &inflightRequest{cancel: cancel}
+	key, keyed := requestIDKey(req.ID)
+	if keyed {
+		inflight.mu.Lock()
+		inflight.entries[key] = entry
+		inflight.mu.Unlock()
+		defer func() {
+			inflight.mu.Lock()
+			if inflight.entries[key] == entry {
+				delete(inflight.entries, key)
+			}
+			inflight.mu.Unlock()
+		}()
+	}
+	resp := serveRequest(rctx, req, r, gt, p)
+	if entry.canceledByClient.Load() {
+		slog.Debug("dropping response to a serve request the client canceled", "id", req.ID)
+		return
+	}
+	if resp != nil {
+		writeResponseAsync(writer, writerMu, resp)
+	}
+}
+
+// writeServerRequestAsync writes one server-to-client request on a serve
+// connection, serialized with the responses.
+func writeServerRequestAsync(writer *bufio.Writer, mu *sync.Mutex, id, method string, params json.RawMessage) error {
+	data, err := marshalServerRequest(id, method, params)
+	if err != nil {
+		return err
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	writeJSONLine(writer, data)
+	return writer.Flush()
 }
 
 // writeNotificationAsync writes one server-to-client notification on a

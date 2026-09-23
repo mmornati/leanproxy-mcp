@@ -84,6 +84,7 @@ servers:
 type protoMsg struct {
 	ID     json.RawMessage `json:"id"`
 	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
 	Result json.RawMessage `json:"result"`
 	Error  *struct {
 		Code    int    `json:"code"`
@@ -93,13 +94,54 @@ type protoMsg struct {
 }
 
 // protoClient speaks newline-delimited JSON-RPC and sets notifications
-// aside while it waits for a response.
+// aside while it waits for a response. Server-to-client requests (#308)
+// are recorded and answered by onRequest (or left unanswered when it is
+// nil or returns nil).
 type protoClient struct {
 	t      *testing.T
 	send   func([]byte) error
 	next   func(time.Duration) (string, bool)
 	nextID int
 	notes  []string
+	// noteMsgs holds every notification received, in order.
+	noteMsgs []protoMsg
+	// requests holds every server-to-client request received, in order.
+	requests []protoMsg
+	// onRequest returns the answer to a server-to-client request: a
+	// map with "result" or "error".
+	onRequest func(m protoMsg) map[string]interface{}
+}
+
+// handleIncoming records a message that is not the awaited response. It
+// reports whether it was a notification or a server-to-client request.
+func (c *protoClient) handleIncoming(m protoMsg) bool {
+	c.t.Helper()
+	if m.Method == "" {
+		return false
+	}
+	if len(m.ID) == 0 {
+		c.notes = append(c.notes, m.Method)
+		c.noteMsgs = append(c.noteMsgs, m)
+		return true
+	}
+	c.requests = append(c.requests, m)
+	if c.onRequest == nil {
+		return true
+	}
+	answer := c.onRequest(m)
+	if answer == nil {
+		return true
+	}
+	answer["jsonrpc"] = "2.0"
+	answer["id"] = m.ID
+	data, err := json.Marshal(answer)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	if err := c.send(append(data, '\n')); err != nil {
+		c.t.Fatalf("answer %s: %v", m.Method, err)
+	}
+	return true
 }
 
 func (c *protoClient) call(method string, params interface{}) protoMsg {
@@ -127,8 +169,7 @@ func (c *protoClient) call(method string, params interface{}) protoMsg {
 			c.t.Fatalf("invalid line %q: %v", line, err)
 		}
 		m.raw = line
-		if m.Method != "" && len(m.ID) == 0 {
-			c.notes = append(c.notes, m.Method)
+		if c.handleIncoming(m) {
 			continue
 		}
 		if string(m.ID) != fmt.Sprint(id) {
@@ -163,8 +204,9 @@ func (c *protoClient) waitNote(method string, timeout time.Duration) bool {
 			return false
 		}
 		var m protoMsg
-		if json.Unmarshal([]byte(line), &m) == nil && m.Method != "" {
-			c.notes = append(c.notes, m.Method)
+		if json.Unmarshal([]byte(line), &m) == nil {
+			m.raw = line
+			c.handleIncoming(m)
 		}
 	}
 }
@@ -255,7 +297,8 @@ func TestProtocolUpgrade_Stdio(t *testing.T) {
 			t.Fatalf("negotiated %s", res["protocolVersion"])
 		}
 		caps := string(res["capabilities"])
-		if !strings.Contains(caps, `"resources":{"listChanged":true}`) || !strings.Contains(caps, `"prompts":{"listChanged":true}`) {
+		// protomcp supports resources/subscribe, relayed since #308.
+		if !strings.Contains(caps, `"resources":{"subscribe":true,"listChanged":true}`) || !strings.Contains(caps, `"prompts":{"listChanged":true}`) {
 			t.Fatalf("capabilities = %s", caps)
 		}
 
@@ -420,7 +463,7 @@ func TestProtocolUpgrade_Serve(t *testing.T) {
 	}
 
 	modern, legacy := dial(), dial()
-	if res := protoInitialize(t, modern, "2025-06-18"); string(res["protocolVersion"]) != `"2025-06-18"` || !strings.Contains(string(res["capabilities"]), `"resources":{"listChanged":true}`) {
+	if res := protoInitialize(t, modern, "2025-06-18"); string(res["protocolVersion"]) != `"2025-06-18"` || !strings.Contains(string(res["capabilities"]), `"resources":{"subscribe":true,"listChanged":true}`) {
 		t.Fatalf("serve initialize = %v", res)
 	}
 	if res := protoInitialize(t, legacy, "2024-11-05"); string(res["protocolVersion"]) != `"2024-11-05"` {

@@ -977,12 +977,59 @@ namespaced by server:
 - Everything goes through response redaction: resource contents and prompt
   messages can carry secrets like any tool result. Resource reads and prompts
   are never cached.
-- Not yet: `subscribe` is not advertised, because upstream
-  `notifications/resources/updated` are not relayed yet (story 20.4, #308).
+- `resources.subscribe: true` is advertised when an upstream supports it.
+  `resources/subscribe` is routed to the owning server and the client's
+  subscription recorded; the server's `notifications/resources/updated` then
+  reach every client subscribed to that resource, with the URI namespaced (or
+  the raw URI, when the client subscribed with one). Clients share one
+  upstream subscription: `resources/unsubscribe` (or a disconnect) only
+  reaches the server when no other client still subscribes.
 
 In `serve`, the same methods (`initialize`, `notifications/initialized`,
 `resources/*`, `prompts/*`) are answered by the same aggregation, per
 connection, before any routing.
+
+### Server-to-client requests, progress and cancellation
+
+Upstream servers can call back into the client during a call (#308). Both
+front ends relay this traffic; `serve` does it per TCP connection.
+
+- **Requests** — `elicitation/create`, `roots/list` and (opt-in)
+  `sampling/createMessage` are forwarded to the client under a proxy id
+  (`"lp-<n>"`); the client answers on the same stream, and the answer (or
+  its JSON-RPC error) goes back to the server under the server's own id.
+  Only a client that declared the capability in `initialize` is asked;
+  otherwise the server gets `-32601` immediately. `ping` is answered by the
+  proxy. See [Server-to-Client Requests](configuration.md#server-to-client-requests-allow_sampling-roots)
+  for the per-server policy (`allow_sampling`, `roots`) and how the client
+  is chosen when several are connected.
+
+  ```json
+  → {"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"invoke_tool","arguments":{"server":"deploy","tool":"release"}}}
+  ← {"jsonrpc":"2.0","id":"lp-1","method":"elicitation/create","params":{"message":"[deploy] Which environment?","requestedSchema":{...}}}
+  → {"jsonrpc":"2.0","id":"lp-1","result":{"action":"accept","content":{"env":"staging"}}}
+  ← {"jsonrpc":"2.0","id":7,"result":{"content":[...]}}
+  ```
+
+- **Progress** — when a `tools/call` (including `invoke_tool`),
+  `resources/read` or `prompts/get` carries `params._meta.progressToken`, the
+  upstream call carries a proxy token instead (`"lp-progress-<n>"`, unique
+  across servers and clients), and the server's `notifications/progress`
+  for it reach the calling client only, with its own token (and redacted),
+  in order and before the call's response. A token the proxy did not hand
+  out, or one whose call already ended, is dropped. Relayed notifications
+  are written by a per-client queue (256 deep, overflow dropped), so a
+  client that stops reading never stalls an upstream shared with others.
+- **Cancellation** — a client's `notifications/cancelled` for one of its
+  requests cancels it locally and sends `notifications/cancelled` to the
+  upstream with the upstream's request id (stdio, HTTP and SSE); the
+  canceled request gets no response. When an upstream cancels a request it
+  sent to the client, the client gets `notifications/cancelled` with the
+  proxy id. Either way the pending entry is freed at once.
+- **Resource updates** — see `resources.subscribe` above.
+- `notifications/elicitation/complete` (URL-mode elicitation) reaches the
+  client that got the elicitation. Other upstream notifications (for
+  example `notifications/message` logging) are not relayed.
 
 ---
 

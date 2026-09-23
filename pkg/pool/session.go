@@ -288,7 +288,7 @@ func (s *StdioServerV2) runHandshake(ctx context.Context, conn *stdioConn, a *ha
 }
 
 func (s *StdioServerV2) handshake(ctx context.Context, conn *stdioConn, generation uint64) (*InitializeResult, error) {
-	params, err := json.Marshal(mcpInitializeRequest().Params)
+	params, err := json.Marshal(mcpInitializeRequest(s.config.ClientCapabilities).Params)
 	if err != nil {
 		return nil, err
 	}

@@ -402,7 +402,11 @@ func runServe(cmd *cobra.Command, args []string) {
 				handler.SetTimeout(srv.Name, srv.TimeoutValue)
 			}
 		}
+		handler.ConfigureRelay(loadedCfg.Servers)
 	}
+	// Relayed server-to-client traffic (#308) goes through the same
+	// firewall as the requests.
+	handler.SetRelayFirewall(serveFirewall)
 
 	// Start serving immediately (#297): routing starts from the persistent
 	// tool cache, and every server's tools/list is refreshed in the
@@ -417,6 +421,7 @@ func runServe(cmd *cobra.Command, args []string) {
 	refreshCtx, stopRefresh := context.WithCancel(ctx)
 	defer stopRefresh()
 	handler.StartBackgroundRefresh(refreshCtx)
+	handler.AttachUpstreamRelay(refreshCtx)
 	serveMCPHandler.Store(handler)
 
 	slog.Info("starting server", "listen", serveFlags.listenAddr, "upstream", serveFlags.upstreamURL)
@@ -662,7 +667,15 @@ func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Rout
 		return errorResponse(req.ID, errors.ErrCodeInternalError, mcp.RedactionFailedMessage)
 	}
 
-	resp, err := p.SendRequest(ctx, server.ID, forwardableRequestFrom(req, routing, server.ID), timeout)
+	fwd := forwardableRequestFrom(req, routing, server.ID)
+	if h := serveMCPHandler.Load(); h != nil {
+		// Forward the client's progress token (remapped, #308) and route
+		// the server's own requests during the call to this connection.
+		var endCall func()
+		fwd.Params, endCall = h.BeginUpstreamCall(ctx, server.ID, routing, fwd.Params)
+		defer endCall()
+	}
+	resp, err := p.SendRequest(ctx, server.ID, fwd, timeout)
 	if err != nil {
 		slog.Warn("upstream send failed", "server", server.ID, "error", serveFirewall.Redaction.RedactText(err.Error()))
 		// A structured upstream JSON-RPC error (tool error, timeout signaled
@@ -1019,7 +1032,7 @@ func isToolCallMethod(method string) bool {
 // serveMCPHandler rather than by routing it to a single backend.
 func isMCPProtocolMethod(method string) bool {
 	switch method {
-	case mcp.MethodInitialize, mcp.MethodInitialized,
+	case mcp.MethodInitialize, mcp.MethodInitialized, mcp.NotificationRootsListChanged,
 		mcp.MethodResourcesList, mcp.MethodResourcesTemplatesList, mcp.MethodResourcesRead,
 		mcp.MethodResourcesSubscribe, mcp.MethodResourcesUnsubscribe,
 		mcp.MethodPromptsList, mcp.MethodPromptsGet:

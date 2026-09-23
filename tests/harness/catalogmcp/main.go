@@ -11,7 +11,10 @@
 // The hidden tool "ask_client" (not listed) sends a roots/list request to
 // the client and answers with {"clientReplied": bool} once the reply arrives
 // or after 5 s, so the harness can check server-to-client requests never
-// hang the proxy.
+// hang the proxy. The hidden tool "ask_elicitation" does the same with an
+// elicitation/create request and answers with the client's reply; the hidden
+// tool "progress" sends three notifications/progress for the call's
+// _meta.progressToken, then answers (issue #308).
 //
 // Flags:
 //
@@ -47,6 +50,19 @@ type message struct {
 	ID     json.RawMessage `json:"id,omitempty"`
 	Method string          `json:"method,omitempty"`
 	Params json.RawMessage `json:"params,omitempty"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  json.RawMessage `json:"error,omitempty"`
+}
+
+// Reply is the result, or the error, of a client's answer.
+func (m message) Reply() json.RawMessage {
+	if len(m.Result) > 0 {
+		return m.Result
+	}
+	if len(m.Error) > 0 {
+		return m.Error
+	}
+	return json.RawMessage(`null`)
 }
 
 type server struct {
@@ -63,7 +79,7 @@ type server struct {
 
 	nextClientReq atomic.Int64
 	mu            sync.Mutex
-	waiting       map[string]chan struct{}
+	waiting       map[string]chan json.RawMessage
 }
 
 func main() {
@@ -105,7 +121,7 @@ func main() {
 		secrets:       *secrets,
 		resources:     *resources,
 		out:           bufio.NewWriterSize(os.Stdout, 64*1024),
-		waiting:       make(map[string]chan struct{}),
+		waiting:       make(map[string]chan json.RawMessage),
 	}
 	for _, t := range srv.Tools {
 		s.tools[t.Name] = true
@@ -136,14 +152,21 @@ func (s *server) dispatch(msg message, concurrent bool) {
 		delete(s.waiting, string(msg.ID))
 		s.mu.Unlock()
 		if ok {
-			close(ch)
+			ch <- msg.Reply()
 		}
 	case !hasID:
 		// Notification (notifications/initialized, cancellations): ignore.
 	case toolName(msg) == "ask_client":
 		// Always asynchronous: its answer depends on a message this loop
 		// has yet to read.
-		go s.askClient(msg)
+		go s.askClient(msg, "roots/list", nil)
+	case toolName(msg) == "ask_elicitation":
+		go s.askClient(msg, "elicitation/create", map[string]interface{}{
+			"message":         "Which environment?",
+			"requestedSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"env": map[string]string{"type": "string"}}},
+		})
+	case toolName(msg) == "progress":
+		go s.progress(msg)
 	case concurrent:
 		go s.handle(msg)
 	default:
@@ -268,23 +291,47 @@ func filler(n int) []byte {
 	return b
 }
 
-func (s *server) askClient(msg message) {
+// askClient sends a server-to-client request and answers the tool call
+// with the client's reply once it arrives (or after 5 s).
+func (s *server) askClient(msg message, method string, params interface{}) {
 	id := fmt.Sprintf("%q", fmt.Sprintf("catalogmcp-%d", s.nextClientReq.Add(1)))
-	ch := make(chan struct{})
+	ch := make(chan json.RawMessage, 1)
 	s.mu.Lock()
 	s.waiting[id] = ch
 	s.mu.Unlock()
-	s.write(map[string]interface{}{"jsonrpc": "2.0", "id": json.RawMessage(id), "method": "roots/list"})
-	replied := false
+	req := map[string]interface{}{"jsonrpc": "2.0", "id": json.RawMessage(id), "method": method}
+	if params != nil {
+		req["params"] = params
+	}
+	s.write(req)
+	var reply json.RawMessage
 	select {
-	case <-ch:
-		replied = true
+	case reply = <-ch:
 	case <-time.After(5 * time.Second):
 	}
 	s.reply(msg.ID, map[string]interface{}{
-		"content":       []map[string]string{{"type": "text", "text": fmt.Sprintf("client replied: %v", replied)}},
-		"clientReplied": replied,
+		"content":       []map[string]string{{"type": "text", "text": fmt.Sprintf("client replied: %v %s", reply != nil, reply)}},
+		"clientReplied": reply != nil,
 	})
+}
+
+// progress reports three steps for the call's progress token, then answers.
+func (s *server) progress(msg message) {
+	var p struct {
+		Meta struct {
+			ProgressToken json.RawMessage `json:"progressToken"`
+		} `json:"_meta"`
+	}
+	_ = json.Unmarshal(msg.Params, &p)
+	for i := 1; i <= 3; i++ {
+		time.Sleep(50 * time.Millisecond)
+		if len(p.Meta.ProgressToken) > 0 {
+			s.write(map[string]interface{}{"jsonrpc": "2.0", "method": "notifications/progress", "params": map[string]interface{}{
+				"progressToken": p.Meta.ProgressToken, "progress": i, "total": 3,
+			}})
+		}
+	}
+	s.reply(msg.ID, map[string]interface{}{"content": []map[string]string{{"type": "text", "text": "progress done"}}})
 }
 
 func (s *server) reply(id json.RawMessage, result interface{}) {

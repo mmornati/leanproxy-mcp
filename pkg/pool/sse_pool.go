@@ -33,6 +33,10 @@ type SSEServer struct {
 	generation atomic.Uint64
 	// events receives this server's lifecycle events (set by the pool).
 	events *eventHub
+	// messages receives the notifications the server initiates (set by the
+	// pool; issue #308). mcp-go's legacy SSE transport cannot receive
+	// server-to-client requests, so none are declared to the server.
+	messages *messageHub
 }
 
 func NewSSEServer(name string, config *migrate.ServerConfig, logger *slog.Logger) *SSEServer {
@@ -147,11 +151,8 @@ func (s *SSEServer) ensureConnected(ctx context.Context) (*client.Client, error)
 		s.setState(StateError)
 		return nil, err
 	}
-	c.OnNotification(func(n mcp.JSONRPCNotification) {
-		if kind, ok := remoteNotificationEvent(n.Method); ok {
-			s.events.emit(ServerEvent{Server: s.name, Kind: kind, Generation: s.generation.Load()})
-		}
-	})
+	inbound := &inboundRequests{}
+	c.OnNotification(remoteNotificationHandler(s.name, s.events, s.generation.Load, s.messages, func() *inboundRequests { return inbound }))
 
 	s.logger.Debug("sse_pool: starting SSE client", "server", s.name)
 	// Start's context must outlive this call: mcp-go's SSE transport binds its
@@ -166,7 +167,7 @@ func (s *SSEServer) ensureConnected(ctx context.Context) (*client.Client, error)
 	s.logger.Debug("sse_pool: initializing SSE client", "server", s.name)
 	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	initRes, err := c.Initialize(initCtx, mcpInitializeRequest())
+	initRes, err := c.Initialize(initCtx, mcpInitializeRequest(UpstreamClientCapabilities(s.config, transportAcceptsRequests(migrate.TransportSSE))))
 	if err != nil {
 		s.setState(StateError)
 		c.Close()
@@ -276,6 +277,7 @@ type SSEPool struct {
 	cancel       context.CancelFunc
 	rateLimiters *serverRateLimiters
 	events       eventHub
+	messages     messageHub
 }
 
 func NewSSEPool(logger *slog.Logger) *SSEPool {
@@ -308,6 +310,7 @@ func (p *SSEPool) StartServer(ctx context.Context, config *migrate.ServerConfig)
 
 	server := NewSSEServer(config.Name, config, p.logger)
 	server.events = &p.events
+	server.messages = &p.messages
 	p.servers[config.Name] = server
 
 	// Off by default; only enabled when the config sets rate_limit with a
@@ -470,8 +473,26 @@ func (p *SSEPool) SendRequestToServerWithID(ctx context.Context, name string, me
 	}, nil
 }
 
+// SendServerNotification sends a notification to the named server over its
+// current connection (connecting first when needed).
 func (p *SSEPool) SendServerNotification(ctx context.Context, name string, method string, params map[string]interface{}) error {
-	return nil
+	p.mu.RLock()
+	server, exists := p.servers[name]
+	p.mu.RUnlock()
+	if !exists {
+		return fmt.Errorf("sse_pool: server %s not found", name)
+	}
+	c, err := server.ensureConnected(ctx)
+	if err != nil {
+		return err
+	}
+	return sendRemoteNotification(ctx, c, method, params)
+}
+
+// SetServerMessageHandler registers the handler that receives the
+// notifications every server initiates (progress, resource updates, ...).
+func (p *SSEPool) SetServerMessageHandler(h ServerMessageHandler) {
+	p.messages.set(h)
 }
 
 func (p *SSEPool) RestartServer(ctx context.Context, name string) error {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 )
 
 // MCP protocol revisions LeanProxy speaks (issue #307).
@@ -66,6 +67,11 @@ func ProtocolAtLeast(v, minVersion string) bool {
 const (
 	NotificationResourcesListChanged = "notifications/resources/list_changed"
 	NotificationPromptsListChanged   = "notifications/prompts/list_changed"
+	NotificationResourcesUpdated     = "notifications/resources/updated"
+	NotificationProgress             = "notifications/progress"
+	NotificationCancelled            = "notifications/cancelled" //nolint:misspell // MCP protocol method name
+	NotificationRootsListChanged     = "notifications/roots/list_changed"
+	NotificationElicitationComplete  = "notifications/elicitation/complete"
 )
 
 // NotifyFunc writes one JSON-RPC notification to a client. Front ends
@@ -84,6 +90,21 @@ type ClientSession struct {
 	protocolVersion string
 	clientInfo      ClientInfo
 	capabilities    json.RawMessage
+
+	// Server-to-client requests (issue #308, see session_requests.go).
+	reqMu       sync.Mutex
+	sendRequest RequestFunc
+	pending     map[string]chan clientReply
+	reqClosed   bool
+	nextReqID   atomic.Uint64
+
+	// Relayed upstream notifications are written by a per-session
+	// goroutine (see sendQueued), so a client that stops reading never
+	// blocks an upstream's reader.
+	queueOnce sync.Once
+	queue     chan queuedNotification
+	queueDone chan struct{}
+	closeOnce sync.Once
 }
 
 // ProtocolVersion returns the negotiated revision, or "" before initialize.
@@ -182,6 +203,8 @@ func (h *Handler) OpenSession(notify NotifyFunc) (*ClientSession, func()) {
 			h.sessionsMu.Lock()
 			delete(h.sessions, s)
 			h.sessionsMu.Unlock()
+			s.closeRequests()
+			h.dropRelaySession(s)
 		})
 	}
 }

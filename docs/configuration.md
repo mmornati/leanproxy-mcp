@@ -259,9 +259,71 @@ Other stdio robustness guarantees:
   5-second grace period. On shutdown all servers are stopped in parallel.
 
 Requests the server sends to the client (`roots/list`,
-`sampling/createMessage`, `elicitation/create`, `ping`) are not relayed yet;
-the proxy answers them with JSON-RPC error `-32601 Method not found` so the
-server never hangs waiting.
+`sampling/createMessage`, `elicitation/create`, `ping`) are relayed to the
+client or answered by the proxy, and never leave the server waiting: see
+[Server-to-Client Requests](#server-to-client-requests-allow_sampling-roots).
+
+### Server-to-Client Requests (`allow_sampling`, `roots`)
+
+MCP is bidirectional: an upstream server can ask its client for something in
+the middle of a call. LeanProxy relays these requests to the connected client
+(both `server run --stdio` and `serve`) and the client's answer back to the
+server, with per-server policy:
+
+| Request | Default | Option |
+|---------|---------|--------|
+| `elicitation/create` (ask the user for input; form and URL mode) | relayed, with `[<server>] ` prepended to the message so the user always sees who is asking | — |
+| `roots/list` (the client's workspace roots) | relayed | `servers[].roots`: answer from a static list instead |
+| `sampling/createMessage` (have the client's LLM generate text) | **refused** with `-32601` | `servers[].allow_sampling: true` |
+| `ping` | answered by the proxy | — |
+
+```yaml
+servers:
+  - name: assistant
+    transport: stdio
+    stdio:
+      command: my-mcp-server
+    allow_sampling: true          # the server may use the client's LLM
+  - name: files
+    transport: stdio
+    stdio:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem"]
+    roots:                        # never ask the client; always these roots
+      - uri: file:///home/me/project
+        name: project
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `servers[].allow_sampling` | bool | `false` | Relay the server's `sampling/createMessage` requests to the client. Sampling spends the user's LLM tokens, so it is opt-in; every relayed request is logged (Warn, with the server and client names). When off, the server gets `-32601` and the `sampling` capability is not declared to it. |
+| `servers[].roots` | list of `{uri, name}` | unset | Answer the server's `roots/list` from this list instead of relaying it. Each `uri` must be a `file://` URI (checked at load). |
+
+What the proxy declares to each upstream in its `initialize` handshake
+follows the same policy: `roots` (with `listChanged` when roots are relayed,
+in which case the client's `notifications/roots/list_changed` is forwarded to
+the server), `elicitation` (form and URL mode), and `sampling` only with
+`allow_sampling: true`. Legacy SSE upstreams get none of them: mcp-go's SSE
+transport cannot receive server-to-client requests. HTTP (Streamable HTTP)
+upstreams may send their requests on the response stream of a call or on the
+GET stream, which the proxy opens for every HTTP server (a server without one
+answers `405` and the proxy stops asking).
+
+A request is only relayed to a client that **declared the matching
+capability** in its own `initialize` (`elicitation`, `roots`, `sampling`;
+URL-mode elicitation needs `elicitation.url`). Otherwise the server gets
+`-32601` at once. With several clients (`serve`), the request goes to the
+client whose call to that server is in flight (the most recent one), or, when
+none is, to the only connected client that can take it; when that is
+ambiguous it is refused rather than shown to a client that did not start the
+work. The request reaches the client under an id of the proxy's own
+(`lp-<n>`), so ids of different servers and clients never collide. A client
+has `10m` to answer; after that the server gets `-32001`.
+
+The Token Firewall applies to this traffic too: the request is
+secret-redacted before it reaches the client and the client's answer before
+it reaches the server, and sampling/elicitation text is checked by the
+prompt-injection guard (see [security](security.md#server-to-client-traffic-308)).
 
 ### Per-Server Rate Limiting
 

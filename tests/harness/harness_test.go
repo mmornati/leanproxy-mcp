@@ -697,7 +697,8 @@ func measureSafety(t *testing.T, bins binaries, extra string) []check {
 	checks = append(checks, check{name: "Injection payload blocked", pass: blocked, detail: detail})
 
 	// Server → client request: the upstream sends roots/list mid-call; the
-	// proxy must answer it so the call completes.
+	// proxy must answer it so the call completes (this client declares no
+	// roots capability, so the upstream gets -32601 at once; #308).
 	r, dur, err := p.call("tools/call", invokeParams("github", "ask_client", map[string]interface{}{}), 15*time.Second)
 	answered := err == nil && r.msg.Error == nil && strings.Contains(string(r.msg.Result), `"clientReplied":true`)
 	checks = append(checks, check{
