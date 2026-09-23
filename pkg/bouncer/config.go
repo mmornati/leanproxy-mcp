@@ -26,6 +26,39 @@ type Config struct {
 	// secrets, which keeps the per-request cost to one regex pass for the
 	// common case.
 	SidecarAlwaysCall *bool `yaml:"sidecar_always_call,omitempty"`
+	// EntropyDetection enables the generic high-entropy detector (off by
+	// default): long random-looking tokens next to a key-like word (key,
+	// secret, token, password) are redacted even when no pattern
+	// recognizes them. See RedactorOptions.Entropy.
+	EntropyDetection *bool `yaml:"entropy_detection,omitempty"`
+}
+
+// EntropyEnabled reports whether the high-entropy detector should run.
+// Defaults to false.
+func (c *Config) EntropyEnabled() bool {
+	if c == nil || c.EntropyDetection == nil {
+		return false
+	}
+	return *c.EntropyDetection
+}
+
+// NewRedactor builds the redactor this config describes: custom patterns
+// followed by the built-ins, plus the options. It returns nil when
+// redaction is disabled.
+func (c *Config) NewRedactor(alerts *AlertManager) *Redactor {
+	if !c.IsEnabled() {
+		return nil
+	}
+	cfg := c
+	if cfg == nil {
+		cfg = &Config{}
+	}
+	loaded, err := cfg.CompilePatterns()
+	if err != nil {
+		slog.Error("bouncer: failed to compile custom patterns, using built-ins only", "error", err)
+		loaded = &LoadedPatterns{All: PatternsToRegexps(BuiltInPatterns)}
+	}
+	return NewRedactorWithOptions(loaded.All, RedactorOptions{Entropy: cfg.EntropyEnabled(), Alerts: alerts})
 }
 
 // IsEnabled reports whether the redactor should run. A nil Config or an

@@ -1,0 +1,895 @@
+{
+  "jsonrpc": "2.0",
+  "id": 23,
+  "result": {
+    "tools": [
+      {
+        "name": "login",
+        "description": "Tool login <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string",
+              "description": "The user's password"
+            }
+          },
+          "required": [
+            "username"
+          ]
+        }
+      },
+      {
+        "name": "create_token",
+        "description": "Tool create_token <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "token": {
+              "type": "object",
+              "properties": {
+                "scopes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "expires_in": {
+              "type": "integer",
+              "minimum": 60
+            }
+          },
+          "required": [
+            "token"
+          ]
+        }
+      },
+      {
+        "name": "call_api",
+        "description": "Tool call_api <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "api_key": {
+              "type": "string",
+              "description": "API key to use"
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "required": [
+            "api_key"
+          ]
+        }
+      },
+      {
+        "name": "set_secret",
+        "description": "Tool set_secret <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "secret": {
+              "type": "string"
+            },
+            "client_secret": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "secret"
+          ]
+        }
+      },
+      {
+        "name": "tool_000",
+        "description": "Tool tool_000 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "nulla duis sed ex exercitation ipsum reprehenderit veniam tempor fugiat exercitation est ad fugiat qui laboris deserunt sint enim amet"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_001",
+        "description": "Tool tool_001 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "culpa exercitation quis occaecat tempor excepteur et commodo veniam officia laboris deserunt aute et irure incididunt officia et ullamco magna"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_002",
+        "description": "Tool tool_002 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "incididunt et cillum in exercitation do fugiat laborum sit dolore elit mollit mollit ea quis reprehenderit commodo commodo elit dolore"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_003",
+        "description": "Tool tool_003 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "nostrud mollit nostrud exercitation esse consectetur veniam pariatur veniam elit occaecat sed nostrud lorem commodo officia dolore esse ea deserunt"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_004",
+        "description": "Tool tool_004 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "officia do veniam in in ea veniam voluptate dolore mollit et exercitation deserunt occaecat adipiscing veniam ullamco excepteur laborum reprehenderit"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_005",
+        "description": "Tool tool_005 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "pariatur anim ipsum est eiusmod mollit laborum officia incididunt eiusmod amet tempor fugiat aliqua lorem voluptate esse ut consequat officia"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_006",
+        "description": "Tool tool_006 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "sed sunt non id labore exercitation nulla irure deserunt do veniam non occaecat ad cupidatat minim do eiusmod sit sunt"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_007",
+        "description": "Tool tool_007 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "minim id in aute reprehenderit reprehenderit nostrud exercitation officia lorem dolor irure veniam ipsum ullamco minim sit veniam occaecat id"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_008",
+        "description": "Tool tool_008 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "sit id non occaecat quis cupidatat ut magna exercitation eiusmod voluptate esse esse dolor voluptate ad sed ipsum amet tempor"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_009",
+        "description": "Tool tool_009 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "proident veniam commodo labore laborum officia minim ea nulla ea pariatur aliquip est cupidatat pariatur anim tempor qui et fugiat"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_010",
+        "description": "Tool tool_010 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "non proident enim eiusmod occaecat officia nulla sunt esse mollit dolore occaecat ad irure nulla cillum minim dolore qui elit"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_011",
+        "description": "Tool tool_011 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "aute eiusmod quis lorem ex sunt esse anim commodo nostrud aliquip culpa do mollit consectetur ea veniam commodo aliqua lorem"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_012",
+        "description": "Tool tool_012 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "est minim nostrud commodo adipiscing culpa id deserunt esse deserunt culpa do ullamco sunt do ullamco consectetur dolore ut enim"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_013",
+        "description": "Tool tool_013 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "tempor dolor laborum exercitation id incididunt culpa consequat magna esse adipiscing excepteur reprehenderit ullamco eiusmod ad sunt sed officia fugiat"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_014",
+        "description": "Tool tool_014 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "quis lorem lorem ullamco sunt quis dolore sed eiusmod adipiscing mollit dolor est ipsum mollit aliqua eiusmod non culpa aute"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_015",
+        "description": "Tool tool_015 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "excepteur et sit occaecat sed cupidatat esse eiusmod proident magna et sit labore ex lorem sed nulla commodo sed nulla"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_016",
+        "description": "Tool tool_016 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "enim officia consequat deserunt nisi cillum ullamco consectetur non quis officia veniam excepteur fugiat in ea esse cillum qui anim"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_017",
+        "description": "Tool tool_017 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "ad magna magna consectetur elit ullamco nulla do deserunt nostrud dolore laboris laboris sed et nisi lorem et amet laboris"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_018",
+        "description": "Tool tool_018 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "deserunt consequat ex dolor labore minim ullamco nostrud cillum voluptate aute dolore duis elit elit culpa do reprehenderit adipiscing fugiat"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_019",
+        "description": "Tool tool_019 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "laborum mollit do commodo aute ad anim occaecat duis in proident pariatur lorem esse laborum exercitation id elit sint non"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_020",
+        "description": "Tool tool_020 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "amet nisi voluptate mollit aliquip culpa tempor incididunt lorem quis sed dolore irure ad ad occaecat aliquip minim esse nisi"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_021",
+        "description": "Tool tool_021 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "aliquip amet est cupidatat voluptate nulla esse reprehenderit aliqua esse ullamco culpa nisi sit nostrud anim ea et ipsum nostrud"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_022",
+        "description": "Tool tool_022 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "et duis sit duis non lorem et adipiscing tempor sunt nostrud nostrud veniam aliqua exercitation et officia ipsum lorem elit"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_023",
+        "description": "Tool tool_023 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "proident fugiat dolore sunt ex et minim elit sit enim sed ipsum fugiat quis eiusmod sed lorem sit adipiscing duis"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_024",
+        "description": "Tool tool_024 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "cupidatat occaecat magna reprehenderit commodo aliquip consequat quis sed ipsum deserunt pariatur dolor dolore exercitation officia in adipiscing duis voluptate"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_025",
+        "description": "Tool tool_025 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "excepteur consectetur esse consequat culpa pariatur nostrud laborum nulla cillum ea adipiscing ex sit laborum consectetur minim ut labore culpa"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_026",
+        "description": "Tool tool_026 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "ex consequat adipiscing mollit proident dolor aute cillum excepteur excepteur in et duis nostrud elit veniam aliquip esse consequat ex"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_027",
+        "description": "Tool tool_027 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "incididunt duis aliquip consequat tempor esse velit minim tempor enim proident sit quis cillum consectetur aliqua sed dolor occaecat aliqua"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_028",
+        "description": "Tool tool_028 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "aute tempor officia officia nostrud elit veniam incididunt incididunt aliqua proident velit ullamco fugiat esse nulla mollit cillum veniam lorem"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_029",
+        "description": "Tool tool_029 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "velit duis aliquip est in duis qui laboris veniam laboris aute reprehenderit duis dolor ut aliquip culpa excepteur ipsum cupidatat"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_030",
+        "description": "Tool tool_030 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "ea enim duis ea sed non consectetur sed occaecat dolor laboris quis est ullamco elit velit magna non velit sed"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_031",
+        "description": "Tool tool_031 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "exercitation sunt irure cupidatat aliqua id nisi aute ipsum et cillum non mollit irure ea pariatur ea aliquip dolor est"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_032",
+        "description": "Tool tool_032 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "esse qui amet amet sit enim mollit sit enim nulla do do magna ipsum sunt sit ea qui aute dolor"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_033",
+        "description": "Tool tool_033 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "quis excepteur duis consequat et pariatur eiusmod nisi dolore officia aute deserunt tempor culpa est ipsum sunt do mollit qui"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_034",
+        "description": "Tool tool_034 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "sint magna anim fugiat elit quis ut voluptate irure incididunt elit sint incididunt ad sint ipsum nostrud sint tempor nostrud"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_035",
+        "description": "Tool tool_035 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "magna incididunt lorem ea laboris nisi irure ex enim ad sit ipsum consequat amet adipiscing lorem magna fugiat commodo labore"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_036",
+        "description": "Tool tool_036 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "consectetur magna ipsum sit nisi qui elit minim magna ipsum voluptate excepteur ex velit ea in sit proident lorem occaecat"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_037",
+        "description": "Tool tool_037 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "eiusmod est enim deserunt sint lorem sed elit do pariatur voluptate non mollit labore sit ut fugiat tempor occaecat culpa"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_038",
+        "description": "Tool tool_038 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "sint deserunt ea sunt consequat aliqua ut aliqua quis nisi aliqua est excepteur tempor anim qui ipsum dolore labore voluptate"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "tool_039",
+        "description": "Tool tool_039 <with> & special chars",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "magna magna ullamco velit magna enim elit dolor ex sunt ex nisi ut mollit in anim aliquip ad irure commodo"
+            },
+            "limit": {
+              "type": "integer",
+              "default": 10
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      }
+    ]
+  }
+}

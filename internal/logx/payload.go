@@ -18,16 +18,16 @@ const MaxPayloadLogBytes = 512
 // MaxPayloadLogBytes.
 const truncatedSuffix = "...(truncated)"
 
-// builtinPatterns backs Payload's redaction. It is the same built-in
-// pattern set bouncer.NewRedaction falls back to when no `bouncer:` config
-// is supplied, compiled once so every log call reuses it. Payload does not
-// take a *bouncer.Redactor because it is used from places with no access to
-// one (a request's firewall redactor is configured per Handler, not
-// available to every logging call site, and some logging happens outside
-// the firewall's request path entirely); it redacts independently as a
-// defense-in-depth measure, on top of whatever redaction the pipeline
-// already applied.
-var builtinPatterns = bouncer.PatternsToRegexps(bouncer.BuiltInPatterns)
+// Payload's redaction uses bouncer.DefaultRedactor: the same engine and
+// built-in pattern set the pipeline falls back to when no `bouncer:` config
+// is supplied. Payload does not take a *bouncer.Redactor because it is used
+// from places with no access to one (a request's firewall redactor is
+// configured per Handler, not available to every logging call site, and
+// some logging happens outside the firewall's request path entirely); it
+// redacts independently as a defense-in-depth measure, on top of whatever
+// redaction the pipeline already applied. JSON payloads get the full JSON
+// pass (sensitive keys, nested JSON strings); anything else is scanned as
+// bytes.
 
 // payloadValue defers formatting a payload until slog actually resolves it,
 // which only happens when the handler is enabled for the record's level.
@@ -58,7 +58,8 @@ func (p payloadValue) String() string {
 	if len(p.b) == 0 {
 		return ""
 	}
-	s := bouncer.RedactWithPatterns(string(p.b), builtinPatterns)
+	red, _ := bouncer.DefaultRedactor().RedactPayload(p.b)
+	s := string(red)
 	if len(s) > MaxPayloadLogBytes {
 		s = s[:MaxPayloadLogBytes] + truncatedSuffix
 	}

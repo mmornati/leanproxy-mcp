@@ -77,7 +77,7 @@ func TestGitHubFineGrainedPATPattern(t *testing.T) {
 		"github_pat_11XXXXXXXXXXXXXXXX_", // underscore at end ok, but pattern requires more
 	}
 
-	ghFGPattern := BuiltInPatterns[2].Pattern
+	ghFGPattern := GetPatternByName("github-fine-grained-pat").Pattern
 	for _, v := range valid {
 		if !ghFGPattern.MatchString(v) {
 			t.Errorf("GitHub fine-grained PAT pattern should match: %q", v)
@@ -102,7 +102,7 @@ func TestStripeKeyPattern(t *testing.T) {
 		"sk_live_" + strings.Repeat("x", 23),
 	}
 
-	stripePattern := BuiltInPatterns[3].Pattern
+	stripePattern := GetPatternByName("stripe-secret-key").Pattern
 	for _, v := range valid {
 		if !stripePattern.MatchString(v) {
 			t.Errorf("Stripe secret key pattern should match: %q", v)
@@ -128,7 +128,7 @@ func TestStripePublishableKeyPattern(t *testing.T) {
 		"pk_live_xxxxxxxxxxxxxxxxxxxxxxx",
 	}
 
-	pkPattern := BuiltInPatterns[4].Pattern
+	pkPattern := GetPatternByName("stripe-publishable-key").Pattern
 	for _, v := range valid {
 		if !pkPattern.MatchString(v) {
 			t.Errorf("Stripe publishable key pattern should match: %q", v)
@@ -689,17 +689,21 @@ func TestWiderGitHubClassicPAT(t *testing.T) {
 
 func TestSensitiveJSONFieldNamesLookup(t *testing.T) {
 	cases := map[string]bool{
-		"api_key":       true,
-		"apikey":        true,
-		"api-key":       true,
-		"token":         true,
-		"password":      true,
-		"private_key":   true,
-		"client_secret": true,
-		"my_api_key":    false, // contains "api_key" but is not exactly it
-		"authorization": false,
-		"data":          false,
-		"":              false,
+		"api_key":         true,
+		"apikey":          true,
+		"api-key":         true,
+		"token":           true,
+		"password":        true,
+		"private_key":     true,
+		"client_secret":   true,
+		"my_api_key":      true, // normalized suffix "apikey"
+		"API-Key":         true,
+		"x-api-key":       true,
+		"authorization":   true,
+		"next_page_token": false, // "token" is exact-match only
+		"max_tokens":      false,
+		"data":            false,
+		"":                false,
 	}
 	for k, want := range cases {
 		if got := sensitiveJSONFieldLookup(k); got != want {
@@ -723,22 +727,22 @@ func TestRedactJSON_SensitiveFieldNames(t *testing.T) {
 		{
 			name:    "unknown token behind api_key",
 			input:   `{"api_key": "internalplatformtoken-noregexmatch", "other": "v"}`,
-			wantKey: `"api_key":"[SECRET_REDACTED]"`,
+			wantKey: `"api_key": "[SECRET_REDACTED]"`,
 		},
 		{
 			name:    "private_key with embedded PEM",
 			input:   `{"private_key": "-----BEGIN PRIVATE KEY-----\nABC\n-----END PRIVATE KEY-----"}`,
-			wantKey: `"private_key":"[SECRET_REDACTED]"`,
+			wantKey: `"private_key": "[SECRET_REDACTED]"`,
 		},
 		{
 			name:    "nested at depth 2",
 			input:   `{"outer": {"apiKey": "totally-bogus-value"}}`,
-			wantKey: `"apiKey":"[SECRET_REDACTED]"`,
+			wantKey: `"apiKey": "[SECRET_REDACTED]"`,
 		},
 		{
 			name:    "non-sensitive key untouched",
 			input:   `{"description": "user typed hunter2 in a doc"}`,
-			wantKey: `"description":"user typed hunter2 in a doc"`,
+			wantKey: `"description": "user typed hunter2 in a doc"`,
 		},
 	}
 	for _, tc := range cases {

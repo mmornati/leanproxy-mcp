@@ -50,13 +50,6 @@ linters:
           - unused
         path: pkg/migrate/vscode\.go
       - linters:
-          - ineffassign
-          - unused
-        path: pkg/bouncer/redactor\.go
-      - linters:
-          - unused
-        path: pkg/bouncer/streaming\.go
-      - linters:
           - unused
         path: pkg/compactor/cache\.go
       - linters:
@@ -68,15 +61,6 @@ linters:
       - linters:
           - errcheck
         path: pkg/registry/cache\.go
-      - linters:
-          - gosec
-        path: pkg/bouncer/allowlist\.go
-      - linters:
-          - gosec
-        path: pkg/bouncer/safe_pattern\.go
-      - linters:
-          - gosec
-        path: pkg/bouncer/boilerplate\.go
       - linters:
           - gosec
         path: pkg/utils/

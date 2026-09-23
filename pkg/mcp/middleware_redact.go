@@ -41,21 +41,7 @@ func NewRedaction(cfg *bouncer.Config) *Redaction {
 // Configure (re)builds the redactor from cfg with the same defaults as
 // NewRedaction.
 func (r *Redaction) Configure(cfg *bouncer.Config) {
-	if !cfg.IsEnabled() {
-		r.redactor.Store(nil)
-		return
-	}
-	if cfg == nil {
-		cfg = &bouncer.Config{}
-	}
-	loaded, err := cfg.CompilePatterns()
-	if err != nil {
-		// CompilePatterns currently never returns a non-nil error (bad
-		// patterns are skipped with a Warn), so this branch is defensive.
-		slog.Error("bouncer: failed to compile custom patterns, using built-ins only", "error", err)
-		loaded = &bouncer.LoadedPatterns{All: bouncer.PatternsToRegexps(bouncer.BuiltInPatterns)}
-	}
-	r.redactor.Store(bouncer.NewRedactorWithAlerts(loaded.All, bouncer.NewAlertManager(false)))
+	r.redactor.Store(cfg.NewRedactor(bouncer.NewAlertManager(false)))
 }
 
 // SetRedactor installs an already-built redactor; nil disables redaction.
@@ -116,7 +102,7 @@ func (r *Redaction) RedactResponse(resp *Response) error {
 		resp.Result = redacted
 	}
 	if resp.Error != nil {
-		resp.Error.Message = bouncer.RedactWithPatterns(resp.Error.Message, red.Patterns())
+		resp.Error.Message = red.RedactText(resp.Error.Message)
 		if len(resp.Error.Data) > 0 {
 			redacted, _, err := red.RedactJSON(resp.Error.Data)
 			if err != nil {
@@ -134,7 +120,7 @@ func (r *Redaction) RedactText(s string) string {
 	if red == nil || s == "" {
 		return s
 	}
-	return bouncer.RedactWithPatterns(s, red.Patterns())
+	return red.RedactText(s)
 }
 
 // RequestMiddleware redacts request params before anything downstream

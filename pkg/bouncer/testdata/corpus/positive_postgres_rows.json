@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"rowCount\": 4, \"rows\": [{\"id\": 9007199254740993, \"email\": \"ann@example.com\", \"role\": \"admin\", \"password\": \"{{PASSWORD}}\", \"api_token\": \"{{PASSWORD}}\", \"created_at\": \"2024-03-01T10:00:00Z\", \"balance\": 12345678901234567890}, {\"id\": 9007199254740995, \"email\": \"bob@example.com\", \"role\": \"user\", \"password\": \"{{PASSWORD}}\", \"api_token\": \"{{PASSWORD}}\", \"created_at\": \"2024-03-02T11:30:00Z\", \"balance\": 0.1}, {\"id\": 3, \"email\": \"svc@example.com\", \"role\": \"service\", \"settings\": {\"webhook\": \"{{SLACK_WEBHOOK}}\", \"notes\": \"rotated temporary key {{AWS_TEMP}} on 2024-05-01\"}, \"connection\": \"mysql://svc:{{DSN_PW}}@replica.internal:3306/shop\", \"mongo\": \"mongodb+srv://reporting:{{DSN_PW}}@cluster0.example.net/analytics\"}, {\"id\": 4, \"email\": \"ci@example.com\", \"role\": \"ci\", \"credentials\": {\"client_secret\": \"{{PASSWORD}}\", \"refresh_token\": \"{{PASSWORD}}\"}, \"comment\": \"CI uses {{GH_FINE}} and google key {{GOOGLE_KEY}}\"}]}"
+      }
+    ]
+  }
+}
