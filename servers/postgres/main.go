@@ -35,6 +35,12 @@ func main() {
 	}
 	defer client.Close()
 
+	if cfg.ReadOnly {
+		fmt.Fprintln(os.Stderr, "postgres server running in read-only mode: postgresql_execute is disabled; set LEANPROXY_POSTGRES_READ_ONLY=false to enable it")
+	} else {
+		fmt.Fprintln(os.Stderr, "WARNING: postgres server running with LEANPROXY_POSTGRES_READ_ONLY=false: postgresql_execute can run INSERT/UPDATE/DELETE/DDL")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -109,6 +115,12 @@ func getConfig() postgresql.Config {
 	if st := os.Getenv("LEANPROXY_POSTGRES_STATEMENT_TIMEOUT"); st != "" {
 		if d, err := time.ParseDuration(st); err == nil {
 			cfg.StatementTimeout = d
+		}
+	}
+
+	if ro := os.Getenv("LEANPROXY_POSTGRES_READ_ONLY"); ro != "" {
+		if b, err := strconv.ParseBool(ro); err == nil {
+			cfg.ReadOnly = b
 		}
 	}
 
