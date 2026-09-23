@@ -34,11 +34,11 @@ var InvokeToolParamDefaults = map[string]interface{}{}
 var InvokeToolParamMeta = map[string]ParameterMeta{
 	"server": {
 		Required:    true,
-		Description: "Server name from list_servers (e.g., 'github', 'garmin', 'filesystem'). Must be a configured and running MCP server.",
+		Description: "Server name from search_tools or list_servers (e.g., 'github', 'garmin', 'filesystem'). Must be a configured and running MCP server.",
 	},
 	"tool": {
 		Required:    true,
-		Description: "Tool name from list_tools (e.g., 'list_issues', 'get_activities'). Do NOT prefix with server name.",
+		Description: "Tool name from search_tools or list_tools (e.g., 'list_issues', 'get_activities'). Do NOT prefix with server name.",
 	},
 	"arguments": {
 		Required:    false,

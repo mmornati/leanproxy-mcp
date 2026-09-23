@@ -1507,38 +1507,3 @@ func TestHandleToolsCallInvalidParams(t *testing.T) {
 	assert.NotNil(t, resp.Error)
 	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
 }
-
-func TestMatchesQuery(t *testing.T) {
-	tests := []struct {
-		name     string
-		text     string
-		words    []string
-		expected bool
-	}{
-		{
-			name:     "all words present",
-			text:     "github_list_issues list github issues",
-			words:    []string{"github", "issues"},
-			expected: true,
-		},
-		{
-			name:     "empty words",
-			text:     "github_list_issues",
-			words:    []string{},
-			expected: true,
-		},
-		{
-			name:     "case insensitive",
-			text:     "github_list_issues",
-			words:    []string{"github"},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := matchesQuery(tt.text, tt.words)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}

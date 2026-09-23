@@ -1108,3 +1108,70 @@ server:
 		}
 	})
 }
+
+func writeToolSearchConfig(t *testing.T, block string) string {
+	t.Helper()
+	yamlContent := `
+servers:
+  - name: github
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+` + block
+	configPath := filepath.Join(t.TempDir(), "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+	return configPath
+}
+
+func TestLoadConfigToolSearch(t *testing.T) {
+	path := writeToolSearchConfig(t, `
+tool_search:
+  synonyms:
+    k8s: kubernetes cluster
+  hybrid:
+    enabled: true
+    embedder:
+      provider: ollama
+      ollama:
+        url: http://localhost:11434
+        model: nomic-embed-text
+`)
+	cfg, err := LoadConfig(context.Background(), path)
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+	ts := cfg.ToolSearch
+	if ts == nil || ts.Synonyms["k8s"] != "kubernetes cluster" {
+		t.Fatalf("tool_search not parsed: %+v", ts)
+	}
+	if !ts.HybridEnabled() || ts.Hybrid.Embedder.Provider != "ollama" {
+		t.Fatalf("tool_search.hybrid not parsed: %+v", ts.Hybrid)
+	}
+	syn := ts.Options().Synonyms
+	if syn["k8s"] != "kubernetes cluster" || syn["pr"] != "pull request" {
+		t.Errorf("synonyms = %v, want the custom entry plus the defaults", syn)
+	}
+}
+
+func TestLoadConfigToolSearch_AbsentIsBM25Only(t *testing.T) {
+	cfg, err := LoadConfig(context.Background(), writeToolSearchConfig(t, ""))
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+	if cfg.ToolSearch.HybridEnabled() {
+		t.Error("hybrid tool search must be off by default")
+	}
+}
+
+func TestLoadConfigToolSearch_Invalid(t *testing.T) {
+	for name, block := range map[string]string{
+		"multi-word synonym key":  "tool_search:\n  synonyms:\n    \"two words\": x\n",
+		"hybrid without provider": "tool_search:\n  hybrid:\n    enabled: true\n",
+	} {
+		if _, err := LoadConfig(context.Background(), writeToolSearchConfig(t, block)); err == nil || !strings.Contains(err.Error(), "tool_search") {
+			t.Errorf("%s: LoadConfig() error = %v, want a tool_search error", name, err)
+		}
+	}
+}

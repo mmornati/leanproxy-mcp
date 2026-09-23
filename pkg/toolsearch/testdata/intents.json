@@ -1,0 +1,503 @@
+{
+ "_comment": "Labeled search_tools evaluation set (#305). 'audit' intents are ported verbatim from docs/audit/experiments/search_eval.py; 'independent' intents were written from the user's point of view without reusing the catalog descriptions, to reduce author bias.",
+ "intents": [
+  {
+   "query": "open a bug ticket in the repo about the login crash",
+   "server": "github",
+   "tool": "create_issue",
+   "source": "audit"
+  },
+  {
+   "query": "show me the CI logs of the failed job",
+   "server": "github",
+   "tool": "get_job_logs",
+   "source": "audit"
+  },
+  {
+   "query": "merge PR 42 with squash",
+   "server": "github",
+   "tool": "merge_pull_request",
+   "source": "audit"
+  },
+  {
+   "query": "what changed in pull request 17, list the files",
+   "server": "github",
+   "tool": "get_pull_request_files",
+   "source": "audit"
+  },
+  {
+   "query": "read the README file from the main branch",
+   "server": "github",
+   "tool": "get_file_contents",
+   "source": "audit"
+  },
+  {
+   "query": "find code that calls parseConfig across repos",
+   "server": "github",
+   "tool": "search_code",
+   "source": "audit"
+  },
+  {
+   "query": "are there leaked credentials detected in my repo",
+   "server": "github",
+   "tool": "list_secret_scanning_alerts",
+   "source": "audit"
+  },
+  {
+   "query": "start a new feature branch",
+   "server": "github",
+   "tool": "create_branch",
+   "source": "audit"
+  },
+  {
+   "query": "approve the pull request",
+   "server": "github",
+   "tool": "create_pull_request_review",
+   "source": "audit"
+  },
+  {
+   "query": "kick off the deploy workflow manually",
+   "server": "github",
+   "tool": "run_workflow",
+   "source": "audit"
+  },
+  {
+   "query": "vulnerable dependencies in the project",
+   "server": "github",
+   "tool": "list_dependabot_alerts",
+   "source": "audit"
+  },
+  {
+   "query": "what is the latest release version",
+   "server": "github",
+   "tool": "get_latest_release",
+   "source": "audit"
+  },
+  {
+   "query": "find jira tickets assigned to me that are in progress",
+   "server": "jira",
+   "tool": "jira_search",
+   "source": "audit"
+  },
+  {
+   "query": "move PROJ-12 to done",
+   "server": "jira",
+   "tool": "jira_transition_issue",
+   "source": "audit"
+  },
+  {
+   "query": "log 2 hours on PROJ-7",
+   "server": "jira",
+   "tool": "jira_add_worklog",
+   "source": "audit"
+  },
+  {
+   "query": "which sprints are active on board 5",
+   "server": "jira",
+   "tool": "jira_get_sprints_from_board",
+   "source": "audit"
+  },
+  {
+   "query": "mark PROJ-3 as blocking PROJ-4",
+   "server": "jira",
+   "tool": "jira_link_issues",
+   "source": "audit"
+  },
+  {
+   "query": "create a story in project ABC",
+   "server": "jira",
+   "tool": "jira_create_issue",
+   "source": "audit"
+  },
+  {
+   "query": "find the onboarding page in confluence",
+   "server": "jira",
+   "tool": "confluence_search",
+   "source": "audit"
+  },
+  {
+   "query": "close the current sprint",
+   "server": "jira",
+   "tool": "jira_update_sprint",
+   "source": "audit"
+  },
+  {
+   "query": "send a message to the team channel",
+   "server": "slack",
+   "tool": "slack_post_message",
+   "source": "audit"
+  },
+  {
+   "query": "reply in the thread",
+   "server": "slack",
+   "tool": "slack_reply_to_thread",
+   "source": "audit"
+  },
+  {
+   "query": "react with thumbs up to that message",
+   "server": "slack",
+   "tool": "slack_add_reaction",
+   "source": "audit"
+  },
+  {
+   "query": "what did people say in #general today",
+   "server": "slack",
+   "tool": "slack_get_channel_history",
+   "source": "audit"
+  },
+  {
+   "query": "set my status to on vacation",
+   "server": "slack",
+   "tool": "slack_set_status",
+   "source": "audit"
+  },
+  {
+   "query": "post the report in slack tomorrow at 9am",
+   "server": "slack",
+   "tool": "slack_schedule_message",
+   "source": "audit"
+  },
+  {
+   "query": "search slack for the outage discussion",
+   "server": "slack",
+   "tool": "slack_search_messages",
+   "source": "audit"
+  },
+  {
+   "query": "how did I sleep last night",
+   "server": "garmin",
+   "tool": "get_sleep_data",
+   "source": "audit"
+  },
+  {
+   "query": "my last run pace and heart rate",
+   "server": "garmin",
+   "tool": "get_activity",
+   "source": "audit"
+  },
+  {
+   "query": "am I ready to train hard today",
+   "server": "garmin",
+   "tool": "get_training_readiness",
+   "source": "audit"
+  },
+  {
+   "query": "what is my predicted marathon time",
+   "server": "garmin",
+   "tool": "get_race_predictions",
+   "source": "audit"
+  },
+  {
+   "query": "record my weight 72kg",
+   "server": "garmin",
+   "tool": "add_weigh_in",
+   "source": "audit"
+  },
+  {
+   "query": "how many kilometers on my running shoes",
+   "server": "garmin",
+   "tool": "get_gear",
+   "source": "audit"
+  },
+  {
+   "query": "show HRV trend",
+   "server": "garmin",
+   "tool": "get_hrv_data",
+   "source": "audit"
+  },
+  {
+   "query": "schedule the interval workout for Friday",
+   "server": "garmin",
+   "tool": "schedule_workout",
+   "source": "audit"
+  },
+  {
+   "query": "my VO2 max",
+   "server": "garmin",
+   "tool": "get_max_metrics",
+   "source": "audit"
+  },
+  {
+   "query": "how many steps today",
+   "server": "garmin",
+   "tool": "get_steps_data",
+   "source": "audit"
+  },
+  {
+   "query": "blood oxygen overnight",
+   "server": "garmin",
+   "tool": "get_spo2_data",
+   "source": "audit"
+  },
+  {
+   "query": "what columns does the users table have",
+   "server": "postgres",
+   "tool": "pg_describe_table",
+   "source": "audit"
+  },
+  {
+   "query": "why is this query slow, show the plan",
+   "server": "postgres",
+   "tool": "pg_explain_query",
+   "source": "audit"
+  },
+  {
+   "query": "count orders placed yesterday",
+   "server": "postgres",
+   "tool": "pg_query",
+   "source": "audit"
+  },
+  {
+   "query": "delete the test rows from the sessions table",
+   "server": "postgres",
+   "tool": "pg_execute",
+   "source": "audit"
+  },
+  {
+   "query": "what queries are running right now",
+   "server": "postgres",
+   "tool": "pg_active_queries",
+   "source": "audit"
+  },
+  {
+   "query": "which tables are biggest on disk",
+   "server": "postgres",
+   "tool": "pg_table_size",
+   "source": "audit"
+  },
+  {
+   "query": "who am I logged in as on github",
+   "server": "github",
+   "tool": "get_me",
+   "source": "independent"
+  },
+  {
+   "query": "fork that project into my own account",
+   "server": "github",
+   "tool": "fork_repository",
+   "source": "independent"
+  },
+  {
+   "query": "make a brand new private repo for my side project",
+   "server": "github",
+   "tool": "create_repository",
+   "source": "independent"
+  },
+  {
+   "query": "retry the build that failed on main",
+   "server": "github",
+   "tool": "rerun_workflow_run",
+   "source": "independent"
+  },
+  {
+   "query": "did the checks pass on my PR",
+   "server": "github",
+   "tool": "get_pull_request_status",
+   "source": "independent"
+  },
+  {
+   "query": "ask the AI bot to review my PR",
+   "server": "github",
+   "tool": "request_copilot_review",
+   "source": "independent"
+  },
+  {
+   "query": "remove the old config file from the repo",
+   "server": "github",
+   "tool": "delete_file",
+   "source": "independent"
+  },
+  {
+   "query": "any unread github pings for me",
+   "server": "github",
+   "tool": "list_notifications",
+   "source": "independent"
+  },
+  {
+   "query": "open a PR from my feature branch into main",
+   "server": "github",
+   "tool": "create_pull_request",
+   "source": "independent"
+  },
+  {
+   "query": "leave a comment on issue 12 saying it is fixed",
+   "server": "github",
+   "tool": "add_issue_comment",
+   "source": "independent"
+  },
+  {
+   "query": "bring my PR up to date with main",
+   "server": "github",
+   "tool": "update_pull_request_branch",
+   "source": "independent"
+  },
+  {
+   "query": "who pushed commits to the develop branch recently",
+   "server": "github",
+   "tool": "list_commits",
+   "source": "independent"
+  },
+  {
+   "query": "which jira projects can I see",
+   "server": "jira",
+   "tool": "jira_list_projects",
+   "source": "independent"
+  },
+  {
+   "query": "how much time has been booked against PROJ-7 so far",
+   "server": "jira",
+   "tool": "jira_get_worklog",
+   "source": "independent"
+  },
+  {
+   "query": "throw away the duplicate ticket PROJ-50 for good",
+   "server": "jira",
+   "tool": "jira_delete_issue",
+   "source": "independent"
+  },
+  {
+   "query": "which statuses can PROJ-8 move to next",
+   "server": "jira",
+   "tool": "jira_get_transitions",
+   "source": "independent"
+  },
+  {
+   "query": "write a new confluence page with the release notes",
+   "server": "jira",
+   "tool": "confluence_create_page",
+   "source": "independent"
+  },
+  {
+   "query": "plan a new two-week sprint on the team board",
+   "server": "jira",
+   "tool": "jira_create_sprint",
+   "source": "independent"
+  },
+  {
+   "query": "what is everyone working on in sprint 14",
+   "server": "jira",
+   "tool": "jira_get_sprint_issues",
+   "source": "independent"
+  },
+  {
+   "query": "file ten tickets at once from this list",
+   "server": "jira",
+   "tool": "jira_batch_create_issues",
+   "source": "independent"
+  },
+  {
+   "query": "who is in our slack workspace",
+   "server": "slack",
+   "tool": "slack_get_users",
+   "source": "independent"
+  },
+  {
+   "query": "make a private channel for the incident",
+   "server": "slack",
+   "tool": "slack_create_channel",
+   "source": "independent"
+  },
+  {
+   "query": "add Bob and Alice to the release channel",
+   "server": "slack",
+   "tool": "slack_invite_to_channel",
+   "source": "independent"
+  },
+  {
+   "query": "share this PDF with the channel",
+   "server": "slack",
+   "tool": "slack_upload_file",
+   "source": "independent"
+  },
+  {
+   "query": "read the answers people wrote under that thread",
+   "server": "slack",
+   "tool": "slack_get_thread_replies",
+   "source": "independent"
+  },
+  {
+   "query": "how stressed was I yesterday",
+   "server": "garmin",
+   "tool": "get_stress_data",
+   "source": "independent"
+  },
+  {
+   "query": "how much energy do I have left today, body battery",
+   "server": "garmin",
+   "tool": "get_body_battery",
+   "source": "independent"
+  },
+  {
+   "query": "did I drink enough water today",
+   "server": "garmin",
+   "tool": "get_hydration_data",
+   "source": "independent"
+  },
+  {
+   "query": "what is my body fat percentage lately",
+   "server": "garmin",
+   "tool": "get_body_composition",
+   "source": "independent"
+  },
+  {
+   "query": "export the raw FIT file of this morning's ride",
+   "server": "garmin",
+   "tool": "download_activity_fit",
+   "source": "independent"
+  },
+  {
+   "query": "what is my fastest 5k ever",
+   "server": "garmin",
+   "tool": "get_personal_records",
+   "source": "independent"
+  },
+  {
+   "query": "how many calories did I burn today",
+   "server": "garmin",
+   "tool": "get_daily_summary",
+   "source": "independent"
+  },
+  {
+   "query": "which watches are linked to my account",
+   "server": "garmin",
+   "tool": "get_devices",
+   "source": "independent"
+  },
+  {
+   "query": "how long did I spend in each heart rate zone on my run",
+   "server": "garmin",
+   "tool": "get_activity_hr_zones",
+   "source": "independent"
+  },
+  {
+   "query": "what indexes exist on the orders table",
+   "server": "postgres",
+   "tool": "pg_list_indexes",
+   "source": "independent"
+  },
+  {
+   "query": "find the worst performing queries in the database",
+   "server": "postgres",
+   "tool": "pg_slow_queries",
+   "source": "independent"
+  },
+  {
+   "query": "show me every table in the public schema",
+   "server": "postgres",
+   "tool": "pg_list_tables",
+   "source": "independent"
+  },
+  {
+   "query": "insert a new customer row into the database",
+   "server": "postgres",
+   "tool": "pg_execute",
+   "source": "independent"
+  },
+  {
+   "query": "what schemas does the database have",
+   "server": "postgres",
+   "tool": "pg_list_schemas",
+   "source": "independent"
+  }
+ ]
+}

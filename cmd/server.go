@@ -15,12 +15,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/cache/embedder"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/statusfile"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/spf13/cobra"
 )
@@ -502,6 +504,10 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// search_tools index (#305): BM25 by default, hybrid (BM25 + embedding
+	// similarity) only when tool_search.hybrid is enabled.
+	configureToolSearch(refreshCtx, handler, cfg.ToolSearch)
+
 	// Serve immediately from the persistent tool cache and refresh every
 	// server's tools in the background (#297): no request ever waits for
 	// another server's tools/list.
@@ -530,6 +536,37 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		MaxLineBytes:  cfg.EffectiveMaxLineBytes(),
 	}
 	return handleStdio(ctx, handler, frontendOpts, closePools, statusStore)
+}
+
+// configureToolSearch builds the handler's search_tools index from the
+// `tool_search:` config block and, when hybrid mode is enabled, starts the
+// background embedding of tool descriptions (stopped with ctx). A hybrid
+// block whose embedder cannot be created leaves search_tools on BM25.
+func configureToolSearch(ctx context.Context, handler *mcp.Handler, cfg *toolsearch.Config) {
+	ix := handler.ConfigureToolSearch(cfg.Options())
+	if !cfg.HybridEnabled() {
+		return
+	}
+	emb, err := embedder.NewFromConfig(cfg.Hybrid.Embedder, slog.Default())
+	if err != nil {
+		slog.Warn("tool_search.hybrid: embedder unavailable, search_tools uses BM25 only", "error", err)
+		return
+	}
+	context.AfterFunc(ctx, func() { _ = emb.Close() })
+	ix.EnableHybrid(ctx, toolSearchEmbedder{emb})
+	slog.Info("tool search: hybrid ranking enabled", "provider", cfg.Hybrid.Embedder.Provider)
+}
+
+// toolSearchEmbedder adapts a pkg/cache/embedder client to
+// toolsearch.Embedder.
+type toolSearchEmbedder struct{ emb embedder.Embedder }
+
+func (a toolSearchEmbedder) Embed(ctx context.Context, text string) ([]float32, error) {
+	out, err := a.emb.Embed(ctx, embedder.EmbedRequest{ToolName: text})
+	if err != nil {
+		return nil, err
+	}
+	return out.Vector, nil
 }
 
 // logFirewallStatus logs the one-line firewall summary at startup, plus a

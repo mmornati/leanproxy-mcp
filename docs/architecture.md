@@ -305,8 +305,11 @@ leanproxy-mcp/
 │   ├── bouncer/    # Redaction engine
 │   ├── mcp/        # MCP protocol implementation
 │   │   ├── handlers.go    # MCP request handlers
-│   │   ├── tool_index.go  # Gateway tool definitions (list_servers, list_tools, invoke_tool)
+│   │   ├── tool_index.go  # Gateway tool definitions (search_tools, list_servers, list_tools, invoke_tool)
+│   │   ├── search_tools.go # search_tools handler
+│   │   ├── toolrefresh.go # Background tool cache refresh (feeds the search index)
 │   │   └── types.go     # MCP types
+│   ├── toolsearch/ # Ranked tool index behind search_tools (BM25, optional hybrid)
 │   ├── toolstore/  # Persistent tool cache
 │   │   └── filecache.go  # File-based cache
 │   └── statusfile/ # Shared status file
@@ -322,8 +325,17 @@ leanproxy-mcp/
 Implements the MCP protocol handling including:
 - Request routing and handling
 - Tool discovery and caching
-- Gateway tools (list_tools method)
+- Gateway tools (search_tools, list_servers, list_tools, invoke_tool)
 - Protocol type definitions
+
+### Tool Search (`pkg/toolsearch/`)
+
+The ranked, cross-server index behind `search_tools`: Okapi BM25 over each
+tool's server name, name (×2), description and parameters, with a small
+synonym table, optionally fused with embedding similarity (Reciprocal Rank
+Fusion) when `tool_search.hybrid` is enabled. The handler re-indexes a server
+whenever the background refresh changes its tool list; queries read an
+immutable snapshot, so they never wait for a refresh.
 
 ### Tool Store (`pkg/toolstore/`)
 

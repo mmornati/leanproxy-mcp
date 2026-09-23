@@ -25,22 +25,23 @@
 
 ## Latest Benchmark
 
-Measured by `make harness`: the real `leanproxy-mcp server run --stdio` binary, driven over pipes, in front of 5 mock MCP servers that serve a realistic 118-tool catalog (GitHub, Jira/Confluence, Slack, Garmin, Postgres). Run on linux/amd64 (4 CPUs) at commit `994d8c8`. Tokens use `pkg/reporter.Estimator` (1 token ≈ 4 chars). Every row below is a line of `bench-results/harness.md`.
+Measured by `make harness`: the real `leanproxy-mcp server run --stdio` binary, driven over pipes, in front of 5 mock MCP servers that serve a realistic 118-tool catalog (GitHub, Jira/Confluence, Slack, Garmin, Postgres). Run on linux/amd64 (4 CPUs) at commit `430f9a8`. Tokens use `pkg/reporter.Estimator` (1 token ≈ 4 chars). Every row below is a line of `bench-results/harness.md`.
 
 | Metric | Measured | Threshold | Status |
 |---|---|---|---|
-| Session savings, Morning Sport (4 prompts, 2 servers) | **−86.8%** (+3 extra LLM turns) | – | measured |
-| Session savings, Dev Workflow (5 prompts, 2 servers) | **−74.8%** (+3 extra LLM turns) | – | measured |
-| Session savings, Full Day (7 prompts, 3 servers) | **−71.8%** (+4 extra LLM turns) | – | measured |
-| Proxy overhead, p50 / p95 (proxied − direct) | **0.59 / 0.72 ms** | p95 < 5 ms | ✅ |
-| 500-call pipelined burst over 5 servers | **0 errors**, 11,570 req/s | 0 errors | ✅ |
+| Session savings, Morning Sport (4 prompts, 2 servers): `list_tools` / `search_tools` discovery | **−86.0%** (+3 turns) / **−93.5%** (+4 turns) | – | measured |
+| Session savings, Dev Workflow (5 prompts, 2 servers): `list_tools` / `search_tools` | **−74.0%** (+3 turns) / **−84.4%** (+6 turns) | – | measured |
+| Session savings, Full Day (7 prompts, 3 servers): `list_tools` / `search_tools` | **−70.9%** (+4 turns) / **−65.0%** (+10 turns, 3 search misses) | – | measured |
+| `search_tools` lookup (k=5), 83 labeled intents | **152 tokens** avg (vs 907 for `list_tools(server)`), right tool in top 5 for **85.5%** | – | measured |
+| Proxy overhead, p50 / p95 (proxied − direct) | **0.56 / 0.74 ms** | p95 < 5 ms | ✅ |
+| 500-call pipelined burst over 5 servers | **0 errors**, 9,723 req/s | 0 errors | ✅ |
 | 50 parallel calls to a 100 ms tool | **205 ms** wall | < 1 s | ✅ |
-| 5 MB tool response relayed | **479 ms** (direct: 55 ms) | relayed intact | ✅ |
-| Secret redaction, both directions | **0 of 3** fake secrets leaked | active | ✅ |
-| Proxy RSS, idle / after burst | **20.1 / 21.8 MiB** | – | measured |
-| Binary size (linux/amd64, stripped) | **16.3 MiB** | < 20 MB | ✅ |
+| 5 MB tool response relayed | **581 ms** (direct: 51 ms) | relayed intact | ✅ |
+| Secret redaction, both directions (incl. `search_tools` output) | **0 of 3** fake secrets leaked | active | ✅ |
+| Proxy RSS, idle / after burst | **20.4 / 22.5 MiB** | – | measured |
+| Binary size (linux/amd64, stripped) | **16.4 MiB** | < 20 MB | ✅ |
 
-> The savings include LeanProxy's own discovery outputs (`list_servers`, `list_tools`), and the table reports the extra turns they cost. Earlier versions of this table left both out and reported 81.5–93.7% session savings. **Methodology, assumptions and full results: [docs/benchmark-results.md](docs/benchmark-results.md).**
+> The savings include LeanProxy's own discovery outputs (`list_servers`, `list_tools`, `search_tools`), and the table reports the extra turns they cost. Earlier versions of this table left both out and reported 81.5–93.7% session savings. **Methodology, assumptions and full results: [docs/benchmark-results.md](docs/benchmark-results.md).**
 
 ---
 
@@ -81,14 +82,14 @@ flowchart LR
 
 ## Enter LeanProxy: Your Token Firewall
 
-LeanProxy sits between your IDE and MCP servers as a smart gateway. It loads tool schemas **only when needed** — reducing the schema tax to a single 237-token router payload (3 tools: `list_servers`, `list_tools`, `invoke_tool`).
+LeanProxy sits between your IDE and MCP servers as a smart gateway. It loads tool schemas **only when needed** — reducing the schema tax to a single 318-token router payload (4 tools: `search_tools`, `list_servers`, `list_tools`, `invoke_tool`). The model finds a tool across every server with one `search_tools` call, then runs it with `invoke_tool`.
 
 ```mermaid
 flowchart LR
     IDE["Your IDE"] --> Gateway["LeanProxy Gateway"]
 
     subgraph Gateway["LeanProxy Gateway"]
-        Router["Router: 3 tools (~237 tokens)"]
+        Router["Router: 4 tools (~318 tokens)"]
         JIT["JIT Schema Loading"]
         Cache["Automatic Caching"]
         Firewall["Token Firewall"]
@@ -118,20 +119,20 @@ flowchart LR
 
 ## Real Results, Real Savings
 
-### 72–87% Fewer Tokens per Session (measured by `make harness`)
+### 65–94% Fewer Tokens per Session (measured by `make harness`)
 
-| Session | Native MCP (0.25× cache read) | LeanProxy | Savings | Extra LLM turns |
-|:--------|:------------------------------|:----------|:--------|:----------------|
-| Morning Sport (4 prompts, 2 of 5 servers) | 17,586 | 2,328 | **−86.8%** | +3 |
-| Dev Workflow (5 prompts, 2 of 5 servers) | 20,098 | 5,068 | **−74.8%** | +3 |
-| Full Day (7 prompts, 3 of 5 servers) | 25,123 | 7,093 | **−71.8%** | +4 |
+| Session | Native MCP (0.25× cache read) | LeanProxy, `list_tools` discovery | Savings | Extra LLM turns | LeanProxy, `search_tools` discovery | Savings | Extra LLM turns |
+|:--------|:------------------------------|:----------|:--------|:----------------|:----------|:--------|:----------------|
+| Morning Sport (4 prompts, 2 of 5 servers) | 17,586 | 2,470 | **−86.0%** | +3 | 1,148 | **−93.5%** | +4 |
+| Dev Workflow (5 prompts, 2 of 5 servers) | 20,098 | 5,234 | **−74.0%** | +3 | 3,143 | **−84.4%** | +6 |
+| Full Day (7 prompts, 3 of 5 servers) | 25,123 | 7,302 | **−70.9%** | +4 | 8,793 | **−65.0%** | +10 |
 
 **How these are counted.**
 
 - **Native MCP.** All 5 configured servers' `tools/list` payloads are in context on every turn: the first turn at full price, later turns at the 0.25× cache-read rate.
 - **LeanProxy.**
-  - The 237-token router is in context from the start.
-  - Discovery outputs join the context the turn they are fetched, at full price: `list_servers` on the first turn, and `list_tools(server)` the first time a server is used.
+  - The 318-token router is in context from the start.
+  - Discovery outputs join the context the turn they are fetched, at full price. With `list_tools`: `list_servers` on the first turn, and `list_tools(server)` the first time a server is used. With `search_tools`: one search the first time a tool is needed; when the tool is not in the top 5 (3 of Full Day's 7 queries), the model falls back to `list_tools(server)` and pays both.
   - Later turns re-read everything already in context at 0.25×.
 - **Extra LLM turns.** Each discovery call is one extra round-trip. The table counts them, but their token cost is not included, so the savings are an upper bound.
 - **Tool results.** They are the same on both paths and left out of both.
@@ -140,14 +141,14 @@ flowchart LR
 
 | Configuration | Native `tools/list` | LeanProxy router | Savings |
 |:--------------|:--------------------|:-----------------|:--------|
-| 1 server (GitHub, 42 tools) | 4,443 tokens | 237 tokens | **−94.7%** |
-| 1 server (Jira/Confluence, 24 tools) | 2,043 tokens | 237 tokens | **−88.4%** |
-| 1 server (Garmin, 28 tools) | 1,795 tokens | 237 tokens | **−86.8%** |
-| 1 server (Slack, 14 tools) | 1,128 tokens | 237 tokens | **−79.0%** |
-| 1 server (Postgres, 10 tools) | 640 tokens | 237 tokens | **−63.0%** |
-| 5 servers (118 tools) | 10,049 tokens | 237 tokens | **−97.6%** |
+| 1 server (GitHub, 42 tools) | 4,443 tokens | 318 tokens | **−92.8%** |
+| 1 server (Jira/Confluence, 24 tools) | 2,043 tokens | 318 tokens | **−84.4%** |
+| 1 server (Garmin, 28 tools) | 1,795 tokens | 318 tokens | **−82.3%** |
+| 1 server (Slack, 14 tools) | 1,128 tokens | 318 tokens | **−71.8%** |
+| 1 server (Postgres, 10 tools) | 640 tokens | 318 tokens | **−50.3%** |
+| 5 servers (118 tools) | 10,049 tokens | 318 tokens | **−96.8%** |
 
-This table counts only the static schema load. LeanProxy fetches a server's tool list on demand with `list_tools` (GitHub: 1,638 tokens), and the session table above includes that cost. See [docs/benchmark-results.md](docs/benchmark-results.md) for the per-server `list_tools` sizes and the full methodology.
+This table counts only the static schema load. LeanProxy fetches tools on demand, with `search_tools` (152 tokens per lookup on average) or `list_tools` (GitHub: 1,638 tokens), and the session table above includes that cost. See [docs/benchmark-results.md](docs/benchmark-results.md) for the per-server `list_tools` sizes and the full methodology.
 
 ---
 
@@ -223,7 +224,7 @@ flowchart TB
     end
 
     subgraph Gateway["LeanProxy Gateway"]
-        Router["Router<br/>(3 tools, ~237 tokens)"]
+        Router["Router<br/>(4 tools, ~318 tokens)"]
         JIT["JIT Schema Cache"]
         Firewall["Token Firewall<br/>(Secret Redaction)"]
         Pool["Connection Pool<br/>(multiplexed stdio)"]

@@ -116,7 +116,6 @@ func (m *mockRouter) GetComplexityTier(ctx context.Context, method string) (stri
 type mockGatewayTools struct {
 	listServersFunc func(ctx context.Context) ([]gateway.ServerInfo, error)
 	invokeToolFunc  func(ctx context.Context, params gateway.InvokeToolParams) (interface{}, error)
-	searchToolsFunc func(ctx context.Context, query string) ([]gateway.ToolSearchResult, error)
 	listToolsFunc   func() []gateway.Tool
 }
 
@@ -139,13 +138,6 @@ func (m *mockGatewayTools) InvokeTool(ctx context.Context, params gateway.Invoke
 		return m.invokeToolFunc(ctx, params)
 	}
 	return nil, nil
-}
-
-func (m *mockGatewayTools) SearchTools(ctx context.Context, query string) ([]gateway.ToolSearchResult, error) {
-	if m.searchToolsFunc != nil {
-		return m.searchToolsFunc(ctx, query)
-	}
-	return []gateway.ToolSearchResult{}, nil
 }
 
 func TestIsGatewayTool(t *testing.T) {

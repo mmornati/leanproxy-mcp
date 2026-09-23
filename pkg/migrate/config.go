@@ -14,6 +14,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
 
@@ -214,6 +215,10 @@ type Config struct {
 	Injection     *injection.Config     `yaml:"injection,omitempty"`
 	Bouncer       *bouncer.Config       `yaml:"bouncer,omitempty"`
 	ResponseCache *responsecache.Config `yaml:"response_cache,omitempty"`
+	// ToolSearch configures the search_tools index (synonyms, optional
+	// hybrid embedding ranking). Absent means BM25 with the default
+	// synonyms.
+	ToolSearch *toolsearch.Config `yaml:"tool_search,omitempty"`
 	// Server holds settings for the proxy's own MCP front end (the
 	// `server run --stdio` loop the IDE talks to), as opposed to the
 	// upstream servers listed under Servers.
@@ -344,6 +349,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	if err := c.Server.Validate(); err != nil {
+		return err
+	}
+	if err := c.ToolSearch.Validate(); err != nil {
 		return err
 	}
 	return nil

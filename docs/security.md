@@ -48,7 +48,8 @@ client → redact request params → injection check → dispatch/upstream → r
   call. If params cannot be redacted the request is rejected with
   `Secret redaction failed; request not forwarded` and never forwarded.
 - **Response redaction** covers `result`, `error.message` and `error.data`
-  of every response, including `list_tools` text (upstream tool descriptions)
+  of every response, including `list_tools` and `search_tools` text
+  (upstream tool descriptions)
   and error hints/schemas.
 - Redaction is **on by default** with the built-in patterns when there is no
   `bouncer:` block. Only `bouncer.enabled: false` turns it off (in both

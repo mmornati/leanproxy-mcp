@@ -4,6 +4,7 @@ package harness
 
 import (
 	"fmt"
+	"math"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -32,11 +33,20 @@ func renderReport(cat *Catalog, tr tokenResults, lr latencyResults, sc []check, 
 	}
 
 	w("\n## Tokens: discovery payloads\n\n| Payload | Tokens |\n|---|---:|\n")
-	w("| LeanProxy `tools/list` (router, 3 tools) | %d |\n", tr.router)
+	w("| LeanProxy `tools/list` (router, 4 tools) | %d |\n", tr.router)
 	w("| LeanProxy `list_servers` (%d servers) | %d |\n", len(cat.Servers), tr.listServers)
-	w("| LeanProxy `search_tools` | n/a (Epic 20) |\n")
+	sr := tr.search
+	w("| LeanProxy `search_tools` (k=5), per lookup: average / max over %d labeled intents | %.0f / %d |\n", sr.lookups, sr.avgTokens, sr.maxTokens)
+	w("| LeanProxy `list_tools(server)` for the same intents' servers, per lookup: average | %.0f |\n", sr.avgListTools)
 	w("| `invoke_tool` request overhead vs a native `tools/call` | +%d |\n", tr.invokeRequest-tr.directRequest)
 	w("| `invoke_tool` response overhead vs a native `tools/call` | %+d |\n", tr.invokeResponse-tr.directResponse)
+
+	w("\n## `search_tools` ranking through the binary\n\n")
+	w("The %d labeled intents of `pkg/toolsearch/testdata/intents.json` (44 from the audit, the rest written independently of the catalog descriptions), each sent as one `search_tools` call (BM25, default config).\n\n", sr.lookups)
+	w("| Measurement | Value |\n|---|---:|\n")
+	w("| Recall@1 (right tool first) | %s |\n", ratio(sr.at1, sr.lookups))
+	w("| Recall@5 (right tool in the answer) | %s |\n", ratio(sr.at5, sr.lookups))
+	w("| Tokens per lookup vs `list_tools(server)` | %s |\n", pct(int(math.Round(sr.avgTokens)), int(math.Round(sr.avgListTools))))
 
 	w("\n## Tokens: per server\n\n| Server | Tools | Native `tools/list` | LeanProxy `list_tools(server)` | LeanProxy router | Router vs native |\n|---|---:|---:|---:|---:|---:|\n")
 	var nativeSum, listSum int
@@ -50,11 +60,12 @@ func renderReport(cat *Catalog, tr tokenResults, lr latencyResults, sc []check, 
 
 	w("\n## Tokens: session replay\n\n")
 	w("Native = all %d servers' `tools/list` in context every turn (turn 1 at 1×, later turns at 0.25× cache read). ", len(cat.Servers))
-	w("LeanProxy = router + every discovery output already in context (turn 1 at 1×, later turns at 0.25×) + that turn's new discovery output (`list_servers` on turn 1, `list_tools` on a server's first use) at 1×. ")
-	w("Tool results are identical on both paths and excluded. Extra turns = discovery round-trips LeanProxy adds; their cost is not included in the token columns.\n\n")
-	w("| Session | Prompts | Servers used | Native tokens | LeanProxy tokens | Savings | Extra LLM turns |\n|---|---:|---:|---:|---:|---:|---:|\n")
+	w("LeanProxy = router + every discovery output already in context (turn 1 at 1×, later turns at 0.25×) + that turn's new discovery output at 1×. ")
+	w("With `list_tools`, discovery is `list_servers` on turn 1 and `list_tools` on a server's first use; with `search_tools`, it is one `search_tools(query)` the first time a tool is needed (a miss outside the top 5 also pays a `list_tools` fallback and one more turn). ")
+	w("Tool results are identical on every path and excluded. Extra turns = discovery round-trips LeanProxy adds; their cost is not included in the token columns.\n\n")
+	w("| Session | Prompts | Servers used | Native tokens | LeanProxy `list_tools` tokens | Savings | Extra LLM turns | LeanProxy `search_tools` tokens | Savings | Extra LLM turns | Search misses |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, s := range tr.sessionResults {
-		w("| %s | %d | %d | %d | %d | %s | +%d |\n", s.name, s.prompts, s.servers, s.native, s.lean, pct(s.lean, s.native), s.extraTurns)
+		w("| %s | %d | %d | %d | %d | %s | +%d | %d | %s | +%d | %d |\n", s.name, s.prompts, s.servers, s.native, s.lean, pct(s.lean, s.native), s.extraTurns, s.searchLean, pct(s.searchLean, s.native), s.searchExtraTurns, s.searchMisses)
 	}
 
 	w("\n## Latency and throughput\n\n| Measurement | Value |\n|---|---:|\n")
@@ -96,6 +107,14 @@ func pct(lean, native int) string {
 		return fmt.Sprintf("+%.1f%% (more tokens)", -saving)
 	}
 	return fmt.Sprintf("−%.1f%%", saving)
+}
+
+// ratio renders n/d as "n/d (x.y%)".
+func ratio(n, d int) string {
+	if d == 0 {
+		return "n/a"
+	}
+	return fmt.Sprintf("%d/%d (%.1f%%)", n, d, 100*float64(n)/float64(d))
 }
 
 func rss(kb int) string {

@@ -6,12 +6,17 @@ issue #301). Nothing here is hand-edited or estimated. The run's report is
 written to `bench-results/harness.md`, and CI uploads the same file as the
 `harness-results` artifact on every push and pull request.
 
-> **TL;DR.** Measured through the real binary: a session costs **72–87%
-> fewer tokens** than native MCP, once LeanProxy's own discovery calls are
-> counted. Each session also takes **3–4 extra LLM turns**. The router the
-> client loads is **237 tokens**, against **10,049** for the five native
-> `tools/list` payloads. The proxy adds **0.72 ms** at p95, and a
-> 500-call burst finished with **0 errors**.
+> **TL;DR.** Measured through the real binary: a session costs **71–86%
+> fewer tokens** than native MCP with `list_tools` discovery, and **65–94%**
+> with `search_tools` discovery, once LeanProxy's own discovery calls are
+> counted. Discovery adds **3–4 extra LLM turns** per session with
+> `list_tools` and **4–10** with `search_tools` (one search per new tool).
+> A `search_tools` lookup costs **152 tokens** on average, against **907**
+> for `list_tools(server)`, and finds the right tool in its top 5 for
+> **85.5%** of 83 labeled intents. The router the client loads is **318
+> tokens**, against **10,049** for the five native `tools/list` payloads.
+> The proxy adds **0.74 ms** at p95, and a 500-call burst finished with
+> **0 errors**.
 
 The README used to claim 81.5–93.7% session savings, ~12 µs overhead and
 ~25,000 q/s. Those figures came from benchmarks that did not run the proxy
@@ -78,28 +83,37 @@ exact, but it is consistent, and consistency is what the ratios need.
 
 - **Native.** Each catalog server's own `tools/list` response, read directly
   from the mock.
-- **Router.** LeanProxy's `tools/list` response (`list_servers`,
-  `list_tools`, `invoke_tool`).
+- **Router.** LeanProxy's `tools/list` response (`search_tools`,
+  `list_servers`, `list_tools`, `invoke_tool`).
 - **`list_servers` and `list_tools(server)`.** The real outputs of those
   router tools. `list_servers` is read once the background tool refresh has
   filled in every server's tool count.
 - **`invoke_tool` overhead.** The token difference between an `invoke_tool`
   request and the same call sent natively as `tools/call`, and the same
   difference for the response.
-- **`search_tools`.** Not measured: it does not exist yet (Epic 20).
+- **`search_tools`.** Each of the 83 labeled intents of
+  `pkg/toolsearch/testdata/intents.json` is sent as one `search_tools`
+  call (k = 5, BM25, default config). The harness reports the average and
+  maximum response size, and compares it with the `list_tools(server)`
+  output of each intent's server, which is what the `list_tools` flow reads
+  for the same lookup. It also reports recall@1 and recall@5 of those
+  answers. 44 intents come from the audit prototype; 39 were written from
+  the user's side without reusing the catalog descriptions.
 
 ### 3.3 Session model
 
-A session is a list of `(server, tool)` prompts. The harness replays each
-session through the proxy: every `list_servers`, `list_tools` and
-`invoke_tool` call below really runs. Tokens are counted per LLM turn.
+A session is a list of prompts. Each prompt names the `(server, tool)` that
+serves it and a plain-words query a model would search with. The harness
+replays each session through the proxy: every `list_servers`, `list_tools`,
+`search_tools` and `invoke_tool` call below really runs. Tokens are counted
+per LLM turn.
 
 **Native MCP.** All 5 configured servers' `tools/list` payloads are in
 context on every turn. The first turn pays for them at full price. Later
 turns pay the provider's cache-read rate of **0.25×**. There are no extra
 turns.
 
-**LeanProxy.**
+**LeanProxy with `list_tools`.**
 
 1. The router is in context from the first turn.
 2. A turn that needs discovery adds that discovery output at full price:
@@ -109,6 +123,14 @@ turns.
 3. Each discovery output stays in context.
 4. Every turn after the first re-reads the carried context (the router plus
    every earlier discovery output) at 0.25×.
+
+**LeanProxy with `search_tools`.** The same rules, but the discovery is one
+`search_tools(query)` the first time the session needs a tool (a tool found
+earlier in the session is already in context). No `list_servers` call. When
+the tool is not in the top 5, the model is assumed to fall back to
+`list_tools(server)`: that output is added at full price too, with one more
+extra turn. The queries are not tuned to the index; a miss is paid for, not
+rewritten.
 
 **Extra turns.** Each discovery call is one extra LLM round-trip.
 The harness reports them in their own column. Their token cost (another
@@ -133,6 +155,8 @@ savings column is an upper bound.
 | Dev Workflow | GitHub ×2, Jira ×2, GitHub |
 | Full Day | GitHub ×2, Jira ×2, Slack ×2, GitHub |
 
+The prompts and their queries are in `tests/harness/harness_test.go`.
+
 ### 3.4 Latency, throughput and memory
 
 - **Paced sequential.**
@@ -156,10 +180,12 @@ savings column is an upper bound.
 
 ### 3.5 Safety
 
-The mock embeds three fake credentials in every result. The harness then
-checks four things:
+The mock embeds three fake credentials in every result, and in the
+description of its first tool. The harness then checks five things:
 
 - **Server → client.** No fake credential reaches the client.
+- **Server → client via `search_tools`.** A search that returns the leaky
+  tool shows no fake credential.
 - **Client → server.** The mock counts the fake credentials that arrive in
   the request it received. The count must be 0.
 - **Injection.** A block-level payload is refused with -32600.
@@ -176,7 +202,7 @@ Run metadata:
 
 | Field | Value |
 |---|---|
-| Commit | `994d8c8` |
+| Commit | `430f9a8` |
 | Date (UTC) | 2026-09-23 |
 | Host | linux/amd64, 4 CPUs, go1.25.5 |
 
@@ -192,15 +218,16 @@ Latency depends on the host; token counts do not.
 | 0 errors in a 500-call pipelined burst | 0 errors | PASS |
 | 50 × 100 ms parallel calls < 1 s | 205 ms | PASS |
 | 5 MB response relayed | 5,242,881 bytes | PASS |
-| p95 proxy overhead < 5 ms | 0.72 ms | PASS |
+| p95 proxy overhead < 5 ms | 0.74 ms | PASS |
 
 ### 4.2 Discovery payloads
 
 | Payload | Tokens |
 |---|---:|
-| LeanProxy `tools/list` (router, 3 tools) | 237 |
+| LeanProxy `tools/list` (router, 4 tools) | 318 |
 | LeanProxy `list_servers` (5 servers) | 80 |
-| LeanProxy `search_tools` | n/a (Epic 20) |
+| LeanProxy `search_tools` (k=5), per lookup: average / max over 83 labeled intents | 152 / 260 |
+| LeanProxy `list_tools(server)` for the same intents' servers, per lookup: average | 907 |
 | `invoke_tool` request overhead vs a native `tools/call` | +14 |
 | `invoke_tool` response overhead vs a native `tools/call` | +0 |
 
@@ -208,42 +235,69 @@ Latency depends on the host; token counts do not.
 
 | Server | Tools | Native `tools/list` | LeanProxy `list_tools(server)` | LeanProxy router | Router vs native |
 |---|---:|---:|---:|---:|---:|
-| github | 42 | 4,443 | 1,638 | 237 | −94.7% |
-| jira | 24 | 2,043 | 772 | 237 | −88.4% |
-| slack | 14 | 1,128 | 441 | 237 | −79.0% |
-| garmin | 28 | 1,795 | 760 | 237 | −86.8% |
-| postgres | 10 | 640 | 282 | 237 | −63.0% |
-| **all 5** | **118** | **10,049** | **3,893** | **237** | **−97.6%** |
+| github | 42 | 4,443 | 1,638 | 318 | −92.8% |
+| jira | 24 | 2,043 | 772 | 318 | −84.4% |
+| slack | 14 | 1,128 | 441 | 318 | −71.8% |
+| garmin | 28 | 1,795 | 760 | 318 | −82.3% |
+| postgres | 10 | 640 | 282 | 318 | −50.3% |
+| **all 5** | **118** | **10,049** | **3,893** | **318** | **−96.8%** |
 
 "Router vs native" compares only what sits in context before any tool is
-used. A real session also pays for discovery; that cost is in §4.4.
+used. A real session also pays for discovery; that cost is in §4.5.
 
-### 4.4 Session replay
+The router grew from 237 to 318 tokens when `search_tools` was added
+(#305).
 
-| Session | Prompts | Servers used | Native tokens | LeanProxy tokens | Savings | Extra LLM turns |
-|---|---:|---:|---:|---:|---:|---:|
-| Morning Sport | 4 | 2 | 17,586 | 2,328 | −86.8% | +3 |
-| Dev Workflow | 5 | 2 | 20,098 | 5,068 | −74.8% | +3 |
-| Full Day | 7 | 3 | 25,123 | 7,093 | −71.8% | +4 |
-
-The savings shrink as a session uses more servers and more tools. Each
-newly used server brings its `list_tools` output into context. GitHub's
-output alone is 1,638 tokens.
-
-### 4.5 Latency, throughput and memory
+### 4.4 `search_tools` ranking through the binary
 
 | Measurement | Value |
 |---|---:|
-| Paced sequential `invoke_tool`, 200 unique calls: p50 / p95 / p99 via proxy | 0.80 / 1.06 / 1.65 ms |
-| Same calls direct to the mock: p50 / p95 / p99 | 0.21 / 0.34 / 0.79 ms |
-| Proxy overhead (proxy − direct): p50 / p95 / p99 | 0.59 / 0.72 / 0.85 ms |
-| 500-call pipelined burst over 5 servers: wall / throughput / errors | 43 ms / 11,570 req/s / 0 |
-| 50 parallel calls to a 100 ms tool on one server (default `max_in_flight` 32, so two waves): wall | 205 ms |
-| 5 MB tool response: via proxy / direct | 479 ms / 55 ms |
-| Proxy RSS: idle (5 servers warm) / after the burst | 20.1 MiB / 21.8 MiB |
-| Binary size (linux/amd64, `-trimpath -ldflags="-s -w"`) | 16.3 MiB |
+| Recall@1 (right tool first) | 55/83 (66.3%) |
+| Recall@5 (right tool in the answer) | 71/83 (85.5%) |
+| Tokens per lookup vs `list_tools(server)` | −83.2% |
 
-The 5 MB relay costs about 0.4 s more through the proxy than directly.
+On the 44 audit intents alone recall@5 is 88.6%; on the 39 independent
+intents it is 82.1% (`go test ./pkg/toolsearch -run TestRecall -v`). The
+independent intents miss mostly on vocabulary the catalog does not use
+("time booked" for a worklog, "watches" for devices); the optional hybrid
+mode (`tool_search.hybrid`, off by default and not measured here) targets
+those.
+
+### 4.5 Session replay
+
+| Session | Prompts | Servers used | Native tokens | LeanProxy `list_tools` tokens | Savings | Extra LLM turns | LeanProxy `search_tools` tokens | Savings | Extra LLM turns | Search misses |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Morning Sport | 4 | 2 | 17,586 | 2,470 | −86.0% | +3 | 1,148 | −93.5% | +4 | 0 |
+| Dev Workflow | 5 | 2 | 20,098 | 5,234 | −74.0% | +3 | 3,143 | −84.4% | +6 | 1 |
+| Full Day | 7 | 3 | 25,123 | 7,302 | −70.9% | +4 | 8,793 | −65.0% | +10 | 3 |
+
+With `list_tools`, the savings shrink as a session uses more servers. Each
+newly used server brings its `list_tools` output into context; GitHub's
+output alone is 1,638 tokens.
+
+With `search_tools`, a session that finds its tools pays about 150 tokens
+per new tool instead of a whole server's list, and saves more (Morning
+Sport, Dev Workflow). A miss is expensive: the modeled fallback reads the
+whole `list_tools` output on top of the search. Full Day misses 3 of its 7
+distinct tools (a README read, a Jira search phrased "find my tickets in
+progress", a Slack post phrased "status update"), so it ends up above the
+`list_tools` flow. `search_tools` also adds more extra turns than
+`list_tools`: one per distinct tool rather than one per server.
+
+### 4.6 Latency, throughput and memory
+
+| Measurement | Value |
+|---|---:|
+| Paced sequential `invoke_tool`, 200 unique calls: p50 / p95 / p99 via proxy | 0.73 / 1.04 / 1.42 ms |
+| Same calls direct to the mock: p50 / p95 / p99 | 0.17 / 0.30 / 0.38 ms |
+| Proxy overhead (proxy − direct): p50 / p95 / p99 | 0.56 / 0.74 / 1.04 ms |
+| 500-call pipelined burst over 5 servers: wall / throughput / errors | 51 ms / 9,723 req/s / 0 |
+| 50 parallel calls to a 100 ms tool on one server (default `max_in_flight` 32, so two waves): wall | 205 ms |
+| 5 MB tool response: via proxy / direct | 581 ms / 51 ms |
+| Proxy RSS: idle (5 servers warm) / after the burst | 20.4 MiB / 22.5 MiB |
+| Binary size (linux/amd64, `-trimpath -ldflags="-s -w"`) | 16.4 MiB |
+
+The 5 MB relay costs about 0.5 s more through the proxy than directly.
 Most of that is response-side secret redaction, which scans the whole
 result. A one-off check with `bouncer.enabled: false` relayed the same
 response several times faster; the harness does not report that
@@ -266,18 +320,20 @@ None of them is a proxy-level number, and none is quoted in the README.
 
 | Previous claim | Where it came from | Now (harness) |
 |---|---|---|
-| Session savings 81.5–93.7% | `SessionReplay_*` charged LeanProxy the router plus one ~26-token stub per prompt. It ignored the `list_tools` output and the extra turns, and its timing loop was empty. | **−71.8% to −86.8%**, with discovery outputs counted and 3–4 extra turns reported |
-| Per-server savings 79.0–97.9% (GitHub 41 tools = 4,570 tokens, ...) | Synthetic `tools/list` payloads padded with dots to a byte count from a seeded snapshot | Real catalog payloads: router vs native **−63.0% to −94.7%** per server, **−97.6%** for all 5 |
-| Proxy overhead ~12 µs/op (p50) | `BenchmarkProxyOverhead_NFR1`: two `json.Unmarshal` calls on literals, in process | **0.59 ms p50 / 0.72 ms p95** through the binary, measured against a direct baseline |
-| Throughput ~25,000 q/s | `BenchmarkThroughput_MockMCP`: an in-process mock, with no proxy involved | **11,570 req/s** for a 500-call pipelined burst through the binary (one run; varies by host) |
-| 50 MB payload estimate ~7 ms | Token estimator over a 50 MB buffer; no relay | **5 MB relayed in 479 ms** (estimator benchmark renamed `BenchmarkEstimateTokens_50MB`) |
-| Binary 15.8 MB (darwin-arm64) | `dist/` build on the maintainer's machine | **16.3 MiB** (linux/amd64, harness build) |
+| Session savings 81.5–93.7% | `SessionReplay_*` charged LeanProxy the router plus one ~26-token stub per prompt. It ignored the `list_tools` output and the extra turns, and its timing loop was empty. | **−70.9% to −86.0%** with `list_tools` (3–4 extra turns), **−65.0% to −93.5%** with `search_tools` (4–10 extra turns), discovery outputs counted |
+| Per-server savings 79.0–97.9% (GitHub 41 tools = 4,570 tokens, ...) | Synthetic `tools/list` payloads padded with dots to a byte count from a seeded snapshot | Real catalog payloads: router vs native **−50.3% to −92.8%** per server, **−96.8%** for all 5 |
+| Proxy overhead ~12 µs/op (p50) | `BenchmarkProxyOverhead_NFR1`: two `json.Unmarshal` calls on literals, in process | **0.56 ms p50 / 0.74 ms p95** through the binary, measured against a direct baseline |
+| Throughput ~25,000 q/s | `BenchmarkThroughput_MockMCP`: an in-process mock, with no proxy involved | **9,723 req/s** for a 500-call pipelined burst through the binary (one run; varies by host) |
+| 50 MB payload estimate ~7 ms | Token estimator over a 50 MB buffer; no relay | **5 MB relayed in 581 ms** (estimator benchmark renamed `BenchmarkEstimateTokens_50MB`) |
+| Binary 15.8 MB (darwin-arm64) | `dist/` build on the maintainer's machine | **16.4 MiB** (linux/amd64, harness build) |
 
 ## 7. Known limits and follow-ups
 
-- **`search_tools` (Epic 20).** Once it lands, the harness should add its
-  cost and a "LeanProxy with `search_tools`" session column. The audit
-  prototype estimated it at about −92% for Full Day.
+- **`search_tools`.** The audit prototype estimated about −92% for Full
+  Day; the harness measures −65.0%, because 3 of Full Day's 7 queries miss
+  the top 5 and pay the `list_tools` fallback. Hybrid mode is not measured
+  (the harness has no network and no embedder), and the fallback model is
+  a conservative guess: a model might retry the search instead.
 - **Extra-turn cost.** The extra turns are counted but not costed. Costing
   them needs a model of what the model re-sends on a discovery turn.
 - **Transports.** Only the stdio front end and stdio upstreams are measured.

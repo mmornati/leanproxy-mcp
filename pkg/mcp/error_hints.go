@@ -140,8 +140,8 @@ var ErrorHintRegistry = map[string][]ErrorHint{
 	"tool not found": {
 		{
 			Original:   "tool not found",
-			Suggestion: "The tool doesn't exist on this server. Use list_servers to get servers, then list_tools to discover available tools.",
-			Action:     "list_tools",
+			Suggestion: "The tool doesn't exist on this server. Use search_tools to find the right tool, or list_tools to browse a server.",
+			Action:     "search_tools",
 		},
 	},
 }

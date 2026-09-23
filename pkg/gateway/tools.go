@@ -21,12 +21,6 @@ type ServerInfo struct {
 	ToolCount int    `json:"tool_count"`
 }
 
-type ToolSearchResult struct {
-	ToolName    string `json:"tool_name"`
-	ServerName  string `json:"server_name"`
-	Description string `json:"description"`
-}
-
 type InvokeToolParams struct {
 	ServerName string                 `json:"server_name"`
 	ToolName   string                 `json:"tool_name"`
@@ -36,7 +30,6 @@ type InvokeToolParams struct {
 type GatewayTools interface {
 	ListTools() []Tool
 	InvokeTool(ctx context.Context, params InvokeToolParams) (interface{}, error)
-	SearchTools(ctx context.Context, query string) ([]ToolSearchResult, error)
 	ListServers(ctx context.Context) ([]ServerInfo, error)
 }
 

@@ -29,7 +29,31 @@ type FieldDescription struct {
 	Desc string `json:"description"`
 }
 
+// LeanproxyTools are the gateway tools the proxy exposes in tools/list. The
+// recommended flow is search_tools -> invoke_tool; list_servers and
+// list_tools stay for browsing.
 var LeanproxyTools = []ToolDefinition{
+	{
+		Name:        "search_tools",
+		Description: "Find the best tools for a task across all servers. Returns the top matches with their input schema; call them with invoke_tool.",
+		Categories:  []string{"discovery", "meta"},
+		Returns: ReturnSchema{
+			Type:        "object",
+			Description: "Returns a content block with one line per matching tool, best first",
+			Fields: []FieldDescription{
+				{Name: "content", Type: "array", Desc: "Array of text content blocks"},
+			},
+		},
+		InputSchema: json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"query": {"type": "string"},
+				"k": {"type": "integer", "default": 5, "maximum": 20},
+				"server": {"type": "string", "description": "optional filter"}
+			},
+			"required": ["query"]
+		}`),
+	},
 	{
 		Name:        "list_servers",
 		Description: "List configured MCP servers: transport, state, tool count.",
@@ -48,7 +72,7 @@ var LeanproxyTools = []ToolDefinition{
 	},
 	{
 		Name:        "list_tools",
-		Description: "List tools on one server. Call list_servers first for names.",
+		Description: "Browse all tools of one server. Prefer search_tools.",
 		Categories:  []string{"discovery", "meta"},
 		Returns: ReturnSchema{
 			Type:        "object",
@@ -75,7 +99,7 @@ var LeanproxyTools = []ToolDefinition{
 	},
 	{
 		Name:        "invoke_tool",
-		Description: "Invoke a server tool. Call list_tools first for tool names.",
+		Description: "Invoke a tool found by search_tools.",
 		Categories:  []string{"execution", "meta"},
 		Returns: ReturnSchema{
 			Type:        "object",
@@ -89,15 +113,15 @@ var LeanproxyTools = []ToolDefinition{
 			"properties": {
 				"server": {
 					"type": "string",
-					"description": "From list_servers."
+					"description": "Server of the tool."
 				},
 				"tool": {
 					"type": "string",
-					"description": "From list_tools. No server prefix."
+					"description": "Tool name, no server prefix."
 				},
 				"arguments": {
 					"type": "object",
-					"description": "Arguments per list_tools."
+					"description": "Tool arguments."
 				}
 			},
 			"required": ["server", "tool"],
