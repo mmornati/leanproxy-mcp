@@ -2,6 +2,8 @@
 
 *Audit date: 2026-09-22 · Baseline: `main` @ `baa2a11` (v0.9.2)*
 
+> **Tracking:** Epic #288 (v0.10, stories #291–#304) · Epic #289 (v0.11, stories #305–#318) · Epic #290 (v1.0, stories #319–#325). Each epic has an ordered execution plan in its first comment.
+
 This document covers four things: where the project stands against the market, a security audit, a performance and reliability audit, and a prioritised roadmap. Every finding was checked either by running the real binary end to end or by reading the code at the cited line. The experiments can be re-run from [`experiments/`](experiments/).
 
 ---
