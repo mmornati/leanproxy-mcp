@@ -104,6 +104,11 @@ func handle(req request) (interface{}, map[string]interface{}) {
 				"description": "Always fails with a -32602 Invalid params error, for error-fidelity tests (#296).",
 				"inputSchema": map[string]interface{}{"type": "object"},
 			},
+			{
+				"name":        "env",
+				"description": "Returns this process's environment (os.Environ()), one KEY=VALUE per line, for least-privilege child environment tests (#311).",
+				"inputSchema": map[string]interface{}{"type": "object"},
+			},
 		}}, nil
 	case "tools/call":
 		var p struct {
@@ -130,6 +135,11 @@ func handle(req request) (interface{}, map[string]interface{}) {
 		if p.Name == "json_doc" {
 			return map[string]interface{}{
 				"content": []map[string]string{{"type": "text", "text": JSONDocText()}},
+			}, nil
+		}
+		if p.Name == "env" {
+			return map[string]interface{}{
+				"content": []map[string]string{{"type": "text", "text": strings.Join(os.Environ(), "\n")}},
 			}, nil
 		}
 		text := fmt.Sprintf("echo %s | leaked %s %s %s", p.Arguments, awsKey, ghToken, stripeKey)
