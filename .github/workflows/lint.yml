@@ -49,8 +49,13 @@ jobs:
       - name: Run govulncheck
         run: $(go env GOPATH)/bin/govulncheck ./...
 
+  # Requires "Dependency graph" to be enabled in the repository settings
+  # (Settings -> Code security -> Dependency graph). Until the maintainer
+  # enables it, the action fails with "Dependency review is not supported",
+  # so the job is opt-in: set the repository variable
+  # ENABLE_DEPENDENCY_REVIEW=true once the dependency graph is on.
   dependency-review:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && vars.ENABLE_DEPENDENCY_REVIEW == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
