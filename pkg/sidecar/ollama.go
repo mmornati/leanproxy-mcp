@@ -66,9 +66,6 @@ func NewClient(cfg Config, logger *slog.Logger) (RedactClient, error) {
 	if !cfg.Enabled() {
 		return nil, nil
 	}
-	if strings.EqualFold(cfg.Provider, ProviderMLX) {
-		return newMLXClient(cfg, logger)
-	}
 	return NewOllamaClient(cfg, logger)
 }
 
