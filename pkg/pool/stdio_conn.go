@@ -76,9 +76,19 @@ type stdioConn struct {
 	handshake handshakeState
 
 	// onNotification, when set, receives every server notification (a
-	// message with a method and no id). It must not block: the stdout
-	// reader calls it inline.
+	// message with a method and no id) except the cancellation of a
+	// server-to-client request, which the connection handles itself. It
+	// must not block for long: the stdout reader calls it inline.
 	onNotification func(method string, params json.RawMessage)
+
+	// onRequest, when set, answers a server-to-client request (issue
+	// #308). It runs on its own goroutine with a context that ends when
+	// the server cancels the request or the connection dies. When unset,
+	// ping gets an empty result and anything else "method not found".
+	onRequest func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, *errs.JSONRPCError)
+
+	// inbound tracks the server-to-client requests being answered.
+	inbound inboundRequests
 }
 
 func newStdioConn(name string, stdin io.WriteCloser, logger *slog.Logger) *stdioConn {
@@ -165,8 +175,8 @@ func (c *stdioConn) failRequest(wireID int64, haveID bool, err error) (int64, bo
 // it.
 func (c *stdioConn) fail(err error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.failErr != nil {
+		c.mu.Unlock()
 		return
 	}
 	c.failErr = err
@@ -174,6 +184,10 @@ func (c *stdioConn) fail(err error) {
 		ch <- rpcReply{err: err}
 		delete(c.pending, id)
 	}
+	c.mu.Unlock()
+	// Server-to-client requests being relayed can no longer be answered:
+	// cancel them so the client is told and nothing waits for them.
+	c.inbound.cancelAll()
 }
 
 // inFlight returns the number of requests currently awaiting a response.
@@ -313,19 +327,21 @@ func (c *stdioConn) handleLine(line []byte) {
 		if !hasID {
 			// Server notification (progress, logging, list_changed, ...).
 			c.logger.Debug("received server notification", "name", c.name, "method", msg.Method)
+			if msg.Method == methodCancelledNotification {
+				// The server gave up on one of its own requests: stop
+				// relaying it (the relay tells the client).
+				if key, ok := cancelledRequestKey(msg.Params); ok && c.inbound.cancel(key) {
+					return
+				}
+			}
 			if c.onNotification != nil {
 				c.onNotification(msg.Method, msg.Params)
 			}
 			return
 		}
 		// A request from the server to the client (roots/list,
-		// sampling/createMessage, elicitation/create, ping). The proxy does
-		// not relay these yet, so answer "method not found" rather than let
-		// the server wait forever. The reply is written asynchronously so
-		// the reader can never block on a full stdin pipe while the server
-		// is itself blocked writing to stdout.
-		c.logger.Debug("answering server-to-client request with method not found", "name", c.name, "method", msg.Method)
-		go c.replyMethodNotFound(msg.ID, msg.Method)
+		// sampling/createMessage, elicitation/create, ping).
+		c.serveInbound(msg.ID, msg.Method, msg.Params)
 		return
 	}
 
@@ -351,16 +367,62 @@ func (c *stdioConn) handleLine(line []byte) {
 	}
 }
 
-func (c *stdioConn) replyMethodNotFound(id json.RawMessage, method string) {
-	msg, err := json.Marshal(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"error": map[string]interface{}{
-			"code":    errs.ErrCodeMethodNotFound,
-			"message": fmt.Sprintf("Method not found: %s (not supported by leanproxy)", method),
-		},
-	})
+// serveInbound answers one server-to-client request on its own goroutine,
+// so the reader never blocks on it (nor on a full stdin pipe while the
+// server is itself blocked writing to stdout). The server's own id is kept
+// for the answer.
+func (c *stdioConn) serveInbound(id json.RawMessage, method string, params json.RawMessage) {
+	key, ok := RequestIDKey(id)
+	if !ok {
+		c.logger.Debug("ignoring server request with an invalid id", "name", c.name, "method", method)
+		return
+	}
+	if c.onRequest == nil {
+		var result json.RawMessage
+		var rpcErr *errs.JSONRPCError
+		if method == MethodPing {
+			result = json.RawMessage(`{}`)
+		} else {
+			c.logger.Debug("answering server-to-client request with method not found", "name", c.name, "method", method)
+			rpcErr = methodNotSupported(method)
+		}
+		go c.writeReply(id, method, result, rpcErr)
+		return
+	}
+	ctx, done, rpcErr := c.inbound.start(context.Background(), key)
+	if rpcErr != nil {
+		go c.writeReply(id, method, nil, rpcErr)
+		return
+	}
+	c.logger.Debug("relaying server-to-client request", "name", c.name, "method", method)
+	go func() {
+		defer done()
+		result, rpcErr := c.onRequest(ctx, method, params)
+		if ctx.Err() != nil {
+			// Canceled by the server (which expects no answer, per the
+			// MCP cancellation spec) or the connection died.
+			c.logger.Debug("server-to-client request ended without an answer", "name", c.name, "method", method)
+			return
+		}
+		c.writeReply(id, method, result, rpcErr)
+	}()
+}
+
+// writeReply writes the answer to a server-to-client request, bounded by
+// backgroundWriteTimeout.
+func (c *stdioConn) writeReply(id json.RawMessage, method string, result json.RawMessage, rpcErr *errs.JSONRPCError) {
+	reply := map[string]interface{}{"jsonrpc": "2.0", "id": id}
+	if rpcErr != nil {
+		reply["error"] = rpcErr
+	} else {
+		if len(result) == 0 {
+			result = json.RawMessage(`{}`)
+		}
+		reply["result"] = result
+	}
+	msg, err := json.Marshal(reply)
 	if err != nil {
+		c.logger.Debug("failed to encode answer to server-to-client request", "name", c.name, "method", method, "error", err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), backgroundWriteTimeout)

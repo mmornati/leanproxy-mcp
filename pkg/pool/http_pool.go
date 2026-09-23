@@ -33,7 +33,13 @@ type HTTPClientServer struct {
 	// generation counts successful (re)connections.
 	generation atomic.Uint64
 	// events receives this server's lifecycle events (set by the pool).
-	events    *eventHub
+	events *eventHub
+	// messages receives the requests and notifications the server
+	// initiates (set by the pool; issue #308).
+	messages *messageHub
+	// inbound tracks the server-to-client requests of the current
+	// connection.
+	inbound   atomic.Pointer[inboundRequests]
 	oauthOpts []transport.StreamableHTTPCOption
 }
 
@@ -115,6 +121,11 @@ func (s *HTTPClientServer) buildClient() (*client.Client, error) {
 	opts := []transport.StreamableHTTPCOption{
 		transport.WithHTTPHeaders(headers),
 		transport.WithHTTPBasicClient(httpClient),
+		// Open the GET stream: a server may send its server-to-client
+		// requests and notifications there rather than on the response
+		// stream of the call that triggered them (#308). A server without
+		// one answers 405 and the client stops asking.
+		transport.WithContinuousListening(),
 	}
 	opts = append(opts, s.oauthOpts...)
 
@@ -132,6 +143,9 @@ func (s *HTTPClientServer) closeClient() {
 	s.mu.Unlock()
 	if c != nil {
 		c.Close()
+	}
+	if in := s.inbound.Swap(nil); in != nil {
+		in.cancelAll()
 	}
 }
 
@@ -164,34 +178,37 @@ func (s *HTTPClientServer) ensureConnected(ctx context.Context) (*client.Client,
 		s.setState(StateError)
 		return nil, err
 	}
-	c.OnNotification(func(n mcp.JSONRPCNotification) {
-		if kind, ok := remoteNotificationEvent(n.Method); ok {
-			s.events.emit(ServerEvent{Server: s.name, Kind: kind, Generation: s.generation.Load()})
-		}
-	})
+	inbound := &inboundRequests{}
+	c.OnNotification(remoteNotificationHandler(s.name, s.events, s.generation.Load, s.messages, func() *inboundRequests { return inbound }))
 
 	s.logger.Debug("http_pool: starting StreamableHTTP client", "server", s.name)
-	startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := c.Start(startCtx); err != nil {
+	// Start's context must outlive this call: the GET stream is bound to
+	// it (it ends when the client is closed). It is a fresh context, not
+	// the caller's: the stream serves every later call, and must not carry
+	// the values (the client session) of whichever call connected first.
+	if err := c.Start(context.Background()); err != nil {
+
 		s.setState(StateError)
 		c.Close()
 		return nil, fmt.Errorf("http_pool: start: %w", err)
 	}
+	installRequestHandler(c, s.name, s.messages, inbound)
 
 	s.logger.Debug("http_pool: initializing StreamableHTTP client", "server", s.name)
 	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	initRes, err := c.Initialize(initCtx, mcpInitializeRequest())
+	initRes, err := c.Initialize(initCtx, mcpInitializeRequest(UpstreamClientCapabilities(s.config, true)))
 	if err != nil {
 		s.setState(StateError)
 		c.Close()
+		inbound.cancelAll()
 		return nil, fmt.Errorf("http_pool: initialize: %w", err)
 	}
 
 	s.mu.Lock()
 	s.mcpClient = c
 	s.mu.Unlock()
+	s.inbound.Store(inbound)
 	s.setState(StateRunning)
 	gen := s.generation.Add(1)
 	s.initResult.Store(fromMCPInitializeResult(initRes, gen))
@@ -292,6 +309,7 @@ type HTTPClientPool struct {
 	cancel       context.CancelFunc
 	rateLimiters *serverRateLimiters
 	events       eventHub
+	messages     messageHub
 }
 
 func NewHTTPClientPool(logger *slog.Logger) *HTTPClientPool {
@@ -324,6 +342,7 @@ func (p *HTTPClientPool) StartServer(ctx context.Context, config *migrate.Server
 
 	server := NewHTTPClientServer(config.Name, config, p.logger)
 	server.events = &p.events
+	server.messages = &p.messages
 	p.servers[config.Name] = server
 
 	// Off by default; only enabled when the config sets rate_limit with a
@@ -486,8 +505,26 @@ func (p *HTTPClientPool) SendRequestToServerWithID(ctx context.Context, name str
 	}, nil
 }
 
+// SendServerNotification sends a notification to the named server over its
+// current connection (connecting first when needed).
 func (p *HTTPClientPool) SendServerNotification(ctx context.Context, name string, method string, params map[string]interface{}) error {
-	return nil
+	p.mu.RLock()
+	server, exists := p.servers[name]
+	p.mu.RUnlock()
+	if !exists {
+		return fmt.Errorf("http_pool: server %s not found", name)
+	}
+	c, err := server.ensureConnected(ctx)
+	if err != nil {
+		return err
+	}
+	return sendRemoteNotification(ctx, c, method, params)
+}
+
+// SetServerMessageHandler registers the handler that receives what every
+// server initiates (server-to-client requests, progress, ...).
+func (p *HTTPClientPool) SetServerMessageHandler(h ServerMessageHandler) {
+	p.messages.set(h)
 }
 
 func (p *HTTPClientPool) RestartServer(ctx context.Context, name string) error {
@@ -706,6 +743,15 @@ func (p *UnifiedPool) ServerInitializeResult(name string) (*InitializeResult, bo
 		return p.ssePool.ServerInitializeResult(name)
 	default:
 		return nil, false
+	}
+}
+
+// SetServerMessageHandler registers h with every underlying pool.
+func (p *UnifiedPool) SetServerMessageHandler(h ServerMessageHandler) {
+	p.stdioPool.SetServerMessageHandler(h)
+	p.httpPool.SetServerMessageHandler(h)
+	if p.ssePool != nil {
+		p.ssePool.SetServerMessageHandler(h)
 	}
 }
 

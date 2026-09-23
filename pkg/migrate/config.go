@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -131,6 +132,24 @@ type ServerConfig struct {
 	// it answers; the server keeps working. 0 or absent means the default
 	// (64 MiB). Only used by stdio servers.
 	MaxResponseBytes int `yaml:"max_response_bytes,omitempty"`
+	// AllowSampling lets this server send sampling/createMessage requests,
+	// which the proxy relays to the client (issue #308). Sampling makes the
+	// client's LLM generate text on the server's behalf, spending the
+	// user's tokens, so it is off by default: the request is refused with
+	// -32601 and the sampling capability is not declared to the server.
+	// Every relayed sampling request is logged.
+	AllowSampling bool `yaml:"allow_sampling,omitempty"`
+	// Roots, when set, answers this server's roots/list requests from this
+	// static list instead of relaying them to the client (issue #308).
+	// Each uri must be a file:// URI.
+	Roots []RootConfig `yaml:"roots,omitempty"`
+}
+
+// RootConfig is one static root of servers[].roots: a file:// URI and an
+// optional display name.
+type RootConfig struct {
+	URI  string `yaml:"uri" json:"uri"`
+	Name string `yaml:"name,omitempty" json:"name,omitempty"`
 }
 
 // RateLimitConfig is an optional, per-server request rate limit applied to
@@ -349,6 +368,11 @@ func (c *ServerConfig) Validate() error {
 	}
 	if c.MaxResponseBytes < 0 {
 		return fmt.Errorf("server %s: max_response_bytes must be >= 0, got %d", c.Name, c.MaxResponseBytes)
+	}
+	for i, r := range c.Roots {
+		if !strings.HasPrefix(r.URI, "file://") {
+			return fmt.Errorf("server %s: roots[%d].uri must be a file:// URI, got %q", c.Name, i, r.URI)
+		}
 	}
 	return nil
 }

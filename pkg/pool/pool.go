@@ -127,6 +127,8 @@ type StdioPool struct {
 	stopGrace time.Duration
 	// events dispatches server lifecycle events to the registered handler.
 	events eventHub
+	// messages dispatches server-initiated requests and notifications.
+	messages messageHub
 }
 
 // closeDeadlineMargin is added to the longest stop grace period to bound
@@ -197,22 +199,24 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 	}
 
 	serverConfig := StdioServerConfig{
-		Name:            config.Name,
-		Command:         config.Stdio.Command,
-		Args:            config.Stdio.Args,
-		Env:             config.Stdio.Env,
-		EnvPassthrough:  config.Stdio.EnvPassthrough,
-		InheritEnv:      config.Stdio.InheritEnv,
-		CWD:             config.Stdio.CWD,
-		MaxInFlight:     config.MaxInFlight,
-		IdleTimeout:     config.IdleTimeoutValue,
-		RequestTimeout:  config.TimeoutValue,
-		MaxResponseSize: config.MaxResponseBytes,
-		StopGracePeriod: p.stopGrace,
+		Name:               config.Name,
+		Command:            config.Stdio.Command,
+		Args:               config.Stdio.Args,
+		Env:                config.Stdio.Env,
+		EnvPassthrough:     config.Stdio.EnvPassthrough,
+		InheritEnv:         config.Stdio.InheritEnv,
+		CWD:                config.Stdio.CWD,
+		MaxInFlight:        config.MaxInFlight,
+		IdleTimeout:        config.IdleTimeoutValue,
+		RequestTimeout:     config.TimeoutValue,
+		MaxResponseSize:    config.MaxResponseBytes,
+		StopGracePeriod:    p.stopGrace,
+		ClientCapabilities: UpstreamClientCapabilities(config, true),
 	}
 
 	server := newServerV2(config.Name, serverConfig, p.logger)
 	server.events = &p.events
+	server.messages = &p.messages
 	server.applyReconnect(p.reconnect)
 	if err := server.spawn(ctx); err != nil {
 		return fmt.Errorf("pool: start %s: %w", config.Name, err)
@@ -294,6 +298,12 @@ func (p *StdioPool) GetOrStartServer(ctx context.Context, name string) (*StdioSe
 // lifecycle events (new process generation, tools/list_changed).
 func (p *StdioPool) SetServerEventHandler(fn ServerEventHandler) {
 	p.events.set(fn)
+}
+
+// SetServerMessageHandler registers the handler that receives what every
+// server initiates (server-to-client requests, progress, ...).
+func (p *StdioPool) SetServerMessageHandler(h ServerMessageHandler) {
+	p.messages.set(h)
 }
 
 // ServerInitializeResult returns the InitializeResult stored by the most

@@ -347,9 +347,10 @@ func TestSSEPoolSendServerNotification(t *testing.T) {
 	pool := NewSSEPool(nil)
 	defer pool.Close()
 
-	err := pool.SendServerNotification(context.Background(), "test-server", "test", nil)
-	if err != nil {
-		t.Errorf("SendServerNotification should not fail: %v", err)
+	// An unknown server is an error (the notification used to be
+	// silently dropped for every SSE server).
+	if err := pool.SendServerNotification(context.Background(), "test-server", "test", nil); err == nil {
+		t.Error("SendServerNotification to an unknown server should fail")
 	}
 }
 

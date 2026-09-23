@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mark3labs/mcp-go/mcp"
+
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	errs "github.com/mmornati/leanproxy-mcp/pkg/errors"
 )
@@ -61,6 +63,9 @@ type StdioServerConfig struct {
 	// SIGKILL to the server's process group. 0 means
 	// defaultStopGracePeriod.
 	StopGracePeriod time.Duration
+	// ClientCapabilities is what the pool declares to the server in its
+	// initialize handshake (see UpstreamClientCapabilities).
+	ClientCapabilities mcp.ClientCapabilities
 }
 
 type ServerHandle struct {
@@ -151,6 +156,9 @@ type StdioServerV2 struct {
 	initResult atomic.Pointer[InitializeResult]
 	// events receives this server's lifecycle events (set by the pool).
 	events *eventHub
+	// messages receives the requests and notifications the server
+	// initiates (set by the pool; issue #308).
+	messages *messageHub
 	// autoRestartDisabled is the reconnect.enabled=false master switch: the
 	// crash path (scheduleRestart) leaves the server in the error state
 	// instead of respawning it. Explicit restarts (request/manual) still work.
@@ -294,12 +302,16 @@ func (s *StdioServerV2) InitializeResult() *InitializeResult {
 }
 
 // handleServerNotification is the stdout reader's hook for server
-// notifications of generation gen.
-func (s *StdioServerV2) handleServerNotification(method string, gen uint64) {
+// notifications of generation gen: list changes become server events,
+// everything else goes to the message handler (progress, resource
+// updates, ...).
+func (s *StdioServerV2) handleServerNotification(method string, params json.RawMessage, gen uint64) {
 	if kind, ok := remoteNotificationEvent(method); ok {
 		s.logger.Info("server list changed", "name", s.name, "generation", gen, "event", kind.String())
 		s.events.emit(ServerEvent{Server: s.name, Kind: kind, Generation: gen})
+		return
 	}
+	s.messages.notify(context.Background(), s.name, method, params)
 }
 
 // spawn starts a new process generation. It serializes against concurrent
@@ -416,8 +428,11 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	// requests of a previous generation can never reach a new waiter.
 	conn := newStdioConn(s.name, stdin, s.logger)
 	gen := s.generation.Add(1)
-	conn.onNotification = func(method string, _ json.RawMessage) {
-		s.handleServerNotification(method, gen)
+	conn.onNotification = func(method string, params json.RawMessage) {
+		s.handleServerNotification(method, params, gen)
+	}
+	conn.onRequest = func(ctx context.Context, method string, params json.RawMessage) (json.RawMessage, *errs.JSONRPCError) {
+		return s.messages.request(ctx, s.name, method, params)
 	}
 	s.conn = conn
 
@@ -1155,7 +1170,9 @@ func (s *StdioServerV2) sendNotification(ctx context.Context, method string, par
 	notification := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  method,
-		"params":  params,
+	}
+	if params != nil {
+		notification["params"] = params
 	}
 	encoded, err := json.Marshal(notification)
 	if err != nil {
@@ -1167,6 +1184,12 @@ func (s *StdioServerV2) sendNotification(ctx context.Context, method string, par
 	s.mu.Unlock()
 	if conn == nil {
 		return fmt.Errorf("pool: stdin not available")
+	}
+	if !conn.handshake.initialized() {
+		// Nothing but the handshake may reach a server before its
+		// initialize completed; the server gets fresh state from it.
+		s.logger.Debug("dropping notification sent before the MCP handshake", "name", s.name, "method", method)
+		return nil
 	}
 
 	writeCtx, cancel := context.WithTimeout(ctx, s.requestTimeout)

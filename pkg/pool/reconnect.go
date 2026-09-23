@@ -68,12 +68,13 @@ func isTransportError(err error) bool {
 
 // mcpInitializeRequest returns the canonical initialize request of the
 // pool's handshake with every upstream (stdio, HTTP and SSE). It asks for
-// RequestedProtocolVersion.
-func mcpInitializeRequest() mcp.InitializeRequest {
+// RequestedProtocolVersion and declares caps (see
+// UpstreamClientCapabilities).
+func mcpInitializeRequest(caps mcp.ClientCapabilities) mcp.InitializeRequest {
 	return mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
 			ProtocolVersion: RequestedProtocolVersion,
-			Capabilities:    mcp.ClientCapabilities{},
+			Capabilities:    caps,
 			ClientInfo: mcp.Implementation{
 				Name:    "leanproxy-mcp",
 				Version: "1.0.0",
