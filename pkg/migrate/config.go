@@ -13,6 +13,7 @@ import (
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
 
@@ -206,12 +207,13 @@ func (c *Config) EffectiveReconnect() ResolvedReconnect {
 }
 
 type Config struct {
-	Version   string            `yaml:"version"`
-	Servers   []*ServerConfig   `yaml:"servers"`
-	Reconnect *ReconnectConfig  `yaml:"reconnect,omitempty"`
-	Cache     *CacheConfig      `yaml:"cache,omitempty"`
-	Injection *injection.Config `yaml:"injection,omitempty"`
-	Bouncer   *bouncer.Config   `yaml:"bouncer,omitempty"`
+	Version       string                `yaml:"version"`
+	Servers       []*ServerConfig       `yaml:"servers"`
+	Reconnect     *ReconnectConfig      `yaml:"reconnect,omitempty"`
+	Cache         *CacheConfig          `yaml:"cache,omitempty"`
+	Injection     *injection.Config     `yaml:"injection,omitempty"`
+	Bouncer       *bouncer.Config       `yaml:"bouncer,omitempty"`
+	ResponseCache *responsecache.Config `yaml:"response_cache,omitempty"`
 }
 
 func (c *ServerConfig) Validate() error {
@@ -305,6 +307,10 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	}
 
 	warnDeprecatedConfigKeys(data)
+
+	if err := cfg.ResponseCache.Normalize(); err != nil {
+		return nil, fmt.Errorf("response_cache: %w", err)
+	}
 
 	for _, server := range cfg.Servers {
 		if server.Timeout != "" {

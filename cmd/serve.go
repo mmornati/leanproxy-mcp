@@ -29,6 +29,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
@@ -88,6 +89,14 @@ var loadedServeConfig atomic.Pointer[migrate.Config]
 // patterns when the bouncer block is absent). The zero value is disabled
 // until configured, which keeps package init free of regex compilation.
 var serveFirewall = &mcp.Firewall{Redaction: &mcp.Redaction{}, Injection: &mcp.InjectionGuard{}}
+
+// serveResponseCache is the opt-in tools/call response cache (issue #299),
+// the same pkg/mcp.ResponseCache `server run --stdio` installs. It replaces
+// the old semantic-cache-backed tools/call caching in dispatchServeRequest:
+// off by default, allowlisted tools only, keyed on the pre-redaction
+// request. initResponseCache builds it from the `response_cache:` config
+// block; the zero value is disabled until then.
+var serveResponseCache = mcp.NewResponseCache(nil)
 
 // globalAlwaysCallSidecar is the operator opt-in (via
 // `bouncer.sidecar_always_call: true`) to keep #274's behavior of running
@@ -285,10 +294,13 @@ func runServe(cmd *cobra.Command, args []string) {
 
 	initSemanticCache(ctx)
 
+	initResponseCache(loadedCfg)
+
 	if loadedCfg != nil {
 		serveFirewall.Injection.Configure(loadedCfg.Injection)
 	}
 	slog.Info(serveFirewall.Summary(), "injection_policies", serveFirewall.Injection.PolicyCount())
+	metrics.SetResponseCacheProvider(responseCacheMetric)
 
 	var toolStore toolstore.Cache
 	fileCache, err := toolstore.NewFileCache(slog.Default())
@@ -542,16 +554,25 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 	}
 }
 
-// serveRequest runs one request through the Token Firewall middlewares
-// (request redaction, injection check, response redaction; shared with
-// `server run --stdio`) around serve's own dispatch.
+// serveRequest runs one request through the response cache and the Token
+// Firewall middlewares (request redaction, injection check, response
+// redaction; shared with `server run --stdio`) around serve's own dispatch.
+//
+// Ordering: the response cache middleware is listed FIRST, i.e. outermost
+// (see mcp.ResponseCache's doc comment for why). That means it captures the
+// tool call's identity and arguments before serveFirewall's
+// RequestMiddleware redacts them (the cache key is derived from the
+// original, unredacted arguments), and stores the response only after it
+// comes back through ResponseMiddleware already redacted. A cache hit
+// short-circuits before any firewall stage or dispatchServeRequest runs.
 func serveRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Router, gt gateway.GatewayTools, p Pool) *proxy.JSONRPCResponse {
 	dispatch := func(ctx context.Context, mreq *mcp.Request) (*mcp.Response, error) {
 		// Pick up the params as rewritten by the request-side middlewares.
 		req.Params = mreq.Params
 		return toMCPResponse(dispatchServeRequest(ctx, req, r, gt, p)), nil
 	}
-	resp, _ := mcp.Chain(dispatch, serveFirewall.Middlewares()...)(ctx, toMCPRequest(req))
+	mws := append([]mcp.Middleware{serveResponseCache.Middleware()}, serveFirewall.Middlewares()...)
+	resp, _ := mcp.Chain(dispatch, mws...)(ctx, toMCPRequest(req))
 	return fromMCPResponse(resp)
 }
 
@@ -572,9 +593,20 @@ func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Rout
 	recordProvider(server)
 	provider := injectBreakpoints(server, req)
 
-	cached, prompt, embedding := semanticCacheLookup(ctx, req)
-	if cached != nil && cached.HitType != cache.HitMiss {
-		return cachedResponse(req, cached.Response)
+	// tools/call caching is handled entirely by the mcp.ResponseCache
+	// middleware wrapping serveRequest (issue #299): exact-match only, keyed
+	// on the pre-redaction request, allowlisted tools only. The semantic
+	// (embedding-similarity) cache below is no longer consulted for tool
+	// calls at all — it stays available for other, non-tool-call methods
+	// that reach this path (e.g. resources/read).
+	var cached *cache.SemanticCacheResult
+	var prompt string
+	var embedding []float32
+	if !isToolCallMethod(req.Method) {
+		cached, prompt, embedding = semanticCacheLookup(ctx, req)
+		if cached != nil && cached.HitType != cache.HitMiss {
+			return cachedResponse(req, cached.Response)
+		}
 	}
 
 	timeout := serverTimeout(server)
@@ -612,7 +644,9 @@ func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Rout
 
 	if resp.Error == nil {
 		cache.ProcessResponseFor(provider, resp.Result)
-		semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
+		if !isToolCallMethod(req.Method) {
+			semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
+		}
 	}
 	return resp
 }
@@ -1318,6 +1352,15 @@ func initVectorStore(cfg *migrate.Config) {
 	if cfg != nil && cfg.Cache != nil {
 		vsConfig = cfg.Cache.VectorStore
 	}
+	// Issue #299: don't open the SQLite vector store (or any backend) at
+	// startup unless it, or an embedder, was explicitly configured.
+	// vectordb.NewStore defaults a nil config to sqlite-vec and opens
+	// ~/.leanproxy/cache/vectors.db unconditionally, which previously
+	// happened on every `serve` start even with no embedder configured.
+	if vsConfig == nil && serveFlags.embedProvider == "" {
+		slog.Debug("vector store: no vector_store config and no --embed-provider, skipping")
+		return
+	}
 	store, err := vectordb.NewStore(vsConfig, slog.Default())
 	if err != nil {
 		slog.Warn("vector store init failed, continuing without vector store", "error", err)
@@ -1329,4 +1372,33 @@ func initVectorStore(cfg *migrate.Config) {
 		backend = vsConfig.Backend
 	}
 	slog.Info("vector store initialized", "backend", backend)
+}
+
+// initResponseCache builds serveResponseCache from the `response_cache:`
+// config block (issue #299). Off by default; only tools explicitly
+// allowlisted are ever cached, keyed on the pre-redaction request.
+func initResponseCache(cfg *migrate.Config) {
+	var rcCfg *responsecache.Config
+	if cfg != nil {
+		rcCfg = cfg.ResponseCache
+	}
+	serveResponseCache = mcp.NewResponseCache(rcCfg)
+	if serveResponseCache.Enabled() {
+		slog.Info("response cache enabled")
+	}
+}
+
+// responseCacheMetric adapts serveResponseCache's stats to the metrics
+// package's type; registered with metrics.SetResponseCacheProvider so
+// pkg/metrics never needs to import pkg/mcp.
+func responseCacheMetric() metrics.ResponseCacheMetric {
+	s := serveResponseCache.Stats()
+	return metrics.ResponseCacheMetric{
+		Enabled:   serveResponseCache.Enabled(),
+		Hits:      s.Hits,
+		Misses:    s.Misses,
+		Evictions: s.Evictions,
+		Bytes:     s.Bytes,
+		Entries:   s.Entries,
+	}
 }

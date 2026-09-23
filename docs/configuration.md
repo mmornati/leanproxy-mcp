@@ -501,9 +501,65 @@ injection:
 | `hypothetical-override` | 25 | Hypothetical scenarios |
 | `ignore-above` | 50 | Selective ignoring |
 
+## Response Cache
+
+The response cache is an opt-in, exact-match cache for `tools/call`: off by
+default, allowlisted tools only, keyed on the request *before* secret
+redaction runs so two callers who differ only in a credential value never
+share a cached response. It is bounded LRU by bytes, never caches an error
+response, and never does embedding-similarity matching (that is the Semantic
+Cache below, which — as of #299 — no longer answers `tools/call` at all).
+
+It runs as a middleware shared by both `leanproxy-mcp server run --stdio` and
+`leanproxy-mcp serve`.
+
+### Configuration
+
+```yaml
+response_cache:
+  enabled: false              # default: off
+  ttl: 5m
+  max_bytes: 67108864         # 64 MiB total, LRU by bytes
+  max_entry_bytes: 1048576    # responses larger than this are never cached
+  tools:                      # explicit allowlist: "server.tool" or a glob
+    - github.get_file_contents
+    - github.get_*
+  honor_annotations: true     # accepted for forward compatibility; see below
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `false` | Master opt-in switch |
+| `ttl` | duration | `5m` | How long a cached response stays fresh |
+| `max_bytes` | int | `67108864` (64 MiB) | Total cache budget; entries are evicted LRU when exceeded |
+| `max_entry_bytes` | int | `1048576` (1 MiB) | A single response larger than this is never stored |
+| `tools` | list of string | `[]` | Explicit allowlist: `"server.tool"` exact match, or a `path.Match` glob such as `"server.get_*"` |
+| `honor_annotations` | bool | `false` | Accepted for forward compatibility. Tool annotations (`readOnlyHint`/`idempotentHint`) are not yet plumbed through the protocol (Epic 20); until then this flag has **no effect** — only the `tools` allowlist above is consulted |
+
+### Why only the allowlist, keyed before redaction
+
+- Only `tools/call` is ever cached, and only tools named in `tools` (or,
+  once Epic 20 lands, tools annotated read-only *and* idempotent). A
+  side-effecting tool like `create_issue` is never cached unless an operator
+  explicitly opts it in.
+- The cache key is `SHA-256(server + tool + canonical JSON of the
+  *original*, unredacted arguments)`. Only that hash is stored — never the
+  raw arguments — but deriving it before redaction means two calls that
+  differ only in a secret value (two different API keys, for example) never
+  collide into the same entry.
+- The cached *value* is the redacted response, so a cache hit can never leak
+  anything a cache miss wouldn't already have redacted.
+
 ## Semantic Cache
 
 Semantic caching stores and retrieves tool responses based on vector similarity, reducing redundant LLM calls for semantically similar requests.
+
+> As of #299, the semantic cache no longer answers `tools/call` — use the
+> Response Cache above for tool-call caching. The vector store is also no
+> longer opened at startup unless `cache.vector_store` or `--embed-provider`
+> is explicitly configured.
 
 ### Configuration
 

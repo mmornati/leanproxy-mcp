@@ -257,6 +257,7 @@ flowchart TB
 | 🛒 **MCP Registry Marketplace** | Discover and install community MCP servers via `marketplace` CLI |
 | 🛡️ **Prompt Injection Protection** | Classifier engine with risk scoring, quarantine, and configurable policies |
 | 🧠 **Semantic Cache** | Vector-similarity caching with Ollama/OpenAI embeddings and SQLite/Qdrant/Pinecone |
+| ⚡ **Response Cache** | Opt-in, exact-match `tools/call` cache: allowlisted read tools only, keyed before secret redaction, bounded LRU by bytes |
 | 🤖 **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model |
 | 📊 **Web Dashboard** | Real-time HTMX-powered dashboard with server/tool drill-down |
 | 🔌 **IDE Extensions** | VS Code and JetBrains plugins for status bar cost monitoring |

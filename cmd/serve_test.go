@@ -9,18 +9,85 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
+	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/router"
 	"github.com/mmornati/leanproxy-mcp/pkg/sidecar"
 )
+
+// TestInitVectorStore_SkippedWithoutExplicitConfig verifies issue #299's
+// requirement 7: the SQLite vector store is never opened (no file created
+// under $HOME) unless a `cache.vector_store` block or --embed-provider is
+// explicitly configured. Previously vectordb.NewStore defaulted a nil config
+// to sqlite-vec and opened ~/.leanproxy/cache/vectors.db on every `serve`
+// start.
+func TestInitVectorStore_SkippedWithoutExplicitConfig(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	prevStore := globalVectorStore.Load()
+	prevEmbed := serveFlags.embedProvider
+	t.Cleanup(func() {
+		if prevStore != nil {
+			globalVectorStore.Store(prevStore)
+		}
+		serveFlags.embedProvider = prevEmbed
+	})
+	globalVectorStore = atomic.Value{}
+	serveFlags.embedProvider = ""
+
+	initVectorStore(&migrate.Config{})
+
+	if v := globalVectorStore.Load(); v != nil {
+		t.Fatalf("expected no vector store to be opened, got %v", v)
+	}
+	dbPath := filepath.Join(tmpHome, ".leanproxy", "cache", "vectors.db")
+	if _, err := os.Stat(dbPath); err == nil {
+		t.Fatalf("expected no vector DB file at %s", dbPath)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("unexpected error checking %s: %v", dbPath, err)
+	}
+}
+
+// TestInitVectorStore_OpensWhenEmbedProviderConfigured verifies the store is
+// still opened when the operator explicitly asked for embeddings.
+func TestInitVectorStore_OpensWhenEmbedProviderConfigured(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	prevStore := globalVectorStore.Load()
+	prevEmbed := serveFlags.embedProvider
+	t.Cleanup(func() {
+		if v := globalVectorStore.Load(); v != nil {
+			if store, ok := v.(interface{ Close() error }); ok {
+				store.Close()
+			}
+		}
+		if prevStore != nil {
+			globalVectorStore.Store(prevStore)
+		}
+		serveFlags.embedProvider = prevEmbed
+	})
+	globalVectorStore = atomic.Value{}
+	serveFlags.embedProvider = "ollama"
+
+	initVectorStore(&migrate.Config{})
+
+	if v := globalVectorStore.Load(); v == nil {
+		t.Fatal("expected a vector store to be opened when --embed-provider is set")
+	}
+}
 
 type mockRouter struct {
 	routeFunc func(ctx context.Context, method string) (*registry.ServerEntry, error)

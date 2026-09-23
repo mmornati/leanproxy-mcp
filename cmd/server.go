@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
+	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
@@ -493,8 +494,18 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	// Token Firewall: the same redaction + injection middlewares `serve`
 	// runs, on by default (built-in patterns when there is no bouncer block).
 	firewall := mcp.NewFirewall(cfg.Bouncer, cfg.Injection)
-	handler.Use(firewall.Middlewares()...)
+
+	// Response cache (issue #299), off by default. It MUST be installed
+	// outermost, ahead of the firewall middlewares: see the ordering
+	// explanation on mcp.ResponseCache.
+	respCache := mcp.NewResponseCache(cfg.ResponseCache)
+	mws := append([]mcp.Middleware{respCache.Middleware()}, firewall.Middlewares()...)
+	handler.Use(mws...)
 	logFirewallStatus(firewall)
+	logResponseCacheStatus(respCache)
+	metrics.SetResponseCacheProvider(func() metrics.ResponseCacheMetric {
+		return toMetricsResponseCache(respCache)
+	})
 
 	return handleStdio(ctx, handler, stdioPool, statusStore)
 }
@@ -505,6 +516,28 @@ func logFirewallStatus(fw *mcp.Firewall) {
 	slog.Info(fw.Summary())
 	if !fw.Redaction.Enabled() {
 		slog.Warn("bouncer: secret redaction explicitly disabled in config; secrets will pass through verbatim")
+	}
+}
+
+// logResponseCacheStatus logs whether the response cache (issue #299) is
+// active. It stays silent when disabled, since that is the default.
+func logResponseCacheStatus(rc *mcp.ResponseCache) {
+	if rc.Enabled() {
+		slog.Info("response cache enabled")
+	}
+}
+
+// toMetricsResponseCache adapts a *mcp.ResponseCache's stats to the metrics
+// package's own type, so pkg/metrics never needs to import pkg/mcp.
+func toMetricsResponseCache(rc *mcp.ResponseCache) metrics.ResponseCacheMetric {
+	s := rc.Stats()
+	return metrics.ResponseCacheMetric{
+		Enabled:   rc.Enabled(),
+		Hits:      s.Hits,
+		Misses:    s.Misses,
+		Evictions: s.Evictions,
+		Bytes:     s.Bytes,
+		Entries:   s.Entries,
 	}
 }
 
