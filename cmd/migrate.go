@@ -120,7 +120,10 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	if !migrateYes {
 		fmt.Printf("\nImport to %s? [y/N]: ", target)
 		var response string
-		fmt.Scanln(&response)
+		if _, err := fmt.Scanln(&response); err != nil {
+			// Treat unreadable/empty input as a declined confirmation.
+			response = ""
+		}
 		if response != "y" && response != "Y" {
 			fmt.Println("Import canceled.")
 			return nil

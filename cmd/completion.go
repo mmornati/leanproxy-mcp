@@ -79,7 +79,10 @@ func runCompletion(cmd *cobra.Command, args []string) error {
 }
 
 func generateBashCompletion(cmd *cobra.Command) {
-	cmd.GenBashCompletion(os.Stdout)
+	if err := cmd.GenBashCompletion(os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "completion: failed to generate bash completion: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func generateZshCompletion(cmd *cobra.Command) {
@@ -172,24 +175,33 @@ func completeRegistryURL(prefix string) []string {
 	return matches
 }
 
+// registerFlagCompletion registers fn as the completion function for the
+// named flag on cmd, logging (rather than ignoring) the rare error case
+// where the flag does not exist or already has a completion function.
+func registerFlagCompletion(cmd *cobra.Command, flag string, fn func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective)) {
+	if err := cmd.RegisterFlagCompletionFunc(flag, fn); err != nil {
+		fmt.Fprintf(os.Stderr, "completion: failed to register completion for --%s: %v\n", flag, err)
+	}
+}
+
 func registerCustomCompletions(cmd *cobra.Command) {
-	cmd.RegisterFlagCompletionFunc("config", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	registerFlagCompletion(cmd, "config", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeConfigPath(toComplete), cobra.ShellCompDirectiveDefault
 	})
 
-	cmd.RegisterFlagCompletionFunc("log-level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	registerFlagCompletion(cmd, "log-level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeLogLevel(toComplete), cobra.ShellCompDirectiveDefault
 	})
 
-	cmd.RegisterFlagCompletionFunc("socket-path", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	registerFlagCompletion(cmd, "socket-path", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeSocketPath(toComplete), cobra.ShellCompDirectiveDefault
 	})
 
-	cmd.RegisterFlagCompletionFunc("registry-url", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	registerFlagCompletion(cmd, "registry-url", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeRegistryURL(toComplete), cobra.ShellCompDirectiveDefault
 	})
 
-	cmd.RegisterFlagCompletionFunc("token-uri", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	registerFlagCompletion(cmd, "token-uri", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeTokenURI(toComplete), cobra.ShellCompDirectiveDefault
 	})
 }
