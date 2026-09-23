@@ -32,7 +32,6 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
-	"github.com/mmornati/leanproxy-mcp/pkg/modelrouter"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
@@ -104,17 +103,15 @@ func init() {
 }
 
 var (
-	serverReg         registry.Registry
-	toolReg           router.ToolRegistry
-	gatewayTools      gateway.GatewayTools
-	stdioPool         *pool.StdioPool
-	httpPool          *pool.HTTPClientPool
-	ssePool           *pool.SSEPool
-	unifiedPool       *pool.UnifiedPool
-	statusStore       *statusfile.FileStatusStore
-	globalModelRouter modelrouter.ModelRouter
-	serverTiers       map[string]string
-	globalSidecar     *sidecar.Manager
+	serverReg     registry.Registry
+	toolReg       router.ToolRegistry
+	gatewayTools  gateway.GatewayTools
+	stdioPool     *pool.StdioPool
+	httpPool      *pool.HTTPClientPool
+	ssePool       *pool.SSEPool
+	unifiedPool   *pool.UnifiedPool
+	statusStore   *statusfile.FileStatusStore
+	globalSidecar *sidecar.Manager
 )
 
 type Router interface {
@@ -256,31 +253,13 @@ func runServe(cmd *cobra.Command, args []string) {
 		}
 	}
 
-	modelRouterCfg := modelrouter.DefaultConfig()
-	if serveFlags.modelRouterConfig != "" {
-		mrCfg, err := modelrouter.LoadConfig(serveFlags.modelRouterConfig)
-		if err != nil {
-			slog.Warn("failed to load model router config", "path", serveFlags.modelRouterConfig, "error", err)
-		} else {
-			modelRouterCfg = mrCfg
-			slog.Info("loaded model router config", "path", serveFlags.modelRouterConfig)
-		}
-	}
-	serverTiers = make(map[string]string)
-	if loadedCfg != nil {
-		for _, srv := range loadedCfg.Servers {
-			if srv.ComplexityTier != "" {
-				serverTiers[srv.Name] = srv.ComplexityTier
-			}
-		}
-	}
-	if serveFlags.modelRouterEnabled {
-		globalModelRouter = modelrouter.NewWithEnvOverride(modelRouterCfg, slog.Default())
-		slog.Info("model router enabled",
-			"default_tier", modelRouterCfg.DefaultTier,
-		)
-	} else {
-		slog.Debug("model router disabled")
+	// --model-router / --model-router-config are deprecated (issue #303):
+	// LeanProxy does not route LLM traffic, so per-tool model selection is a
+	// non-goal (LiteLLM, Portkey and the enterprise gateways own that). The
+	// flags are still accepted for one release so existing invocations do
+	// not fail outright, but they no longer have any effect.
+	if serveFlags.modelRouterEnabled || serveFlags.modelRouterConfig != "" {
+		slog.Warn("--model-router and --model-router-config are deprecated and no longer have any effect; they will be removed in a future release")
 	}
 
 	{
@@ -563,77 +542,6 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 	wg.Wait()
 }
 
-func handleSingleRequest(ctx context.Context, line []byte, writer *bufio.Writer, r Router, gt gateway.GatewayTools, p Pool) {
-	req, err := proxy.ParseJSONRPCRequest(line)
-	if err != nil {
-		writeError(writer, nil, errors.ErrCodeParseError, "Parse error")
-		return
-	}
-
-	if err := redactParams(req); err != nil {
-		writeError(writer, req.ID, errors.ErrCodeInternalError, redactionFailedMessage)
-		return
-	}
-
-	if resp := checkInjection(req); resp != nil {
-		writeResponse(writer, resp)
-		return
-	}
-
-	if isGatewayTool(req.Method) {
-		handleGatewayTool(ctx, req, writer, gt)
-		return
-	}
-
-	server, err := routeRequest(ctx, r, req)
-	if err != nil {
-		writeError(writer, req.ID, errors.ErrCodeMethodNotFound, "Method not found")
-		return
-	}
-
-	logModelSelection(ctx, server, req.Method)
-	recordProvider(server)
-	provider := injectBreakpoints(server, req)
-
-	cached, prompt, embedding := semanticCacheLookup(ctx, req)
-	if cached != nil && cached.HitType != cache.HitMiss {
-		cachedResp := cachedResponse(req, cached.Response)
-		if err := redactResponse(cachedResp); err != nil {
-			slog.Warn("redacting cached response failed", "error", err)
-			writeError(writer, req.ID, errors.ErrCodeInternalError, redactionFailedMessage)
-			return
-		}
-		writeResponse(writer, cachedResp)
-		return
-	}
-
-	timeout := serverTimeout(server)
-
-	if err := redactWithSidecar(ctx, req); err != nil {
-		writeError(writer, req.ID, errors.ErrCodeInternalError, redactionFailedMessage)
-		return
-	}
-
-	resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
-	if err != nil {
-		slog.Warn("upstream send failed", "server", server.ID, "error", err)
-		writeError(writer, req.ID, errors.ErrCodeInternalError, redactErrorMessage(err.Error()))
-		return
-	}
-
-	if err := redactResponse(resp); err != nil {
-		writeError(writer, req.ID, errors.ErrCodeInternalError, redactionFailedMessage)
-		return
-	}
-
-	if resp.Error == nil {
-		cache.ProcessResponseFor(provider, resp.Result)
-		semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
-	}
-
-	writeResponse(writer, resp)
-}
-
 func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Writer, writerMu *sync.Mutex, r Router, gt gateway.GatewayTools, p Pool) {
 	req, err := proxy.ParseJSONRPCRequest(line)
 	if err != nil {
@@ -667,7 +575,6 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		return
 	}
 
-	logModelSelection(ctx, server, req.Method)
 	recordProvider(server)
 	provider := injectBreakpoints(server, req)
 
@@ -710,135 +617,10 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 	writeResponseAsync(writer, writerMu, resp)
 }
 
-func handleBatchRequest(ctx context.Context, line []byte, writer *bufio.Writer, r Router, gt gateway.GatewayTools, p Pool) {
-	reqs, err := proxy.ParseJSONRPCBatchRequest(line, maxBatchSize)
-	if err != nil {
-		writeError(writer, nil, errors.ErrCodeParseError, "Parse error")
-		return
-	}
-
-	if len(reqs) == 0 {
-		writeError(writer, nil, errors.ErrCodeInvalidRequest, "Empty batch")
-		return
-	}
-
-	responses := make([]*proxy.JSONRPCResponse, 0, len(reqs))
-	for i := range reqs {
-		req := &reqs[i]
-		if req.ID == nil {
-			continue
-		}
-
-		if err := redactParams(req); err != nil {
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactionFailedMessage),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		if resp := checkInjection(req); resp != nil {
-			responses = append(responses, resp)
-			continue
-		}
-
-		if isGatewayTool(req.Method) {
-			resp := handleGatewayToolSync(ctx, req, gt)
-			if resp != nil {
-				responses = append(responses, resp)
-			}
-			continue
-		}
-
-		server, err := routeRequest(ctx, r, req)
-		if err != nil {
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeMethodNotFound, "Method not found"),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		logModelSelection(ctx, server, req.Method)
-		recordProvider(server)
-		provider := injectBreakpoints(server, req)
-
-		cached, prompt, embedding := semanticCacheLookup(ctx, req)
-		if cached != nil && cached.HitType != cache.HitMiss {
-			cachedResp := cachedResponse(req, cached.Response)
-			if err := redactResponse(cachedResp); err != nil {
-				slog.Warn("redacting cached response failed", "error", err)
-				responses = append(responses, &proxy.JSONRPCResponse{
-					JSONRPC: "2.0",
-					Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactionFailedMessage),
-					ID:      req.ID,
-				})
-				continue
-			}
-			responses = append(responses, cachedResp)
-			continue
-		}
-
-		timeout := serverTimeout(server)
-
-		if err := redactWithSidecar(ctx, req); err != nil {
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactionFailedMessage),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
-		if err != nil {
-			slog.Warn("upstream send failed", "server", server.ID, "error", err)
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactErrorMessage(err.Error())),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		if err := redactResponse(resp); err != nil {
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactionFailedMessage),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		if resp.Error == nil {
-			cache.ProcessResponseFor(provider, resp.Result)
-			semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
-		}
-		responses = append(responses, resp)
-	}
-
-	data, err := json.Marshal(responses)
-	if err != nil {
-		writeError(writer, nil, errors.ErrCodeInternalError, "Failed to marshal batch response")
-		return
-	}
-
-	fmt.Fprintln(writer, string(data))
-}
-
 var ctx = context.Background()
 
 func isGatewayTool(method string) bool {
 	return method == "invoke_tool" || method == "list_tools" || method == "list_servers"
-}
-
-func handleGatewayTool(ctx context.Context, req *proxy.JSONRPCRequest, writer *bufio.Writer, gt gateway.GatewayTools) {
-	resp := handleGatewayToolSync(ctx, req, gt)
-	if resp != nil {
-		writeResponse(writer, resp)
-	}
 }
 
 const redactionFailedMessage = "Secret redaction failed; request not forwarded"
@@ -1008,27 +790,6 @@ func redactErrorMessage(msg string) string {
 
 func isBatchRequest(data []byte) bool {
 	return proxy.IsBatchRequest(data)
-}
-
-func logModelSelection(ctx context.Context, server *registry.ServerEntry, method string) {
-	if globalModelRouter == nil || server == nil {
-		return
-	}
-	tier := serverTiers[server.ID]
-	if tier == "" {
-		tier = string(modelrouter.TierMedium)
-	}
-	sel, err := globalModelRouter.Select(ctx, modelrouter.Tier(tier))
-	if err != nil {
-		slog.Debug("model selection failed", "method", method, "tier", tier, "error", err)
-		return
-	}
-	slog.Debug("model router selected",
-		"method", method,
-		"tier", tier,
-		"provider", sel.Provider,
-		"model", sel.Model,
-	)
 }
 
 func recordProvider(server *registry.ServerEntry) {
@@ -1508,7 +1269,6 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 			continue
 		}
 
-		logModelSelection(ctx, server, req.Method)
 		recordProvider(server)
 		provider := injectBreakpoints(server, req)
 

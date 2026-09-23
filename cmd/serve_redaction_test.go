@@ -99,9 +99,9 @@ func TestHandleSingleRequest_RedactsParamsBeforeForwarding(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleSingleRequest(ctx,
+	handleSingleRequestAsync(ctx,
 		[]byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"t","arguments":{"token":"`+testAWSKey+`"}},"id":1}`),
-		w, &mockRouter{}, &mockGatewayTools{}, mockP)
+		w, &sync.Mutex{}, &mockRouter{}, &mockGatewayTools{}, mockP)
 	w.Flush()
 
 	if forwarded == nil {
@@ -128,9 +128,9 @@ func TestHandleSingleRequest_RedactsUpstreamResponse(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleSingleRequest(ctx,
+	handleSingleRequestAsync(ctx,
 		[]byte(`{"jsonrpc":"2.0","method":"resources/read","params":{"uri":"file:///.env"},"id":1}`),
-		w, &mockRouter{}, &mockGatewayTools{}, mockP)
+		w, &sync.Mutex{}, &mockRouter{}, &mockGatewayTools{}, mockP)
 	w.Flush()
 
 	if strings.Contains(buf.String(), testGHPat) {
@@ -154,8 +154,8 @@ func TestHandleSingleRequest_RedactsUpstreamErrorMessage(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleSingleRequest(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"t"},"id":1}`),
-		w, &mockRouter{}, &mockGatewayTools{}, mockP)
+	handleSingleRequestAsync(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"t"},"id":1}`),
+		w, &sync.Mutex{}, &mockRouter{}, &mockGatewayTools{}, mockP)
 	w.Flush()
 
 	if strings.Contains(buf.String(), testAWSKey) {
@@ -197,7 +197,7 @@ func TestHandleBatchRequest_RedactsBothDirections(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleBatchRequest(ctx, line, w, &mockRouter{}, &mockGatewayTools{}, mockP)
+	handleBatchRequestAsync(ctx, line, w, &sync.Mutex{}, &mockRouter{}, &mockGatewayTools{}, mockP)
 	w.Flush()
 	if len(forwarded) != 2 {
 		t.Fatalf("expected 2 forwarded requests, got %d", len(forwarded))
@@ -209,20 +209,6 @@ func TestHandleBatchRequest_RedactsBothDirections(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), testGHPat) {
 		t.Fatalf("batch response leaked secret: %s", buf.String())
-	}
-
-	buf.Reset()
-	w = bufio.NewWriter(&buf)
-	forwarded = nil
-	handleBatchRequestAsync(ctx, line, w, &sync.Mutex{}, &mockRouter{}, &mockGatewayTools{}, mockP)
-	w.Flush()
-	for _, f := range forwarded {
-		if bytes.Contains(f, []byte(testAWSKey)) {
-			t.Fatalf("async batch forwarded secret: %s", f)
-		}
-	}
-	if strings.Contains(buf.String(), testGHPat) {
-		t.Fatalf("async batch response leaked secret: %s", buf.String())
 	}
 }
 
@@ -291,8 +277,8 @@ func TestHandleSingleRequest_SidecarFailureIsFailClosed(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleSingleRequest(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"k":"v"},"id":1}`),
-		w, &mockRouter{}, &mockGatewayTools{}, mockP)
+	handleSingleRequestAsync(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"k":"v"},"id":1}`),
+		w, &sync.Mutex{}, &mockRouter{}, &mockGatewayTools{}, mockP)
 	w.Flush()
 
 	if forwarded {
@@ -336,8 +322,8 @@ func TestHandleSingleRequest_SidecarFallbackIsAvailable(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleSingleRequest(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"k":"v"},"id":1}`),
-		w, &mockRouter{}, &mockGatewayTools{}, mockP)
+	handleSingleRequestAsync(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"k":"v"},"id":1}`),
+		w, &sync.Mutex{}, &mockRouter{}, &mockGatewayTools{}, mockP)
 	w.Flush()
 
 	if !forwarded {
@@ -349,7 +335,7 @@ func TestHandleSingleRequest_SidecarFallbackIsAvailable(t *testing.T) {
 // path so any future code change that stores an unredacted entry fails
 // closed rather than leaking. Exercise the redact-on-cache-hit logic
 // directly via the in-package redactResponse helper: the cache-hit branch
-// in handleSingleRequest calls redactResponse on a freshly-built
+// in handleSingleRequestAsync calls redactResponse on a freshly-built
 // cachedResponse, so testing redactResponse in isolation covers the
 // redaction half. The wiring itself is exercised by the other tests.
 func TestRedactResponse_RedactsCachedResponse(t *testing.T) {
@@ -379,8 +365,8 @@ func TestHandleSingleRequest_RedactsUpstreamSendError(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleSingleRequest(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"k":"v"},"id":7}`),
-		w, &mockRouter{}, &mockGatewayTools{}, mockP)
+	handleSingleRequestAsync(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"k":"v"},"id":7}`),
+		w, &sync.Mutex{}, &mockRouter{}, &mockGatewayTools{}, mockP)
 	w.Flush()
 
 	if strings.Contains(buf.String(), testAWSKey) {
@@ -403,8 +389,8 @@ func TestHandleSingleRequest_PreservesIDOnSendError(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleSingleRequest(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"k":"v"},"id":42}`),
-		w, &mockRouter{}, &mockGatewayTools{}, mockP)
+	handleSingleRequestAsync(ctx, []byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"k":"v"},"id":42}`),
+		w, &sync.Mutex{}, &mockRouter{}, &mockGatewayTools{}, mockP)
 	w.Flush()
 
 	var parsed proxy.JSONRPCResponse

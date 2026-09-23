@@ -308,7 +308,7 @@ func TestHandleSingleRequest_RouteError(t *testing.T) {
 	readBuf := &bytes.Buffer{}
 	writer := bufio.NewWriter(readBuf)
 
-	handleSingleRequest(ctx, []byte(`{"jsonrpc":"2.0","method":"unknown.tool","id":1}`), writer, mockR, mockGT, mockP)
+	handleSingleRequestAsync(ctx, []byte(`{"jsonrpc":"2.0","method":"unknown.tool","id":1}`), writer, &sync.Mutex{}, mockR, mockGT, mockP)
 
 	writer.Flush()
 	output := readBuf.String()
@@ -347,7 +347,7 @@ func TestHandleSingleRequest_SuccessfulRoute(t *testing.T) {
 	readBuf := &bytes.Buffer{}
 	writer := bufio.NewWriter(readBuf)
 
-	handleSingleRequest(ctx, []byte(`{"jsonrpc":"2.0","method":"test.tool","id":1}`), writer, mockR, mockGT, mockP)
+	handleSingleRequestAsync(ctx, []byte(`{"jsonrpc":"2.0","method":"test.tool","id":1}`), writer, &sync.Mutex{}, mockR, mockGT, mockP)
 
 	writer.Flush()
 	output := readBuf.String()
@@ -387,7 +387,7 @@ func TestHandleBatchRequest(t *testing.T) {
 	readBuf := &bytes.Buffer{}
 	writer := bufio.NewWriter(readBuf)
 
-	handleBatchRequest(ctx, []byte(batchInput), writer, mockR, mockGT, mockP)
+	handleBatchRequestAsync(ctx, []byte(batchInput), writer, &sync.Mutex{}, mockR, mockGT, mockP)
 
 	writer.Flush()
 	output := readBuf.String()
@@ -610,13 +610,13 @@ func TestHandleSingleRequest_SidecarRedactsParams(t *testing.T) {
 	readBuf := &bytes.Buffer{}
 	writer := bufio.NewWriter(readBuf)
 
-	handleSingleRequest(ctx,
+	handleSingleRequestAsync(ctx,
 		[]byte(`{"jsonrpc":"2.0","method":"test.tool","params":{"key":"safe_value"},"id":1}`),
-		writer, mockR, mockGT, mockP)
+		writer, &sync.Mutex{}, mockR, mockGT, mockP)
 	writer.Flush()
 
 	if !sidecarCalled {
-		t.Error("expected sidecar to be called by handleSingleRequest")
+		t.Error("expected sidecar to be called by handleSingleRequestAsync")
 	}
 }
 
@@ -688,9 +688,9 @@ func TestHandleSingleRequest_SidecarDisabled_NoCall(t *testing.T) {
 	readBuf := &bytes.Buffer{}
 	writer := bufio.NewWriter(readBuf)
 
-	handleSingleRequest(ctx,
+	handleSingleRequestAsync(ctx,
 		[]byte(`{"jsonrpc":"2.0","method":"test.tool","params":{"key":"safe_value"},"id":1}`),
-		writer, mockR, mockGT, mockP)
+		writer, &sync.Mutex{}, mockR, mockGT, mockP)
 	writer.Flush()
 
 	_ = readBuf.String()
