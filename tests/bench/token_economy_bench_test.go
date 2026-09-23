@@ -30,7 +30,8 @@ type routerTool struct {
 }
 
 // routerListJSON marshals the real, production `tools/list` payload
-// (pkg/mcp.GetAllToolDefinitions: list_servers, list_tools, invoke_tool —
+// (pkg/mcp.GetAllToolDefinitions: search_tools, list_servers, list_tools,
+// invoke_tool —
 // the same list `server run --stdio` returns) instead of a hand-maintained
 // stub, so this benchmark can never drift from what ships. See #300.
 func routerListJSON() []byte {
@@ -195,17 +196,17 @@ func TestBinarySize_NFR3(t *testing.T) {
 
 func TestGatewayRouterToolsList(t *testing.T) {
 	// Sanity check that the production pkg/mcp package's tool definitions
-	// (used by `server run --stdio` tools/list) return exactly the 3 tools
+	// (used by `server run --stdio` tools/list) return exactly the 4 tools
 	// we expect.
 	tools := mcp.GetAllToolDefinitions()
-	if len(tools) != 3 {
-		t.Fatalf("mcp.GetAllToolDefinitions() = %d tools, want 3 (list_servers, list_tools, invoke_tool)", len(tools))
+	if len(tools) != 4 {
+		t.Fatalf("mcp.GetAllToolDefinitions() = %d tools, want 4 (search_tools, list_servers, list_tools, invoke_tool)", len(tools))
 	}
 	names := map[string]bool{}
 	for _, tool := range tools {
 		names[tool.Name] = true
 	}
-	for _, expected := range []string{"list_servers", "invoke_tool", "list_tools"} {
+	for _, expected := range []string{"search_tools", "list_servers", "invoke_tool", "list_tools"} {
 		if !names[expected] {
 			t.Errorf("router is missing tool %q", expected)
 		}
@@ -219,7 +220,7 @@ func TestGatewayRouterToolsList(t *testing.T) {
 	if tokens <= 0 {
 		t.Fatalf("router tokens = %d, want > 0", tokens)
 	}
-	const budget = 250
+	const budget = 330
 	if tokens >= budget {
 		t.Errorf("router tools/list tokens = %d, want < %d", tokens, budget)
 	}

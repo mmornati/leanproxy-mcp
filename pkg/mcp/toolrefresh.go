@@ -275,8 +275,16 @@ func (h *Handler) setServerTools(name string, tools []Tool) {
 	if tools == nil {
 		tools = []Tool{}
 	}
-	h.toolCache.mu.Lock()
+	h.toolCache.mu.RLock()
 	old, had := h.toolCache.tools[name]
+	h.toolCache.mu.RUnlock()
+	changed := !had || !reflect.DeepEqual(old, tools)
+	// Index before publishing to the cache: search_tools treats a server
+	// whose tools are cached as searchable.
+	if changed {
+		h.searchIndex().SetServerTools(name, toSearchTools(tools))
+	}
+	h.toolCache.mu.Lock()
 	h.toolCache.tools[name] = tools
 	h.toolCache.mu.Unlock()
 
@@ -287,7 +295,7 @@ func (h *Handler) setServerTools(name string, tools []Tool) {
 	}
 	h.logger.Info("tools refreshed", "server", name, "count", len(tools))
 
-	if had && reflect.DeepEqual(old, tools) {
+	if !changed {
 		return
 	}
 	h.refreshMu.Lock()
@@ -320,6 +328,7 @@ func (h *Handler) loadFromPersistentCache() {
 			}
 		}
 
+		h.searchIndex().SetServerTools(serverName, toSearchTools(tools))
 		h.toolCache.mu.Lock()
 		h.toolCache.tools[serverName] = tools
 		h.toolCache.mu.Unlock()

@@ -15,6 +15,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/internal/version"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 )
 
@@ -64,6 +65,10 @@ type Handler struct {
 	retryInterval  time.Duration
 	toolsListeners []func(server string, tools []Tool)
 
+	// search is the ranked cross-server tool index behind search_tools,
+	// kept in step with toolCache (see toolrefresh.go).
+	search atomic.Pointer[toolsearch.Index]
+
 	// pipelineMu guards middlewares; pipeline holds the composed chain
 	// (middlewares around dispatch) so HandleRequest can load it lock-free.
 	pipelineMu  sync.Mutex
@@ -81,7 +86,7 @@ func NewHandler(p pool.ServerSource, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{
+	h := &Handler{
 		pool:    p,
 		logger:  logger,
 		timeout: 30 * time.Second,
@@ -93,6 +98,8 @@ func NewHandler(p pool.ServerSource, logger *slog.Logger) *Handler {
 		bgCtx:         context.Background(),
 		retryInterval: DefaultToolRefreshRetryInterval,
 	}
+	h.search.Store(toolsearch.New(toolsearch.Options{Logger: logger}))
+	return h
 }
 
 func NewHandlerWithToolStore(p pool.ServerSource, logger *slog.Logger, store toolstore.Cache) *Handler {
@@ -286,7 +293,7 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		}, nil
 	}
 
-	if params.Name == "list_servers" || params.Name == "list_tools" || params.Name == "invoke_tool" {
+	if GetToolDefinition(params.Name) != nil {
 		return h.handleLeanproxyTool(ctx, req, params)
 	}
 
@@ -334,6 +341,8 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 
 func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
 	switch params.Name {
+	case "search_tools":
+		return h.handleSearchTools(ctx, req, params)
 	case "list_servers":
 		return h.handleListServers(ctx, req)
 	case "list_tools":
@@ -578,15 +587,6 @@ func (h *Handler) toolCountFor(serverName string) int {
 	return len(h.toolCache.tools[serverName])
 }
 
-func matchesQuery(text string, queryWords []string) bool {
-	for _, word := range queryWords {
-		if !strings.Contains(text, word) {
-			return false
-		}
-	}
-	return true
-}
-
 // invokeToolEnvelope is the invoke_tool gateway tool's params, decoded
 // without going through map[string]interface{} so that Arguments travels to
 // the upstream server byte-for-byte (no float64 round-trip that would lose
@@ -635,7 +635,7 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	if serverName == "" || toolName == "" {
 		return &Response{
 			JSONRPC: JSONRPCVersion,
-			Error:   NewError(ErrCodeInvalidParams, "server and tool are required. Use list_servers to get server names, then list_tools to discover available tools."),
+			Error:   NewError(ErrCodeInvalidParams, "server and tool are required. Use search_tools to find a tool and its server."),
 			ID:      req.ID,
 		}, nil
 	}
@@ -835,8 +835,13 @@ func parseInputSchema(schema json.RawMessage) (required, optional []ParamInfo) {
 		isRequired[name] = true
 	}
 
-	for name, prop := range properties {
-		propMap, ok := prop.(map[string]interface{})
+	names := make([]string, 0, len(properties))
+	for name := range properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		propMap, ok := properties[name].(map[string]interface{})
 		if !ok {
 			continue
 		}

@@ -29,6 +29,11 @@ func TestGetToolDefinition(t *testing.T) {
 			wantNil:    false,
 		},
 		{
+			name:       "search_tools exists",
+			searchName: "search_tools",
+			wantNil:    false,
+		},
+		{
 			name:       "non_existent tool",
 			searchName: "fake_tool",
 			wantNil:    true,
@@ -47,15 +52,15 @@ func TestGetToolDefinition(t *testing.T) {
 
 func TestGetAllToolDefinitions(t *testing.T) {
 	tools := GetAllToolDefinitions()
-	if len(tools) != 3 {
-		t.Errorf("GetAllToolDefinitions() = %d tools, want 3", len(tools))
+	if len(tools) != 4 {
+		t.Errorf("GetAllToolDefinitions() = %d tools, want 4", len(tools))
 	}
 
 	names := map[string]bool{}
 	for _, tool := range tools {
 		names[tool.Name] = true
 	}
-	for _, want := range []string{"list_servers", "list_tools", "invoke_tool"} {
+	for _, want := range []string{"search_tools", "list_servers", "list_tools", "invoke_tool"} {
 		if !names[want] {
 			t.Errorf("GetAllToolDefinitions() missing tool %q", want)
 		}
@@ -107,10 +112,11 @@ func TestListServersToolDefinition(t *testing.T) {
 	}
 }
 
-// TestToolsListTokenBudget asserts the acceptance criterion from #300: the
-// marshaled tools/list result for the 3 gateway tools must stay under 250
-// estimated tokens (pkg/reporter.Estimator), matching what the README claims
-// and what tests/bench measures.
+// TestToolsListTokenBudget asserts the token budget of the gateway tools
+// (#300, raised by #305 when search_tools was added): the marshaled
+// tools/list result for the 4 gateway tools must stay under 330 estimated
+// tokens (pkg/reporter.Estimator), matching what the README claims and what
+// tests/bench measures.
 func TestToolsListTokenBudget(t *testing.T) {
 	type wireTool struct {
 		Name        string          `json:"name"`
@@ -138,7 +144,7 @@ func TestToolsListTokenBudget(t *testing.T) {
 	estimator := reporter.NewEstimator()
 	tokens := estimator.EstimateTokens(string(payload))
 
-	const budget = 250
+	const budget = 330
 	if tokens >= budget {
 		t.Errorf("tools/list estimated tokens = %d, want < %d", tokens, budget)
 	}

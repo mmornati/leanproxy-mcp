@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 )
@@ -101,3 +102,18 @@ var (
 )
 
 const MaxPayloadBytes = 64 * 1024
+
+// NewFromConfig validates cfg and builds the Embedder it selects.
+func NewFromConfig(cfg Config, logger *slog.Logger) (Embedder, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	switch cfg.Provider {
+	case ProviderOllama:
+		return NewOllamaEmbedder(*cfg.Ollama, logger)
+	case ProviderOpenAI:
+		return NewOpenAIEmbedder(*cfg.OpenAI, logger)
+	default:
+		return nil, fmt.Errorf("embedder: unknown provider %q", cfg.Provider)
+	}
+}
