@@ -107,13 +107,6 @@ func (m *mockPool) Close() error {
 	return nil
 }
 
-func (m *mockPool) IsServerMCPInitialized(name string) bool {
-	return false
-}
-
-func (m *mockPool) MarkServerMCPInitialized(name string) {
-}
-
 func (m *mockPool) SetServerState(name string, state pool.ServerState) {
 	m.servers[name] = string(state)
 }
@@ -738,11 +731,9 @@ func TestHandleListServers(t *testing.T) {
 	})
 
 	h := NewHandler(p, logger)
-	// Seed the handler's own tool cache directly (list_servers reads from
-	// it, not from the mock pool's per-test tool map). We avoid
-	// PopulateToolCache here because it restarts (and thus "heals") any
-	// server not already idle/running/busy, which would defeat the
-	// "jira is unreachable" case below.
+	// Seed the handler's own tool cache directly: list_servers reads from
+	// it (kept current by the background refresh), not from the mock
+	// pool's per-test tool map.
 	h.toolCache.tools["github"] = []Tool{
 		{Name: "list_issues", Description: "List GitHub issues", InputSchema: json.RawMessage(`{}`)},
 	}
@@ -1120,7 +1111,7 @@ func TestLoadFromPersistentCache(t *testing.T) {
 
 	h := NewHandlerWithToolStore(mockPool, logger, cache)
 
-	h.loadFromPersistentCache(context.Background())
+	h.loadFromPersistentCache()
 }
 
 func TestParseInputSchema(t *testing.T) {

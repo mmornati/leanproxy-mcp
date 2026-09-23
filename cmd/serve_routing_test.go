@@ -291,10 +291,6 @@ func (f *fakeToolSource) GetServerTransport(string) (string, error) {
 
 func (f *fakeToolSource) RestartServer(context.Context, string) error { return nil }
 
-func (f *fakeToolSource) IsServerMCPInitialized(string) bool { return true }
-
-func (f *fakeToolSource) MarkServerMCPInitialized(string) {}
-
 func (f *fakeToolSource) Close() error { return nil }
 
 func TestPopulateRouterTools_RegistersCachedTools(t *testing.T) {

@@ -461,9 +461,11 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	// health-triggered restart can race the shutdown sweep and orphan a
 	// freshly spawned process. It runs once, from the signal handler or
 	// after the stdio front end returns (EOF / shutdown).
+	refreshCtx, stopRefresh := context.WithCancel(ctx)
 	var closeOnce sync.Once
 	closePools := func() {
 		closeOnce.Do(func() {
+			stopRefresh()
 			if healthCancel != nil {
 				healthCancel()
 			}
@@ -499,6 +501,12 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 			handler.SetTimeout(srv.Name, srv.TimeoutValue)
 		}
 	}
+
+	// Serve immediately from the persistent tool cache and refresh every
+	// server's tools in the background (#297): no request ever waits for
+	// another server's tools/list.
+	handler.LoadPersistentToolCache()
+	handler.StartBackgroundRefresh(refreshCtx)
 
 	// Token Firewall: the same redaction + injection middlewares `serve`
 	// runs, on by default (built-in patterns when there is no bouncer block).

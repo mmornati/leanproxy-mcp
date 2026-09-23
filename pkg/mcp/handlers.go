@@ -55,10 +55,13 @@ type Handler struct {
 	cacheRefreshes atomic.Uint64
 	cacheFailures  atomic.Uint64
 
-	// initLocks maps a server name to a 1-slot channel used as a
-	// context-aware mutex, so concurrent requests (the stdio front end runs
-	// them in parallel) perform the lazy MCP handshake with a server once.
-	initLocks sync.Map
+	// Background per-server tool refresh (see toolrefresh.go).
+	refreshMu      sync.Mutex
+	refreshing     map[string]*refreshCall
+	refreshErrs    map[string]error
+	bgCtx          context.Context
+	retryInterval  time.Duration
+	toolsListeners []func(server string, tools []Tool)
 
 	// pipelineMu guards middlewares; pipeline holds the composed chain
 	// (middlewares around dispatch) so HandleRequest can load it lock-free.
@@ -84,6 +87,10 @@ func NewHandler(p pool.ServerSource, logger *slog.Logger) *Handler {
 		toolCache: &ToolCache{
 			tools: make(map[string][]Tool),
 		},
+		refreshing:    make(map[string]*refreshCall),
+		refreshErrs:   make(map[string]error),
+		bgCtx:         context.Background(),
+		retryInterval: DefaultToolRefreshRetryInterval,
 	}
 }
 
@@ -91,15 +98,9 @@ func NewHandlerWithToolStore(p pool.ServerSource, logger *slog.Logger, store too
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Handler{
-		pool:    p,
-		logger:  logger,
-		timeout: 30 * time.Second,
-		toolCache: &ToolCache{
-			tools: make(map[string][]Tool),
-		},
-		toolStore: store,
-	}
+	h := NewHandler(p, logger)
+	h.toolStore = store
+	return h
 }
 
 // SetTimeout registers a per-server request timeout. The handler falls back
@@ -259,74 +260,6 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 	}, nil
 }
 
-func (h *Handler) initializeServer(ctx context.Context, serverName string) error {
-	h.logger.Info("initializing server", "name", serverName)
-
-	initParams := InitializeParams{
-		ProtocolVersion: "2024-11-05",
-		Capabilities:    ClientCapabilities{},
-		ClientInfo: ClientInfo{
-			Name:    "leanproxy-mcp",
-			Version: "1.0.0",
-		},
-	}
-	paramsBytes, _ := json.Marshal(initParams)
-
-	h.logger.Debug("sending initialize request", "name", serverName, "params", string(paramsBytes))
-
-	resp, err := h.pool.SendRequestToServerWithID(ctx, serverName, MethodInitialize, paramsBytes, 120*time.Second, 1)
-	if err != nil {
-		h.logger.Error("initialize request failed", "name", serverName, "error", err)
-		return fmt.Errorf("initialize request failed: %w", err)
-	}
-
-	if resp != nil && resp.Error != nil {
-		h.logger.Error("server returned initialize error", "name", serverName, "error", resp.Error.Message)
-		return fmt.Errorf("server returned error: %s", resp.Error.Message)
-	}
-
-	h.logger.Debug("server initialized, sending initialized notification", "name", serverName)
-
-	notifyErr := h.pool.SendServerNotification(ctx, serverName, "notifications/initialized", map[string]interface{}{
-		"capabilities": ServerCapabilities{},
-	})
-	if notifyErr != nil {
-		h.logger.Warn("failed to send initialized notification", "name", serverName, "error", notifyErr)
-	}
-
-	h.logger.Info("server ready", "name", serverName)
-	return nil
-}
-
-// ensureServerInitialized performs the MCP initialize handshake with
-// serverName unless the pool already marks it initialized. Concurrent callers
-// for the same server are serialized on a per-server lock (waiting honors
-// ctx), and the flag is re-checked under the lock, so one handshake runs even
-// when the front end dispatches many requests at once.
-func (h *Handler) ensureServerInitialized(ctx context.Context, serverName string) error {
-	if h.pool.IsServerMCPInitialized(serverName) {
-		return nil
-	}
-	v, _ := h.initLocks.LoadOrStore(serverName, make(chan struct{}, 1))
-	lock := v.(chan struct{})
-	select {
-	case lock <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-	defer func() { <-lock }()
-
-	if h.pool.IsServerMCPInitialized(serverName) {
-		return nil
-	}
-	h.logger.Debug("initializing MCP session with server", "name", serverName)
-	if err := h.initializeServer(ctx, serverName); err != nil {
-		return err
-	}
-	h.pool.MarkServerMCPInitialized(serverName)
-	return nil
-}
-
 func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response, error) {
 	h.logger.Debug("handleToolsCall called", "params", string(req.Params))
 
@@ -365,15 +298,8 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		}, nil
 	}
 
-	// Perform MCP initialize handshake if not yet done for this server instance.
-	if err := h.ensureServerInitialized(ctx, serverName); err != nil {
-		return &Response{
-			JSONRPC: JSONRPCVersion,
-			Error:   NewError(ErrCodeServerError, fmt.Sprintf("server initialization failed: %v", err)),
-			ID:      req.ID,
-		}, nil
-	}
-
+	// The pool performs the MCP handshake with the server (once per
+	// process generation / connection); the handler just sends requests.
 	newParams := ToolsCallParams{
 		Name:      toolName,
 		Arguments: params.Arguments,
@@ -488,17 +414,24 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 	tools, exists := h.toolCache.tools[serverName]
 	h.toolCache.mu.RUnlock()
 
+	var refreshErr error
 	if !exists || len(tools) == 0 {
-		h.PopulateToolCache(ctx)
+		// Refresh this server only, waiting at most its own timeout; the
+		// other servers are never touched.
+		refreshErr = h.RefreshServerTools(ctx, serverName)
 		h.toolCache.mu.RLock()
 		tools = h.toolCache.tools[serverName]
 		h.toolCache.mu.RUnlock()
 	}
 
 	if len(tools) == 0 {
+		text := fmt.Sprintf("No tools available on server '%s'. The server may be unavailable or have no tools.", serverName)
+		if refreshErr != nil {
+			text = fmt.Sprintf("No tools available on server '%s': listing its tools failed: %v", serverName, refreshErr)
+		}
 		result := map[string]interface{}{
 			"content": []map[string]string{
-				{"type": "text", "text": fmt.Sprintf("No tools available on server '%s'. The server may be unavailable or have no tools.", serverName)},
+				{"type": "text", "text": text},
 			},
 		}
 		resultBytes, _ := json.Marshal(result)
@@ -531,14 +464,16 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 	}, nil
 }
 
+// listServersInstructionsChars caps the server instructions list_servers
+// shows per server.
+const listServersInstructionsChars = 120
+
 // handleListServers implements the list_servers gateway tool: one compact
 // line per configured server with its transport, state and cached tool
-// count. It takes no parameters and never forces a backend round-trip, so
-// it stays cheap to call before every session.
-//
-// The stored InitializeResult (server instructions / serverInfo) that
-// Story 19.7 will add is not available yet, so the `instructions` field is
-// omitted for now (see AGENTS.md / issue #300).
+// count (kept current by the background tool refresh), plus the serverInfo
+// and the first 120 characters of the instructions the server returned in
+// its InitializeResult, when known. It takes no parameters and never forces
+// a backend round-trip, so it stays cheap to call before every session.
 func (h *Handler) handleListServers(ctx context.Context, req *Request) (*Response, error) {
 	servers := h.pool.ListServers()
 	sort.Strings(servers)
@@ -556,7 +491,11 @@ func (h *Handler) handleListServers(ctx context.Context, req *Request) (*Respons
 		}
 
 		count := h.toolCountFor(name)
-		lines = append(lines, fmt.Sprintf("%s (%s, %s, %d tools)", name, transport, healthLabel(state), count))
+		line := fmt.Sprintf("%s (%s, %s, %d tools)", name, transport, healthLabel(state), count)
+		if info := h.serverInitializeResult(name); info != nil {
+			line += sessionSummary(info)
+		}
+		lines = append(lines, line)
 	}
 
 	text := "No servers configured."
@@ -580,6 +519,43 @@ func (h *Handler) handleListServers(ctx context.Context, req *Request) (*Respons
 	}, nil
 }
 
+// serverInitializeResult returns the pool's stored InitializeResult for a
+// server, or nil when the pool does not keep one (or has none yet).
+func (h *Handler) serverInitializeResult(name string) *pool.InitializeResult {
+	provider, ok := h.pool.(pool.SessionInfoProvider)
+	if !ok {
+		return nil
+	}
+	res, ok := provider.ServerInitializeResult(name)
+	if !ok {
+		return nil
+	}
+	return res
+}
+
+// sessionSummary renders the serverInfo and (truncated, single-line)
+// instructions part of a list_servers line.
+func sessionSummary(info *pool.InitializeResult) string {
+	var sb strings.Builder
+	if info.ServerInfo.Name != "" {
+		sb.WriteString(" [")
+		sb.WriteString(info.ServerInfo.Name)
+		if info.ServerInfo.Version != "" {
+			sb.WriteString(" ")
+			sb.WriteString(info.ServerInfo.Version)
+		}
+		sb.WriteString("]")
+	}
+	if instr := strings.Join(strings.Fields(info.Instructions), " "); instr != "" {
+		if r := []rune(instr); len(r) > listServersInstructionsChars {
+			instr = string(r[:listServersInstructionsChars-3]) + "..."
+		}
+		sb.WriteString(" instructions: ")
+		sb.WriteString(instr)
+	}
+	return sb.String()
+}
+
 // healthLabel maps a pool.ServerState to the compact word list_servers
 // reports: "healthy" for a server that can serve requests right now, and
 // "unreachable" for anything else (stopped, errored, disconnected,
@@ -599,186 +575,6 @@ func (h *Handler) toolCountFor(serverName string) int {
 	h.toolCache.mu.RLock()
 	defer h.toolCache.mu.RUnlock()
 	return len(h.toolCache.tools[serverName])
-}
-
-func (h *Handler) PopulateToolCache(ctx context.Context) {
-	h.logger.Info("populating tool cache from backend servers")
-
-	if h.toolStore != nil {
-		h.loadFromPersistentCache(ctx)
-	}
-
-	h.refreshToolCacheFromServers(ctx)
-
-	h.logger.Info("tool cache population complete")
-}
-
-func (h *Handler) loadFromPersistentCache(ctx context.Context) {
-	servers := h.pool.ListServers()
-	for _, serverName := range servers {
-		cachedTools, err := h.toolStore.GetTools(serverName)
-		if err != nil {
-			h.logger.Warn("failed to load tools from persistent cache", "server", serverName, "error", err)
-			continue
-		}
-		if cachedTools == nil {
-			continue
-		}
-
-		tools := make([]Tool, len(cachedTools))
-		for i, ct := range cachedTools {
-			tools[i] = Tool{
-				Name:        ct.Name,
-				Description: ct.Description,
-				InputSchema: ct.InputSchema,
-			}
-		}
-
-		h.toolCache.mu.Lock()
-		h.toolCache.tools[serverName] = tools
-		h.toolCache.mu.Unlock()
-
-		h.logger.Debug("loaded tools from persistent cache", "server", serverName, "count", len(tools))
-	}
-}
-
-func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
-	h.cacheRefreshes.Add(1)
-	servers := h.pool.ListServers()
-
-	if len(servers) == 0 {
-		h.logger.Debug("no servers to refresh")
-		return
-	}
-
-	type serverToolResult struct {
-		name      string
-		tools     []Tool
-		err       error
-		initErr   error
-		respError string
-		hasResult bool
-	}
-
-	var wg sync.WaitGroup
-	results := make(chan serverToolResult, len(servers))
-
-	for _, serverName := range servers {
-		wg.Add(1)
-		go func(name string) {
-			defer wg.Done()
-
-			select {
-			case <-ctx.Done():
-				results <- serverToolResult{name: name, err: ctx.Err()}
-				return
-			default:
-			}
-
-			serverCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			defer cancel()
-
-			h.logger.Debug("checking server for cache refresh", "name", name)
-
-			state, _ := h.pool.GetServerState(name)
-			h.logger.Debug("server state", "name", name, "state", state)
-
-			if state != "idle" && state != "running" && state != "busy" {
-				h.logger.Warn("server not running, attempting restart for cache refresh", "name", name, "state", state)
-
-				var restartErr error
-				for attempt := 0; attempt < 3; attempt++ {
-					if attempt > 0 {
-						h.logger.Info("retrying server restart for cache", "name", name, "attempt", attempt+1)
-						time.Sleep(time.Duration(attempt) * time.Second)
-					}
-
-					if err := h.pool.RestartServer(serverCtx, name); err != nil {
-						restartErr = err
-						continue
-					}
-					restartErr = nil
-					break
-				}
-
-				if restartErr != nil {
-					h.logger.Error("failed to restart server for cache after retries", "name", name, "error", restartErr)
-					h.cacheFailures.Add(1)
-					results <- serverToolResult{name: name, err: restartErr}
-					return
-				}
-			}
-
-			initErr := h.initializeServer(serverCtx, name)
-			if initErr != nil {
-				h.logger.Warn("failed to initialize server, will try without initialization", "name", name, "error", initErr)
-			}
-
-			h.logger.Debug("requesting tools/list for cache", "name", name)
-			resp, err := h.pool.SendRequestToServer(serverCtx, name, MethodToolsList, nil, 10*time.Second)
-			if err != nil {
-				h.logger.Error("failed to get tools for cache", "name", name, "error", err)
-				h.cacheFailures.Add(1)
-				results <- serverToolResult{name: name, err: err, initErr: initErr}
-				return
-			}
-
-			if resp != nil && resp.Error != nil {
-				h.logger.Error("server error during cache population", "name", name, "error", resp.Error.Message)
-				h.cacheFailures.Add(1)
-				results <- serverToolResult{name: name, respError: resp.Error.Message, initErr: initErr}
-				return
-			}
-
-			if resp == nil || resp.Result == nil {
-				h.logger.Error("server returned no result for cache", "name", name, "resp", fmt.Sprintf("%+v", resp))
-				h.cacheFailures.Add(1)
-				results <- serverToolResult{name: name, initErr: initErr}
-				return
-			}
-
-			if len(resp.Result) == 0 || string(resp.Result) == "null" {
-				h.logger.Error("server returned null/empty result for cache", "name", name, "resp", fmt.Sprintf("%+v", resp))
-				h.cacheFailures.Add(1)
-				results <- serverToolResult{name: name, initErr: initErr}
-				return
-			}
-
-			var toolsResult ToolsListResult
-			if err := json.Unmarshal(resp.Result, &toolsResult); err != nil {
-				h.logger.Error("failed to parse tools for cache", "name", name, "error", err, "result", string(resp.Result))
-				h.cacheFailures.Add(1)
-				results <- serverToolResult{name: name, err: err, initErr: initErr}
-				return
-			}
-
-			h.logger.Debug("caching tools from server", "name", name, "count", len(toolsResult.Tools))
-			results <- serverToolResult{name: name, tools: toolsResult.Tools, hasResult: true, initErr: initErr}
-		}(serverName)
-	}
-
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	for result := range results {
-		if !result.hasResult {
-			continue
-		}
-
-		h.toolCache.mu.Lock()
-		h.toolCache.tools[result.name] = result.tools
-		h.toolCache.mu.Unlock()
-
-		if h.toolStore != nil {
-			if err := h.toolStore.SetTools(result.name, toolsToCachedTools(result.tools)); err != nil {
-				h.logger.Warn("failed to persist tools to cache", "name", result.name, "error", err)
-			}
-		}
-
-		h.logger.Debug("cached tools from server", "name", result.name, "count", len(result.tools))
-	}
 }
 
 func matchesQuery(text string, queryWords []string) bool {
@@ -849,63 +645,9 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 
 	h.logger.Info("invoke_tool called", "server", serverName, "tool", toolName)
 
-	state, stateErr := h.pool.GetServerState(serverName)
-	h.logger.Debug("server current state", "name", serverName, "state", state, "error", stateErr)
-
-	if state != "idle" && state != "running" && state != "busy" {
-		h.logger.Warn("server not running, attempting to restart", "name", serverName, "state", state)
-
-		var restartErr error
-		for attempt := 0; attempt < 3; attempt++ {
-			if attempt > 0 {
-				h.logger.Info("retrying server restart", "name", serverName, "attempt", attempt+1)
-				time.Sleep(time.Duration(attempt) * time.Second)
-			}
-
-			if err := h.pool.RestartServer(ctx, serverName); err != nil {
-				restartErr = err
-				continue
-			}
-			restartErr = nil
-			break
-		}
-
-		if restartErr != nil {
-			h.logger.Error("failed to restart server after retries", "name", serverName, "error", restartErr)
-			enrichedError := FormatErrorWithHint(
-				fmt.Sprintf("server %s is not running (state: %s) and failed to restart after retries: %v", serverName, state, restartErr),
-				serverName, toolName,
-			)
-			return &Response{
-				JSONRPC: JSONRPCVersion,
-				Error:   NewError(ErrCodeServerError, enrichedError),
-				ID:      req.ID,
-			}, nil
-		}
-		h.logger.Info("server restarted successfully", "name", serverName)
-	}
-
-	// Perform MCP initialize handshake if not yet done for this server instance.
-	// The MCP protocol requires initialize + notifications/initialized before any tool call.
-	if err := h.ensureServerInitialized(ctx, serverName); err != nil {
-		h.logger.Error("invoke_tool: server initialization failed", "server", serverName, "error", err)
-		schema := h.lookupToolSchema(serverName, toolName)
-		enrichedError := FormatErrorWithHint(fmt.Sprintf("server initialization failed: %v", err), serverName, toolName)
-		errResp := NewError(ErrCodeServerError, enrichedError)
-		if schema != nil {
-			dataBytes, _ := json.Marshal(map[string]interface{}{
-				"tool":   toolName,
-				"schema": json.RawMessage(schema),
-			})
-			errResp.Data = dataBytes
-		}
-		return &Response{
-			JSONRPC: JSONRPCVersion,
-			Error:   errResp,
-			ID:      req.ID,
-		}, nil
-	}
-
+	// No handler-level restart or handshake: the pool restarts an
+	// unhealthy stdio server on use (and its crash-restart loop runs in the
+	// background) and performs the MCP handshake before the call.
 	newParams := ToolsCallParams{
 		Name:      toolName,
 		Arguments: arguments,
@@ -1019,11 +761,13 @@ func (h *Handler) handlePing(ctx context.Context, req *Request) (*Response, erro
 	}, nil
 }
 
+// handleShutdown acknowledges a shutdown request. It does not close the
+// pool: the front end that received the request owns the shutdown order
+// (drain in-flight requests, answer, then close the pools), and closing
+// here would kill servers under requests still in flight.
 func (h *Handler) handleShutdown(ctx context.Context, req *Request) (*Response, error) {
 	result := map[string]string{"status": "shutdown"}
 	resultBytes, _ := json.Marshal(result)
-
-	h.pool.Close()
 
 	return &Response{
 		JSONRPC: JSONRPCVersion,
