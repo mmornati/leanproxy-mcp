@@ -3,6 +3,7 @@ package e2e
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -24,6 +25,17 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "set LEANPROXY_TOOLCACHE_DIR:", err)
 		os.Exit(1)
 	}
+	// Tool pinning (#310) is on (warn) by default: keep every proxy these
+	// tests start away from ~/.config/leanproxy/pins.json.
+	pinsDir, err := os.MkdirTemp("", "leanproxy-e2e-pins-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "create pins dir:", err)
+		os.Exit(1)
+	}
+	if err := os.Setenv("LEANPROXY_PINS_FILE", filepath.Join(pinsDir, "pins.json")); err != nil {
+		fmt.Fprintln(os.Stderr, "set LEANPROXY_PINS_FILE:", err)
+		os.Exit(1)
+	}
 	// Every `serve` these tests start authenticates clients with this
 	// token (#298) instead of creating ~/.config/leanproxy/serve.token.
 	if err := os.Setenv("LEANPROXY_SERVE_TOKEN", e2eServeToken); err != nil {
@@ -32,6 +44,7 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	_ = os.RemoveAll(dir)
+	_ = os.RemoveAll(pinsDir)
 	os.Exit(code)
 }
 

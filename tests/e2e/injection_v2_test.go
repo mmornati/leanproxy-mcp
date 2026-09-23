@@ -436,8 +436,14 @@ func TestInjectionV2_JudgeAndSidecar(t *testing.T) {
 		if !strings.Contains(string(logData), `"name":"echo","arguments":{"path":"/tmp/notes.txt"}`) {
 			t.Fatalf("original call not forwarded: %s", logData)
 		}
-		if !strings.Contains(logs.String(), "sidecar: output changed the request structure") {
-			t.Fatalf("no warning logged:\n%s", logs.String())
+		// The child's stderr reaches logs through exec's copy goroutine,
+		// possibly after the response: wait for it.
+		deadline := time.Now().Add(5 * time.Second)
+		for !strings.Contains(logs.String(), "sidecar: output changed the request structure") {
+			if time.Now().After(deadline) {
+				t.Fatalf("no warning logged:\n%s", logs.String())
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
 	})
 }
