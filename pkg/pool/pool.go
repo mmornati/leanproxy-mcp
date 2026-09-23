@@ -119,7 +119,15 @@ type StdioPool struct {
 	cancel       context.CancelFunc
 	rateLimiters *serverRateLimiters
 	reconnect    ReconnectSettings
+	// stopGrace is the SIGTERM→SIGKILL grace period given to every server
+	// started by this pool (0 means defaultStopGracePeriod). Tests shorten
+	// it.
+	stopGrace time.Duration
 }
+
+// closeDeadlineMargin is added to the longest stop grace period to bound
+// how long Close waits for all servers.
+const closeDeadlineMargin = 5 * time.Second
 
 // NewStdioPool creates a new StdioPool with the given idle timeout.
 //
@@ -185,14 +193,16 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 	}
 
 	serverConfig := StdioServerConfig{
-		Name:           config.Name,
-		Command:        config.Stdio.Command,
-		Args:           config.Stdio.Args,
-		Env:            config.Stdio.Env,
-		CWD:            config.Stdio.CWD,
-		MaxInFlight:    config.MaxInFlight,
-		IdleTimeout:    config.IdleTimeoutValue,
-		RequestTimeout: config.TimeoutValue,
+		Name:            config.Name,
+		Command:         config.Stdio.Command,
+		Args:            config.Stdio.Args,
+		Env:             config.Stdio.Env,
+		CWD:             config.Stdio.CWD,
+		MaxInFlight:     config.MaxInFlight,
+		IdleTimeout:     config.IdleTimeoutValue,
+		RequestTimeout:  config.TimeoutValue,
+		MaxResponseSize: config.MaxResponseBytes,
+		StopGracePeriod: p.stopGrace,
 	}
 
 	server := newServerV2(config.Name, serverConfig, p.logger)
@@ -392,28 +402,53 @@ func (p *StdioPool) do(ctx context.Context, name string, req Request) (*Response
 	return resp, nil
 }
 
+// Close stops every server. The server list is taken (and the pool emptied)
+// under the lock; the servers are then stopped in parallel outside it, so
+// Close takes about one stop grace period however many servers ignore
+// SIGTERM, bounded by an overall deadline.
 func (p *StdioPool) Close() error {
 	p.cancel()
 
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	servers := p.servers
+	p.servers = make(map[string]*StdioServerV2)
+	// golang.org/x/time/rate.Limiter holds no background goroutine or
+	// resources to release, so the rate limiters just get a fresh map.
+	p.rateLimiters = newServerRateLimiters()
+	p.mu.Unlock()
 
-	for name, server := range p.servers {
+	var wg sync.WaitGroup
+	longestGrace := time.Duration(0)
+	for name, server := range servers {
 		// Mark closed before stopping so that a concurrent in-flight restart
 		// (e.g. health-triggered) aborts instead of respawning a process the
 		// pool will never see again.
 		server.closed.Store(true)
-		if err := server.stop(); err != nil {
-			p.logger.Warn("server stop failed", "name", name, "error", err)
+		if server.stopGrace > longestGrace {
+			longestGrace = server.stopGrace
 		}
-		p.logger.Info("server stopped", "name", name)
+		wg.Add(1)
+		go func(name string, server *StdioServerV2) {
+			defer wg.Done()
+			if err := server.stop(); err != nil {
+				p.logger.Warn("server stop failed", "name", name, "error", err)
+			}
+			p.logger.Info("server stopped", "name", name)
+		}(name, server)
 	}
 
-	// golang.org/x/time/rate.Limiter holds no background goroutine or
-	// resources to release, so the rate limiters just get a fresh map.
-	p.rateLimiters = newServerRateLimiters()
-
-	p.servers = make(map[string]*StdioServerV2)
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(longestGrace + closeDeadlineMargin)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		p.logger.Warn("timed out waiting for stdio servers to stop", "servers", len(servers))
+	}
 	return nil
 }
 

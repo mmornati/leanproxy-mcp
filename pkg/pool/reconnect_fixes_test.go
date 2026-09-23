@@ -163,7 +163,10 @@ func TestStopEscalatesSIGKILLForSIGTERMIgnoringProcess(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping process-based test in short mode")
 	}
-	server := newServerV2("test-stubborn", echoServerConfig("test-stubborn", "GO_HELPER_IGNORE_SIGTERM=1"), slog.Default())
+	const grace = time.Second
+	cfg := echoServerConfig("test-stubborn", "GO_HELPER_IGNORE_SIGTERM=1")
+	cfg.StopGracePeriod = grace
+	server := newServerV2("test-stubborn", cfg, slog.Default())
 	require.NoError(t, server.spawn(context.Background()))
 
 	// Give the child time to install its SIGTERM handler; a SIGTERM delivered
@@ -176,11 +179,11 @@ func TestStopEscalatesSIGKILLForSIGTERMIgnoringProcess(t *testing.T) {
 	go func() { done <- server.stop() }()
 	select {
 	case <-done:
-	case <-time.After(stopGracePeriod + 10*time.Second):
+	case <-time.After(grace + 10*time.Second):
 		t.Fatal("stop wedged: SIGTERM-ignoring process was not escalated to SIGKILL")
 	}
 	elapsed := time.Since(start)
-	require.GreaterOrEqual(t, elapsed, stopGracePeriod-time.Second,
+	require.GreaterOrEqual(t, elapsed, grace-100*time.Millisecond,
 		"stop should have waited out the SIGTERM grace period before escalating, took %v", elapsed)
 	require.Equal(t, StateStopped, server.getState())
 }
