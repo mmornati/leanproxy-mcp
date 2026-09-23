@@ -9,6 +9,9 @@ type ToolDefinition struct {
 	Returns     ReturnSchema    `json:"returns,omitempty"`
 	Categories  []string        `json:"categories,omitempty"`
 	InputSchema json.RawMessage `json:"inputSchema"`
+	// ReadOnly marks a gateway tool that never changes anything; clients
+	// that negotiated 2025-03-26 or newer see it as readOnlyHint.
+	ReadOnly bool `json:"-"`
 }
 
 type ToolExample struct {
@@ -35,6 +38,7 @@ type FieldDescription struct {
 var LeanproxyTools = []ToolDefinition{
 	{
 		Name:        "search_tools",
+		ReadOnly:    true,
 		Description: "Find the best tools for a task across all servers. Returns the top matches with their input schema; call them with invoke_tool.",
 		Categories:  []string{"discovery", "meta"},
 		Returns: ReturnSchema{
@@ -56,6 +60,7 @@ var LeanproxyTools = []ToolDefinition{
 	},
 	{
 		Name:        "list_servers",
+		ReadOnly:    true,
 		Description: "List configured MCP servers: transport, state, tool count.",
 		Categories:  []string{"discovery", "meta"},
 		Returns: ReturnSchema{
@@ -72,6 +77,7 @@ var LeanproxyTools = []ToolDefinition{
 	},
 	{
 		Name:        "list_tools",
+		ReadOnly:    true,
 		Description: "Browse all tools of one server. Prefer search_tools.",
 		Categories:  []string{"discovery", "meta"},
 		Returns: ReturnSchema{

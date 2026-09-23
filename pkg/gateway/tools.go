@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
@@ -21,10 +22,14 @@ type ServerInfo struct {
 	ToolCount int    `json:"tool_count"`
 }
 
+// InvokeToolParams are the invoke_tool arguments. Arguments stays raw JSON
+// end to end so the tool's arguments are relayed byte for byte: decoding
+// them into a map would turn every number into a float64 and corrupt
+// integers above 2^53 (9007199254740993 would become ...992).
 type InvokeToolParams struct {
-	ServerName string                 `json:"server_name"`
-	ToolName   string                 `json:"tool_name"`
-	Arguments  map[string]interface{} `json:"arguments,omitempty"`
+	ServerName string          `json:"server_name"`
+	ToolName   string          `json:"tool_name"`
+	Arguments  json.RawMessage `json:"arguments,omitempty"`
 }
 
 type GatewayTools interface {

@@ -13,10 +13,18 @@ import (
 
 const CacheValidDuration = 24 * time.Hour
 
+// CachedTool is one persisted tool definition. The MCP 2025 metadata
+// fields are optional, so cache files written before they existed still
+// load.
 type CachedTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	InputSchema json.RawMessage `json:"inputSchema"`
+	Name         string          `json:"name"`
+	Title        string          `json:"title,omitempty"`
+	Description  string          `json:"description"`
+	InputSchema  json.RawMessage `json:"inputSchema"`
+	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
+	Annotations  json.RawMessage `json:"annotations,omitempty"`
+	Icons        json.RawMessage `json:"icons,omitempty"`
+	Meta         json.RawMessage `json:"_meta,omitempty"`
 }
 
 type Cache interface {

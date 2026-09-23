@@ -68,6 +68,14 @@ func (rc *ResponseCache) Enabled() bool {
 	return rc != nil && rc.cfg != nil && rc.cfg.Enabled && rc.store != nil
 }
 
+// Allows reports whether the cache is on and its policy (the allowlist of
+// idempotent read tools) permits caching the tool identified by identity
+// ("server.tool"). Other caches, e.g. `serve`'s semantic cache, use it so
+// that every cache honors the same policy.
+func (rc *ResponseCache) Allows(identity string) bool {
+	return rc.Enabled() && identity != "" && rc.cfg.Allowed(identity)
+}
+
 // Stats returns the underlying store's counters, or a zero Stats when the
 // cache is disabled.
 func (rc *ResponseCache) Stats() responsecache.Stats {

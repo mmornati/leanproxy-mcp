@@ -22,6 +22,11 @@
 //	                       and in the description of the first tool
 //	--concurrent           handle requests concurrently; answers go out in
 //	                       completion order, not request order
+//	--resources            speak the 2025 revisions (#307): answer initialize
+//	                       with the requested protocolVersion, advertise
+//	                       resources and prompts, and serve one resource
+//	                       (catalog://NAME/readme), one template and one
+//	                       prompt ("brief")
 package main
 
 import (
@@ -51,6 +56,7 @@ type server struct {
 	delay         time.Duration
 	responseBytes int
 	secrets       bool
+	resources     bool
 
 	outMu sync.Mutex
 	out   *bufio.Writer
@@ -66,6 +72,7 @@ func main() {
 	responseBytes := flag.Int("response-bytes", 0, "pad each tools/call text to at least this many bytes")
 	secrets := flag.Bool("secrets", false, "embed fake credentials in tools/call results and in the first tool's description")
 	concurrent := flag.Bool("concurrent", false, "handle requests concurrently, answering out of order")
+	resources := flag.Bool("resources", false, "advertise and serve resources and prompts, echo the requested protocol version")
 	flag.Parse()
 
 	cat, err := harness.LoadCatalog()
@@ -96,6 +103,7 @@ func main() {
 		delay:         time.Duration(*delayMS) * time.Millisecond,
 		responseBytes: *responseBytes,
 		secrets:       *secrets,
+		resources:     *resources,
 		out:           bufio.NewWriterSize(os.Stdout, 64*1024),
 		waiting:       make(map[string]chan struct{}),
 	}
@@ -157,11 +165,31 @@ func toolName(msg message) string {
 func (s *server) handle(msg message) {
 	switch msg.Method {
 	case "initialize":
+		if s.resources {
+			var p struct {
+				ProtocolVersion string `json:"protocolVersion"`
+			}
+			_ = json.Unmarshal(msg.Params, &p)
+			s.reply(msg.ID, map[string]interface{}{
+				"protocolVersion": p.ProtocolVersion,
+				"capabilities": map[string]interface{}{
+					"tools": map[string]interface{}{}, "resources": map[string]interface{}{}, "prompts": map[string]interface{}{},
+				},
+				"serverInfo": map[string]string{"name": s.name, "version": "1.0.0"},
+			})
+			return
+		}
 		s.reply(msg.ID, map[string]interface{}{
 			"protocolVersion": "2024-11-05",
 			"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
 			"serverInfo":      map[string]string{"name": s.name, "version": "1.0.0"},
 		})
+	case "resources/list", "resources/templates/list", "resources/read", "prompts/list", "prompts/get":
+		if !s.resources {
+			s.replyError(msg.ID, -32601, "method not found: "+msg.Method)
+			return
+		}
+		s.resourceMethod(msg)
 	case "tools/list":
 		s.reply(msg.ID, s.toolsList)
 	case "tools/call":
@@ -202,6 +230,31 @@ func (s *server) toolCall(msg message) {
 		"content":     []map[string]string{{"type": "text", "text": string(text)}},
 		"fixtureHits": harness.CountFakeSecrets(string(msg.Params)),
 	})
+}
+
+// resourceMethod serves the --resources resources and prompts.
+func (s *server) resourceMethod(msg message) {
+	uri := "catalog://" + s.name + "/readme"
+	switch msg.Method {
+	case "resources/list":
+		s.reply(msg.ID, map[string]interface{}{"resources": []map[string]string{{"uri": uri, "name": "readme", "mimeType": "text/plain"}}})
+	case "resources/templates/list":
+		s.reply(msg.ID, map[string]interface{}{"resourceTemplates": []map[string]string{{"uriTemplate": "catalog://" + s.name + "/{doc}", "name": "docs"}}})
+	case "resources/read":
+		var p struct {
+			URI string `json:"uri"`
+		}
+		_ = json.Unmarshal(msg.Params, &p)
+		s.reply(msg.ID, map[string]interface{}{"contents": []map[string]string{{"uri": p.URI, "mimeType": "text/plain", "text": "readme of " + s.name}}})
+	case "prompts/list":
+		s.reply(msg.ID, map[string]interface{}{"prompts": []map[string]string{{"name": "brief", "description": "Brief about " + s.name}}})
+	case "prompts/get":
+		var p struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(msg.Params, &p)
+		s.reply(msg.ID, map[string]interface{}{"messages": []map[string]interface{}{{"role": "user", "content": map[string]string{"type": "text", "text": p.Name + " from " + s.name}}}})
+	}
 }
 
 // filler returns n bytes of plain prose, so a large response looks like

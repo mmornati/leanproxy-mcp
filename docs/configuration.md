@@ -739,6 +739,12 @@ Semantic caching stores and retrieves tool responses based on vector similarity,
 > Response Cache above for tool-call caching. The vector store is also no
 > longer opened at startup unless `cache.vector_store` or `--embed-provider`
 > is explicitly configured.
+>
+> As of #307, `serve` consults it only for a tool addressed by its namespaced
+> method (`server.tool`) that the `response_cache.tools` allowlist declares
+> cacheable — the same policy as the stdio front end. MCP protocol methods
+> (`resources/read`, `prompts/get`, `resources/list`, ...) are never answered
+> from any cache.
 
 ### Configuration
 

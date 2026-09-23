@@ -78,6 +78,36 @@
 
 ## Added in v0.11
 
+- **MCP protocol upgrade, part 1: version negotiation, tool metadata and result passthrough, resources & prompts aggregation** ([#307](https://github.com/mmornati/leanproxy-mcp/issues/307)).
+  - **Versions.** Both front ends negotiate MCP `2024-11-05`, `2025-03-26`, `2025-06-18` and `2025-11-25`
+    (one list, `pkg/mcp/protocol.go`): a supported requested revision is echoed, anything else gets the
+    latest. The revision is kept per client session (per connection in `serve`) and gates the fields
+    LeanProxy adds, so a `2024-11-05` client sees no new field. The pool's handshake with every upstream
+    now asks for the latest revision (it was hard-coded to `2024-11-05`) and stores the answer with the
+    server's capabilities.
+  - **Tool metadata.** Upstream tools keep `title`, `outputSchema`, `annotations`, `icons` and `_meta`
+    (also in the persistent tool cache). `list_tools` and `search_tools` tag hinted tools `[read-only]` /
+    `[destructive]`, and return the full tool objects as `structuredContent` to clients on `2025-06-18`+.
+    The gateway tools advertise `readOnlyHint` to `2025-03-26`+ clients. Upstream `tools/list` pagination
+    (`nextCursor`) is followed.
+  - **Results.** `invoke_tool` returns the upstream `CallToolResult` unchanged apart from redaction
+    (`structuredContent`, `isError`, `resource_link` and every other content type). HTTP/SSE upstreams now
+    relay every MCP method as raw JSON instead of through mcp-go's typed results, which dropped fields and
+    re-encoded numbers through float64; their JSON-RPC errors now reach the client with their code,
+    message and data instead of a generic "tool call failed".
+  - **Resources & prompts.** `resources/list`, `resources/templates/list` and `prompts/list` (which
+    returned empty lists) now merge every upstream's lists in parallel, namespaced as
+    `leanproxy://<server>/<uri>` and `<server>.<prompt>`; `resources/read`, `resources/subscribe` /
+    `unsubscribe` and `prompts/get` (not proxied before) are routed to the owning server. `initialize`
+    advertises `resources` / `prompts` only when an upstream serves them, with `listChanged: true`, and
+    clients get `notifications/resources/list_changed` / `notifications/prompts/list_changed` when an
+    upstream's lists change or it restarts. Everything is redacted. `serve` answers the same methods.
+  - **Tests.** New conformance smoke test in the harness: an mcp-go client drives the real binary at every
+    supported revision.
+  - **Not yet** (story 20.4, [#308](https://github.com/mmornati/leanproxy-mcp/issues/308)): server-to-client
+    requests (elicitation, sampling, roots), progress, cancellation relay and `notifications/resources/updated`
+    (so `resources.subscribe` is not advertised). The `2026-07-28` revision is out of scope.
+
 - **`search_tools`: ranked tool search across every server** ([#305](https://github.com/mmornati/leanproxy-mcp/issues/305)).
   - **What.** A fourth gateway tool in `server run --stdio`. One call ranks the cached tools of all servers
     against a plain-words query and returns the top matches (default 5, at most 20) in the `list_tools`
@@ -94,6 +124,18 @@
     session model: −65.0% to −93.5% tokens against native, with one extra turn per new tool.
   - **Router size.** `tools/list` grows from 237 to 318 tokens (budget test now < 330).
   - **Removed.** The dead substring matchers `matchesQuery` and `gateway.SearchTools`.
+
+## Fixed in v0.11
+
+- **`serve` never answers `resources/read` / `prompts/get` from the semantic cache** ([#307](https://github.com/mmornati/leanproxy-mcp/issues/307)).
+  The semantic (embedding-similarity) cache in `serve` was consulted for every routed method other than
+  `tools/call`, so a resource read or a prompt could be replayed stale — or for a merely *similar* request.
+  It now follows the stdio front end's cache policy: only a tool addressed by its namespaced method that the
+  `response_cache.tools` allowlist declares cacheable, never an MCP protocol method, never an `isError` result.
+- **`serve` simple gateway mode relays `invoke_tool` arguments byte for byte** ([#307](https://github.com/mmornati/leanproxy-mcp/issues/307)).
+  `gateway.InvokeToolParams.Arguments` was a `map[string]any`, so every number went through float64 and an
+  integer above 2^53 was corrupted (`9007199254740993` became `…992`). It is now a `json.RawMessage`,
+  validated as a JSON object and relayed unchanged.
 
 ## Changed in v0.10
 

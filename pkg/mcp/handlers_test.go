@@ -249,10 +249,11 @@ func TestHandleInitialize(t *testing.T) {
 			expectedVer:   version.Get().Version,
 		},
 		{
+			// No requested version: the latest supported one is offered.
 			name:          "nil params",
 			params:        nil,
 			expectError:   false,
-			expectedProto: "2024-11-05",
+			expectedProto: LatestProtocolVersion,
 			expectedName:  "leanproxy-mcp",
 			expectedVer:   version.Get().Version,
 		},
@@ -288,8 +289,9 @@ func TestHandleInitialize(t *testing.T) {
 			assert.Equal(t, tt.expectedName, result.ServerInfo.Name)
 			assert.Equal(t, tt.expectedVer, result.ServerInfo.Version)
 			assert.NotNil(t, result.Capabilities.Tools)
-			assert.NotNil(t, result.Capabilities.Resources)
-			assert.NotNil(t, result.Capabilities.Prompts)
+			// No upstream serves resources or prompts: not advertised.
+			assert.Nil(t, result.Capabilities.Resources)
+			assert.Nil(t, result.Capabilities.Prompts)
 		})
 	}
 }

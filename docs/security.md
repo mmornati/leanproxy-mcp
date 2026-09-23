@@ -145,7 +145,9 @@ client → redact request params → injection check → dispatch/upstream → r
   `Secret redaction failed; request not forwarded` and never forwarded.
 - **Response redaction** covers `result`, `error.message` and `error.data`
   of every response, including `list_tools` and `search_tools` text
-  (upstream tool descriptions)
+  (upstream tool descriptions) and `structuredContent`, the aggregated
+  `resources/list`, `resources/templates/list` and `prompts/list`, resource
+  contents (`resources/read`) and prompt messages (`prompts/get`),
   and error hints/schemas.
 - Redaction is **on by default** with the built-in patterns when there is no
   `bouncer:` block. Only `bouncer.enabled: false` turns it off (in both

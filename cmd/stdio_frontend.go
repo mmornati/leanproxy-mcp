@@ -35,6 +35,20 @@ type requestHandler interface {
 	HandleRequest(ctx context.Context, req *mcp.Request) (*mcp.Response, error)
 }
 
+// sessionOpener is implemented by handlers that keep per-client MCP session
+// state (negotiated protocol version) and send notifications to clients
+// (*mcp.Handler). The front end opens one session for its client.
+type sessionOpener interface {
+	OpenSession(notify mcp.NotifyFunc) (*mcp.ClientSession, func())
+}
+
+// jsonRPCNotification is a server-to-client notification.
+type jsonRPCNotification struct {
+	JSONRPC string          `json:"jsonrpc"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
 // stdioFrontendOptions configures serveStdio. Zero values mean defaults.
 type stdioFrontendOptions struct {
 	// MaxConcurrent caps the requests handled in parallel
@@ -135,6 +149,15 @@ func serveStdio(ctx context.Context, r io.Reader, w io.Writer, handler requestHa
 		sem:          make(chan struct{}, maxConc),
 		queue:        make(chan *queuedRequest, stdioQueueSize(maxConc)),
 		inflight:     make(map[string]*inflightRequest),
+	}
+
+	// One MCP session for the lifetime of this client: every request
+	// carries it (negotiated protocol version), and the handler writes its
+	// notifications through the same serialized writer as the responses.
+	if opener, ok := handler.(sessionOpener); ok {
+		session, closeSession := opener.OpenSession(f.writeNotification)
+		defer closeSession()
+		ctx = mcp.WithClientSession(ctx, session)
 	}
 
 	// Every request context derives from reqCtx so the end of the grace
@@ -446,6 +469,22 @@ func (f *stdioFrontend) write(resp *mcp.Response) {
 	f.writeMu.Lock()
 	defer f.writeMu.Unlock()
 	writeStdioResponse(f.w, resp)
+}
+
+// writeNotification writes one server-to-client notification, serialized
+// with the responses.
+func (f *stdioFrontend) writeNotification(method string, params json.RawMessage) {
+	data, err := json.Marshal(jsonRPCNotification{JSONRPC: mcp.JSONRPCVersion, Method: method, Params: params})
+	if err != nil {
+		f.logger.Error("failed to marshal notification", "method", method, "error", err)
+		return
+	}
+	f.writeMu.Lock()
+	defer f.writeMu.Unlock()
+	writeJSONLine(f.w, data)
+	if err := f.w.Flush(); err != nil {
+		f.logger.Debug("failed to flush notification", "method", method, "error", err)
+	}
 }
 
 // requestIDKey normalizes a decoded JSON-RPC id (a JSON number decodes as

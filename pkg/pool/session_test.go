@@ -285,3 +285,40 @@ func TestHTTPPool_SessionFromMCPClient(t *testing.T) {
 	require.Equal(t, 0, backend.calls("ping"), "ping must never be sent as a tools/call")
 	require.Equal(t, 1, backend.calls("echo"))
 }
+
+// TestStdioResourcePromptListChangedNotifications (#307): upstream
+// notifications/resources/list_changed and notifications/prompts/list_changed
+// surface as their own server events.
+func TestStdioResourcePromptListChangedNotifications(t *testing.T) {
+	p := startSessionMCP(t, "hs-lists", 30*time.Second)
+	rec := &eventRecorder{}
+	p.SetServerEventHandler(rec.record)
+
+	for _, kind := range []string{"resources", "prompts"} {
+		resp, err := callTool(context.Background(), p, "hs-lists", "list_changed", map[string]interface{}{"tag": kind}, 5*time.Second)
+		require.NoError(t, err)
+		require.Nil(t, resp.Error)
+	}
+	require.Eventually(t, func() bool {
+		return rec.has(EventResourcesListChanged, 0) && rec.has(EventPromptsListChanged, 0)
+	}, 5*time.Second, 5*time.Millisecond)
+	require.False(t, rec.has(EventToolsListChanged, 0))
+}
+
+// TestStdioHandshake_RequestsLatestProtocolVersion (#307): the pool asks
+// the upstream for the latest MCP revision and keeps whatever it answers.
+func TestStdioHandshake_RequestsLatestProtocolVersion(t *testing.T) {
+	p := startSessionMCP(t, "hs-version", 30*time.Second)
+	resp, err := callTool(context.Background(), p, "hs-version", "stats", nil, 5*time.Second)
+	require.NoError(t, err)
+	require.Nil(t, resp.Error)
+	var stats struct {
+		RequestedProtocol string `json:"requestedProtocol"`
+	}
+	require.NoError(t, json.Unmarshal(resp.Result, &stats))
+	require.Equal(t, RequestedProtocolVersion, stats.RequestedProtocol)
+
+	res, ok := p.ServerInitializeResult("hs-version")
+	require.True(t, ok)
+	require.Equal(t, "2024-11-05", res.ProtocolVersion, "the server's (older) answer is accepted as is")
+}

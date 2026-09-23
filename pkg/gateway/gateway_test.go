@@ -2,7 +2,9 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
@@ -207,7 +209,7 @@ func TestInvokeTool(t *testing.T) {
 		params := InvokeToolParams{
 			ServerName: "github-1",
 			ToolName:   "create_issue",
-			Arguments:  map[string]interface{}{"title": "Test Issue"},
+			Arguments:  json.RawMessage(`{"title": "Test Issue"}`),
 		}
 		result, err := gw.InvokeTool(ctx, params)
 		if err != nil {
@@ -219,6 +221,75 @@ func TestInvokeTool(t *testing.T) {
 	})
 }
 
+// TestInvokeTool_BigIntegerArgumentsByteFaithful is the regression test for
+// serve's simple gateway mode losing precision on integers above 2^53: the
+// arguments used to be decoded into a map (float64), so 9007199254740993
+// was forwarded as 9007199254740992.
+func TestInvokeTool_BigIntegerArgumentsByteFaithful(t *testing.T) {
+	ctx := context.Background()
+	gw := newInvokeTestGateway(t)
+
+	const args = `{"id":9007199254740993,"nested":{"big":-123456789012345678901234567890,"f":1.50}}`
+	var params InvokeToolParams
+	if err := json.Unmarshal([]byte(`{"server_name":"github-1","tool_name":"create_issue","arguments":`+args+`}`), &params); err != nil {
+		t.Fatal(err)
+	}
+	result, err := gw.InvokeTool(ctx, params)
+	if err != nil {
+		t.Fatalf("InvokeTool() error = %v", err)
+	}
+	out, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"params":`+args) {
+		t.Fatalf("arguments not relayed byte for byte:\n got %s\nwant params %s", out, args)
+	}
+	if strings.Contains(string(out), "9007199254740992") {
+		t.Fatalf("2^53+1 was rounded: %s", out)
+	}
+}
+
+func TestInvokeTool_ArgumentsMustBeAnObject(t *testing.T) {
+	ctx := context.Background()
+	gw := newInvokeTestGateway(t)
+	for _, args := range []string{`[1,2]`, `"x"`, `42`} {
+		_, err := gw.InvokeTool(ctx, InvokeToolParams{ServerName: "github-1", ToolName: "create_issue", Arguments: json.RawMessage(args)})
+		rpcErr, ok := err.(*errors.JSONRPCError)
+		if !ok || rpcErr.Code != errors.ErrCodeInvalidParams {
+			t.Errorf("arguments %s: err = %v, want invalid params", args, err)
+		}
+	}
+	for _, args := range []string{``, `null`} {
+		result, err := gw.InvokeTool(ctx, InvokeToolParams{ServerName: "github-1", ToolName: "create_issue", Arguments: json.RawMessage(args)})
+		if err != nil {
+			t.Fatalf("arguments %q: %v", args, err)
+		}
+		out, _ := json.Marshal(result)
+		if !strings.Contains(string(out), `"params":{}`) {
+			t.Errorf("arguments %q: want empty object params, got %s", args, out)
+		}
+	}
+}
+
 func TestGatewayToolsInterface(t *testing.T) {
 	var _ GatewayTools = (*gatewayTools)(nil)
+}
+
+// newInvokeTestGateway returns a gateway with one healthy server
+// ("github-1") exposing github.create_issue.
+func newInvokeTestGateway(t *testing.T) GatewayTools {
+	t.Helper()
+	ctx := context.Background()
+	logger := slog.Default()
+	serverReg := registry.NewRegistry(logger, "")
+	toolReg := router.NewToolRegistry()
+	r := router.NewRouter(toolReg, serverReg, logger)
+	if err := serverReg.Register(ctx, registry.ServerEntry{ID: "github-1", Transport: registry.TransportStdio, Health: registry.HealthHealthy}); err != nil {
+		t.Fatal(err)
+	}
+	if err := toolReg.RegisterTool(ctx, router.ToolEntry{Name: "github.create_issue", Namespace: "github", ServerID: "github-1"}); err != nil {
+		t.Fatal(err)
+	}
+	return NewGatewayTools(serverReg, toolReg, r, logger)
 }
