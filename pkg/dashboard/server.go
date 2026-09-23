@@ -16,6 +16,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/httpsec"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolpin"
 )
 
 //go:embed assets/*
@@ -158,6 +159,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
     {{template "serverRows" .Servers}}
   </div>
   <div id="drilldown-content"></div>
+  <div class="section-title">Tool pinning</div>
+  <div id="tool-pins" hx-get="/api/dashboard/tool-pins" hx-trigger="load, every 10s" hx-swap="innerHTML"></div>
 </div>
 </body>
 </html>
@@ -183,6 +186,41 @@ var cardsTemplate = template.Must(template.New("cards").Parse(`
   </div>
 </div>
 `))
+
+// toolPinTemplate renders this process's latest tool pinning events
+// (#310): drift, identity changes, scanner findings, collisions.
+var toolPinTemplate = template.Must(template.New("toolPins").Parse(`
+{{if .}}
+<table class="server-table">
+  <thead><tr><th>Time</th><th>Event</th><th>Server</th><th>Tool</th><th>Severity</th><th>Detail</th></tr></thead>
+  <tbody>
+  {{range .}}
+  <tr>
+    <td class="cell-time">{{.Time.Format "2006-01-02 15:04:05"}}</td>
+    <td>{{.Kind}}</td>
+    <td class="cell-server">{{.Server}}</td>
+    <td class="cell-tool">{{.Tool}}</td>
+    <td>{{.Severity}}</td>
+    <td>{{.Detail}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty-state">No tool pinning events. Review pins with <code>leanproxy-mcp tools pins list</code>.</div>
+{{end}}
+`))
+
+func handleToolPins(w http.ResponseWriter, r *http.Request) {
+	events := toolpin.RecentEvents()
+	if len(events) > 50 {
+		events = events[:50]
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := toolPinTemplate.Execute(w, events); err != nil {
+		globalLogger.Error("failed to render tool pinning events", "error", err)
+	}
+}
 
 var drilldownTemplates = template.Must(template.ParseFS(viewsFS, "views/drilldown.html"))
 
@@ -236,6 +274,7 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 		DashboardJSON(w, r)
 	})
 	mux.HandleFunc("GET /api/dashboard/servers", handleServerTable)
+	mux.HandleFunc("GET /api/dashboard/tool-pins", handleToolPins)
 	mux.HandleFunc("GET /api/dashboard/servers/{server}", handleServerDrilldown)
 	mux.HandleFunc("GET /api/dashboard/servers/{server}/tools/{tool}/prompts", handleToolPrompts)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assetsFS))))
