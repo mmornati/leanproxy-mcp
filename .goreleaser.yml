@@ -24,6 +24,29 @@ archives:
     files: []
 checksum:
   name_template: "checksums.txt"
+# Software Bill of Materials for each archive, generated with syft.
+# Requires the `syft` binary on the runner (see release.yml).
+sboms:
+  - id: archive-sbom
+    artifacts: archive
+    documents:
+      - "${artifact}.sbom.json"
+# Cosign keyless signing is NOT enabled here: it needs OIDC/Sigstore
+# permissions (id-token: write) and a maintainer decision on whether to
+# publish signatures. Uncomment once the maintainer configures it (see the
+# `permissions` block release.yml would also need):
+#
+# signs:
+#   - cmd: cosign
+#     signature: "${artifact}.sig"
+#     certificate: "${artifact}.pem"
+#     args:
+#       - sign-blob
+#       - "--output-signature=${artifact}.sig"
+#       - "--output-certificate=${artifact}.pem"
+#       - "${artifact}"
+#       - --yes
+#     artifacts: checksum
 release:
   github:
     owner: mmornati
