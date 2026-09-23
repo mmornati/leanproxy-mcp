@@ -1,12 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
+	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
+	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/spf13/cobra"
 )
 
@@ -32,8 +36,17 @@ var doctorSecurityCmd = &cobra.Command{
 	},
 }
 
+var doctorEnvCmd = &cobra.Command{
+	Use:   "env",
+	Short: "Show, per configured stdio server, which environment variables are passed and which are dropped (#311)",
+	Run: func(cmd *cobra.Command, args []string) {
+		runEnvDiagnostic()
+	},
+}
+
 func init() {
 	doctorCmd.AddCommand(doctorSecurityCmd)
+	doctorCmd.AddCommand(doctorEnvCmd)
 	doctorCmd.Flags().BoolVar(&securityCheck, "security", false, "Show security diagnostics")
 	RootCmd.AddCommand(doctorCmd)
 }
@@ -107,4 +120,70 @@ func runSecurityDiagnostic() {
 	fmt.Println()
 
 	fmt.Printf("Total quarantined payloads: %d\n", len(qFiles))
+}
+
+// runEnvDiagnostic prints, per configured stdio server, the environment
+// variable names that would be passed to its child process and the parent
+// variable names that would be dropped (#311). It never prints values.
+func runEnvDiagnostic() {
+	cfgPath := configDir()
+	if cfgPath == "" {
+		fmt.Println("doctor env: cannot determine config path")
+		os.Exit(1)
+	}
+
+	cfg, err := migrate.LoadConfig(context.Background(), cfgPath)
+	if err != nil {
+		fmt.Printf("doctor env: cannot load config %q: %v\n", cfgPath, err)
+		os.Exit(1)
+	}
+
+	fmt.Println("# Child Environment Report (#311)")
+	fmt.Println()
+	fmt.Println("Names only — values are never shown.")
+	fmt.Println()
+
+	parentEnv := os.Environ()
+	found := false
+	for _, server := range cfg.Servers {
+		if server.Transport != migrate.TransportStdio || server.Stdio == nil {
+			continue
+		}
+		found = true
+
+		fmt.Printf("## %s\n\n", server.Name)
+		if server.Stdio.InheritEnv {
+			fmt.Println("  inherit_env: true — the full proxy environment is passed through.")
+		}
+
+		serverCfg := pool.StdioServerConfig{
+			Name:           server.Name,
+			Command:        server.Stdio.Command,
+			Args:           server.Stdio.Args,
+			Env:            server.Stdio.Env,
+			EnvPassthrough: server.Stdio.EnvPassthrough,
+			InheritEnv:     server.Stdio.InheritEnv,
+		}
+
+		passed, dropped, err := pool.ChildEnvReport(parentEnv, serverCfg)
+		if err != nil {
+			fmt.Printf("  ERROR: %v\n\n", err)
+			continue
+		}
+
+		fmt.Printf("  Passed (%d): %s\n", len(passed), joinOrNone(passed))
+		fmt.Printf("  Dropped (%d): %s\n", len(dropped), joinOrNone(dropped))
+		fmt.Println()
+	}
+
+	if !found {
+		fmt.Println("(No stdio servers configured.)")
+	}
+}
+
+func joinOrNone(names []string) string {
+	if len(names) == 0 {
+		return "(none)"
+	}
+	return strings.Join(names, ", ")
 }

@@ -1,5 +1,28 @@
 # Changelog
 
+## Breaking in v0.11
+
+- **Least-privilege child environment: stdio servers no longer inherit the proxy's full environment** ([#311](https://github.com/mmornati/leanproxy-mcp/issues/311)).
+  - **What.** `spawnLocked` used to build a stdio child's environment as
+    `os.Environ()` (the proxy's own, in full) plus the server's configured `env`. Every
+    stdio MCP server — including third-party servers installed from the marketplace —
+    therefore saw every secret the proxy's own environment held (`OPENAI_API_KEY`,
+    `AWS_*`, `GITHUB_TOKEN`, database URLs, ...), whether or not it needed them.
+  - **Now.** Each child gets a minimal, fixed allowlist by default (PATH, HOME, locale,
+    TLS trust, outbound proxy, and npx/uvx/node runtime-manager variables — see
+    [`docs/configuration.md`](docs/configuration.md#child-process-environment-env-env_passthrough-inherit_env)),
+    plus `servers[].stdio.env_passthrough` (copy named parent variables as-is),
+    plus `servers[].stdio.env` (explicit `KEY=VALUE`, with `${VAR}` expansion from the
+    parent environment; an unresolved reference fails start with a named error).
+  - **Migration.** Set `servers[].stdio.inherit_env: true` on a server to restore the old
+    full-inheritance behavior (logs one warning), or add the variables it needs to
+    `env_passthrough`/`env`. `leanproxy-mcp doctor env` lists, per server, which
+    variable names are passed and which are dropped (never values). At start, LeanProxy
+    also warns when a well-known server package (e.g. `@modelcontextprotocol/server-github`)
+    likely needs a variable that is present in the proxy's environment but not being
+    passed to it. Configs imported via `leanproxy-mcp migrate` are unaffected: they
+    already write each server's env as explicit `stdio.env` entries.
+
 ## Added in v0.11
 
 - **`search_tools`: ranked tool search across every server** ([#305](https://github.com/mmornati/leanproxy-mcp/issues/305)).

@@ -71,8 +71,23 @@ type CacheConfig struct {
 type StdioConfig struct {
 	Command string   `yaml:"command"`
 	Args    []string `yaml:"args"`
-	Env     []string `yaml:"env"`
-	CWD     string   `yaml:"cwd"`
+	// Env holds explicit "KEY=VALUE" entries added on top of the minimal
+	// base environment (#311). A value may reference "${VAR}" to expand a
+	// variable from the proxy's own (parent) environment; a reference to a
+	// variable that is not set there fails the server's start with an
+	// error naming the server and the variable.
+	Env []string `yaml:"env"`
+	// EnvPassthrough lists parent environment variable names to copy
+	// through to the child as-is, in addition to the minimal base
+	// environment and Env (#311). Only names — never values — are ever
+	// logged for these.
+	EnvPassthrough []string `yaml:"env_passthrough"`
+	// InheritEnv restores the pre-#311 behavior of passing the proxy's
+	// entire environment to the child. It logs one warning per server at
+	// start and exists only to ease migration; least-privilege (the
+	// default, false) should be preferred.
+	InheritEnv bool   `yaml:"inherit_env"`
+	CWD        string `yaml:"cwd"`
 }
 
 type HTTPConfig struct {

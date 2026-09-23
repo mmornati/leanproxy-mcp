@@ -20,6 +20,8 @@
 //	close_stdout  answer, then close stdout and keep running
 //	list_changed  send notifications/tools/list_changed, then answer
 //	add_tool      {"tag":T} add a tool named T to tools/list, then answer
+//	env           answer with this process's environment (os.Environ()),
+//	              one KEY=VALUE per line, joined with "\n" (#311)
 //
 // Session checks (#297): "received" counts requests other than initialize;
 // "stats" also reports how many initialize requests and
@@ -338,6 +340,10 @@ func (s *server) toolCall(msg message) {
 		s.extra = append(s.extra, p.Arguments.Tag)
 		s.mu.Unlock()
 		s.reply(msg.ID, toolResult("added"))
+	case "env":
+		// Returns this process's environment, for least-privilege child
+		// environment tests (#311).
+		s.reply(msg.ID, toolResult(strings.Join(os.Environ(), "\n")))
 	default:
 		s.write(map[string]interface{}{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]interface{}{"code": -32602, "message": "unknown tool " + p.Name}})
 	}
