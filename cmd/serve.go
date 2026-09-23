@@ -1167,13 +1167,27 @@ func forwardableRequest(req *proxy.JSONRPCRequest, serverID string) *proxy.JSONR
 	return &fwd
 }
 
+// writeJSONLine writes data followed by a newline, without the string(data)
+// copy fmt.Fprintln would make. A write error is logged, not returned: the
+// caller already committed to answering and there is nothing more useful
+// to do with it here.
+func writeJSONLine(writer *bufio.Writer, data []byte) {
+	if _, err := writer.Write(data); err != nil {
+		slog.Warn("failed to write response", "error", err)
+		return
+	}
+	if err := writer.WriteByte('\n'); err != nil {
+		slog.Warn("failed to write response", "error", err)
+	}
+}
+
 func writeResponse(writer *bufio.Writer, resp *proxy.JSONRPCResponse) {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		slog.Warn("failed to marshal response", "error", err)
 		return
 	}
-	fmt.Fprintln(writer, string(data))
+	writeJSONLine(writer, data)
 }
 
 func writeError(writer *bufio.Writer, id interface{}, code int, message string) {
@@ -1187,7 +1201,7 @@ func writeError(writer *bufio.Writer, id interface{}, code int, message string) 
 		slog.Warn("failed to marshal error response", "error", err)
 		return
 	}
-	fmt.Fprintln(writer, string(data))
+	writeJSONLine(writer, data)
 }
 
 // maxBatchSize caps the number of JSON-RPC requests accepted in a single
@@ -1216,7 +1230,7 @@ func writeResponseAsync(writer *bufio.Writer, mu *sync.Mutex, resp *proxy.JSONRP
 		slog.Warn("failed to marshal response", "error", err)
 		return
 	}
-	fmt.Fprintln(writer, string(data))
+	writeJSONLine(writer, data)
 	writer.Flush()
 }
 
@@ -1233,7 +1247,7 @@ func writeErrorAsync(writer *bufio.Writer, mu *sync.Mutex, id interface{}, code 
 		slog.Warn("failed to marshal error response", "error", err)
 		return
 	}
-	fmt.Fprintln(writer, string(data))
+	writeJSONLine(writer, data)
 	writer.Flush()
 }
 
@@ -1268,7 +1282,7 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 
 	writerMu.Lock()
 	defer writerMu.Unlock()
-	fmt.Fprintln(writer, string(data))
+	writeJSONLine(writer, data)
 	writer.Flush()
 }
 

@@ -280,6 +280,11 @@ leanproxy-mcp server run --stdio [flags]
 | `--log-level` | string | `info` | Log level (debug, info, warn, error) |
 | `-v, --verbose` | bool | false | Enable verbose logging |
 
+A message from stdin over `server.max_line_bytes` (default 64 MiB, see
+[configuration](configuration.md#server-options)) gets a parse-error
+response with `id` `null`, is discarded up to its next newline, and the
+connection keeps serving.
+
 #### Examples
 
 ```bash

@@ -527,6 +527,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	frontendOpts := stdioFrontendOptions{
 		MaxConcurrent: cfg.EffectiveMaxConcurrentRequests(),
 		ShutdownGrace: defaultStdioShutdownGrace,
+		MaxLineBytes:  cfg.EffectiveMaxLineBytes(),
 	}
 	return handleStdio(ctx, handler, frontendOpts, closePools, statusStore)
 }
@@ -737,7 +738,7 @@ func writeStdioResponse(writer *bufio.Writer, resp *mcp.Response) {
 		slog.Error("failed to marshal response", "error", err)
 		return
 	}
-	fmt.Fprintln(writer, string(data))
+	writeJSONLine(writer, data)
 	writer.Flush()
 }
 

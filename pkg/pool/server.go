@@ -407,7 +407,10 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	}
 	s.conn = conn
 
-	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", s.config.Args)
+	// Args are redacted (#304): a server is routinely started with a
+	// secret on its command line (e.g. --api-key=...), and this line is
+	// logged at Info, unconditionally.
+	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", redactArgs(s.config.Args))
 
 	s.mu.Unlock()
 
@@ -761,6 +764,21 @@ func (s *StdioServerV2) captureStderrLine(line []byte, truncated int) {
 	}
 	s.stderrLines.add(text)
 	s.logger.Debug("server stderr", "name", s.name, "output", text)
+}
+
+// redactArgs returns a copy of args with secrets scrubbed via the built-in
+// redactor, so a server started with a secret on its command line (e.g.
+// --api-key=...) never puts it, unredacted, in the "server spawned" log
+// line (#304).
+func redactArgs(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = bouncer.RedactSecrets(a)
+	}
+	return out
 }
 
 func (s *StdioServerV2) stop() error {

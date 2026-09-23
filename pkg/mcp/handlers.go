@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/internal/logx"
 	"github.com/mmornati/leanproxy-mcp/internal/version"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
@@ -261,7 +262,7 @@ func (h *Handler) collectTools(ctx context.Context) (*AggregatedManifest, error)
 }
 
 func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response, error) {
-	h.logger.Debug("handleToolsCall called", "params", string(req.Params))
+	h.logger.Debug("handleToolsCall called", logx.Payload("params", req.Params))
 
 	var params ToolsCallParams
 	if req.Params != nil {
