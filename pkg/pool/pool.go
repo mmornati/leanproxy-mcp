@@ -3,13 +3,13 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/mmornati/leanproxy-mcp/pkg/concurrent"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
@@ -106,25 +106,28 @@ func (rs ReconnectSettings) validate() ReconnectSettings {
 	return rs
 }
 
-// StdioPool manages multiple stdio-based MCP server subprocesses.
+// StdioPool manages multiple stdio-based MCP server subprocesses. Each
+// server multiplexes concurrent requests over its single stdio pipe (see
+// StdioServerV2.sendRequest), capped per server by max_in_flight.
 type StdioPool struct {
-	servers         map[string]*StdioServerV2
-	mu              sync.RWMutex
-	maxPerServer    int
-	idleTimeout     time.Duration
-	logger          *slog.Logger
-	ctx             context.Context
-	cancel          context.CancelFunc
-	requestWaiters  map[string][]chan Request
-	waiterMu        sync.Mutex
-	rateLimiters    *serverRateLimiters
-	circuitBreakers map[string]*concurrent.CircuitBreaker
-	maxQueueSize    int
-	reconnect       ReconnectSettings
+	// mu guards servers, rateLimiters and reconnect.
+	mu           sync.RWMutex
+	servers      map[string]*StdioServerV2
+	idleTimeout  time.Duration
+	logger       *slog.Logger
+	ctx          context.Context
+	cancel       context.CancelFunc
+	rateLimiters *serverRateLimiters
+	reconnect    ReconnectSettings
 }
 
-// NewStdioPool creates a new StdioPool with the specified maximum servers per name and idle timeout.
+// NewStdioPool creates a new StdioPool with the given idle timeout.
+//
+// maxPerServer is retained for API compatibility and is ignored: the number
+// of concurrent requests per server is set by the server's max_in_flight
+// config (default DefaultMaxInFlight).
 func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logger) *StdioPool {
+	_ = maxPerServer
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -132,16 +135,12 @@ func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logg
 	ctx, cancel := context.WithCancel(context.Background())
 
 	pool := &StdioPool{
-		servers:         make(map[string]*StdioServerV2),
-		maxPerServer:    maxPerServer,
-		idleTimeout:     idleTimeout,
-		logger:          logger,
-		ctx:             ctx,
-		cancel:          cancel,
-		requestWaiters:  make(map[string][]chan Request),
-		rateLimiters:    newServerRateLimiters(),
-		circuitBreakers: make(map[string]*concurrent.CircuitBreaker),
-		maxQueueSize:    1000,
+		servers:      make(map[string]*StdioServerV2),
+		idleTimeout:  idleTimeout,
+		logger:       logger,
+		ctx:          ctx,
+		cancel:       cancel,
+		rateLimiters: newServerRateLimiters(),
 	}
 
 	return pool
@@ -150,8 +149,9 @@ func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logg
 // SetReconnect applies reconnect settings to the pool. It takes effect on
 // servers already in the pool and on every server started afterwards.
 func (p *StdioPool) SetReconnect(settings ReconnectSettings) {
+	settings = settings.validate()
 	p.mu.Lock()
-	p.reconnect = settings.validate()
+	p.reconnect = settings
 	p.mu.Unlock()
 
 	names := p.ListServers()
@@ -162,7 +162,7 @@ func (p *StdioPool) SetReconnect(settings ReconnectSettings) {
 		if !exists {
 			continue
 		}
-		server.applyReconnect(p.reconnect)
+		server.applyReconnect(settings)
 	}
 }
 
@@ -190,7 +190,7 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 		Args:           config.Stdio.Args,
 		Env:            config.Stdio.Env,
 		CWD:            config.Stdio.CWD,
-		MaxConcurrent:  p.maxPerServer,
+		MaxInFlight:    config.MaxInFlight,
 		IdleTimeout:    config.IdleTimeoutValue,
 		RequestTimeout: config.TimeoutValue,
 	}
@@ -207,7 +207,6 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 	// server only gets a limiter when its config sets rate_limit with a
 	// positive requests_per_second.
 	p.rateLimiters.set(config.Name, config.RateLimit)
-	p.circuitBreakers[config.Name] = concurrent.NewCircuitBreaker(5, 50*time.Second, 10*time.Second)
 
 	p.logger.Info("server started in pool", "name", config.Name)
 	return nil
@@ -310,46 +309,87 @@ func (p *StdioPool) waitForServerReady(ctx context.Context, name string, timeout
 	}
 }
 
-func (p *StdioPool) PutRequest(name string, req Request) error {
-	server, err := p.GetOrStartServer(p.ctx, name)
+// limiters returns the current rate limiter set under p.mu, since Close
+// replaces it.
+func (p *StdioPool) limiters() *serverRateLimiters {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.rateLimiters
+}
+
+// admit resolves (and if needed restarts) the named server and waits for
+// its optional rate limiter. The wait is bounded by the request's timeout
+// so a configured limit delays a request rather than rejecting it, but never
+// beyond its own deadline. Internal methods bypass the limiter (see
+// ratelimit.go).
+func (p *StdioPool) admit(ctx context.Context, name string, req Request) (*StdioServerV2, error) {
+	server, err := p.GetOrStartServer(ctx, name)
 	if err != nil {
-		return err
-	}
-
-	if cb, exists := p.circuitBreakers[name]; exists {
-		if cb.State() == concurrent.StateOpen {
-			return fmt.Errorf("pool: circuit breaker open for %s", name)
-		}
-	}
-
-	if !server.canAcceptRequest() {
-		return fmt.Errorf("pool: server %s at max capacity", name)
+		return nil, err
 	}
 
 	timeout := req.Timeout
 	if timeout == 0 {
 		timeout = 30 * time.Second
 	}
-
-	// A single deadline bounds both the (optional) rate-limit wait and the
-	// subsequent hand-off to the server's request channel, so a configured
-	// limit waits for a token rather than rejecting outright, but still
-	// respects the request's own timeout overall.
-	waitCtx, cancel := context.WithTimeout(p.ctx, timeout)
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if err := p.rateLimiters.wait(waitCtx, name, req.Method); err != nil {
-		return fmt.Errorf("pool: %w", err)
+	if err := p.limiters().wait(waitCtx, name, req.Method); err != nil {
+		return nil, fmt.Errorf("pool: %w", err)
+	}
+	return server, nil
+}
+
+// PutRequest submits req to the named server asynchronously: once the
+// server is resolved and any rate limit is satisfied it returns, and the
+// response is delivered to req.ResultCh (always, with Error set on failure)
+// and the failure, if any, to req.ErrorCh. The request is multiplexed with
+// every other in-flight request to that server.
+func (p *StdioPool) PutRequest(name string, req Request) error {
+	server, err := p.admit(p.ctx, name, req)
+	if err != nil {
+		return err
 	}
 
-	select {
-	case server.requestCh <- req:
-		return nil
-	case <-waitCtx.Done():
-		return fmt.Errorf("pool: request timeout for %s", name)
-	case <-p.ctx.Done():
-		return p.ctx.Err()
+	go func() {
+		resp, sendErr := server.processRequest(p.ctx, req)
+		if req.ResultCh != nil {
+			select {
+			case req.ResultCh <- resp:
+			default:
+			}
+		}
+		if req.ErrorCh != nil && sendErr != nil {
+			select {
+			case req.ErrorCh <- sendErr:
+			default:
+			}
+		}
+	}()
+	return nil
+}
+
+// do runs req synchronously on the named server with the caller's context,
+// so a caller that gives up cancels its request on the server too. An
+// upstream JSON-RPC error is returned as resp.Error with a nil error; a
+// transport or proxy failure (timeout, process exit, ...) is returned as
+// the error.
+func (p *StdioPool) do(ctx context.Context, name string, req Request) (*Response, error) {
+	server, err := p.admit(ctx, name, req)
+	if err != nil {
+		return nil, fmt.Errorf("pool: send request: %w", err)
 	}
+
+	resp, sendErr := server.processRequest(ctx, req)
+	if sendErr != nil {
+		var upstreamErr *errors.JSONRPCError
+		if stderrors.As(sendErr, &upstreamErr) {
+			return resp, nil
+		}
+		return nil, sendErr
+	}
+	return resp, nil
 }
 
 func (p *StdioPool) Close() error {
@@ -363,7 +403,9 @@ func (p *StdioPool) Close() error {
 		// (e.g. health-triggered) aborts instead of respawning a process the
 		// pool will never see again.
 		server.closed.Store(true)
-		server.stop()
+		if err := server.stop(); err != nil {
+			p.logger.Warn("server stop failed", "name", name, "error", err)
+		}
 		p.logger.Info("server stopped", "name", name)
 	}
 
@@ -459,12 +501,6 @@ func (p *StdioPool) RestartServer(ctx context.Context, name string) error {
 		p.logger.Warn("server restarted but not ready yet, proceeding anyway", "name", name, "error", err)
 	}
 
-	// Reset circuit breaker on successful restart to avoid cascading failures
-	if cb, exists := p.circuitBreakers[name]; exists {
-		cb.Reset()
-		p.logger.Info("circuit breaker reset after restart", "name", name)
-	}
-
 	return nil
 }
 
@@ -478,76 +514,44 @@ func (p *StdioPool) SendRequest(ctx context.Context, serverName string, req *pro
 		id = 1
 	}
 
-	resultCh := make(chan *Response, 1)
-	errorCh := make(chan error, 1)
-
-	poolReq := Request{
-		Method:   req.Method,
-		Params:   req.Params,
-		ID:       id,
-		Timeout:  timeout,
-		ResultCh: resultCh,
-		ErrorCh:  errorCh,
-	}
-
-	if err := p.PutRequest(serverName, poolReq); err != nil {
-		return nil, fmt.Errorf("pool: send request: %w", err)
-	}
-
-	select {
-	case resp := <-resultCh:
-		if resp.Error != nil {
-			return nil, resp.Error
-		}
-		return &proxy.JSONRPCResponse{
-			JSONRPC: "2.0",
-			Result:  resp.Result,
-			ID:      resp.ID,
-		}, nil
-	case err := <-errorCh:
+	resp, err := p.do(ctx, serverName, Request{
+		Method:  req.Method,
+		Params:  req.Params,
+		ID:      id,
+		Timeout: timeout,
+	})
+	if err != nil {
 		return nil, err
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("pool: request timeout after %v", timeout)
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	}
+	if resp.Error != nil {
+		return nil, resp.Error
+	}
+	return &proxy.JSONRPCResponse{
+		JSONRPC: "2.0",
+		Result:  resp.Result,
+		ID:      resp.ID,
+	}, nil
 }
 
 func (p *StdioPool) SendRequestToServer(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration) (*Response, error) {
 	return p.SendRequestToServerWithID(ctx, name, method, params, timeout, 1)
 }
 
+// SendRequestToServerWithID sends one request and waits for its response.
+// Concurrent calls to the same server are multiplexed over its pipe. An
+// upstream JSON-RPC error comes back as resp.Error (err == nil); a
+// transport or proxy failure comes back as err.
 func (p *StdioPool) SendRequestToServerWithID(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration, id int) (*Response, error) {
 	if err := errors.ValidateContext(ctx); err != nil {
 		return nil, fmt.Errorf("pool: %w", err)
 	}
 
-	resultCh := make(chan *Response, 1)
-	errorCh := make(chan error, 1)
-
-	poolReq := Request{
-		Method:   method,
-		Params:   params,
-		ID:       id,
-		Timeout:  timeout,
-		ResultCh: resultCh,
-		ErrorCh:  errorCh,
-	}
-
-	if err := p.PutRequest(name, poolReq); err != nil {
-		return nil, fmt.Errorf("pool: send request: %w", err)
-	}
-
-	select {
-	case resp := <-resultCh:
-		return resp, nil
-	case err := <-errorCh:
-		return nil, err
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("request timeout after %v", timeout)
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	return p.do(ctx, name, Request{
+		Method:  method,
+		Params:  params,
+		ID:      id,
+		Timeout: timeout,
+	})
 }
 
 func (p *StdioPool) SendNotificationToServer(ctx context.Context, name string, method string, params json.RawMessage) error {
@@ -564,7 +568,11 @@ func (p *StdioPool) SendNotificationToServer(ctx context.Context, name string, m
 	}
 
 	var paramsMap map[string]interface{}
-	json.Unmarshal(params, &paramsMap)
+	if len(params) > 0 {
+		if err := json.Unmarshal(params, &paramsMap); err != nil {
+			return fmt.Errorf("pool: invalid notification params: %w", err)
+		}
+	}
 
 	return server.sendNotification(ctx, method, paramsMap)
 }

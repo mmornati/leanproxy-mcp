@@ -2,7 +2,6 @@ package pool
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	errstd "errors"
@@ -32,12 +31,16 @@ const (
 )
 
 type StdioServerConfig struct {
-	Name            string
-	Command         string
-	Args            []string
-	Env             []string
-	CWD             string
-	MaxConcurrent   int
+	Name    string
+	Command string
+	Args    []string
+	Env     []string
+	CWD     string
+	// MaxInFlight caps the number of requests multiplexed concurrently
+	// over the server's stdio pipe. Callers beyond the cap wait (respecting
+	// their context) instead of being rejected. 0 means
+	// DefaultMaxInFlight.
+	MaxInFlight     int
 	IdleTimeout     time.Duration
 	RequestTimeout  time.Duration
 	MaxResponseSize int
@@ -90,15 +93,14 @@ func (r *stderrRing) String() string {
 }
 
 type StdioServerV2 struct {
-	name            string
-	config          StdioServerConfig
-	process         *exec.Cmd
-	pgid            int
-	stdin           io.WriteCloser
-	stdout          io.Reader
+	name    string
+	config  StdioServerConfig
+	process *exec.Cmd
+	pgid    int
+	// conn is the current process generation's multiplexed JSON-RPC
+	// connection (pending map + serialized stdin writer). Guarded by mu.
+	conn            *stdioConn
 	mu              sync.Mutex
-	requestCh       chan Request
-	responseCh      chan Response
 	state           int32
 	stats           ServerStats
 	restartCount    int
@@ -110,17 +112,20 @@ type StdioServerV2 struct {
 	lastSpawnAt     time.Time
 	idleTimeout     time.Duration
 	requestTimeout  time.Duration
-	maxConcurrent   int
+	maxInFlight     int
 	maxResponseSize int
-	currentLoad     int
-	healthTicker    *time.Ticker
-	genStopCh       chan struct{}
-	genStopOnce     *sync.Once
-	restartMu       sync.Mutex
-	logger          *slog.Logger
-	wg              sync.WaitGroup
-	mcpInitialized  atomic.Bool
-	stderrLines     *stderrRing
+	// slots is the per-server in-flight semaphore (capacity maxInFlight).
+	slots chan struct{}
+	// inFlight counts requests holding a slot. Guarded by mu.
+	inFlight       int
+	healthTicker   *time.Ticker
+	genStopCh      chan struct{}
+	genStopOnce    *sync.Once
+	restartMu      sync.Mutex
+	logger         *slog.Logger
+	wg             sync.WaitGroup
+	mcpInitialized atomic.Bool
+	stderrLines    *stderrRing
 	// autoRestartDisabled is the reconnect.enabled=false master switch: the
 	// crash path (scheduleRestart) leaves the server in the error state
 	// instead of respawning it. Explicit restarts (request/manual) still work.
@@ -145,9 +150,9 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 		logger = slog.Default()
 	}
 
-	maxConcurrent := config.MaxConcurrent
-	if maxConcurrent <= 0 {
-		maxConcurrent = 5
+	maxInFlight := config.MaxInFlight
+	if maxInFlight <= 0 {
+		maxInFlight = DefaultMaxInFlight
 	}
 
 	idleTimeout := config.IdleTimeout
@@ -170,8 +175,6 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 	return &StdioServerV2{
 		name:            name,
 		config:          config,
-		requestCh:       make(chan Request, maxConcurrent),
-		responseCh:      make(chan Response, maxConcurrent),
 		state:           stateIdle,
 		stats:           ServerStats{},
 		maxRestarts:     5,
@@ -180,7 +183,8 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 		stableWindow:    2 * time.Minute,
 		idleTimeout:     idleTimeout,
 		requestTimeout:  requestTimeout,
-		maxConcurrent:   maxConcurrent,
+		maxInFlight:     maxInFlight,
+		slots:           make(chan struct{}, maxInFlight),
 		maxResponseSize: maxResponseSize,
 		healthTicker:    time.NewTicker(30 * time.Second),
 		logger:          logger,
@@ -204,26 +208,6 @@ func (s *StdioServerV2) applyReconnect(settings ReconnectSettings) {
 	s.backoff = settings.RestartBackoff
 	s.stableWindow = settings.StableWindow
 	s.stats.CurrentBackoff = s.backoff
-}
-
-func (s *StdioServerV2) setState(newState int32) {
-	atomic.StoreInt32(&s.state, newState)
-}
-
-// drainResponses discards any responses buffered in responseCh. Called at
-// spawn time so a fresh generation starts with an empty channel.
-func (s *StdioServerV2) drainResponses() {
-	for {
-		select {
-		case <-s.responseCh:
-		default:
-			return
-		}
-	}
-}
-
-func (s *StdioServerV2) compareAndSwapState(oldState, newState int32) bool {
-	return atomic.CompareAndSwapInt32(&s.state, oldState, newState)
 }
 
 func toServerState(state int32) ServerState {
@@ -280,7 +264,7 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	// restart timed out.
 	genCtx := context.WithoutCancel(ctx)
 
-	cmd := exec.CommandContext(genCtx, s.config.Command, s.config.Args...)
+	cmd := exec.CommandContext(genCtx, s.config.Command, s.config.Args...) // #nosec G204 -- the command is the operator's own configured MCP server
 	// Build environment: inherit current env, apply user config, then ensure
 	// PYTHONUNBUFFERED=1 so Python-based MCP servers don't buffer stdout.
 	env := os.Environ()
@@ -301,7 +285,6 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 		s.mu.Unlock()
 		return fmt.Errorf("pool: stdin pipe: %w", err)
 	}
-	s.stdin = stdin
 
 	stdoutR, err := cmd.StdoutPipe()
 	if err != nil {
@@ -309,7 +292,6 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 		s.mu.Unlock()
 		return fmt.Errorf("pool: stdout pipe: %w", err)
 	}
-	s.stdout = stdoutR
 
 	stderrR, err := cmd.StderrPipe()
 	if err != nil {
@@ -347,11 +329,10 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	s.genStopCh = genStopCh
 	s.genStopOnce = genStopOnce
 
-	// Drop responses buffered by previous generations (late answers to
-	// timed-out or killed requests) so the new generation can never consume
-	// a stale response. Belt-and-braces on top of the wire-ID matching in
-	// sendRequest.
-	s.drainResponses()
+	// A fresh connection (and pending map) per generation: late answers to
+	// requests of a previous generation can never reach a new waiter.
+	conn := newStdioConn(s.name, stdin, s.logger)
+	s.conn = conn
 	s.generation.Add(1)
 
 	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", s.config.Args)
@@ -360,11 +341,11 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 
 	go s.readStderr(stderrR, genStopCh)
 	s.wg.Add(1)
-	go s.waitForExit(genCtx, genStopCh, genStopOnce)
+	go s.waitForExit(genCtx, cmd, conn, genStopCh, genStopOnce)
 	s.wg.Add(1)
-	go s.readResponses(stdoutR, genStopCh)
+	go s.readResponses(conn, stdoutR, genStopCh)
 	s.wg.Add(1)
-	go s.runRequestLoop(genCtx, genStopCh)
+	go s.runIdleLoop(genCtx, genStopCh)
 
 	// Post-spawn verification: confirm process is alive.
 	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
@@ -381,11 +362,15 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	return nil
 }
 
-func (s *StdioServerV2) waitForExit(ctx context.Context, stopCh chan struct{}, stopOnce *sync.Once) {
-	err := s.process.Wait()
+func (s *StdioServerV2) waitForExit(ctx context.Context, cmd *exec.Cmd, conn *stdioConn, stopCh chan struct{}, stopOnce *sync.Once) {
+	err := cmd.Wait()
+
+	// Fail every request still waiting on this generation right away (the
+	// stdout reader normally does this first on EOF; this is the backstop).
+	conn.fail(s.exitedError())
 
 	// Signal the rest of this generation that the process is gone so readers
-	// and the request loop exit and never serve a dead process.
+	// and the idle loop exit and never serve a dead process.
 	stopOnce.Do(func() { close(stopCh) })
 
 	s.mu.Lock()
@@ -436,6 +421,9 @@ func (s *StdioServerV2) waitForExit(ctx context.Context, stopCh chan struct{}, s
 }
 
 const (
+	// DefaultMaxInFlight is the default per-server cap on requests
+	// multiplexed concurrently over one stdio pipe (max_in_flight).
+	DefaultMaxInFlight = 32
 	// maxRestartBackoff caps the exponential crash-restart backoff.
 	maxRestartBackoff = time.Minute
 	// minRestartBackoff floors the configured backoff so the jitter math can
@@ -580,55 +568,45 @@ func (s *StdioServerV2) restart(ctx context.Context) error {
 	return nil
 }
 
-func (s *StdioServerV2) readResponses(stdout io.Reader, stopCh chan struct{}) {
+// exitedError is the error delivered to every request pending on a process
+// generation that went away.
+func (s *StdioServerV2) exitedError() error {
+	return fmt.Errorf("pool: server %s %w (recent stderr: %s)", s.name, errServerExited, s.stderrLines.String())
+}
+
+// readResponses is the single stdout reader of a process generation. It
+// hands every line to conn.handleLine, which decodes it once and delivers it
+// to its waiter. When the reader ends for any reason (EOF, read error,
+// oversized line, generation stopped) every pending waiter is failed
+// immediately via conn.fail.
+func (s *StdioServerV2) readResponses(conn *stdioConn, stdout io.Reader, stopCh chan struct{}) {
 	defer s.wg.Done()
+	// Evaluated at exit so the error carries the stderr lines captured up
+	// to the moment the reader died.
+	defer func() { conn.fail(s.exitedError()) }()
+
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 1024), s.maxResponseSize)
 
-	for {
+	for scanner.Scan() {
 		select {
 		case <-stopCh:
 			return
 		default:
-			if scanner.Scan() {
-				if scanner.Err() != nil {
-					if errstd.Is(scanner.Err(), bufio.ErrBufferFull) {
-						s.logger.Error("response exceeds max buffer size", "name", s.name, "maxSize", s.maxResponseSize)
-					} else {
-						s.logger.Error("scanner error", "name", s.name, "error", scanner.Err())
-					}
-					return
-				}
+		}
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		s.logger.Debug("read from server stdout", "name", s.name, "line", string(line))
+		conn.handleLine(line)
+	}
 
-				line := scanner.Bytes()
-				s.logger.Debug("read from server stdout", "name", s.name, "line", string(line))
-
-				var msg map[string]json.RawMessage
-				if err := json.Unmarshal(line, &msg); err != nil {
-					s.logger.Warn("failed to parse response", "name", s.name, "error", err)
-					continue
-				}
-
-				if _, hasResult := msg["result"]; !hasResult {
-					if _, hasError := msg["error"]; !hasError {
-						s.logger.Debug("received notification, ignoring", "name", s.name, "line", string(line))
-						continue
-					}
-				}
-
-				var resp Response
-				if err := json.Unmarshal(line, &resp); err != nil {
-					s.logger.Warn("failed to parse response", "name", s.name, "error", err)
-					continue
-				}
-				select {
-				case s.responseCh <- resp:
-				default:
-					s.logger.Warn("response channel full, dropping response", "name", s.name)
-				}
-			} else {
-				return
-			}
+	if err := scanner.Err(); err != nil {
+		if errstd.Is(err, bufio.ErrTooLong) {
+			s.logger.Error("response exceeds max buffer size", "name", s.name, "maxSize", s.maxResponseSize)
+		} else {
+			s.logger.Debug("stdout reader ended", "name", s.name, "error", err)
 		}
 	}
 }
@@ -681,14 +659,23 @@ func (s *StdioServerV2) stopLocked() error {
 	stopCh := s.genStopCh
 	stopOnce := s.genStopOnce
 	proc := s.process
+	conn := s.conn
 	s.mu.Unlock()
+
+	// Fail in-flight requests right away instead of letting them hang until
+	// their timeout while this generation is torn down.
+	if conn != nil {
+		conn.fail(fmt.Errorf("pool: server %s is stopping", s.name))
+	}
 
 	if stopCh != nil && stopOnce != nil {
 		stopOnce.Do(func() { close(stopCh) })
 	}
 
 	if proc != nil && proc.Process != nil {
-		proc.Process.Signal(syscall.SIGTERM)
+		if err := proc.Process.Signal(syscall.SIGTERM); err != nil {
+			s.logger.Debug("SIGTERM failed", "name", s.name, "error", err)
+		}
 	}
 
 	// Wait for the generation's goroutines to wind down, but escalate to
@@ -718,17 +705,20 @@ func (s *StdioServerV2) isHealthy() bool {
 	return currentState == stateIdle || currentState == stateRunning || currentState == stateBusy
 }
 
-func (s *StdioServerV2) canAcceptRequest() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.currentLoad < s.maxConcurrent
-}
-
+// isIdle reports whether the server is alive with no request in flight.
 func (s *StdioServerV2) isIdle() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	currentState := atomic.LoadInt32(&s.state)
-	return s.currentLoad == 0 && (currentState == stateIdle || currentState == stateRunning)
+	return s.inFlight == 0 && (currentState == stateIdle || currentState == stateRunning)
+}
+
+// inFlightCount returns the number of requests currently holding an
+// in-flight slot on this server.
+func (s *StdioServerV2) inFlightCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inFlight
 }
 
 // failedSinceSpawn reports whether a request has failed in the current
@@ -747,36 +737,48 @@ func (s *StdioServerV2) getStats() ServerStats {
 	return stats
 }
 
-func (s *StdioServerV2) enqueueRequest(req Request) bool {
-	s.mu.Lock()
-	if s.currentLoad >= s.maxConcurrent {
-		s.mu.Unlock()
-		return false
+// acquireSlot takes one of the server's max_in_flight slots, waiting (and
+// respecting ctx) when the server is at its cap. The returned release func
+// must be called exactly once. While at least one request holds a slot the
+// server reports the busy state.
+func (s *StdioServerV2) acquireSlot(ctx context.Context) (func(), error) {
+	select {
+	case s.slots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	s.currentLoad++
+
+	s.mu.Lock()
+	s.inFlight++
+	// Only a live server transitions to busy: an unconditional store would
+	// overwrite the error state set by waitForExit when the child dies.
+	if !atomic.CompareAndSwapInt32(&s.state, stateIdle, stateBusy) {
+		atomic.CompareAndSwapInt32(&s.state, stateRunning, stateBusy)
+	}
 	s.mu.Unlock()
 
-	select {
-	case s.requestCh <- req:
-		return true
-	default:
+	return func() {
 		s.mu.Lock()
-		s.currentLoad--
+		s.inFlight--
+		if s.inFlight == 0 {
+			// If the state is no longer busy, something else (crash, stop)
+			// changed it while requests were in flight; leave that alone.
+			atomic.CompareAndSwapInt32(&s.state, stateBusy, stateIdle)
+		}
 		s.mu.Unlock()
-		return false
-	}
+		<-s.slots
+	}, nil
 }
 
-func (s *StdioServerV2) runRequestLoop(ctx context.Context, stopCh chan struct{}) {
+// runIdleLoop periodically checks the idle timeout for one process
+// generation. Requests no longer flow through a loop: every caller writes
+// its own request and waits on its own pending entry (see sendRequest).
+func (s *StdioServerV2) runIdleLoop(ctx context.Context, stopCh chan struct{}) {
 	defer s.wg.Done()
 	for {
 		select {
-		case req := <-s.requestCh:
-			s.processRequest(ctx, req, stopCh)
-
 		case <-s.healthTicker.C:
 			s.checkIdleTimeout(ctx)
-
 		case <-ctx.Done():
 			return
 		case <-stopCh:
@@ -785,7 +787,11 @@ func (s *StdioServerV2) runRequestLoop(ctx context.Context, stopCh chan struct{}
 	}
 }
 
-func (s *StdioServerV2) processRequest(ctx context.Context, req Request, stopCh chan struct{}) {
+// processRequest executes req on the server and returns the response
+// envelope (carrying the caller's own ID) together with the error that made
+// the request fail, if any. An upstream JSON-RPC error is returned both as
+// resp.Error (code, message and data preserved) and as err.
+func (s *StdioServerV2) processRequest(ctx context.Context, req Request) (*Response, error) {
 	startTime := time.Now()
 
 	s.mu.Lock()
@@ -794,19 +800,7 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request, stopCh 
 
 	resp := &Response{ID: req.ID}
 
-	// Only a live (idle/running) server transitions to busy, and only a
-	// server we moved to busy is moved back to idle afterwards. An
-	// unconditional store here used to overwrite the error state set by
-	// waitForExit when the child died mid-request, leaving a dead process
-	// reported healthy and never restarted.
-	priorState := stateIdle
-	claimed := atomic.CompareAndSwapInt32(&s.state, stateIdle, stateBusy)
-	if !claimed {
-		priorState = stateRunning
-		claimed = atomic.CompareAndSwapInt32(&s.state, stateRunning, stateBusy)
-	}
-
-	result, sendErr := s.sendRequest(ctx, req, stopCh)
+	result, sendErr := s.sendRequest(ctx, req)
 	if sendErr != nil {
 		// A structured upstream JSON-RPC error (the subprocess's own
 		// {"error":{"code":...,"message":...,"data":...}}) keeps its
@@ -820,47 +814,62 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request, stopCh 
 		} else {
 			resp.Error = &errs.JSONRPCError{Code: errs.ErrCodeServerError, Message: sendErr.Error()}
 		}
-		s.mu.Lock()
-		s.stats.ErrorCount++
-		s.stats.LastError = sendErr.Error()
-		s.stats.LastErrorAt = time.Now()
-		s.mu.Unlock()
 	} else {
 		resp.Result = result
 	}
 
-	latency := time.Since(startTime).Seconds() * 1000
+	now := time.Now()
+	latency := now.Sub(startTime).Seconds() * 1000
 	s.mu.Lock()
+	s.lastRequestAt = now
+	if sendErr != nil {
+		s.stats.ErrorCount++
+		s.stats.LastError = sendErr.Error()
+		s.stats.LastErrorAt = now
+	}
 	s.stats.RequestCount++
 	s.stats.AvgLatencyMs = (s.stats.AvgLatencyMs*float64(s.stats.RequestCount-1) + latency) / float64(s.stats.RequestCount)
-	if claimed {
-		// If the state is no longer busy, something else (crash, stop)
-		// changed it while the request was in flight; leave that alone.
-		atomic.CompareAndSwapInt32(&s.state, stateBusy, priorState)
-	}
 	s.mu.Unlock()
 
-	if req.ResultCh != nil {
-		select {
-		case req.ResultCh <- resp:
-		default:
-		}
-	}
-
-	if req.ErrorCh != nil && sendErr != nil {
-		select {
-		case req.ErrorCh <- sendErr:
-		default:
-		}
-	}
+	return resp, sendErr
 }
 
-func (s *StdioServerV2) sendRequest(ctx context.Context, req Request, stopCh chan struct{}) (json.RawMessage, error) {
+// sendRequest multiplexes one request over the current process generation's
+// pipe and waits for its own response. Any number of callers may be in
+// sendRequest concurrently, up to max_in_flight; further callers wait for a
+// slot.
+//
+// The effective timeout is min(server request timeout, req.Timeout). When
+// the caller's context ends (or the timeout elapses) before the response
+// arrives, the pending entry is removed, the MCP cancellation notification is sent to
+// the server and a late response is discarded by the reader. A request whose
+// context is already done before it is written is never written.
+func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawMessage, error) {
+	timeout := s.requestTimeout
+	if req.Timeout > 0 && req.Timeout < timeout {
+		timeout = req.Timeout
+	}
+	callCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	release, err := s.acquireSlot(callCtx)
+	if err != nil {
+		return nil, s.waitError(ctx, timeout)
+	}
+	defer release()
+
+	s.mu.Lock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn == nil {
+		return nil, fmt.Errorf("pool: stdin not available")
+	}
+
 	// Give the request a unique internal wire ID so the response can be
-	// matched to this exact in-flight request. Callers across generations and
-	// retries routinely reuse the same JSON-RPC ID (handlers default to id 1),
-	// so without this a stale or cross-generation response could be delivered
-	// to an unrelated caller.
+	// matched to this exact in-flight request. Callers across generations
+	// and retries routinely reuse the same JSON-RPC ID (handlers default to
+	// id 1), so the caller's ID is never put on the wire; it is restored on
+	// the response by processRequest.
 	wireID := s.nextRequestID.Add(1)
 	wireReq := req
 	wireReq.ID = wireID
@@ -869,68 +878,53 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request, stopCh cha
 		return nil, fmt.Errorf("pool: marshal request: %w", err)
 	}
 
-	s.logger.Debug("sending request to server", "name", s.name, "method", req.Method, "id", wireID, "encoded", string(encoded))
-
-	s.mu.Lock()
-	if s.stdin == nil {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("pool: stdin not available")
+	replyCh, err := conn.register(wireID)
+	if err != nil {
+		return nil, err
 	}
-	stdin := s.stdin
-	s.mu.Unlock()
 
-	s.logger.Debug("writing to stdin", "name", s.name, "data", string(encoded))
-	if _, err := fmt.Fprintln(stdin, string(encoded)); err != nil {
+	// Never write a request nobody is waiting for any more.
+	if callCtx.Err() != nil {
+		conn.unregister(wireID)
+		return nil, s.waitError(ctx, timeout)
+	}
+
+	s.logger.Debug("sending request to server", "name", s.name, "method", req.Method, "id", wireID)
+	if err := conn.writeLine(encoded); err != nil {
+		conn.unregister(wireID)
 		return nil, fmt.Errorf("pool: write stdin: %w", err)
 	}
 
-	timeout := s.requestTimeout
-	if req.Timeout > 0 && req.Timeout < timeout {
-		timeout = req.Timeout
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	for {
-		select {
-		case resp := <-s.responseCh:
-			if !jsonIDEqual(resp.ID, wireID) {
-				// Stale or cross-generation response: belongs to a timed-out
-				// or killed request. Drop it and keep waiting for ours.
-				s.logger.Warn("discarding stale response", "name", s.name, "got_id", resp.ID, "want_id", wireID)
-				continue
-			}
-			s.logger.Debug("received raw response from server", "name", s.name, "response", fmt.Sprintf("%+v", resp))
-			if resp.Error != nil {
-				return nil, resp.Error
-			}
-			return resp.Result, nil
-		case <-timer.C:
-			return nil, fmt.Errorf("pool: request timeout after %v (recent stderr: %s)", timeout, s.stderrLines.String())
-		case <-stopCh:
-			// The process generation is being torn down (restart/shutdown):
-			// fail fast instead of hanging until the request timeout while the
-			// stop path waits on this goroutine.
-			return nil, fmt.Errorf("pool: server %s is stopping", s.name)
-		case <-ctx.Done():
-			return nil, ctx.Err()
+	select {
+	case reply := <-replyCh:
+		return reply.result, reply.err
+	case <-callCtx.Done():
+		if !conn.unregister(wireID) {
+			// The response (or a connection failure) was delivered at the
+			// same moment the context ended; the channel already holds it.
+			reply := <-replyCh
+			return reply.result, reply.err
 		}
+		reason := "timeout"
+		if errstd.Is(callCtx.Err(), context.Canceled) {
+			reason = "canceled"
+		}
+		// Asynchronous so a server that stopped reading stdin can never
+		// block a caller past its deadline.
+		go conn.notifyCancelled(wireID, reason)
+		return nil, s.waitError(ctx, timeout)
 	}
 }
 
-// jsonIDEqual compares two JSON-RPC IDs by their canonical JSON encoding so
-// that numeric equality holds across decoder types (e.g. int64(1) vs the
-// float64(1) produced by unmarshalling into interface{}).
-func jsonIDEqual(a, b interface{}) bool {
-	ab, err := json.Marshal(a)
-	if err != nil {
-		return false
+// waitError is the error returned when a request's wait ends before a
+// response: the caller's own context error when the caller gave up, or a
+// request-timeout error (with recent stderr for diagnostics) when the
+// per-request timeout elapsed.
+func (s *StdioServerV2) waitError(ctx context.Context, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	bb, err := json.Marshal(b)
-	if err != nil {
-		return false
-	}
-	return bytes.Equal(ab, bb)
+	return fmt.Errorf("pool: request timeout after %v (recent stderr: %s)", timeout, s.stderrLines.String())
 }
 
 func (s *StdioServerV2) sendNotification(ctx context.Context, method string, params map[string]interface{}) error {
@@ -945,14 +939,13 @@ func (s *StdioServerV2) sendNotification(ctx context.Context, method string, par
 	}
 
 	s.mu.Lock()
-	if s.stdin == nil {
-		s.mu.Unlock()
+	conn := s.conn
+	s.mu.Unlock()
+	if conn == nil {
 		return fmt.Errorf("pool: stdin not available")
 	}
-	stdin := s.stdin
-	s.mu.Unlock()
 
-	if _, err := fmt.Fprintln(stdin, string(encoded)); err != nil {
+	if err := conn.writeLine(encoded); err != nil {
 		return fmt.Errorf("pool: write stdin: %w", err)
 	}
 
@@ -967,13 +960,13 @@ func (s *StdioServerV2) checkIdleTimeout(ctx context.Context) {
 	s.mu.Lock()
 	idleDuration := time.Since(s.lastRequestAt)
 	currentState := atomic.LoadInt32(&s.state)
-	shouldStop := s.currentLoad == 0 && idleDuration > s.idleTimeout && currentState == stateIdle
+	shouldStop := s.inFlight == 0 && idleDuration > s.idleTimeout && currentState == stateIdle
 	s.mu.Unlock()
 
 	if shouldStop {
 		s.logger.Info("idle timeout reached, stopping server", "name", s.name)
 		// Must run asynchronously: checkIdleTimeout executes on the
-		// runRequestLoop goroutine, which is registered in s.wg. stopLocked
+		// runIdleLoop goroutine, which is registered in s.wg. stopLocked
 		// waits on s.wg, so a synchronous call would wait on itself and
 		// deadlock the server (and every later restart) permanently.
 		go func() {
