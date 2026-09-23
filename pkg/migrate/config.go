@@ -144,6 +144,26 @@ type ServerConfig struct {
 	// static list instead of relaying them to the client (issue #308).
 	// Each uri must be a file:// URI.
 	Roots []RootConfig `yaml:"roots,omitempty"`
+	// InstalledFrom records provenance when this server was written by
+	// `leanproxy add`/`marketplace update` (issue #313): which registry
+	// source it came from, its name there, the exact version pinned, and
+	// when. Absent for hand-written or migrated entries.
+	InstalledFrom *InstalledFromConfig `yaml:"installed_from,omitempty"`
+}
+
+// InstalledFromConfig is servers[].installed_from.
+type InstalledFromConfig struct {
+	// Registry is the source name: "official" for the MCP Registry API, or
+	// the configured name of a custom NDJSON source (registry.sources).
+	Registry string `yaml:"registry"`
+	// Name is the server's name as known to that registry (may differ
+	// from the local server Name after a rename).
+	Name string `yaml:"name"`
+	// Version is the exact version pinned at install time.
+	Version string `yaml:"version,omitempty"`
+	// InstalledAt is when the install (or last `marketplace update`) ran,
+	// RFC 3339.
+	InstalledAt string `yaml:"installed_at"`
 }
 
 // RootConfig is one static root of servers[].roots: a file:// URI and an
@@ -267,6 +287,49 @@ type Config struct {
 	// Security holds the upstream-trust settings (issue #310: tool
 	// pinning). Absent means the defaults (tool pinning in warn mode).
 	Security *SecurityConfig `yaml:"security,omitempty"`
+	// Registry configures marketplace server sources (issue #313). The
+	// official MCP Registry (registry.modelcontextprotocol.io) is always
+	// available as the default source and needs no entry here; Sources
+	// lists additional opt-in custom NDJSON feeds.
+	Registry *RegistrySettings `yaml:"registry,omitempty"`
+}
+
+// RegistrySettings is the `registry:` block.
+type RegistrySettings struct {
+	// Sources are opt-in custom NDJSON feed URLs, synced in addition to
+	// the official MCP Registry by `marketplace sync`. Each must have a
+	// unique, non-empty Name (used for provenance display and as the
+	// InstalledFrom.Registry value for servers installed from it) and a
+	// non-empty http(s) URL.
+	Sources []RegistrySourceConfig `yaml:"sources,omitempty"`
+}
+
+// RegistrySourceConfig is one entry of registry.sources.
+type RegistrySourceConfig struct {
+	Name string `yaml:"name"`
+	URL  string `yaml:"url"`
+}
+
+// Validate checks that every source has a name and an http(s) URL, and that
+// names are unique. A nil receiver is valid (no custom sources).
+func (r *RegistrySettings) Validate() error {
+	if r == nil {
+		return nil
+	}
+	seen := make(map[string]bool, len(r.Sources))
+	for i, s := range r.Sources {
+		if strings.TrimSpace(s.Name) == "" {
+			return fmt.Errorf("registry.sources[%d]: name is required", i)
+		}
+		if seen[s.Name] {
+			return fmt.Errorf("registry.sources[%d]: duplicate name %q", i, s.Name)
+		}
+		seen[s.Name] = true
+		if !strings.HasPrefix(s.URL, "http://") && !strings.HasPrefix(s.URL, "https://") {
+			return fmt.Errorf("registry.sources[%d] (%s): url must start with http:// or https://, got %q", i, s.Name, s.URL)
+		}
+	}
+	return nil
 }
 
 // SecurityConfig is the `security:` block.
@@ -422,6 +485,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.ToolPinningConfig().Validate(); err != nil {
+		return err
+	}
+	if err := c.Registry.Validate(); err != nil {
 		return err
 	}
 	return nil
