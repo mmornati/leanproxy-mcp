@@ -318,9 +318,9 @@ func (p *SSEPool) SendRequest(ctx context.Context, serverName string, req *proxy
 		return nil, fmt.Errorf("sse_pool: server %s not found", serverName)
 	}
 
-	waitCtx, cancel := boundedContext(ctx, timeout)
+	ctx, cancel := boundedContext(ctx, timeout)
 	defer cancel()
-	if err := p.rateLimiters.wait(waitCtx, serverName, req.Method); err != nil {
+	if err := p.rateLimiters.wait(ctx, serverName, req.Method); err != nil {
 		return nil, fmt.Errorf("sse_pool: %w", err)
 	}
 
@@ -378,9 +378,9 @@ func (p *SSEPool) SendRequestToServerWithID(ctx context.Context, name string, me
 		return nil, fmt.Errorf("sse_pool: server %s not found", name)
 	}
 
-	waitCtx, cancel := boundedContext(ctx, timeout)
+	ctx, cancel := boundedContext(ctx, timeout)
 	defer cancel()
-	if err := p.rateLimiters.wait(waitCtx, name, method); err != nil {
+	if err := p.rateLimiters.wait(ctx, name, method); err != nil {
 		return nil, fmt.Errorf("sse_pool: %w", err)
 	}
 

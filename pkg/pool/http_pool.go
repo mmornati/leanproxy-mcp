@@ -327,9 +327,9 @@ func (p *HTTPClientPool) SendRequest(ctx context.Context, serverName string, req
 		return nil, fmt.Errorf("http_pool: server %s not found", serverName)
 	}
 
-	waitCtx, cancel := boundedContext(ctx, timeout)
+	ctx, cancel := boundedContext(ctx, timeout)
 	defer cancel()
-	if err := p.rateLimiters.wait(waitCtx, serverName, req.Method); err != nil {
+	if err := p.rateLimiters.wait(ctx, serverName, req.Method); err != nil {
 		return nil, fmt.Errorf("http_pool: %w", err)
 	}
 
@@ -387,9 +387,9 @@ func (p *HTTPClientPool) SendRequestToServerWithID(ctx context.Context, name str
 		return nil, fmt.Errorf("http_pool: server %s not found", name)
 	}
 
-	waitCtx, cancel := boundedContext(ctx, timeout)
+	ctx, cancel := boundedContext(ctx, timeout)
 	defer cancel()
-	if err := p.rateLimiters.wait(waitCtx, name, method); err != nil {
+	if err := p.rateLimiters.wait(ctx, name, method); err != nil {
 		return nil, fmt.Errorf("http_pool: %w", err)
 	}
 
@@ -527,116 +527,175 @@ func (p *UnifiedPool) ListServers() []string {
 	return servers
 }
 
+// owningTransport identifies which pool a server name belongs to, resolved
+// once per call by membership (not by trying pools in order and falling
+// through on error) so a real error from the owning pool - a timeout, a
+// rate limit, an upstream tool error - is returned to the caller instead of
+// being masked by "not found" errors from pools that were never asked about
+// that server.
+type owningTransport int
+
+const (
+	transportNone owningTransport = iota
+	transportStdio
+	transportHTTP
+	transportSSE
+)
+
+func (p *UnifiedPool) resolveTransport(name string) owningTransport {
+	if p.stdioPool.HasServer(name) {
+		return transportStdio
+	}
+	if p.httpPool.HasServer(name) {
+		return transportHTTP
+	}
+	if p.ssePool != nil && p.ssePool.HasServer(name) {
+		return transportSSE
+	}
+	return transportNone
+}
+
 func (p *UnifiedPool) GetServerState(name string) (ServerState, error) {
-	state, err := p.stdioPool.GetServerState(name)
-	if err == nil {
+	switch p.resolveTransport(name) {
+	case transportStdio:
+		state, err := p.stdioPool.GetServerState(name)
+		if err != nil {
+			return "", fmt.Errorf("unified_pool: %w", err)
+		}
 		return state, nil
-	}
-	state, err = p.httpPool.GetServerState(name)
-	if err == nil {
+	case transportHTTP:
+		state, err := p.httpPool.GetServerState(name)
+		if err != nil {
+			return "", fmt.Errorf("unified_pool: %w", err)
+		}
 		return state, nil
+	case transportSSE:
+		state, err := p.ssePool.GetServerState(name)
+		if err != nil {
+			return "", fmt.Errorf("unified_pool: %w", err)
+		}
+		return state, nil
+	default:
+		return "", fmt.Errorf("server %s not found in any pool", name)
 	}
-	if p.ssePool != nil {
-		return p.ssePool.GetServerState(name)
-	}
-	return "", fmt.Errorf("server %s not found in any pool", name)
 }
 
 func (p *UnifiedPool) SendRequestToServer(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration) (*Response, error) {
-	if p.stdioPool.HasServer(name) {
+	switch p.resolveTransport(name) {
+	case transportStdio:
 		resp, err := p.stdioPool.SendRequestToServer(ctx, name, method, params, timeout)
-		if err == nil {
-			return resp, nil
+		if err != nil {
+			return nil, fmt.Errorf("unified_pool: %w", err)
 		}
-		return nil, err
-	}
-	if p.httpPool.HasServer(name) {
+		return resp, nil
+	case transportHTTP:
 		resp, err := p.httpPool.SendRequestToServer(ctx, name, method, params, timeout)
-		if err == nil {
-			return resp, nil
+		if err != nil {
+			return nil, fmt.Errorf("unified_pool: %w", err)
 		}
-		return nil, err
+		return resp, nil
+	case transportSSE:
+		resp, err := p.ssePool.SendRequestToServer(ctx, name, method, params, timeout)
+		if err != nil {
+			return nil, fmt.Errorf("unified_pool: %w", err)
+		}
+		return resp, nil
+	default:
+		return nil, fmt.Errorf("server %s not found in any pool", name)
 	}
-	if p.ssePool != nil && p.ssePool.HasServer(name) {
-		return p.ssePool.SendRequestToServer(ctx, name, method, params, timeout)
-	}
-	return nil, fmt.Errorf("server %s not found in any pool", name)
 }
 
 func (p *UnifiedPool) RestartServer(ctx context.Context, name string) error {
-	err := p.stdioPool.RestartServer(ctx, name)
-	if err == nil {
+	switch p.resolveTransport(name) {
+	case transportStdio:
+		if err := p.stdioPool.RestartServer(ctx, name); err != nil {
+			return fmt.Errorf("unified_pool: %w", err)
+		}
 		return nil
-	}
-	err = p.httpPool.RestartServer(ctx, name)
-	if err == nil {
+	case transportHTTP:
+		if err := p.httpPool.RestartServer(ctx, name); err != nil {
+			return fmt.Errorf("unified_pool: %w", err)
+		}
 		return nil
+	case transportSSE:
+		if err := p.ssePool.RestartServer(ctx, name); err != nil {
+			return fmt.Errorf("unified_pool: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("server %s not found", name)
 	}
-	if p.ssePool != nil {
-		return p.ssePool.RestartServer(ctx, name)
-	}
-	return fmt.Errorf("server %s not found", name)
 }
 
 func (p *UnifiedPool) IsServerMCPInitialized(name string) bool {
-	if p.stdioPool.HasServer(name) {
+	switch p.resolveTransport(name) {
+	case transportStdio:
 		return p.stdioPool.IsServerMCPInitialized(name)
-	}
-	if p.httpPool.HasServer(name) {
+	case transportHTTP:
 		return p.httpPool.IsServerMCPInitialized(name)
-	}
-	if p.ssePool != nil {
+	case transportSSE:
 		return p.ssePool.IsServerMCPInitialized(name)
+	default:
+		return false
 	}
-	return false
 }
 
 func (p *UnifiedPool) MarkServerMCPInitialized(name string) {
-	if p.stdioPool.HasServer(name) {
+	switch p.resolveTransport(name) {
+	case transportStdio:
 		p.stdioPool.MarkServerMCPInitialized(name)
-	}
-	if p.httpPool.HasServer(name) {
+	case transportHTTP:
 		p.httpPool.MarkServerMCPInitialized(name)
-	}
-	if p.ssePool != nil {
+	case transportSSE:
 		p.ssePool.MarkServerMCPInitialized(name)
 	}
 }
 
 func (p *UnifiedPool) SendRequestToServerWithID(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration, id int) (*Response, error) {
-	if p.stdioPool.HasServer(name) {
+	switch p.resolveTransport(name) {
+	case transportStdio:
 		resp, err := p.stdioPool.SendRequestToServerWithID(ctx, name, method, params, timeout, id)
-		if err == nil {
-			return resp, nil
+		if err != nil {
+			return nil, fmt.Errorf("unified_pool: %w", err)
 		}
-		return nil, err
-	}
-	if p.httpPool.HasServer(name) {
+		return resp, nil
+	case transportHTTP:
 		resp, err := p.httpPool.SendRequestToServerWithID(ctx, name, method, params, timeout, id)
-		if err == nil {
-			return resp, nil
+		if err != nil {
+			return nil, fmt.Errorf("unified_pool: %w", err)
 		}
-		return nil, err
+		return resp, nil
+	case transportSSE:
+		resp, err := p.ssePool.SendRequestToServerWithID(ctx, name, method, params, timeout, id)
+		if err != nil {
+			return nil, fmt.Errorf("unified_pool: %w", err)
+		}
+		return resp, nil
+	default:
+		return nil, fmt.Errorf("server %s not found in any pool", name)
 	}
-	if p.ssePool != nil && p.ssePool.HasServer(name) {
-		return p.ssePool.SendRequestToServerWithID(ctx, name, method, params, timeout, id)
-	}
-	return nil, fmt.Errorf("server %s not found in any pool", name)
 }
 
 func (p *UnifiedPool) SendServerNotification(ctx context.Context, name string, method string, params map[string]interface{}) error {
-	err := p.stdioPool.SendServerNotification(ctx, name, method, params)
-	if err == nil {
+	switch p.resolveTransport(name) {
+	case transportStdio:
+		if err := p.stdioPool.SendServerNotification(ctx, name, method, params); err != nil {
+			return fmt.Errorf("unified_pool: %w", err)
+		}
 		return nil
-	}
-	err = p.httpPool.SendServerNotification(ctx, name, method, params)
-	if err == nil {
+	case transportHTTP:
+		if err := p.httpPool.SendServerNotification(ctx, name, method, params); err != nil {
+			return fmt.Errorf("unified_pool: %w", err)
+		}
 		return nil
+	case transportSSE:
+		if err := p.ssePool.SendServerNotification(ctx, name, method, params); err != nil {
+			return fmt.Errorf("unified_pool: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("server %s not found", name)
 	}
-	if p.ssePool != nil {
-		return p.ssePool.SendServerNotification(ctx, name, method, params)
-	}
-	return fmt.Errorf("server %s not found", name)
 }
 
 func (p *UnifiedPool) Close() error {
@@ -649,16 +708,26 @@ func (p *UnifiedPool) Close() error {
 }
 
 func (p *UnifiedPool) SendRequest(ctx context.Context, serverName string, req *proxy.JSONRPCRequest, timeout time.Duration) (*proxy.JSONRPCResponse, error) {
-	resp, err := p.stdioPool.SendRequest(ctx, serverName, req, timeout)
-	if err == nil {
+	switch p.resolveTransport(serverName) {
+	case transportStdio:
+		resp, err := p.stdioPool.SendRequest(ctx, serverName, req, timeout)
+		if err != nil {
+			return nil, fmt.Errorf("unified_pool: %w", err)
+		}
 		return resp, nil
-	}
-	resp, err = p.httpPool.SendRequest(ctx, serverName, req, timeout)
-	if err == nil {
+	case transportHTTP:
+		resp, err := p.httpPool.SendRequest(ctx, serverName, req, timeout)
+		if err != nil {
+			return nil, fmt.Errorf("unified_pool: %w", err)
+		}
 		return resp, nil
+	case transportSSE:
+		resp, err := p.ssePool.SendRequest(ctx, serverName, req, timeout)
+		if err != nil {
+			return nil, fmt.Errorf("unified_pool: %w", err)
+		}
+		return resp, nil
+	default:
+		return nil, fmt.Errorf("server %s not found", serverName)
 	}
-	if p.ssePool != nil {
-		return p.ssePool.SendRequest(ctx, serverName, req, timeout)
-	}
-	return nil, fmt.Errorf("server %s not found", serverName)
 }
