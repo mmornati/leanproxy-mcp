@@ -79,6 +79,8 @@ func PromptName(server, name string) string { return server + "." + name }
 type serverCaps struct {
 	resources bool
 	prompts   bool
+	// subscribe: the server supports resources/subscribe.
+	subscribe bool
 }
 
 // parseServerCaps reads the resources/prompts capabilities of an upstream
@@ -95,6 +97,12 @@ func parseServerCaps(raw json.RawMessage) serverCaps {
 	}
 	caps.resources = present("resources")
 	caps.prompts = present("prompts")
+	if caps.resources {
+		var r struct {
+			Subscribe bool `json:"subscribe"`
+		}
+		caps.subscribe = json.Unmarshal(c["resources"], &r) == nil && r.Subscribe
+	}
 	return caps
 }
 
@@ -148,7 +156,8 @@ func (h *Handler) upstreamFeatures(ctx context.Context) serverCaps {
 		case c := <-results:
 			out.resources = out.resources || c.resources
 			out.prompts = out.prompts || c.prompts
-			if out.resources && out.prompts {
+			out.subscribe = out.subscribe || c.subscribe
+			if out.resources && out.prompts && out.subscribe {
 				return out
 			}
 		case <-wctx.Done():
@@ -400,6 +409,10 @@ func (h *Handler) forwardRouted(ctx context.Context, req *Request, server string
 	if err != nil {
 		return errorResponse(req, ErrCodeInternalError, fmt.Sprintf("encode params: %v", err)), nil
 	}
+	// Route the server's own requests (and progress, when the client
+	// asked for it) during the call to this client.
+	body, endCall := h.BeginUpstreamCall(ctx, server, req.Params, body)
+	defer endCall()
 	resp, err := h.pool.SendRequestToServer(ctx, server, req.Method, body, h.timeoutFor(server))
 	if err == nil && resp == nil {
 		err = fmt.Errorf("no response")
@@ -476,7 +489,10 @@ func namespaceContents(result json.RawMessage, server string) json.RawMessage {
 }
 
 // handleResourcesSubscription routes resources/subscribe and
-// resources/unsubscribe to the owning server.
+// resources/unsubscribe to the owning server, and records the client's
+// subscription so the server's notifications/resources/updated reach it
+// (#308). Clients share one upstream subscription: an unsubscribe is only
+// forwarded when no other client still subscribes to the resource.
 func (h *Handler) handleResourcesSubscription(ctx context.Context, req *Request) (*Response, error) {
 	params, errResp := decodeParams(req)
 	if errResp != nil {
@@ -490,9 +506,15 @@ func (h *Handler) handleResourcesSubscription(ctx context.Context, req *Request)
 	if !ok {
 		return resourceNotFound(req, uri), nil
 	}
+	if req.Method == MethodResourcesUnsubscribe && h.unsubscribe(ctx, server, upstreamURI) {
+		return &Response{JSONRPC: JSONRPCVersion, Result: json.RawMessage(`{}`), ID: req.ID}, nil
+	}
 	resp, result := h.forwardRouted(ctx, req, server, params, "uri", upstreamURI)
 	if resp != nil {
 		return resp, nil
+	}
+	if req.Method == MethodResourcesSubscribe {
+		h.subscribe(ctx, server, upstreamURI, uri)
 	}
 	return &Response{JSONRPC: JSONRPCVersion, Result: result, ID: req.ID}, nil
 }

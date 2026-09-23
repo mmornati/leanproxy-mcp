@@ -89,6 +89,10 @@ type Handler struct {
 	// (e.g. from a resource_link) can still be routed (see aggregate.go).
 	ownersMu       sync.RWMutex
 	resourceOwners map[string]string
+
+	// relay routes what the upstreams initiate (server-to-client requests,
+	// progress, resource updates) to the right client (see relay.go).
+	relay relayState
 }
 
 type AggregatedManifest struct {
@@ -215,6 +219,9 @@ func (h *Handler) dispatch(ctx context.Context, req *Request) (*Response, error)
 	case MethodInitialized:
 		h.logger.Info("received initialized notification from client")
 		return nil, nil
+	case NotificationRootsListChanged:
+		h.forwardRootsListChanged()
+		return nil, nil
 	case MethodResourcesList:
 		return h.handleResourcesList(ctx, req)
 	case MethodResourcesTemplatesList:
@@ -277,7 +284,9 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 	// them; the aggregated lists change with the upstreams, hence
 	// listChanged.
 	if upstream.resources {
-		result.Capabilities.Resources = &ResourcesCapability{ListChanged: true}
+		// subscribe: resources/subscribe is routed to the owning server
+		// and its notifications/resources/updated relayed (#308).
+		result.Capabilities.Resources = &ResourcesCapability{ListChanged: true, Subscribe: upstream.subscribe}
 	}
 	if upstream.prompts {
 		result.Capabilities.Prompts = &PromptsCapability{ListChanged: true}
@@ -394,6 +403,10 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		Arguments: params.Arguments,
 	}
 	paramsBytes, _ := json.Marshal(newParams)
+	// Progress token and client routing of the upstream's own requests
+	// (#308).
+	paramsBytes, endCall := h.BeginUpstreamCall(ctx, serverName, req.Params, paramsBytes)
+	defer endCall()
 
 	resp, err := h.sendUpstream(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
 	if err != nil {
@@ -769,6 +782,10 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		Arguments: arguments,
 	}
 	paramsBytes, _ := json.Marshal(newParams)
+	// The gateway call's own _meta.progressToken is forwarded (remapped)
+	// to the upstream tool call (#308).
+	paramsBytes, endCall := h.BeginUpstreamCall(ctx, serverName, req.Params, paramsBytes)
+	defer endCall()
 
 	resp, err := h.sendUpstream(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
 	if err != nil {
