@@ -20,6 +20,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 	"github.com/mmornati/leanproxy-mcp/pkg/sidecar"
@@ -44,6 +45,15 @@ func withBuiltInRedactor(t *testing.T) {
 	initRedactor(nil)
 	providerDetector.Store(cache.NewProviderDetector())
 	breakpointInjector.Store(cache.NewBreakpointInjector(cache.WithStrategy(cache.StrategyOff)))
+}
+
+// withResponseCache installs cfg as serveResponseCache for the duration of a
+// test and restores the previous instance afterward.
+func withResponseCache(t *testing.T, cfg *responsecache.Config) {
+	t.Helper()
+	prev := serveResponseCache
+	t.Cleanup(func() { serveResponseCache = prev })
+	serveResponseCache = mcp.NewResponseCache(cfg)
 }
 
 func TestInitRedactor_DefaultsToBuiltInsWhenNoConfig(t *testing.T) {
@@ -350,42 +360,51 @@ func TestHandleSingleRequest_SidecarFallbackIsAvailable(t *testing.T) {
 // B1: cached responses are redacted on the cache-hit path too, so a cache
 // entry that somehow holds an unredacted secret fails closed rather than
 // leaking. Poison the semantic cache directly and hit it through serve.
-func TestRedactResponse_RedactsCachedResponse(t *testing.T) {
+// tools/call caching is now handled by the mcp.ResponseCache middleware
+// (issue #299), not the semantic cache: it is exact-match only, keyed on the
+// pre-redaction request, and stores the redacted response. A second
+// identical call must be served from that cache without reaching upstream,
+// and without ever leaking the secret redacted out of the first response.
+func TestResponseCache_ServesRedactedResponseFromCacheWithoutForwarding(t *testing.T) {
 	withBuiltInRedactor(t)
-
-	prevCache := cache.GlobalSemanticCache()
-	t.Cleanup(func() { cache.SetGlobalSemanticCache(prevCache) })
-	sc := cache.NewSemanticCache(nil, slog.Default(), 0)
-	cache.SetGlobalSemanticCache(sc)
+	withResponseCache(t, &responsecache.Config{Enabled: true, Tools: []string{"t"}})
 
 	params := `{"arguments":{"k":"v"},"name":"t"}`
-	if err := sc.Set(ctx, "t:"+params, json.RawMessage(`{"token":"`+testGHPat+`"}`), "t", nil); err != nil {
-		t.Fatal(err)
+	callCount := 0
+	mockP := &mockPool{sendRequestFunc: func(_ context.Context, _ string, req *proxy.JSONRPCRequest, _ time.Duration) (*proxy.JSONRPCResponse, error) {
+		callCount++
+		return &proxy.JSONRPCResponse{JSONRPC: "2.0", Result: json.RawMessage(`{"token":"` + testGHPat + `"}`), ID: req.ID}, nil
+	}}
+
+	first := serveRequest(ctx, &proxy.JSONRPCRequest{JSONRPC: "2.0", Method: "tools/call", Params: json.RawMessage(params), ID: 1},
+		&mockRouter{}, &mockGatewayTools{}, mockP)
+	if callCount != 1 {
+		t.Fatalf("expected the first call to reach upstream once, got %d calls", callCount)
+	}
+	if bytes.Contains(first.Result, []byte(testGHPat)) {
+		t.Fatalf("first response leaked secret: %s", first.Result)
 	}
 
-	forwarded := false
-	mockP := &mockPool{sendRequestFunc: func(_ context.Context, _ string, req *proxy.JSONRPCRequest, _ time.Duration) (*proxy.JSONRPCResponse, error) {
-		forwarded = true
-		return &proxy.JSONRPCResponse{JSONRPC: "2.0", Result: json.RawMessage(`{}`), ID: req.ID}, nil
-	}}
-	resp := serveRequest(ctx, &proxy.JSONRPCRequest{JSONRPC: "2.0", Method: "tools/call", Params: json.RawMessage(params), ID: 1},
+	second := serveRequest(ctx, &proxy.JSONRPCRequest{JSONRPC: "2.0", Method: "tools/call", Params: json.RawMessage(params), ID: 2},
 		&mockRouter{}, &mockGatewayTools{}, mockP)
-	if forwarded {
-		t.Fatal("expected a semantic cache hit, request was forwarded upstream")
+	if callCount != 1 {
+		t.Fatalf("expected the second identical call to be served from cache, upstream was called %d times", callCount)
 	}
-	if resp == nil || resp.Error != nil {
-		t.Fatalf("expected cached result, got %+v", resp)
+	if second == nil || second.Error != nil {
+		t.Fatalf("expected a cached result, got %+v", second)
 	}
-	if bytes.Contains(resp.Result, []byte(testGHPat)) {
-		t.Fatalf("cached response leaked secret: %s", resp.Result)
+	if bytes.Contains(second.Result, []byte(testGHPat)) {
+		t.Fatalf("cached response leaked secret: %s", second.Result)
 	}
-	if !bytes.Contains(resp.Result, []byte(bouncer.SecretRedacted)) {
-		t.Fatalf("expected redaction marker in cached response: %s", resp.Result)
+	if !bytes.Contains(second.Result, []byte(bouncer.SecretRedacted)) {
+		t.Fatalf("expected redaction marker in cached response: %s", second.Result)
 	}
 }
 
-// The response stored in the semantic cache must already be redacted.
-func TestSemanticCacheStore_StoresRedactedResult(t *testing.T) {
+// The semantic (embedding-similarity) cache must never answer tools/call
+// anymore (issue #299): only the exact-match mcp.ResponseCache middleware
+// does, and only for allowlisted tools.
+func TestSemanticCache_NeverAnswersToolsCall(t *testing.T) {
 	withBuiltInRedactor(t)
 
 	prevCache := cache.GlobalSemanticCache()
@@ -400,12 +419,8 @@ func TestSemanticCacheStore_StoresRedactedResult(t *testing.T) {
 	serveRequest(ctx, &proxy.JSONRPCRequest{JSONRPC: "2.0", Method: "tools/call", Params: json.RawMessage(params), ID: 1},
 		&mockRouter{}, &mockGatewayTools{}, mockP)
 
-	got, err := sc.Get(ctx, "t:"+params, "t", nil)
-	if err != nil || got == nil || got.HitType == cache.HitMiss {
-		t.Fatalf("expected the upstream result to be cached, got %+v err=%v", got, err)
-	}
-	if bytes.Contains(got.Response, []byte(testGHPat)) {
-		t.Fatalf("semantic cache stored an unredacted secret: %s", got.Response)
+	if got, err := sc.Get(ctx, "t:"+params, "t", nil); err == nil && got != nil && got.HitType != cache.HitMiss {
+		t.Fatalf("expected the semantic cache to never be populated by a tools/call, got %+v", got)
 	}
 }
 

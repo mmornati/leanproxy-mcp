@@ -7,10 +7,11 @@ import (
 )
 
 type MetricsSnapshot struct {
-	ByTool             []ToolMetric   `json:"by_tool"`
-	ByServer           []ServerMetric `json:"by_server"`
-	TotalSpend         int64          `json:"total_spend"`
-	Top5ExpensiveTools []ToolMetric   `json:"top_5_expensive_tools"`
+	ByTool             []ToolMetric         `json:"by_tool"`
+	ByServer           []ServerMetric       `json:"by_server"`
+	TotalSpend         int64                `json:"total_spend"`
+	Top5ExpensiveTools []ToolMetric         `json:"top_5_expensive_tools"`
+	ResponseCache      *ResponseCacheMetric `json:"response_cache,omitempty"`
 }
 
 type ToolMetric struct {
@@ -51,5 +52,6 @@ func Snapshot() MetricsSnapshot {
 		ByServer:           byServer,
 		TotalSpend:         breakdown.Total,
 		Top5ExpensiveTools: top5,
+		ResponseCache:      responseCacheSnapshot(),
 	}
 }

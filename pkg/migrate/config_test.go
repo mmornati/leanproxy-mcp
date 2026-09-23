@@ -929,3 +929,92 @@ servers:
 		t.Errorf("expected negative max_response_bytes to be rejected, got %v", err)
 	}
 }
+
+func TestLoadConfigResponseCache(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: github
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+response_cache:
+  enabled: true
+  ttl: 10m
+  max_bytes: 1048576
+  max_entry_bytes: 65536
+  tools:
+    - github.get_file_contents
+  honor_annotations: true
+`
+	configPath := filepath.Join(t.TempDir(), "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+	cfg, err := LoadConfig(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+	rc := cfg.ResponseCache
+	if rc == nil {
+		t.Fatal("expected a response_cache block to be parsed")
+	}
+	if !rc.Enabled {
+		t.Error("Enabled = false, want true")
+	}
+	if rc.TTLValue != 10*time.Minute {
+		t.Errorf("TTLValue = %v, want 10m", rc.TTLValue)
+	}
+	if rc.MaxBytes != 1048576 {
+		t.Errorf("MaxBytes = %d, want 1048576", rc.MaxBytes)
+	}
+	if rc.MaxEntryBytes != 65536 {
+		t.Errorf("MaxEntryBytes = %d, want 65536", rc.MaxEntryBytes)
+	}
+	if len(rc.Tools) != 1 || rc.Tools[0] != "github.get_file_contents" {
+		t.Errorf("Tools = %v, want [github.get_file_contents]", rc.Tools)
+	}
+	if !rc.HonorAnnotations {
+		t.Error("HonorAnnotations = false, want true")
+	}
+}
+
+func TestLoadConfigResponseCache_AbsentDefaultsToDisabled(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: github
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+`
+	configPath := filepath.Join(t.TempDir(), "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+	cfg, err := LoadConfig(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+	if cfg.ResponseCache != nil && cfg.ResponseCache.Enabled {
+		t.Error("expected response_cache to be disabled when the block is absent")
+	}
+}
+
+func TestLoadConfigResponseCache_InvalidTTLRejected(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: github
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+response_cache:
+  enabled: true
+  ttl: not-a-duration
+`
+	configPath := filepath.Join(t.TempDir(), "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+	if _, err := LoadConfig(context.Background(), configPath); err == nil {
+		t.Fatal("expected an invalid response_cache.ttl to fail LoadConfig")
+	}
+}
