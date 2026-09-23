@@ -123,6 +123,71 @@ server:
 - **Disconnects** cancel the connection's in-flight requests and their
   upstream calls.
 
+### Child Process Environment (`env`, `env_passthrough`, `inherit_env`)
+
+**Breaking change (#311):** stdio servers used to inherit the proxy's
+**entire** process environment — every `OPENAI_API_KEY`, `AWS_*`,
+`GITHUB_TOKEN`, database URL, etc. that happened to be set where the proxy
+runs, whether or not that server needed it. As of this release, each child
+gets a **least-privilege** environment by default:
+
+1. A minimal, fixed allowlist copied from the proxy's own environment:
+   `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `TMPDIR`/`TEMP`/`TMP`,
+   `LANG`, `LC_*`, `TZ`, `TERM`, `XDG_*`; the Windows equivalents
+   (`SYSTEMROOT`, `COMSPEC`, `PATHEXT`, `APPDATA`, `LOCALAPPDATA`,
+   `USERPROFILE`, `PROGRAMDATA`); `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY`
+   (both cases); TLS trust variables (`SSL_CERT_FILE`, `SSL_CERT_DIR`,
+   `NODE_EXTRA_CA_CERTS`, `REQUESTS_CA_BUNDLE`); and the runtime-manager
+   variables `npx`/`uvx`/`node` commonly need (`NVM_*`, `VOLTA_HOME`,
+   `PNPM_HOME`, `UV_*`, `PYENV_*`, `ASDF_*`, `GOPATH`, `GOROOT`).
+2. `servers[].stdio.env_passthrough`: names copied from the parent
+   environment as-is.
+3. `servers[].stdio.env`: explicit `"KEY=VALUE"` entries. A value may
+   reference `${VAR}`, expanded from the parent (proxy) environment at
+   start. A reference to a variable that is not set there **fails the
+   server's start** with an error naming the server and the variable.
+4. `PYTHONUNBUFFERED=1` (unchanged from before).
+
+```yaml
+servers:
+  - name: github
+    transport: stdio
+    stdio:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env: ["GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}"]  # explicit, ${VAR} expanded from the parent env
+      env_passthrough: ["GITHUB_TOKEN"]                       # copy this name through as-is
+      # inherit_env: true                                     # restore the old (pre-#311) full-inheritance behavior
+```
+
+**Migration steps** if your config relied on the old full-inheritance
+behavior (for example a `GITHUB_TOKEN` exported in the shell that a server
+picked up implicitly):
+
+- Preferred: add the variable to that server's `env_passthrough` (copy
+  as-is) or `env` (rename/derive it, e.g.
+  `env: ["GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}"]`).
+- Quick migration: set `stdio.inherit_env: true` on that server to restore
+  full inheritance. LeanProxy logs one warning per server that sets it.
+- At start, for servers whose command matches a known package (e.g.
+  `@modelcontextprotocol/server-github`), LeanProxy warns when a variable
+  that package commonly needs is present in the proxy's environment but is
+  not being passed to the child — a hint you likely need
+  `env_passthrough`/`env`, not proof either way.
+- Run `leanproxy-mcp doctor env` to see, per configured stdio server, which
+  variable **names** are passed and which are dropped (never values).
+- Configs imported via `leanproxy-mcp migrate` (from Claude/Cursor/VS Code)
+  already write each imported server's `env` into explicit `stdio.env`
+  entries, so they keep working unchanged.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `servers[].stdio.env` | list of strings | none | Explicit `"KEY=VALUE"` entries added to the base environment. `${VAR}` is expanded from the parent (proxy) environment; an unresolved reference fails start. |
+| `servers[].stdio.env_passthrough` | list of strings | none | Parent environment variable names copied to the child as-is, in addition to the base allowlist. |
+| `servers[].stdio.inherit_env` | bool | `false` | `true` restores full inheritance of the proxy's environment (pre-#311 behavior). Logs one warning per server at start. |
+
+See also [Security: Least-Privilege Child Environment](security.md#least-privilege-child-environment-311).
+
 ### Concurrent Requests per Stdio Server (`max_in_flight`)
 
 A stdio server is one child process with one stdin/stdout pipe, but the

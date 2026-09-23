@@ -1636,6 +1636,7 @@ leanproxy-mcp doctor [command] [flags]
 | Command | Description |
 |---------|-------------|
 | `security` | Show injection security policy and quarantine status |
+| `env` | Show, per configured stdio server, which environment variable names are passed to its child process and which are dropped (#311) |
 
 ---
 
@@ -1674,6 +1675,40 @@ leanproxy-mcp doctor security
     - ~/.leanproxy/quarantine/b2c3d4e5-f6a7-8901-bcde-fa1234567890.json
 
 Total quarantined payloads: 2
+```
+
+---
+
+### `doctor env` - Child Environment Diagnostic
+
+Show, per configured stdio server, which environment variable **names** are
+passed to its child process and which are dropped, under the
+least-privilege child environment default (#311). Values are never shown.
+
+#### Usage
+
+```bash
+leanproxy-mcp doctor env
+```
+
+#### Examples
+
+```bash
+# Show which env vars each stdio server gets / loses
+leanproxy-mcp doctor env
+```
+
+#### Output
+
+```
+# Child Environment Report (#311)
+
+Names only — values are never shown.
+
+## github
+
+  Passed (5): GITHUB_PERSONAL_ACCESS_TOKEN, HOME, PATH, PYTHONUNBUFFERED, TERM
+  Dropped (3): AWS_SECRET_ACCESS_KEY, OPENAI_API_KEY, STRIPE_KEY
 ```
 
 ---

@@ -6,6 +6,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 
 | Feature | Description |
 |---------|-------------|
+| **Least-Privilege Child Environment** | Stdio MCP servers get a minimal environment by default instead of the proxy's full environment (#311) |
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
 | **Prompt Injection Protection** | Classifies payloads against injection patterns with risk scoring and configurable actions |
 | **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model for sensitive data beyond regex |
@@ -13,6 +14,28 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | **ReDoS Protection** | Validates regex patterns to prevent catastrophic backtracking |
 | **Path Validation** | Prevents path traversal attacks on configuration files |
 | **Graceful Shutdown** | Ensures all goroutines are properly terminated |
+
+## Least-Privilege Child Environment (#311)
+
+**Breaking change.** Every stdio MCP server used to inherit the proxy's
+**full** process environment, including any `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `AWS_*`, `GITHUB_TOKEN`, database URLs, etc. set where
+the proxy runs — visible to a compromised or malicious server regardless of
+whether it needed them. As of this release each child gets a
+**least-privilege environment by default**: a small fixed allowlist (PATH,
+HOME, locale, TLS trust, outbound proxy, and npx/uvx/node runtime-manager
+variables), plus whatever a server's own config explicitly asks for via
+`env_passthrough` / `env`. See [Configuration: Child Process
+Environment](configuration.md#child-process-environment-env-env_passthrough-inherit_env)
+for the full allowlist, the `${VAR}`-expansion syntax and migration steps
+(including `leanproxy-mcp doctor env`, which lists per-server passed/dropped
+variable **names**, never values).
+
+`inherit_env: true` restores the old full-inheritance behavior per server,
+for migration; LeanProxy logs one warning per server that sets it, and at
+start also warns when a well-known server package (e.g.
+`@modelcontextprotocol/server-github`) likely needs a variable that is
+present in the proxy's environment but not being passed to it.
 
 ## `serve` listener authentication
 
