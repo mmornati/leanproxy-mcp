@@ -166,11 +166,12 @@ func TestStdioRobust_StderrIsRedacted(t *testing.T) {
 
 	server, err := p.GetServer("leaky")
 	require.NoError(t, err)
+	// The line is kept in the ring and then logged: wait for both.
 	require.Eventually(t, func() bool {
-		return strings.Contains(server.stderrLines.String(), "token=")
+		return strings.Contains(server.stderrLines.String(), "token=") &&
+			strings.Contains(logs.String(), "server stderr")
 	}, 5*time.Second, 10*time.Millisecond)
 	require.NotContains(t, server.stderrLines.String(), secret)
-	require.Contains(t, logs.String(), "server stderr")
 	require.NotContains(t, logs.String(), secret)
 }
 
