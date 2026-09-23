@@ -89,10 +89,6 @@ leanproxy add github --dry-run
 
 ```
 Registry entry: github (41 tools, trust score: 85/100)
-Token impact:
-  Native MCP:   ~4,100 tokens per request
-  LeanProxy:    ~110 tokens per request
-  Savings:      ~3,990 tokens (97.3%)
 
 Server 'github' added successfully.
 ```
