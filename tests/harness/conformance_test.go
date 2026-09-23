@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -110,5 +112,100 @@ func TestHarness_ProtocolConformance(t *testing.T) {
 				t.Fatalf("prompts/get %s = %s", name, msg)
 			}
 		})
+	}
+}
+
+// elicitationAnswer is an mcp-go ElicitationHandler that accepts every
+// request and records the messages it was shown.
+type elicitationAnswer struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (e *elicitationAnswer) Elicit(_ context.Context, req mcpgo.ElicitationRequest) (*mcpgo.ElicitationResult, error) {
+	e.mu.Lock()
+	e.messages = append(e.messages, req.Params.Message)
+	e.mu.Unlock()
+	return &mcpgo.ElicitationResult{ElicitationResponse: mcpgo.ElicitationResponse{
+		Action:  mcpgo.ElicitationResponseActionAccept,
+		Content: map[string]any{"env": "staging"},
+	}}, nil
+}
+
+// TestHarness_ServerToClientConformance is the #308 conformance check: an
+// mcp-go client that declares elicitation gets the upstream's
+// elicitation/create relayed mid-call (prefixed with the server name) and
+// the upstream gets its answer; progress notifications of a call reach the
+// client with the client's own token.
+func TestHarness_ServerToClientConformance(t *testing.T) {
+	bins := sharedBinaries(t)
+	cat, err := LoadCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	servers := catalogServers(cat)[:1]
+	e := newEnv(t, bins, servers, "")
+
+	tr := transport.NewStdio(bins.proxy, e.vars, "server", "run", "--stdio", "--config", e.cfg,
+		"--log-file", filepath.Join(e.dir, "conformance-s2c.log"))
+	elicit := &elicitationAnswer{}
+	c := client.NewClient(tr, client.WithElicitationHandler(elicit))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := c.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	var mu sync.Mutex
+	var progress []mcpgo.JSONRPCNotification
+	c.OnNotification(func(n mcpgo.JSONRPCNotification) {
+		if n.Method == "notifications/progress" {
+			mu.Lock()
+			progress = append(progress, n)
+			mu.Unlock()
+		}
+	})
+
+	if _, err := c.Initialize(ctx, mcpgo.InitializeRequest{Params: mcpgo.InitializeParams{
+		ProtocolVersion: "2025-11-25",
+		ClientInfo:      mcpgo.Implementation{Name: "harness-s2c", Version: "1"},
+	}}); err != nil {
+		t.Fatalf("initialize: %v", err)
+	}
+	server := servers[0].name
+	invoke := func(tool string, meta *mcpgo.Meta) *mcpgo.CallToolResult {
+		t.Helper()
+		res, err := c.CallTool(ctx, mcpgo.CallToolRequest{Params: mcpgo.CallToolParams{
+			Name: "invoke_tool", Arguments: map[string]interface{}{"server": server, "tool": tool}, Meta: meta,
+		}})
+		if err != nil || res.IsError || len(res.Content) == 0 {
+			t.Fatalf("invoke_tool %s: %v %+v", tool, err, res)
+		}
+		return res
+	}
+
+	res := invoke("ask_elicitation", nil)
+	text, _ := res.Content[0].(mcpgo.TextContent)
+	if !strings.Contains(text.Text, "client replied: true") || !strings.Contains(text.Text, `"staging"`) {
+		t.Fatalf("elicitation answer did not reach the upstream: %+v", res.Content)
+	}
+	elicit.mu.Lock()
+	shown := append([]string(nil), elicit.messages...)
+	elicit.mu.Unlock()
+	if len(shown) != 1 || shown[0] != "["+server+"] Which environment?" {
+		t.Fatalf("elicitation shown to the user = %q", shown)
+	}
+
+	invoke("progress", &mcpgo.Meta{ProgressToken: "harness-token"})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(progress) < 2 {
+		t.Fatalf("got %d progress notifications, want >= 2", len(progress))
+	}
+	for _, n := range progress {
+		if tok := n.Params.AdditionalFields["progressToken"]; tok != "harness-token" {
+			t.Fatalf("progress with token %v, want the client's own", tok)
+		}
 	}
 }
