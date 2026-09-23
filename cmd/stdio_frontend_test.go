@@ -542,6 +542,50 @@ func TestStdioFrontend_ShutdownDrainsThenStops(t *testing.T) {
 	}
 }
 
+// TestStdioFrontend_OversizedLine checks that a line over
+// server.max_line_bytes gets a JSON-RPC error with id null, is skipped up
+// to its next newline, and the connection keeps serving afterwards (#304
+// follow-up to #298's TCP listener cap).
+func TestStdioFrontend_OversizedLine(t *testing.T) {
+	h := newFakeFrontendHandler()
+	const maxLine = 64
+	fh := startFrontend(t, h, stdioFrontendOptions{MaxLineBytes: maxLine})
+
+	oversized := `{"jsonrpc":"2.0","id":1,"method":"ping","params":{"pad":"` + strings.Repeat("x", maxLine*2) + `"}}`
+	// Send the oversized line and a normal one right after, in one write,
+	// so the test also proves the reader resynchronizes on the very next
+	// newline rather than treating the tail of the discarded line (or the
+	// next request) as garbage.
+	fh.send(oversized + "\n" + `{"jsonrpc":"2.0","id":2,"method":"ping"}`)
+
+	r := fh.next()
+	if string(r.ID) != "null" {
+		t.Fatalf("oversized-line response id = %s, want null", r.ID)
+	}
+	if r.Error == nil || r.Error.Code != mcp.ErrCodeParseError {
+		t.Fatalf("oversized-line response = %+v, want a parse-error code", r)
+	}
+
+	r = fh.next()
+	if string(r.ID) != "2" || r.Error != nil {
+		t.Fatalf("response after the oversized line = %+v, want id 2 success (server kept serving)", r)
+	}
+	if rest := fh.finish(); len(rest) != 0 {
+		t.Fatalf("unexpected extra responses: %+v", rest)
+	}
+	h.mu.Lock()
+	pings := 0
+	for _, c := range h.calls {
+		if c == "ping" {
+			pings++
+		}
+	}
+	h.mu.Unlock()
+	if pings != 1 {
+		t.Fatalf("expected exactly one ping to reach the handler, got %d", pings)
+	}
+}
+
 func TestRequestIDKey(t *testing.T) {
 	a, _ := requestIDKey(float64(1))
 	b, _ := requestIDKey("1")
