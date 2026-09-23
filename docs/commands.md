@@ -139,7 +139,7 @@ leanproxy-mcp serve [flags]
 | `--ollama-model` | string | `nomic-embed-text` | Ollama embedding model |
 | `--openai-model` | string | `text-embedding-3-small` | OpenAI embedding model |
 | `--providers-config` | string | `""` | Path to providers config file for provider detection |
-| `--model-router` | bool | false | Deprecated, no effect: prints a warning. Removed in a future release (see [CHANGELOG.md](../CHANGELOG.md#removed-in-v010)) |
+| `--model-router` | bool | false | Deprecated, no effect: prints a warning. Removed in a future release (see [CHANGELOG.md](https://github.com/mmornati/leanproxy-mcp/blob/main/CHANGELOG.md#removed-in-v010)) |
 | `--model-router-config` | string | `""` | Deprecated, no effect: prints a warning. Removed in a future release |
 | `--sidecar-provider` | string | `""` | Sidecar provider (`ollama`) for local LLM redaction (empty = disabled) |
 | `--sidecar-model` | string | `llama3.1:8b` | Sidecar model name |
