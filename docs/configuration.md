@@ -608,6 +608,63 @@ response_cache:
 - The cached *value* is the redacted response, so a cache hit can never leak
   anything a cache miss wouldn't already have redacted.
 
+## Tool Search (`search_tools`)
+
+`search_tools` is the recommended discovery path of `leanproxy-mcp server run
+--stdio`: one call ranks the cached tools of **every** server against a
+natural-language query and returns the top matches (default 5, at most 20),
+one line each in the `list_tools` format, ready for `invoke_tool`.
+
+It uses Okapi BM25 (k1 = 1.2, b = 0.75) over the server name, the tool name
+(weight ×2), the description, parameter names and parameter descriptions
+(weight ×0.5). Words are lowercased, split on non-alphanumerics, `_` and
+camelCase, lightly stemmed (`ing`, `ies`→`y`, `es`, `s`, `ed` on words longer
+than 4 characters) and stopwords are dropped. The index follows the
+background tool cache: when a server's tool list changes, only that server's
+tools are re-indexed. Ties are broken by server, then tool name.
+
+With no `tool_search` block, BM25 runs with the default synonyms and no
+network access.
+
+### Configuration
+
+```yaml
+tool_search:
+  synonyms:                    # added to the defaults; same key replaces one
+    k8s: kubernetes cluster
+    mr: merge request
+  disable_default_synonyms: false
+  hybrid:                      # optional; off by default
+    enabled: true
+    embedder:
+      provider: ollama         # or openai
+      ollama:
+        url: http://localhost:11434
+        model: nomic-embed-text
+      # openai:
+      #   model: text-embedding-3-small   # key from OPENAI_API_KEY or api_key
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `synonyms` | map of string | `{}` | Query expansions: a single-word key (not a stopword) and the words it adds to the query. Added to the defaults below |
+| `disable_default_synonyms` | bool | `false` | Drop the built-in synonyms: `pr`→`pull request`, `ticket`/`bug`→`issue`, `ci`→`workflow action`, `repo`→`repository` |
+| `hybrid.enabled` | bool | `false` | Fuse BM25 with embedding similarity (Reciprocal Rank Fusion, k = 60) |
+| `hybrid.embedder.provider` | string | – | `ollama` or `openai`, required when `hybrid.enabled` is true |
+| `hybrid.embedder.ollama` / `.openai` | object | – | Same keys as the embedder elsewhere in the config (`url`, `model`; `model`, `api_key`) |
+
+In hybrid mode, tool descriptions are embedded in the background and the
+vectors are cached by tool-definition hash, so an unchanged tool is never
+embedded twice. A tool not embedded yet ranks through BM25 only, and a query
+whose embedding fails (embedder down, 3 s timeout) is answered with BM25
+alone. Hybrid mode sends each tool description and each query to the
+configured embedder.
+
+An invalid `tool_search` block (a multi-word synonym key, hybrid enabled
+without a valid embedder) fails config loading.
+
 ## Semantic Cache
 
 Semantic caching stores and retrieves tool responses based on vector similarity, reducing redundant LLM calls for semantically similar requests.

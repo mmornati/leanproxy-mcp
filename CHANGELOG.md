@@ -1,5 +1,24 @@
 # Changelog
 
+## Added in v0.11
+
+- **`search_tools`: ranked tool search across every server** ([#305](https://github.com/mmornati/leanproxy-mcp/issues/305)).
+  - **What.** A fourth gateway tool in `server run --stdio`. One call ranks the cached tools of all servers
+    against a plain-words query and returns the top matches (default 5, at most 20) in the `list_tools`
+    line format. The recommended flow is now `search_tools` → `invoke_tool`; `list_servers` and `list_tools`
+    stay for browsing.
+  - **How.** New package `pkg/toolsearch`: Okapi BM25 over server name, tool name (×2), description and
+    parameters, with light stemming, stopwords and a small synonym table. The index follows the background
+    tool cache and re-indexes only a server whose tool list changed. Optional hybrid mode (off by default)
+    fuses BM25 with embedding similarity by Reciprocal Rank Fusion.
+  - **Config.** New `tool_search:` block: extra `synonyms`, `disable_default_synonyms`, and `hybrid`
+    with an Ollama or OpenAI embedder.
+  - **Measured.** 85.5% recall@5 and 66.3% recall@1 on 83 labeled intents, 152 tokens per lookup against
+    907 for `list_tools(server)`, p99 under 0.2 ms for 1,000 tools. The harness adds a `search_tools`
+    session model: −65.0% to −93.5% tokens against native, with one extra turn per new tool.
+  - **Router size.** `tools/list` grows from 237 to 318 tokens (budget test now < 330).
+  - **Removed.** The dead substring matchers `matchesQuery` and `gateway.SearchTools`.
+
 ## Changed in v0.10
 
 - **Benchmark numbers now come from an end-to-end harness that runs the real binary** ([#301](https://github.com/mmornati/leanproxy-mcp/issues/301)).

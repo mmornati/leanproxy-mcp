@@ -890,9 +890,60 @@ Cached tools for garmin (100 total):
 
 ---
 
+## `search_tools` - MCP Method
+
+`search_tools` is the recommended way for a model to find a tool: one call
+ranks the cached tools of **every** server against a natural-language query
+(BM25, optionally hybrid with embeddings; see
+[Tool Search](configuration.md#tool-search-search_tools)) and returns the best
+matches, which the model then calls with `invoke_tool`. There is no need to
+guess the server first. `list_servers` and `list_tools` stay available for
+browsing.
+
+### Request Format
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "search_tools",
+    "arguments": {"query": "create a new issue", "k": 2, "server": "github"}
+  }
+}
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | What the model wants to do, in plain words |
+| `k` | integer | No | Number of hits (default 5, at most 20) |
+| `server` | string | No | Only search this server's tools |
+
+### Response Format
+
+One text block, one line per hit, best first, in the `list_tools` format
+(descriptions truncated to 200 characters). For the request above, against
+the harness catalog:
+
+```
+github_create_issue: Create a new issue in a GitHub repository with a title, body, labels and assignees. [owner: string, repo: string, title: string] {assignees: string, body: string, labels: string}
+github_create_branch: Create a new branch in a GitHub repository from an existing ref. [owner: string] {branch: string, from_branch: string, repo: string}
+```
+
+Call a hit with `invoke_tool` (`server: "github"`, `tool: "create_issue"`).
+When nothing matches, the answer says so and suggests `list_servers` /
+`list_tools`. Servers whose tools are not known yet (unreachable, still
+starting) are named on a last line. Like every response, the output goes
+through secret redaction.
+
+---
+
 ## `list_tools` - MCP Method
 
-LeanProxy-MCP supports a `list_tools` MCP method that allows LLMs to list all tools available on a specific MCP server. This is particularly useful when used with OpenCode - the LLM first calls `list_servers` to get available servers, then `list_tools` to see tools on a specific server.
+LeanProxy-MCP supports a `list_tools` MCP method that lists all tools available on a specific MCP server, for browsing: the model calls `list_servers` to get available servers, then `list_tools` to see tools on a specific server. To find a tool for a task, `search_tools` (above) is cheaper and does not need the server first.
 
 ### Request Format
 
