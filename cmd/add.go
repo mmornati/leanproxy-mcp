@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,13 +48,17 @@ func (a *feedSourceAdapter) LookupCache(_ context.Context) (migrate.CacheSnapsho
 	entries := make([]migrate.CacheEntry, 0, len(index.Entries))
 	for _, e := range index.Entries {
 		entries = append(entries, migrate.CacheEntry{
-			Name:          e.Name,
-			Transport:     e.Transport,
-			Command:       e.Command,
-			Args:          append([]string(nil), e.Args...),
-			Env:           cloneStringMap(e.Env),
-			URL:           e.URL,
-			TokensPerTurn: e.TokensPerTurn,
+			Name:              e.Name,
+			Transport:         e.Transport,
+			Command:           e.Command,
+			Args:              append([]string(nil), e.Args...),
+			Env:               cloneStringMap(e.Env),
+			URL:               e.URL,
+			TokensPerTurn:     e.TokensPerTurn,
+			Version:           e.Version,
+			PackageRegistry:   e.PackageRegistry,
+			PackageIdentifier: e.PackageIdentifier,
+			Registry:          e.Source,
 		})
 	}
 	return migrate.CacheSnapshot{Entries: entries}, nil
@@ -193,6 +200,29 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Preview + confirm-before-enable (issue #313). Print the exact command
+	// line, env var *names* (never values), transport, URL and trust
+	// signals, then ask before the server is allowed to run. --yes skips
+	// the prompt for scripts; --dry-run only previews. A newly installed
+	// server that is not confirmed is still written, but with
+	// enabled: false, so it never silently starts running an unreviewed
+	// command.
+	preview, previewErr := migrate.PreviewServerConfig(entry)
+	if previewErr != nil {
+		return fmt.Errorf("preview %q: %w", serverID, previewErr)
+	}
+	feedEntry, feedFound := findFeedEntry(cache.Entries, entry.Name)
+	printInstallPreview(stdout, entry, preview, feedEntry, feedFound)
+
+	dryRun := addServerDryRun || DryRunEnabled
+	enable := addServerYes
+	if !enable && !dryRun {
+		enable = confirmEnable(cmd)
+	}
+	if !enable && !dryRun {
+		fmt.Fprintln(stdout, "Installing with enabled: false. Re-run with --yes, or edit the config, to turn it on.")
+	}
+
 	graceful := time.Duration(addServerGracefulWait) * time.Second
 	opts := migrate.InstallOptions{
 		Force:           addServerForce || (alreadyInstalled && addServerYes),
@@ -200,7 +230,8 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		GracefulTimeout: graceful,
 		Stopper:         nil, // lifecycle wiring happens in a follow-up; cmd/add stays config-only by default
 		Logger:          slog.Default(),
-		DryRun:          addServerDryRun || DryRunEnabled,
+		DryRun:          dryRun,
+		Enabled:         enable,
 	}
 
 	installCtx := cmd.Context()
@@ -229,14 +260,123 @@ func runAdd(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(stdout, "\n✓ Installed %s (%s)\n", result.ServerName, result.Transport)
 	fmt.Fprintf(stdout, "  Config: %s\n", result.ConfigPath)
+	fmt.Fprintf(stdout, "  Enabled: %v\n", enable)
 	if result.Replaced {
 		fmt.Fprintln(stdout, "  Replaced: yes")
 	}
 	if result.Stopped {
 		fmt.Fprintln(stdout, "  Graceful stop: yes")
 	}
+	if lowTrust {
+		fmt.Fprintln(stdout, "  Tip: this server's trust score is low; consider running it with --sandbox once sandboxing is configured.")
+	}
+	if !result.DryRun {
+		fmt.Fprintln(stdout, "  Tools will be pinned automatically (trust-on-first-use) the first time this server starts;")
+		fmt.Fprintln(stdout, "  review them with `leanproxy tools pins`.")
+	}
 
 	return nil
+}
+
+// printInstallPreview shows exactly what would be written and run, before
+// any confirmation is asked for or any file is touched (issue #313): the
+// resolved command line, the *names* only of the env vars the server
+// declares (never values — a value could be a secret the operator typed
+// into their shell history or a config file), the transport/URL, and the
+// individual trust signals behind the score.
+func printInstallPreview(w io.Writer, entry migrate.CacheEntry, preview *migrate.ServerConfig, feedEntry registry.RegistryFeedEntry, trustFound bool) {
+	fmt.Fprintf(w, "About to install %q:\n", entry.Name)
+	switch {
+	case preview.Stdio != nil:
+		fmt.Fprintf(w, "  Transport: stdio\n")
+		fmt.Fprintf(w, "  Command:   %s\n", strings.TrimSpace(preview.Stdio.Command+" "+strings.Join(preview.Stdio.Args, " ")))
+		if names := envNames(entry.Env); len(names) > 0 {
+			fmt.Fprintf(w, "  Env vars:  %s (values are never printed or logged)\n", strings.Join(names, ", "))
+		}
+	case preview.HTTP != nil:
+		fmt.Fprintf(w, "  Transport: %s\n", preview.Transport)
+		fmt.Fprintf(w, "  URL:       %s\n", preview.HTTP.URL)
+		if len(preview.HTTP.Headers) > 0 {
+			names := make([]string, 0, len(preview.HTTP.Headers))
+			for k := range preview.HTTP.Headers {
+				names = append(names, k)
+			}
+			sort.Strings(names)
+			fmt.Fprintf(w, "  Headers:   %s (values are never printed or logged)\n", strings.Join(names, ", "))
+		}
+	}
+	if entry.Version != "" {
+		fmt.Fprintf(w, "  Version:   %s (pinned)\n", entry.Version)
+	}
+	if entry.Registry != "" {
+		fmt.Fprintf(w, "  Source:    %s\n", entry.Registry)
+	}
+	if trustFound {
+		score := registry.CalculateTrustScore(feedEntry)
+		fmt.Fprintf(w, "  Trust:     %s\n", registry.FormatTrustLabel(score))
+		for _, s := range registry.TrustSignals(feedEntry) {
+			mark := "no"
+			if s.Present {
+				mark = "yes"
+			}
+			fmt.Fprintf(w, "    - %-18s %s\n", s.Name+":", mark)
+		}
+	} else {
+		fmt.Fprintf(w, "  Trust:     unverified (no trust data available for this entry)\n")
+	}
+}
+
+// findFeedEntry returns the RegistryFeedEntry matching name (case
+// insensitive) and whether one was found.
+func findFeedEntry(entries []registry.RegistryFeedEntry, name string) (registry.RegistryFeedEntry, bool) {
+	for _, e := range entries {
+		if strings.EqualFold(e.Name, name) {
+			return e, true
+		}
+	}
+	return registry.RegistryFeedEntry{}, false
+}
+
+// envNames returns the sorted variable names of env, never the values.
+func envNames(env map[string]string) []string {
+	names := make([]string, 0, len(env))
+	for k := range env {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// confirmEnable asks "Enable this server? [y/N]" and returns whether the
+// user answered yes. It never blocks when stdin is not an interactive
+// terminal (e.g. under a script, in CI, or in tests): a non-interactive
+// caller that wants the server enabled must pass --yes explicitly.
+func confirmEnable(cmd *cobra.Command) bool {
+	return confirmPrompt(cmd, "Enable this server? [y/N]: ")
+}
+
+// confirmPrompt prints prompt and asks for a y/N answer, returning whether
+// the user answered yes. It never blocks when stdin is not an interactive
+// terminal (e.g. under a script, in CI, or in tests): a non-interactive
+// caller must pass an explicit --yes-style flag instead.
+func confirmPrompt(cmd *cobra.Command, prompt string) bool {
+	if !stdinIsInteractive() {
+		return false
+	}
+	fmt.Fprint(cmd.OutOrStdout(), prompt)
+	var response string
+	_, _ = fmt.Fscanln(cmd.InOrStdin(), &response)
+	return response == "y" || response == "Y"
+}
+
+// stdinIsInteractive reports whether os.Stdin looks like a terminal rather
+// than a pipe, redirect, or closed file descriptor.
+func stdinIsInteractive() bool {
+	fi, err := os.Stdin.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // loadExistingEntry returns a non-nil pointer (true presence) when the config
