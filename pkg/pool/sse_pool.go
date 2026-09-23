@@ -144,8 +144,8 @@ func (s *SSEServer) ensureConnected(ctx context.Context) (*client.Client, error)
 		return nil, err
 	}
 	c.OnNotification(func(n mcp.JSONRPCNotification) {
-		if n.Method == MethodToolsListChanged {
-			s.events.emit(ServerEvent{Server: s.name, Kind: EventToolsListChanged, Generation: s.generation.Load()})
+		if kind, ok := remoteNotificationEvent(n.Method); ok {
+			s.events.emit(ServerEvent{Server: s.name, Kind: kind, Generation: s.generation.Load()})
 		}
 	})
 
@@ -374,29 +374,6 @@ func (p *SSEPool) SendRequest(ctx context.Context, serverName string, req *proxy
 		return nil, fmt.Errorf("sse_pool: %w", err)
 	}
 
-	if req.Method == "tools/call" {
-		var toolParams struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments"`
-		}
-		if err := json.Unmarshal(req.Params, &toolParams); err != nil {
-			return nil, fmt.Errorf("sse_pool: invalid tools/call params: %w", err)
-		}
-		if _, err := server.ensureConnected(ctx); err != nil {
-			return nil, err
-		}
-		result, err := server.CallTool(ctx, toolParams.Name, toolParams.Arguments)
-		if err != nil {
-			return nil, err
-		}
-		resultBytes, _ := json.Marshal(result)
-		return &proxy.JSONRPCResponse{
-			JSONRPC: "2.0",
-			Result:  resultBytes,
-			ID:      req.ID,
-		}, nil
-	}
-
 	c, err := server.ensureConnected(ctx)
 	if err != nil {
 		return nil, err
@@ -406,6 +383,13 @@ func (p *SSEPool) SendRequest(ctx context.Context, serverName string, req *proxy
 			return nil, err
 		}
 		return &proxy.JSONRPCResponse{JSONRPC: "2.0", Result: result, ID: req.ID}, nil
+	}
+	if forwardsRaw(req.Method) {
+		result, rpcErr, err := relayRaw(ctx, server, "sse_pool", req.Method, req.Params)
+		if err != nil {
+			return nil, err
+		}
+		return &proxy.JSONRPCResponse{JSONRPC: "2.0", Result: result, Error: rpcErr, ID: req.ID}, nil
 	}
 
 	toolArgs := make(map[string]interface{})
@@ -457,36 +441,12 @@ func (p *SSEPool) SendRequestToServerWithID(ctx context.Context, name string, me
 		return &Response{Result: result, ID: id}, nil
 	}
 
-	if method == "tools/list" {
-		tools, err := server.ListTools(ctx)
+	if forwardsRaw(method) {
+		result, rpcErr, err := relayRaw(ctx, server, "sse_pool", method, params)
 		if err != nil {
 			return nil, err
 		}
-		result := mcp.ListToolsResult{Tools: tools}
-		resultBytes, _ := json.Marshal(result)
-		return &Response{
-			Result: resultBytes,
-			ID:     id,
-		}, nil
-	}
-
-	if method == "tools/call" {
-		var toolParams struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments"`
-		}
-		if err := json.Unmarshal(params, &toolParams); err != nil {
-			return nil, fmt.Errorf("sse_pool: invalid tools/call params: %w", err)
-		}
-		result, err := server.CallTool(ctx, toolParams.Name, toolParams.Arguments)
-		if err != nil {
-			return nil, err
-		}
-		resultBytes, _ := json.Marshal(result)
-		return &Response{
-			Result: resultBytes,
-			ID:     id,
-		}, nil
+		return &Response{Result: result, Error: rpcErr, ID: id}, nil
 	}
 
 	toolArgs := make(map[string]interface{})

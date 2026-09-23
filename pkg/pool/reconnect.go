@@ -66,12 +66,13 @@ func isTransportError(err error) bool {
 	return false
 }
 
-// mcpInitializeRequest returns the canonical initialize request used when a
-// remote (SSE/HTTP) MCP client is (re)established.
+// mcpInitializeRequest returns the canonical initialize request of the
+// pool's handshake with every upstream (stdio, HTTP and SSE). It asks for
+// RequestedProtocolVersion.
 func mcpInitializeRequest() mcp.InitializeRequest {
 	return mcp.InitializeRequest{
 		Params: mcp.InitializeParams{
-			ProtocolVersion: "2024-11-05",
+			ProtocolVersion: RequestedProtocolVersion,
 			Capabilities:    mcp.ClientCapabilities{},
 			ClientInfo: mcp.Implementation{
 				Name:    "leanproxy-mcp",

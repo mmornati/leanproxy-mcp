@@ -18,13 +18,15 @@
 //	            answer
 //	stop_reading  answer, then never read stdin again
 //	close_stdout  answer, then close stdout and keep running
-//	list_changed  send notifications/tools/list_changed, then answer
+//	list_changed  {"tag":K} send notifications/K/list_changed (K: tools by
+//	              default, or resources / prompts), then answer
 //	add_tool      {"tag":T} add a tool named T to tools/list, then answer
 //	env           answer with this process's environment (os.Environ()),
 //	              one KEY=VALUE per line, joined with "\n" (#311)
 //
 // Session checks (#297): "received" counts requests other than initialize;
-// "stats" also reports how many initialize requests and
+// "stats" also reports the protocolVersion the last initialize asked for,
+// how many initialize requests and
 // notifications/initialized were seen and how many other requests arrived
 // before the session was initialized (each of those is answered with an
 // error, like a strict MCP server).
@@ -87,10 +89,11 @@ type server struct {
 	maxActive     atomic.Int64
 	nextClientReq atomic.Int64
 
-	mu        sync.Mutex
-	cancelled []cancelRecord
-	waiting   map[string]chan json.RawMessage
-	extra     []string
+	mu                sync.Mutex
+	requestedProtocol string
+	cancelled         []cancelRecord
+	waiting           map[string]chan json.RawMessage
+	extra             []string
 
 	initializes    atomic.Int64
 	initializedN   atomic.Int64
@@ -210,6 +213,13 @@ func (s *server) reply(id json.RawMessage, result interface{}) {
 func (s *server) handle(msg message) {
 	switch msg.Method {
 	case "initialize":
+		var ip struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		_ = json.Unmarshal(msg.Params, &ip)
+		s.mu.Lock()
+		s.requestedProtocol = ip.ProtocolVersion
+		s.mu.Unlock()
 		time.Sleep(time.Duration(*initDelayMS) * time.Millisecond)
 		result := map[string]interface{}{
 			"protocolVersion": "2024-11-05",
@@ -322,18 +332,24 @@ func (s *server) toolCall(msg message) {
 	case "stats":
 		s.mu.Lock()
 		cancelled := append([]cancelRecord(nil), s.cancelled...)
+		requested := s.requestedProtocol
 		s.mu.Unlock()
 		s.reply(msg.ID, map[string]interface{}{
-			"received":      s.received.Load(),
-			"maxActive":     s.maxActive.Load(),
-			"cancellations": cancelled,
-			"initializes":   s.initializes.Load(),
-			"initialized":   s.initializedN.Load(),
-			"earlyRequests": s.earlyRequests.Load(),
-			"pid":           os.Getpid(),
+			"requestedProtocol": requested,
+			"received":          s.received.Load(),
+			"maxActive":         s.maxActive.Load(),
+			"cancellations":     cancelled,
+			"initializes":       s.initializes.Load(),
+			"initialized":       s.initializedN.Load(),
+			"earlyRequests":     s.earlyRequests.Load(),
+			"pid":               os.Getpid(),
 		})
 	case "list_changed":
-		s.write(map[string]interface{}{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+		kind := "tools"
+		if p.Arguments.Tag != "" {
+			kind = p.Arguments.Tag
+		}
+		s.write(map[string]interface{}{"jsonrpc": "2.0", "method": "notifications/" + kind + "/list_changed"})
 		s.reply(msg.ID, toolResult("notified"))
 	case "add_tool":
 		s.mu.Lock()

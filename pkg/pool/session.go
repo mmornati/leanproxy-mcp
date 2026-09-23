@@ -19,7 +19,18 @@ const (
 	// MethodToolsListChanged is the notification an upstream sends when its
 	// tool list changed; the pool surfaces it as EventToolsListChanged.
 	MethodToolsListChanged = "notifications/tools/list_changed"
+	// MethodResourcesListChanged and MethodPromptsListChanged are surfaced
+	// as EventResourcesListChanged and EventPromptsListChanged.
+	MethodResourcesListChanged = "notifications/resources/list_changed"
+	MethodPromptsListChanged   = "notifications/prompts/list_changed"
 )
+
+// RequestedProtocolVersion is the MCP revision the pool asks every upstream
+// for in its initialize handshake: the latest one LeanProxy speaks (it must
+// equal mcp.LatestProtocolVersion; pkg/mcp tests enforce it). The server
+// may answer with an older revision; whatever it returns is accepted and
+// stored in its InitializeResult with its capabilities.
+const RequestedProtocolVersion = "2025-11-25"
 
 // ServerInfo is the upstream server's self-description from its
 // InitializeResult.
@@ -106,6 +117,12 @@ const (
 	// EventToolsListChanged fires when an upstream sent
 	// notifications/tools/list_changed.
 	EventToolsListChanged
+	// EventResourcesListChanged fires when an upstream sent
+	// notifications/resources/list_changed.
+	EventResourcesListChanged
+	// EventPromptsListChanged fires when an upstream sent
+	// notifications/prompts/list_changed.
+	EventPromptsListChanged
 )
 
 func (k ServerEventKind) String() string {
@@ -114,6 +131,10 @@ func (k ServerEventKind) String() string {
 		return "session_started"
 	case EventToolsListChanged:
 		return "tools_list_changed"
+	case EventResourcesListChanged:
+		return "resources_list_changed"
+	case EventPromptsListChanged:
+		return "prompts_list_changed"
 	default:
 		return "unknown"
 	}

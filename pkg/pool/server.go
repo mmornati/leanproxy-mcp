@@ -296,9 +296,9 @@ func (s *StdioServerV2) InitializeResult() *InitializeResult {
 // handleServerNotification is the stdout reader's hook for server
 // notifications of generation gen.
 func (s *StdioServerV2) handleServerNotification(method string, gen uint64) {
-	if method == MethodToolsListChanged {
-		s.logger.Info("server tool list changed", "name", s.name, "generation", gen)
-		s.events.emit(ServerEvent{Server: s.name, Kind: EventToolsListChanged, Generation: gen})
+	if kind, ok := remoteNotificationEvent(method); ok {
+		s.logger.Info("server list changed", "name", s.name, "generation", gen, "event", kind.String())
+		s.events.emit(ServerEvent{Server: s.name, Kind: kind, Generation: gen})
 	}
 }
 
