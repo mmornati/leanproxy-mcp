@@ -241,6 +241,16 @@ func TestBackgroundRefresh(t *testing.T) {
 	require.Less(t, time.Since(start), time.Second, "StartBackgroundRefresh must not block")
 
 	require.Eventually(t, func() bool { return h.toolCountFor("ok") == 1 }, 5*time.Second, 5*time.Millisecond)
+	// The cache is published before the listeners run (on the refresh
+	// goroutine), so seeing the tools cached does not mean the listener has
+	// been called yet. Wait for the refresh to finish: RefreshServerTools
+	// joins the one in progress (or, if it already finished, runs a new one
+	// with an unchanged list, which must not notify).
+	waitRefreshed := func() {
+		t.Helper()
+		require.NoError(t, h.RefreshServerTools(ctx, "ok"))
+	}
+	waitRefreshed()
 	require.Equal(t, int32(1), changes.Load())
 
 	p.setTools("ok", "one", "two")
@@ -255,8 +265,11 @@ func TestBackgroundRefresh(t *testing.T) {
 	// notify listeners again.
 	before := p.count("ok", MethodToolsList)
 	p.emit(pool.ServerEvent{Server: "ok", Kind: pool.EventSessionStarted, Generation: 2})
-	require.Eventually(t, func() bool { return p.count("ok", MethodToolsList) > before }, 5*time.Second, 5*time.Millisecond)
-	time.Sleep(20 * time.Millisecond)
+	// The event handler starts (or joins) the refresh synchronously, so
+	// this waits for the refresh triggered by the event to complete,
+	// listeners included.
+	waitRefreshed()
+	require.Greater(t, p.count("ok", MethodToolsList), before)
 	require.Equal(t, int32(2), changes.Load())
 }
 
