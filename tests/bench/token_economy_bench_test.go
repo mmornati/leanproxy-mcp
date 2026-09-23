@@ -1,89 +1,24 @@
-// Package bench contains the token-economy + NFR benchmark suite that
-// validates the headline numbers in README.md and docs/index.md.
+// Package bench holds micro-benchmarks. Each one measures exactly what its
+// name says (a payload size, a parse, an estimate) and nothing here is a
+// proxy-level number: the token savings, latency, throughput and safety
+// figures published in README.md and docs/benchmark-results.md come only
+// from the end-to-end harness in tests/harness (`make harness`, #301),
+// which drives the real binary.
 //
-// Each benchmark consumes the canonical live snapshot at
-// tests/bench/fixtures/live-snapshot.json as the ground-truth MCP server
-// shape. The snapshot is produced by `go run ./tests/bench/live_snapshot`
-// against the configured MCP servers; until it's refreshed, the seeded
-// numbers in the JSON file (derived from docs/index.md) are authoritative.
-//
-// All token accounting in this package uses reporter.NewEstimator() so the
-// numbers reported here match the values tracked at runtime by
-// pkg/reporter/cost.go (TrackCostFromStrings). This is the same primitive
-// the runtime cost-tracker uses, so the README's "token savings" claims
-// never drift from what users see in `leanproxy-mcp savings`.
+// Token accounting uses reporter.NewEstimator(), the same chars/4 primitive
+// the runtime cost tracker (pkg/reporter/cost.go) and the harness use.
 package bench
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
-	"github.com/mmornati/leanproxy-mcp/tests/bench/mockmcp"
 )
-
-// --- helpers --------------------------------------------------------------
-//
-// buildMockMCP is the subprocess variant of the mockmcp. It is kept here
-// for future benchmarks that want to reproduce end-to-end proxy throughput
-// against the real leanproxy binary + a real mockmcp subprocess. Once the
-// leanproxy e2e harness is in place, `make bench-e2e` can opt in.
-var _ = buildMockMCP // keep the helper around
-
-// snapshot represents the canonical MCP server shape used by the suite.
-type snapshot struct {
-	QueriedAt string `json:"queried_at"`
-	Source    string `json:"source"`
-	Servers   []struct {
-		Name        string `json:"name"`
-		ToolCount   int    `json:"tool_count"`
-		SchemaBytes int    `json:"schema_bytes"`
-		Reachable   bool   `json:"reachable"`
-	} `json:"servers"`
-	Totals struct {
-		Servers     int `json:"servers"`
-		Tools       int `json:"tools"`
-		SchemaBytes int `json:"schema_bytes"`
-	} `json:"totals"`
-	Estimator struct {
-		CharsPerToken float64 `json:"chars_per_token"`
-		ReadmeTokens  int     `json:"router_tokens"`
-	} `json:"estimator"`
-}
-
-func loadSnapshot(tb testing.TB) *snapshot {
-	tb.Helper()
-	// The test runs from tests/bench/, so the fixture is fixtures/live-snapshot.json
-	// relative to that directory. We also try a few other locations for robustness.
-	wd, _ := os.Getwd()
-	candidates := []string{
-		filepath.Join(wd, "fixtures", "live-snapshot.json"),
-		filepath.Join(wd, "..", "..", "tests", "bench", "fixtures", "live-snapshot.json"),
-		"fixtures/live-snapshot.json",
-	}
-	var raw []byte
-	var err error
-	for _, p := range candidates {
-		raw, err = os.ReadFile(p)
-		if err == nil {
-			break
-		}
-	}
-	if err != nil {
-		tb.Fatalf("live-snapshot.json not found (run `go run ./tests/bench/live_snapshot`); tried: %v", candidates)
-	}
-	var s snapshot
-	if err := json.Unmarshal(raw, &s); err != nil {
-		tb.Fatalf("live-snapshot.json malformed: %v", err)
-	}
-	return &s
-}
 
 // routerTool mirrors the JSON shape a `tools/list` response sends to
 // clients: name, description and inputSchema only (Examples, Returns and
@@ -117,93 +52,7 @@ func routerListJSON() []byte {
 	return b
 }
 
-// stubSchema is what pkg/registry's lazy-loading mode emits in place of a
-// full tool schema. We use the same shape that lazy.go emits so the
-// ~54 tokens/stub claim has a deterministic source.
-type stubSchema struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Hint        string `json:"hint,omitempty"`
-}
-
-func stubFor(toolName string) stubSchema {
-	return stubSchema{
-		Name:        toolName,
-		Description: "Tool description.",
-		Hint:        "Use leanproxy-mcp gateway for full schema.",
-	}
-}
-
-// --- A. Schema-tax: native `tools/list` ----------------------------------
-
-func BenchmarkSchemaTax_Native(b *testing.B) {
-	snap := loadSnapshot(b)
-	estimator := reporter.NewEstimator()
-	router := routerListJSON()
-	routerTokens := estimator.EstimateTokens(string(router))
-
-	b.ReportMetric(float64(routerTokens), "router_tokens")
-	for _, srv := range snap.Servers {
-		if !srv.Reachable {
-			continue
-		}
-		// Build a synthetic tools/list response whose JSON size matches
-		// the per-server schema_bytes observed in the live snapshot.
-		// This avoids spinning up a real MCP server for the accounting
-		// path while still using real per-server token counts.
-		name := srv.Name
-		count := srv.ToolCount
-		bytes := srv.SchemaBytes
-		b.Run(fmt.Sprintf("server=%s", name), func(b *testing.B) {
-			tools := make([]stubSchema, count)
-			avgSize := bytes / max(count, 1)
-			for i := range tools {
-				tools[i] = stubFor(fmt.Sprintf("%s_tool_%d", name, i))
-				// pad the stub to roughly match the per-tool average from
-				// the live snapshot so the JSON size is realistic.
-				if len(tools[i].Description) < avgSize-50 {
-					pad := make([]byte, avgSize-50-len(tools[i].Description))
-					for j := range pad {
-						pad[j] = '.'
-					}
-					tools[i].Description += string(pad)
-				}
-			}
-			envelope := map[string]any{
-				"jsonrpc": "2.0",
-				"id":      1,
-				"result":  map[string]any{"tools": tools},
-			}
-			payload, _ := json.Marshal(envelope)
-			tokens := estimator.EstimateTokens(string(payload))
-			b.ReportMetric(float64(tokens), "native_tokens")
-			b.ReportMetric(float64(routerTokens), "router_tokens")
-			b.ReportMetric(1.0-float64(routerTokens)/float64(tokens), "savings_pct")
-
-			// The benchmark loop just re-estimates; the result is the
-			// single-iteration accounting. We use b.N to allow
-			// benchstat to track variance.
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				_ = estimator.EstimateTokens(string(payload))
-			}
-
-			// Emit a one-line result when -v is passed.
-			b.Logf("server=%s tools=%d native_tokens=%d router_tokens=%d savings=%.1f%%",
-				name, count, tokens, routerTokens,
-				100*(1-float64(routerTokens)/float64(tokens)))
-		})
-	}
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-// --- B. Schema-tax: router payload --------------------------------------
+// --- Router payload (the real `tools/list` of `server run --stdio`) ----
 
 func BenchmarkSchemaTax_LeanProxyRouter(b *testing.B) {
 	payload := routerListJSON()
@@ -222,7 +71,7 @@ func BenchmarkSchemaTax_LeanProxyRouter(b *testing.B) {
 		len(payload), tokens)
 }
 
-// --- C. Lazy-loading stub schema ---------------------------------------
+// --- Lazy-loading stub schema -----------------------------------------
 
 func BenchmarkSchemaTax_StubSchema(b *testing.B) {
 	estimator := reporter.NewEstimator()
@@ -254,159 +103,14 @@ type registryToolStub struct {
 	Category    string `json:"category,omitempty"`
 }
 
-// --- D. Session replays: Morning Sport / Dev / Full Day ----------------
+// --- JSON parse of two literals ------------------------------------------
 
-type sessionSpec struct {
-	Name    string
-	Servers []string
-	Prompts []sessionPrompt
-}
-
-type sessionPrompt struct {
-	Tool string
-	Args string
-}
-
-var (
-	morningSport = sessionSpec{
-		Name:    "MorningSport",
-		Servers: []string{"garmin", "intervals"},
-		Prompts: []sessionPrompt{
-			{Tool: "garmin_get_stats"},
-			{Tool: "intervals_get_events"},
-			{Tool: "intervals_get_activity_intervals"},
-			{Tool: "intervals_add_or_update_event"},
-		},
-	}
-	devWorkflow = sessionSpec{
-		Name:    "DevWorkflow",
-		Servers: []string{"github", "intervals"},
-		Prompts: []sessionPrompt{
-			{Tool: "github_search_repositories"},
-			{Tool: "github_get_file_contents"},
-			{Tool: "intervals_get_events"},
-			{Tool: "intervals_add_or_update_event"},
-			{Tool: "github_create_pull_request"},
-		},
-	}
-	fullDay = sessionSpec{
-		Name:    "FullDay",
-		Servers: []string{"github", "garmin", "intervals"},
-		Prompts: []sessionPrompt{
-			{Tool: "github_search_repositories"},
-			{Tool: "github_get_file_contents"},
-			{Tool: "garmin_get_stats"},
-			{Tool: "intervals_get_events"},
-			{Tool: "intervals_get_activity_intervals"},
-			{Tool: "intervals_add_or_update_event"},
-			{Tool: "github_create_pull_request"},
-		},
-	}
-)
-
-func benchmarkSessionReplay(b *testing.B, spec sessionSpec) {
-	snap := loadSnapshot(b)
-	estimator := reporter.NewEstimator()
-	router := routerListJSON()
-	routerTokens := estimator.EstimateTokens(string(router))
-
-	// Compute native per-prompt cost: each prompt re-sends every server's
-	// tools/list (the "schema tax"). Tools called in the same session share
-	// the cache, but the *first* prompt pays full price and subsequent
-	// prompts pay the 0.25x cache-read cost.
-	perServerNative := map[string]int{}
-	for _, srv := range snap.Servers {
-		if !srv.Reachable {
-			continue
-		}
-		// synthesize a representative payload
-		tools := make([]stubSchema, srv.ToolCount)
-		avg := srv.SchemaBytes / max(srv.ToolCount, 1)
-		for i := range tools {
-			tools[i] = stubFor(fmt.Sprintf("%s_tool_%d", srv.Name, i))
-			if len(tools[i].Description) < avg-50 {
-				pad := make([]byte, avg-50-len(tools[i].Description))
-				for j := range pad {
-					pad[j] = '.'
-				}
-				tools[i].Description += string(pad)
-			}
-		}
-		envelope := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      1,
-			"result":  map[string]any{"tools": tools},
-		}
-		payload, _ := json.Marshal(envelope)
-		perServerNative[srv.Name] = estimator.EstimateTokens(string(payload))
-	}
-
-	// LeanProxy path: each prompt pays the router cost + the on-demand
-	// cost of the actual tool invoked (≈ one stub ≈ ~54 tokens).
-	stubTokens := estimator.EstimateTokens(func() string {
-		s := stubFor("placeholder")
-		b, _ := json.Marshal(s)
-		return string(b)
-	}())
-
-	var nativeTotal, leanTotal int
-	for _, p := range spec.Prompts {
-		// Identify the server that owns this tool. For the benchmark
-		// purposes we route by prefix; in production the gateway router
-		// looks up the actual server.
-		srv := ""
-		for _, s := range spec.Servers {
-			if len(p.Tool) >= len(s) && p.Tool[:len(s)] == s {
-				srv = s
-				break
-			}
-		}
-		if srv == "" {
-			srv = spec.Servers[0]
-		}
-		// Native: every server in the session re-sends its tools/list at
-		// 0.25x cache cost on prompts 2+. We model the cache-read cost.
-		for _, s := range spec.Servers {
-			tokens := perServerNative[s]
-			nativeTotal += tokens / 4 // 0.25x cache read
-		}
-		// LeanProxy: router schema + on-demand tool stub.
-		leanTotal += routerTokens + stubTokens
-	}
-
-	if nativeTotal == 0 {
-		b.Skip("no reachable servers in snapshot — skipping session replay")
-	}
-	savings := 1.0 - float64(leanTotal)/float64(nativeTotal)
-	b.ReportMetric(float64(nativeTotal), "native_tokens")
-	b.ReportMetric(float64(leanTotal), "lean_tokens")
-	b.ReportMetric(savings*100, "savings_pct")
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		// Re-run the inner work so b.N is a meaningful iteration count;
-		// the reported metrics above are stable across runs.
-		_ = routerTokens
-		_ = stubTokens
-		_ = savings
-	}
-
-	b.Logf("session=%s prompts=%d native=%d lean=%d savings=%.1f%%",
-		spec.Name, len(spec.Prompts), nativeTotal, leanTotal, savings*100)
-}
-
-func BenchmarkSessionReplay_MorningSport(b *testing.B) { benchmarkSessionReplay(b, morningSport) }
-func BenchmarkSessionReplay_Dev(b *testing.B)          { benchmarkSessionReplay(b, devWorkflow) }
-func BenchmarkSessionReplay_FullDay(b *testing.B)      { benchmarkSessionReplay(b, fullDay) }
-
-// --- E. Proxy overhead (NFR1: <50ms p95) --------------------------------
-
-func BenchmarkProxyOverhead_NFR1(b *testing.B) {
-	// Microbenchmark of the proxy JSON-RPC parse + dispatch + cost-track
-	// hot path. We don't go through net.Listen here because the proxy
-	// connects over TCP and our test infra would be the dominant cost.
-	// This is a *pure* hot-path cost measurement: parse a request,
-	// forward a canned response, and feed the cost tracker.
+// BenchmarkJSONParse_Literal unmarshals one literal tools/call request and
+// one literal response and feeds the cost tracker. It is an in-process
+// micro-benchmark of those three operations only: no pipe, no pool, no
+// middleware. It is NOT the proxy overhead; the harness measures that
+// through the real binary (tests/harness, "Proxy overhead" row).
+func BenchmarkJSONParse_Literal(b *testing.B) {
 	tracker := reporter.NewCostTracker()
 	estimator := reporter.NewEstimator()
 
@@ -427,11 +131,13 @@ func BenchmarkProxyOverhead_NFR1(b *testing.B) {
 	}
 }
 
-// --- F. Large payload (NFR2: 50MB / <200ms) ----------------------------
+// --- Token estimate over 50 MB ------------------------------------------
 
-func BenchmarkLargePayload_NFR2(b *testing.B) {
+// BenchmarkEstimateTokens_50MB runs the chars/4 estimator over a 50 MB
+// buffer. It measures the estimator only, not relaying a large response
+// (the harness measures a 5 MB relay through the binary).
+func BenchmarkEstimateTokens_50MB(b *testing.B) {
 	estimator := reporter.NewEstimator()
-	// 50 MB of structured JSON, which is the NFR2 worst case.
 	const targetBytes = 50 * 1024 * 1024
 	chunk := make([]byte, 1024)
 	for i := range chunk {
@@ -452,69 +158,7 @@ func BenchmarkLargePayload_NFR2(b *testing.B) {
 	}
 }
 
-// --- G. Throughput against mock MCP (AC 16-3: ≥500 q/s) ----------------
-//
-// We measure throughput in-process using the mockmcp.Server library (no
-// subprocess) to keep the benchmark deterministic and CI-friendly. A
-// subprocess variant (buildMockMCP + os/exec) lives in buildMockMCP for
-// users who want to reproduce end-to-end against the real binary.
-
-func BenchmarkThroughput_MockMCP(b *testing.B) {
-	srv := mockmcp.New(mockmcp.Config{ToolCount: 100, ResponseBytes: 256})
-
-	reqs := make([]string, b.N)
-	for i := 0; i < b.N; i++ {
-		reqs[i] = fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"tool_%d","arguments":{}}}`, i, i%100)
-	}
-
-	var totalTokens int64
-	estimator := reporter.NewEstimator()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		resp, err := srv.HandleRequest(reqs[i])
-		if err != nil {
-			b.Fatalf("HandleRequest[%d]: %v", i, err)
-		}
-		if resp == "" {
-			b.Fatalf("HandleRequest[%d] returned empty response", i)
-		}
-		totalTokens += int64(estimator.EstimateTokens(resp))
-	}
-	b.StopTimer()
-
-	qps := float64(srv.Count()) / b.Elapsed().Seconds()
-	b.ReportMetric(qps, "qps")
-	b.ReportMetric(float64(totalTokens), "total_resp_tokens")
-	b.Logf("throughput: %.1f qps in-process (mockmcp.Server, %d requests, %v)",
-		qps, srv.Count(), b.Elapsed())
-}
-
-func buildMockMCP(b *testing.B) string {
-	b.Helper()
-	// Build the mockmcp binary into a temp file. Resolve the package
-	// path from this test's working directory so the build works
-	// regardless of how the test was invoked.
-	wd, _ := os.Getwd()
-	pkg := "./mockmcp/cmd"
-	if _, err := os.Stat(filepath.Join(wd, "mockmcp", "cmd", "main.go")); err != nil {
-		// tests/bench is the test package; the mockmcp cmd is a sibling
-		pkg = "./tests/bench/mockmcp/cmd"
-	}
-	tmp, err := os.MkdirTemp("", "mockmcp-bin-")
-	if err != nil {
-		b.Fatalf("tempdir: %v", err)
-	}
-	b.Cleanup(func() { os.RemoveAll(tmp) })
-	binPath := filepath.Join(tmp, "mockmcp")
-	cmd := exec.Command("go", "build", "-o", binPath, pkg)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		b.Fatalf("build mockmcp: %v\n%s", err, out)
-	}
-	return binPath
-}
-
-// --- H. Binary size (NFR3: <20MB) --------------------------------------
+// --- Binary size (NFR3: <20MB) ------------------------------------------
 
 func TestBinarySize_NFR3(t *testing.T) {
 	// Find the dist/ binaries built by `make build`. The test package
