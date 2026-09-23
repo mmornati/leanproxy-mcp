@@ -893,6 +893,99 @@ Cached tools for garmin (100 total):
 
 ---
 
+## MCP protocol support
+
+Both front ends (`server run --stdio` and `serve`) speak MCP revisions
+`2024-11-05`, `2025-03-26`, `2025-06-18` and `2025-11-25`.
+
+### Version negotiation
+
+- A client that asks for a supported revision in `initialize` gets that
+  revision; any other request (unknown, empty) gets the latest, `2025-11-25`,
+  and the client decides whether to continue.
+- The negotiated revision is kept **per client session**: one session for the
+  lifetime of `server run --stdio`, one per TCP connection for `serve`.
+- Fields LeanProxy adds are gated on it, so an older client only sees fields
+  its revision defines:
+
+| Field | From revision |
+|-------|---------------|
+| `annotations.readOnlyHint` on the gateway tools in `tools/list` | `2025-03-26` |
+| `serverInfo.title` in the `initialize` result | `2025-06-18` |
+| `structuredContent` in `list_tools` and `search_tools` results | `2025-06-18` |
+
+- Towards the upstream servers, the pool's handshake asks for the latest
+  revision and accepts whatever the server answers; the answer and the
+  server's capabilities are stored per server (see `list_servers`).
+
+Upstream tool results are relayed unchanged whatever the client's revision
+(only redacted): LeanProxy does not rewrite a newer upstream result for an
+older client, whose JSON parser ignores fields it does not know.
+
+### Tool metadata and results
+
+- Upstream tools keep every field: `title`, `outputSchema`, `annotations`
+  (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`),
+  `icons` and `_meta` (for example MCP Apps UI resource references). They are
+  also kept in the persistent tool cache.
+- `list_tools` and `search_tools` show the hints compactly in their text:
+  `github_get_repo [read-only]: ...`, `github_delete_repo [destructive]: ...`
+  (only an explicit `destructiveHint: true` is flagged).
+- For a client on `2025-06-18` or newer, both also return the full upstream
+  tool objects as `structuredContent`:
+  `{"tools": [{"server": "github", "tool": {...}}, ...]}`.
+- `invoke_tool` (and a direct `tools/call`) returns the upstream's
+  `CallToolResult` unchanged apart from redaction: `structuredContent`,
+  `isError`, `_meta` and every content item type (`text`, `image`, `audio`,
+  `resource`, `resource_link`) pass through byte for byte, including integers
+  above 2^53.
+
+### Resources and prompts
+
+The resources, resource templates and prompts of every upstream are merged,
+namespaced by server:
+
+| Upstream | Seen by the client |
+|----------|--------------------|
+| resource `file:///notes.txt` on server `docs` | `leanproxy://docs/file:///notes.txt` |
+| template `file:///{path}` on server `docs` | `leanproxy://docs/file:///{path}` |
+| prompt `summarize` on server `docs` | `docs.summarize` |
+
+- `resources/list`, `resources/templates/list` and `prompts/list` fan out, in
+  parallel, to the servers that advertise the capability, each bounded by its
+  own `timeout`. Upstream pagination (`nextCursor`) is followed up to 20 pages
+  per server; the merged list is returned in one page. A server that fails is
+  left out (and logged); the others still answer.
+- `resources/read`, `resources/subscribe` and `resources/unsubscribe` are
+  routed to the server named in the URI, with the upstream's own URI; the
+  `contents[].uri` of a read come back namespaced. The original URI is
+  appended verbatim after the server, so the mapping round-trips for any URI
+  and an expanded template still routes. A plain upstream URI (for example
+  from a `resource_link` in a tool result) is routed through the last
+  `resources/list`. An unknown resource gets error `-32002`.
+- `prompts/get` is routed by the `<server>.` prefix (longest matching server
+  name), with the upstream's own prompt name and the arguments untouched.
+- `initialize` advertises `resources` and `prompts` only when at least one
+  upstream does, with `listChanged: true`. Upstream sessions not established
+  yet are waited for at most 1 second, so a hung server never delays
+  `initialize`; a server that comes up later is still aggregated, but cannot
+  change the capabilities already advertised.
+- When an upstream sends `notifications/resources/list_changed` or
+  `notifications/prompts/list_changed`, or restarts, every initialized client
+  gets `notifications/resources/list_changed` / `notifications/prompts/list_changed`
+  and can list again.
+- Everything goes through response redaction: resource contents and prompt
+  messages can carry secrets like any tool result. Resource reads and prompts
+  are never cached.
+- Not yet: `subscribe` is not advertised, because upstream
+  `notifications/resources/updated` are not relayed yet (story 20.4, #308).
+
+In `serve`, the same methods (`initialize`, `notifications/initialized`,
+`resources/*`, `prompts/*`) are answered by the same aggregation, per
+connection, before any routing.
+
+---
+
 ## `search_tools` - MCP Method
 
 `search_tools` is the recommended way for a model to find a tool: one call
@@ -935,6 +1028,12 @@ the harness catalog:
 github_create_issue: Create a new issue in a GitHub repository with a title, body, labels and assignees. [owner: string, repo: string, title: string] {assignees: string, body: string, labels: string}
 github_create_branch: Create a new branch in a GitHub repository from an existing ref. [owner: string] {branch: string, from_branch: string, repo: string}
 ```
+
+Tools that declare behavior hints are tagged after their name:
+`[read-only]` (`readOnlyHint: true`) or `[destructive]`
+(`destructiveHint: true`). For a client on MCP `2025-06-18` or newer the
+result also carries the full tool objects as `structuredContent` (see
+[MCP protocol support](#mcp-protocol-support)).
 
 Call a hit with `invoke_tool` (`server: "github"`, `tool: "create_issue"`).
 When nothing matches, the answer says so and suggests `list_servers` /
@@ -992,9 +1091,17 @@ LeanProxy-MCP supports a `list_tools` MCP method that lists all tools available 
 Each tool is displayed with:
 - **Name**: `tool_name` (without server prefix in list_tools output)
 - **Description**: Full or truncated description
+- **Hints**: `[read-only]` or `[destructive]` right after the name when the
+  upstream tool declares `readOnlyHint: true` or `destructiveHint: true`
 - **Parameters**:
   - `[required: type]` - Required parameters in brackets
   - `{optional: type}` - Optional parameters in braces
+
+For a client on MCP `2025-06-18` or newer, the result also has a
+`structuredContent` object with the full upstream tool objects (`title`,
+`outputSchema`, `annotations`, `icons`, `_meta`, ...):
+`{"tools": [{"server": "github", "tool": {...}}]}`. Upstream tool lists are
+fetched page by page (`nextCursor`, up to 20 pages).
 
 Example:
 ```

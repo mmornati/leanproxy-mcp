@@ -326,7 +326,16 @@ Implements the MCP protocol handling including:
 - Request routing and handling
 - Tool discovery and caching
 - Gateway tools (search_tools, list_servers, list_tools, invoke_tool)
-- Protocol type definitions
+- Protocol type definitions (`types.go`: full MCP 2025 tool objects, raw
+  content items, `CallToolResult`)
+- Version negotiation and per-client sessions (`protocol.go`): the supported
+  revisions are one list (`SupportedProtocolVersions`); each front end opens a
+  `ClientSession` per client, carried in the request context, which records
+  the negotiated revision and receives server-to-client notifications
+- Resources and prompts aggregation (`aggregate.go`): fan-out of the list
+  methods to the upstreams that advertise the capability (paginated, per-server
+  timeouts), `leanproxy://<server>/<uri>` and `<server>.<prompt>` namespacing,
+  routing of `resources/read`, `resources/subscribe` and `prompts/get`
 
 ### Tool Search (`pkg/toolsearch/`)
 
@@ -350,9 +359,17 @@ Persistent tool cache that stores tool signatures to disk:
 The pool owns the MCP handshake. For stdio servers every process generation (a counter bumped on each
 spawn or respawn) sends `initialize` and `notifications/initialized` exactly once, before any other request
 of that generation; concurrent first callers share it. HTTP/SSE servers use the mcp-go client's own
-`Initialize` on each connection. The `InitializeResult` is stored per server (`ServerInitializeResult`), and
-the pools report lifecycle events (`EventSessionStarted`, `EventToolsListChanged`, surfaced from the stdout
-reader and the mcp-go notification handler) that trigger a background refresh of that server's tools.
+`Initialize` on each connection. Every handshake asks for the latest MCP revision
+(`RequestedProtocolVersion`) and accepts the server's answer. The `InitializeResult` (negotiated revision,
+capabilities, `serverInfo`, `instructions`) is stored per server (`ServerInitializeResult`), and the pools
+report lifecycle events (`EventSessionStarted`, `EventToolsListChanged`, `EventResourcesListChanged`,
+`EventPromptsListChanged`, surfaced from the stdout reader and the mcp-go notification handler): tool
+events trigger a background refresh of that server's tools, resource/prompt events a `list_changed`
+notification to the clients.
+
+For HTTP/SSE servers, every MCP method (`tools/list`, `tools/call`, `resources/*`, `prompts/*`, ...) is
+relayed as raw JSON on the mcp-go transport (`pkg/pool/rawcall.go`), so results, arguments and upstream
+JSON-RPC errors travel byte for byte instead of through mcp-go's typed results.
 
 ### Status File (`pkg/statusfile/`)
 
