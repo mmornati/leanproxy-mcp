@@ -37,9 +37,6 @@ linters:
           - staticcheck
         path: _test\.go
       - linters:
-          - errcheck
-        path: cmd/server\.go
-      - linters:
           - unused
         path: cmd/root\.go
       - linters:
@@ -91,13 +88,6 @@ linters:
       - linters:
           - errcheck
         path: pkg/registry/cache\.go
-      - linters:
-          - errcheck
-        path: cmd/serve\.go
-      - linters:
-          - errcheck
-          - unused
-        path: pkg/mcp/handlers\.go
       - linters:
           - gosec
         path: pkg/bouncer/allowlist\.go

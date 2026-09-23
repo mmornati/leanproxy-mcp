@@ -193,6 +193,14 @@ Tools are registered on-demand, not at startup. This minimizes initial context o
 
 ### Token Firewall
 
+The firewall is a middleware chain in `pkg/mcp` (`Firewall`, `Redaction`,
+`InjectionGuard`) shared by both front ends: `server run --stdio` installs it
+on the MCP handler with `Handler.Use`, and `serve` wraps its own dispatch with
+the same middlewares via `mcp.Chain`. Order: redact request →
+injection check → dispatch → redact response. Later stages (caching,
+metering, ...) plug into the same `Middleware` API. See
+[Security](./security.md#which-modes-are-protected).
+
 Pre-configured redaction for:
 - API keys and secrets
 - Environment variables

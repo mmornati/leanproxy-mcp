@@ -22,7 +22,6 @@ import (
 	stderrors "errors"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
-	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/embedder"
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/vectordb"
@@ -82,11 +81,13 @@ var globalVectorStore atomic.Value
 // pattern edits do not require a full restart.
 var loadedServeConfig atomic.Pointer[migrate.Config]
 
-// globalRedactor is the regex secret redactor applied to every request and
-// response that passes through the proxy. It is built at startup from the
-// `bouncer:` config block (built-in patterns when absent) and is only nil when
-// the operator explicitly disables it.
-var globalRedactor atomic.Pointer[bouncer.Redactor]
+// serveFirewall is the Token Firewall (secret redaction + prompt-injection
+// guard) every request and response passes through. It is the same
+// pkg/mcp middleware set `server run --stdio` installs; runServe configures
+// it from the `bouncer:` and `injection:` blocks (built-in redaction
+// patterns when the bouncer block is absent). The zero value is disabled
+// until configured, which keeps package init free of regex compilation.
+var serveFirewall = &mcp.Firewall{Redaction: &mcp.Redaction{}, Injection: &mcp.InjectionGuard{}}
 
 // globalAlwaysCallSidecar is the operator opt-in (via
 // `bouncer.sidecar_always_call: true`) to keep #274's behavior of running
@@ -94,9 +95,6 @@ var globalRedactor atomic.Pointer[bouncer.Redactor]
 // matched. Defaults to false so the per-request cost stays at one regex
 // pass for the common case.
 var globalAlwaysCallSidecar atomic.Bool
-
-var globalInjectionClassifier atomic.Pointer[injection.Classifier]
-var globalInjectionDispatcher atomic.Pointer[injection.Dispatcher]
 
 func init() {
 	providerDetector.Store(cache.NewProviderDetector())
@@ -287,20 +285,10 @@ func runServe(cmd *cobra.Command, args []string) {
 
 	initSemanticCache(ctx)
 
-	if loadedCfg != nil && loadedCfg.Injection != nil {
-		classifier, err := loadedCfg.Injection.BuildClassifier()
-		if err != nil {
-			slog.Warn("injection: failed to build classifier", "error", err)
-		} else if classifier != nil {
-			globalInjectionClassifier.Store(classifier)
-			slog.Info("injection classifier initialized",
-				"threshold", loadedCfg.Injection.Threshold)
-		}
-		dispatcher := loadedCfg.Injection.BuildDispatcher()
-		globalInjectionDispatcher.Store(dispatcher)
-		slog.Info("injection dispatcher initialized",
-			"policies", len(dispatcher.Rules()))
+	if loadedCfg != nil {
+		serveFirewall.Injection.Configure(loadedCfg.Injection)
 	}
+	slog.Info(serveFirewall.Summary(), "injection_policies", serveFirewall.Injection.PolicyCount())
 
 	var toolStore toolstore.Cache
 	fileCache, err := toolstore.NewFileCache(slog.Default())
@@ -549,30 +537,36 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 		return
 	}
 
-	if err := redactParams(req); err != nil {
-		writeErrorAsync(writer, writerMu, req.ID, errors.ErrCodeInternalError, redactionFailedMessage)
-		return
-	}
-
-	if resp := checkInjection(req); resp != nil {
+	if resp := serveRequest(ctx, req, r, gt, p); resp != nil {
 		writeResponseAsync(writer, writerMu, resp)
-		return
 	}
+}
 
+// serveRequest runs one request through the Token Firewall middlewares
+// (request redaction, injection check, response redaction; shared with
+// `server run --stdio`) around serve's own dispatch.
+func serveRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Router, gt gateway.GatewayTools, p Pool) *proxy.JSONRPCResponse {
+	dispatch := func(ctx context.Context, mreq *mcp.Request) (*mcp.Response, error) {
+		// Pick up the params as rewritten by the request-side middlewares.
+		req.Params = mreq.Params
+		return toMCPResponse(dispatchServeRequest(ctx, req, r, gt, p)), nil
+	}
+	resp, _ := mcp.Chain(dispatch, serveFirewall.Middlewares()...)(ctx, toMCPRequest(req))
+	return fromMCPResponse(resp)
+}
+
+// dispatchServeRequest is serve's innermost pipeline step: gateway tools,
+// routing, semantic cache, sidecar redaction and upstream forwarding. req
+// has already been redacted and injection-checked; the response it returns
+// is redacted by the firewall on the way out.
+func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Router, gt gateway.GatewayTools, p Pool) *proxy.JSONRPCResponse {
 	if isGatewayTool(req.Method) {
-		// Must go through writeResponseAsync: this runs concurrently with
-		// other requests on the same connection and the bufio.Writer is
-		// shared.
-		if resp := handleGatewayToolSync(ctx, req, gt); resp != nil {
-			writeResponseAsync(writer, writerMu, resp)
-		}
-		return
+		return handleGatewayToolSync(ctx, req, gt)
 	}
 
 	server, err := routeRequest(ctx, r, req)
 	if err != nil {
-		writeErrorAsync(writer, writerMu, req.ID, errors.ErrCodeMethodNotFound, "Method not found")
-		return
+		return errorResponse(req.ID, errors.ErrCodeMethodNotFound, "Method not found")
 	}
 
 	recordProvider(server)
@@ -580,41 +574,73 @@ func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Wr
 
 	cached, prompt, embedding := semanticCacheLookup(ctx, req)
 	if cached != nil && cached.HitType != cache.HitMiss {
-		cachedResp := cachedResponse(req, cached.Response)
-		if err := redactResponse(cachedResp); err != nil {
-			slog.Warn("redacting cached response failed", "error", err)
-			writeErrorAsync(writer, writerMu, req.ID, errors.ErrCodeInternalError, redactionFailedMessage)
-			return
-		}
-		writeResponseAsync(writer, writerMu, cachedResp)
-		return
+		return cachedResponse(req, cached.Response)
 	}
 
 	timeout := serverTimeout(server)
 
 	if err := redactWithSidecar(ctx, req); err != nil {
-		writeErrorAsync(writer, writerMu, req.ID, errors.ErrCodeInternalError, redactionFailedMessage)
-		return
+		return errorResponse(req.ID, errors.ErrCodeInternalError, mcp.RedactionFailedMessage)
 	}
 
 	resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
 	if err != nil {
-		slog.Warn("upstream send failed", "server", server.ID, "error", err)
-		writeErrorAsync(writer, writerMu, req.ID, errors.ErrCodeInternalError, redactErrorMessage(err.Error()))
-		return
+		slog.Warn("upstream send failed", "server", server.ID, "error", serveFirewall.Redaction.RedactText(err.Error()))
+		return errorResponse(req.ID, errors.ErrCodeInternalError, err.Error())
 	}
 
-	if err := redactResponse(resp); err != nil {
-		writeErrorAsync(writer, writerMu, req.ID, errors.ErrCodeInternalError, redactionFailedMessage)
-		return
+	// The firewall redacts the response only after dispatch returns, but the
+	// result is cached here first: redact it now so the semantic cache never
+	// holds a secret.
+	mresp := toMCPResponse(resp)
+	if err := serveFirewall.Redaction.RedactResponse(mresp); err != nil {
+		slog.Warn("redacting upstream response failed", "error", err)
+		return errorResponse(req.ID, errors.ErrCodeInternalError, mcp.ResponseRedactionFailedMessage)
 	}
+	resp = fromMCPResponse(mresp)
 
 	if resp.Error == nil {
 		cache.ProcessResponseFor(provider, resp.Result)
 		semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
 	}
+	return resp
+}
 
-	writeResponseAsync(writer, writerMu, resp)
+func errorResponse(id interface{}, code int, message string) *proxy.JSONRPCResponse {
+	return &proxy.JSONRPCResponse{
+		JSONRPC: "2.0",
+		Error:   errors.NewJSONRPCError(code, message),
+		ID:      id,
+	}
+}
+
+// toMCPRequest / toMCPResponse / fromMCPResponse adapt serve's proxy types
+// to the pkg/mcp pipeline types. Error values are copied, never aliased, so
+// redaction never mutates an error owned by the caller.
+func toMCPRequest(req *proxy.JSONRPCRequest) *mcp.Request {
+	return &mcp.Request{JSONRPC: req.JSONRPC, Method: req.Method, Params: req.Params, ID: req.ID}
+}
+
+func toMCPResponse(resp *proxy.JSONRPCResponse) *mcp.Response {
+	if resp == nil {
+		return nil
+	}
+	out := &mcp.Response{JSONRPC: resp.JSONRPC, Result: resp.Result, ID: resp.ID}
+	if resp.Error != nil {
+		out.Error = &mcp.Error{Code: resp.Error.Code, Message: resp.Error.Message, Data: resp.Error.Data}
+	}
+	return out
+}
+
+func fromMCPResponse(resp *mcp.Response) *proxy.JSONRPCResponse {
+	if resp == nil {
+		return nil
+	}
+	out := &proxy.JSONRPCResponse{JSONRPC: resp.JSONRPC, Result: resp.Result, ID: resp.ID}
+	if resp.Error != nil {
+		out.Error = &errors.JSONRPCError{Code: resp.Error.Code, Message: resp.Error.Message, Data: resp.Error.Data}
+	}
+	return out
 }
 
 var ctx = context.Background()
@@ -623,83 +649,26 @@ func isGatewayTool(method string) bool {
 	return method == "invoke_tool" || method == "list_tools" || method == "list_servers"
 }
 
-const redactionFailedMessage = "Secret redaction failed; request not forwarded"
-
-// initRedactor builds the process-wide regex redactor from the `bouncer:`
-// config block. With no block (or no config at all) the built-in pattern set
-// is used; only an explicit `enabled: false` turns redaction off.
+// initRedactor (re)configures the firewall's redaction stage from the
+// `bouncer:` config block. With no block (or no config at all) the built-in
+// pattern set is used; only an explicit `enabled: false` turns redaction off.
 func initRedactor(cfg *migrate.Config) {
 	var bcfg *bouncer.Config
 	if cfg != nil {
 		bcfg = cfg.Bouncer
 	}
 	globalAlwaysCallSidecar.Store(bcfg.ShouldAlwaysCallSidecar())
-	if !bcfg.IsEnabled() {
-		globalRedactor.Store(nil)
+	serveFirewall.Redaction.Configure(bcfg)
+	if !serveFirewall.Redaction.Enabled() {
 		slog.Warn("bouncer: secret redaction explicitly disabled in config")
 		if globalSidecar == nil || !globalSidecar.Enabled() {
 			slog.Warn("bouncer: no redactor AND no sidecar; secrets will pass through verbatim")
 		}
 		return
 	}
-	if bcfg == nil {
-		bcfg = &bouncer.Config{}
-	}
-	loaded, err := bcfg.CompilePatterns()
-	if err != nil {
-		// CompilePatterns currently never returns a non-nil error (bad
-		// patterns are skipped with a Warn), so this branch is defensive.
-		slog.Error("bouncer: failed to compile custom patterns, using built-ins only", "error", err)
-		loaded = &bouncer.LoadedPatterns{All: bouncer.PatternsToRegexps(bouncer.BuiltInPatterns)}
-	}
-	globalRedactor.Store(bouncer.NewRedactorWithAlerts(loaded.All, bouncer.NewAlertManager(false)))
 	slog.Info("bouncer: secret redaction enabled",
-		"patterns", len(loaded.All),
+		"patterns", serveFirewall.Redaction.PatternCount(),
 		"sidecar_always_call", globalAlwaysCallSidecar.Load())
-}
-
-// redactParams runs the regex redactor over req.Params in place. It must be
-// called before anything else inspects, embeds, caches, or persists the
-// params. An error means the params could not be safely redacted and the
-// request must not be forwarded.
-func redactParams(req *proxy.JSONRPCRequest) error {
-	r := globalRedactor.Load()
-	if r == nil || req == nil || len(req.Params) == 0 {
-		return nil
-	}
-	redacted, _, err := r.RedactJSON(req.Params)
-	if err != nil {
-		return err
-	}
-	req.Params = redacted
-	return nil
-}
-
-// redactResponse runs the regex redactor over an upstream response — result
-// and error alike — before it is cached or written to the client.
-func redactResponse(resp *proxy.JSONRPCResponse) error {
-	r := globalRedactor.Load()
-	if r == nil || resp == nil {
-		return nil
-	}
-	if len(resp.Result) > 0 {
-		redacted, _, err := r.RedactJSON(resp.Result)
-		if err != nil {
-			return err
-		}
-		resp.Result = redacted
-	}
-	if resp.Error != nil {
-		resp.Error.Message = bouncer.RedactWithPatterns(resp.Error.Message, r.Patterns())
-		if len(resp.Error.Data) > 0 {
-			redacted, _, err := r.RedactJSON(resp.Error.Data)
-			if err != nil {
-				return err
-			}
-			resp.Error.Data = redacted
-		}
-	}
-	return nil
 }
 
 func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt gateway.GatewayTools) *proxy.JSONRPCResponse {
@@ -711,7 +680,7 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 		if listErr != nil {
 			return &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactErrorMessage(listErr.Error())),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, listErr.Error()),
 				ID:      req.ID,
 			}
 		}
@@ -721,7 +690,9 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 			ServerName string `json:"server_name"`
 		}
 		if req.Params != nil {
-			json.Unmarshal(req.Params, &params)
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return errorResponse(req.ID, errors.ErrCodeInvalidParams, "invalid params: "+err.Error())
+			}
 		}
 		if params.ServerName == "" {
 			return &proxy.JSONRPCResponse{
@@ -738,12 +709,13 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 	case "invoke_tool":
 		var params gateway.InvokeToolParams
 		if req.Params != nil {
-			json.Unmarshal(req.Params, &params)
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return errorResponse(req.ID, errors.ErrCodeInvalidParams, "invalid params: "+err.Error())
+			}
 		}
 		invokeResult, invokeErr := gt.InvokeTool(ctx, params)
 		if invokeErr != nil {
 			if rpcErr, ok := invokeErr.(*errors.JSONRPCError); ok {
-				rpcErr.Message = redactErrorMessage(rpcErr.Message)
 				return &proxy.JSONRPCResponse{
 					JSONRPC: "2.0",
 					Error:   rpcErr,
@@ -752,40 +724,18 @@ func handleGatewayToolSync(ctx context.Context, req *proxy.JSONRPCRequest, gt ga
 			}
 			return &proxy.JSONRPCResponse{
 				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactErrorMessage(invokeErr.Error())),
+				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, invokeErr.Error()),
 				ID:      req.ID,
 			}
 		}
 		result, _ = json.Marshal(invokeResult)
 	}
 
-	resp := &proxy.JSONRPCResponse{
+	return &proxy.JSONRPCResponse{
 		JSONRPC: "2.0",
 		Result:  result,
 		ID:      req.ID,
 	}
-	if err := redactResponse(resp); err != nil {
-		return &proxy.JSONRPCResponse{
-			JSONRPC: "2.0",
-			Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactionFailedMessage),
-			ID:      req.ID,
-		}
-	}
-	return resp
-}
-
-// redactErrorMessage runs the redactor's pattern set over a free-form error
-// string so upstream errors that embed secrets (path tokens, connection
-// strings, key=arg forms) do not reach the client verbatim.
-func redactErrorMessage(msg string) string {
-	if msg == "" {
-		return msg
-	}
-	r := globalRedactor.Load()
-	if r == nil {
-		return msg
-	}
-	return bouncer.RedactWithPatterns(msg, r.Patterns())
 }
 
 func isBatchRequest(data []byte) bool {
@@ -841,46 +791,6 @@ func injectBreakpoints(server *registry.ServerEntry, req *proxy.JSONRPCRequest) 
 
 	cache.GlobalCacheStatsTracker().RecordRequest(provider, hasBreakpoint, inputEstimate)
 	return provider
-}
-
-func checkInjection(req *proxy.JSONRPCRequest) *proxy.JSONRPCResponse {
-	classifier := globalInjectionClassifier.Load()
-	dispatcher := globalInjectionDispatcher.Load()
-	if classifier == nil || dispatcher == nil {
-		return nil
-	}
-
-	if len(req.Params) == 0 {
-		return nil
-	}
-
-	payload := string(req.Params)
-	result := classifier.Classify(payload)
-	if result.RiskScore == 0 {
-		return nil
-	}
-
-	actionResult := dispatcher.Dispatch(result)
-	switch actionResult.Action {
-	case injection.ActionBlock:
-		return &proxy.JSONRPCResponse{
-			JSONRPC: "2.0",
-			Error:   errors.NewJSONRPCError(errors.ErrCodeInvalidRequest, actionResult.Message),
-			ID:      req.ID,
-		}
-	case injection.ActionQuarantine:
-		data, _ := json.Marshal(actionResult.Message)
-		return &proxy.JSONRPCResponse{
-			JSONRPC: "2.0",
-			Result:  data,
-			ID:      req.ID,
-		}
-	case injection.ActionRedact:
-		req.Params = json.RawMessage(actionResult.TransformedPayload)
-		return nil
-	default:
-		return nil
-	}
 }
 
 func embedOutboundPayload(req *proxy.JSONRPCRequest) {
@@ -1236,94 +1146,9 @@ func handleBatchRequestAsync(ctx context.Context, line []byte, writer *bufio.Wri
 		if req.ID == nil {
 			continue
 		}
-
-		if err := redactParams(req); err != nil {
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactionFailedMessage),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		if resp := checkInjection(req); resp != nil {
+		if resp := serveRequest(ctx, req, r, gt, p); resp != nil {
 			responses = append(responses, resp)
-			continue
 		}
-
-		if isGatewayTool(req.Method) {
-			resp := handleGatewayToolSync(ctx, req, gt)
-			if resp != nil {
-				responses = append(responses, resp)
-			}
-			continue
-		}
-
-		server, err := routeRequest(ctx, r, req)
-		if err != nil {
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeMethodNotFound, "Method not found"),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		recordProvider(server)
-		provider := injectBreakpoints(server, req)
-
-		cached, prompt, embedding := semanticCacheLookup(ctx, req)
-		if cached != nil && cached.HitType != cache.HitMiss {
-			cachedResp := cachedResponse(req, cached.Response)
-			if err := redactResponse(cachedResp); err != nil {
-				slog.Warn("redacting cached response failed", "error", err)
-				responses = append(responses, &proxy.JSONRPCResponse{
-					JSONRPC: "2.0",
-					Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactionFailedMessage),
-					ID:      req.ID,
-				})
-				continue
-			}
-			responses = append(responses, cachedResp)
-			continue
-		}
-
-		timeout := serverTimeout(server)
-
-		if err := redactWithSidecar(ctx, req); err != nil {
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactionFailedMessage),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
-		if err != nil {
-			slog.Warn("upstream send failed", "server", server.ID, "error", err)
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactErrorMessage(err.Error())),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		if err := redactResponse(resp); err != nil {
-			responses = append(responses, &proxy.JSONRPCResponse{
-				JSONRPC: "2.0",
-				Error:   errors.NewJSONRPCError(errors.ErrCodeInternalError, redactionFailedMessage),
-				ID:      req.ID,
-			})
-			continue
-		}
-
-		if resp.Error == nil {
-			cache.ProcessResponseFor(provider, resp.Result)
-			semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
-		}
-		responses = append(responses, resp)
 	}
 
 	data, err := json.Marshal(responses)

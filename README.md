@@ -150,7 +150,7 @@ Measured on v0.9.0 with the same MCP server tool counts as production. Native MC
 
 | Feature | Benefit |
 |:--------|:--------|
-| 🛡️ **Token Firewall** | Redacts secrets, API keys, and PII before they reach LLM providers |
+| 🛡️ **Token Firewall** | Redacts secrets in tool arguments and responses (on by default) and screens calls for prompt injection — in both `server run --stdio` and `serve` |
 | ⚡ **JIT Schema Loading** | Tool schemas load only when actually called — not on every request |
 | 🔄 **Connection Pooling** | HTTP MCP clients reuse connections with circuit breakers |
 | 📦 **Multi-Transport** | Supports stdio, HTTP, and SSE transport protocols |
