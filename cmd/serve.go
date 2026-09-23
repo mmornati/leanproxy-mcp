@@ -50,25 +50,28 @@ var serveCmd = &cobra.Command{
 }
 
 var serveFlags struct {
-	listenAddr         string
-	upstreamURL        string
-	providersConfig    string
-	cacheStrategy      string
-	embedProvider      string
-	ollamaURL          string
-	ollamaModel        string
-	openAIModel        string
-	embedPoolSize      int
-	metricsBind        string
-	modelRouterEnabled bool
-	modelRouterConfig  string
-	sidecarProvider    string
-	sidecarModel       string
-	sidecarURL         string
-	dashboardBind      string
-	dashboardToken     string
-	authToken          string
-	noAuth             bool
+	listenAddr            string
+	upstreamURL           string
+	providersConfig       string
+	cacheStrategy         string
+	embedProvider         string
+	ollamaURL             string
+	ollamaModel           string
+	openAIModel           string
+	embedPoolSize         int
+	metricsBind           string
+	metricsToken          string
+	metricsAllowedHosts   []string
+	modelRouterEnabled    bool
+	modelRouterConfig     string
+	sidecarProvider       string
+	sidecarModel          string
+	sidecarURL            string
+	dashboardBind         string
+	dashboardToken        string
+	dashboardAllowedHosts []string
+	authToken             string
+	noAuth                bool
 }
 
 var metricsServer *http.Server
@@ -142,13 +145,16 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.openAIModel, "openai-model", "text-embedding-3-small", "OpenAI embedding model")
 	serveCmd.Flags().IntVar(&serveFlags.embedPoolSize, "embed-pool-size", 4, "Embedder worker pool size")
 	serveCmd.Flags().StringVar(&serveFlags.metricsBind, "metrics-bind", "", "Metrics endpoint bind address (e.g. 127.0.0.1:9090). Set to 'off' or empty to disable.")
+	serveCmd.Flags().StringVar(&serveFlags.metricsToken, "metrics-token", "", "Bearer token for the metrics endpoint; required on a non-loopback --metrics-bind")
+	serveCmd.Flags().StringSliceVar(&serveFlags.metricsAllowedHosts, "metrics-allowed-hosts", nil, "Extra Host header values accepted by the metrics endpoint, beyond the bind host and loopback names")
 	serveCmd.Flags().BoolVar(&serveFlags.modelRouterEnabled, "model-router", false, "Enable per-tool model routing based on complexity_tier")
 	serveCmd.Flags().StringVar(&serveFlags.modelRouterConfig, "model-router-config", "", "Path to model router YAML config (uses defaults if not set)")
 	serveCmd.Flags().StringVar(&serveFlags.sidecarProvider, "sidecar-provider", "", "Sidecar provider (ollama) for local LLM redaction (empty = disabled)")
 	serveCmd.Flags().StringVar(&serveFlags.sidecarModel, "sidecar-model", "llama3.1:8b", "Sidecar model name")
 	serveCmd.Flags().StringVar(&serveFlags.sidecarURL, "sidecar-url", "http://localhost:11434", "Sidecar server URL")
 	serveCmd.Flags().StringVar(&serveFlags.dashboardBind, "dashboard-bind", "127.0.0.1:9090", "Dashboard endpoint bind address (e.g. 127.0.0.1:9090). Set to 'off' or empty to disable.")
-	serveCmd.Flags().StringVar(&serveFlags.dashboardToken, "dashboard-token", "", "Bearer token for dashboard access from non-loopback addresses")
+	serveCmd.Flags().StringVar(&serveFlags.dashboardToken, "dashboard-token", "", "Bearer token for dashboard access; required on a non-loopback --dashboard-bind, and then required from every client including loopback")
+	serveCmd.Flags().StringSliceVar(&serveFlags.dashboardAllowedHosts, "dashboard-allowed-hosts", nil, "Extra Host header values accepted by the dashboard, beyond the bind host and loopback names")
 	serveCmd.Flags().StringVar(&serveFlags.authToken, "auth-token", "", "Token every client must send in its first line (default: $"+serveTokenEnv+", else ~/.config/leanproxy/serve.token, generated on first start)")
 	serveCmd.Flags().BoolVar(&serveFlags.noAuth, "no-auth", false, "Disable the client auth handshake (only allowed on a loopback --listen address)")
 	RootCmd.AddCommand(serveCmd)
@@ -410,17 +416,26 @@ func runServe(cmd *cobra.Command, args []string) {
 		go updateServerStatusPeriodically()
 	}
 
-	metricsServer, err = metrics.ListenAndServe(serveFlags.metricsBind, slog.Default())
+	// Issue #316: a non-loopback bind without a token is a hard startup
+	// failure for both endpoints, not a warning — otherwise the server
+	// names, tool names, token counts and prompt hashes they expose would
+	// be served to anyone who can reach the bound interface.
+	metricsServer, err = metrics.ListenAndServeConfig(metrics.Config{
+		Bind:         serveFlags.metricsBind,
+		Token:        serveFlags.metricsToken,
+		AllowedHosts: serveFlags.metricsAllowedHosts,
+	}, slog.Default())
 	if err != nil {
-		slog.Warn("failed to start metrics endpoint", "error", err)
+		logError("failed to start metrics endpoint: %v", err)
 	}
 
 	dashboardServer, err = dashboard.ListenAndServe(dashboard.Config{
-		Bind:  serveFlags.dashboardBind,
-		Token: serveFlags.dashboardToken,
+		Bind:         serveFlags.dashboardBind,
+		Token:        serveFlags.dashboardToken,
+		AllowedHosts: serveFlags.dashboardAllowedHosts,
 	}, slog.Default())
 	if err != nil {
-		slog.Warn("failed to start dashboard endpoint", "error", err)
+		logError("failed to start dashboard endpoint: %v", err)
 	}
 
 	go startRegistryFeedSync(ctx, func(entries []registry.RegistryFeedEntry) {

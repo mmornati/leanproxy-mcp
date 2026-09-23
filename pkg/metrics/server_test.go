@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,5 +147,105 @@ func TestServeConcurrentRequests(t *testing.T) {
 		} else if r.status != http.StatusOK {
 			t.Errorf("concurrent request %d status = %d, want 200", i, r.status)
 		}
+	}
+}
+
+// The following tests cover issue #316: Host validation and an optional
+// bearer token on the metrics endpoint, matching the dashboard's.
+
+func TestListenAndServeConfigNonLoopbackBindRefusesWithoutToken(t *testing.T) {
+	srv, err := ListenAndServeConfig(Config{Bind: "0.0.0.0:0"}, slog.Default())
+	if err == nil {
+		if srv != nil {
+			srv.Close()
+		}
+		t.Fatal("expected an error starting a non-loopback metrics bind without a token")
+	}
+	if !strings.Contains(err.Error(), "token") {
+		t.Errorf("error %q does not mention the missing token", err.Error())
+	}
+}
+
+func TestListenAndServeConfigNonLoopbackBindStartsWithToken(t *testing.T) {
+	srv, err := ListenAndServeConfig(Config{Bind: "0.0.0.0:0", Token: "mytoken"}, slog.Default())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if srv == nil {
+		t.Fatal("expected a non-nil server")
+	}
+	defer srv.Close()
+}
+
+func TestMetricsRejectsUnknownHostHeader(t *testing.T) {
+	reporter.GlobalCostTracker().Reset()
+	defer reporter.GlobalCostTracker().Reset()
+
+	srv, err := ListenAndServe("127.0.0.1:0", slog.Default())
+	if err != nil {
+		t.Fatalf("ListenAndServe failed: %v", err)
+	}
+	defer srv.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	req, err := http.NewRequest(http.MethodGet, "http://"+srv.Addr+"/metrics", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "evil.example"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /metrics failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 for Host: evil.example", resp.StatusCode)
+	}
+}
+
+func TestMetricsRequiresConfiguredToken(t *testing.T) {
+	reporter.GlobalCostTracker().Reset()
+	defer reporter.GlobalCostTracker().Reset()
+
+	srv, err := ListenAndServeConfig(Config{Bind: "127.0.0.1:0", Token: "mytoken"}, slog.Default())
+	if err != nil {
+		t.Fatalf("ListenAndServeConfig failed: %v", err)
+	}
+	defer srv.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	// No token: 401.
+	resp, err := http.Get("http://" + srv.Addr + "/metrics")
+	if err != nil {
+		t.Fatalf("GET /metrics failed: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status without token = %d, want 401", resp.StatusCode)
+	}
+
+	// Wrong token: 401.
+	req, _ := http.NewRequest(http.MethodGet, "http://"+srv.Addr+"/metrics", nil)
+	req.Header.Set("Authorization", "Bearer wrongtoken")
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /metrics with wrong token failed: %v", err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status with wrong token = %d, want 401", resp2.StatusCode)
+	}
+
+	// Correct token: 200.
+	req2, _ := http.NewRequest(http.MethodGet, "http://"+srv.Addr+"/metrics", nil)
+	req2.Header.Set("Authorization", "Bearer mytoken")
+	resp3, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatalf("GET /metrics with correct token failed: %v", err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != http.StatusOK {
+		t.Errorf("status with correct token = %d, want 200", resp3.StatusCode)
 	}
 }
