@@ -21,7 +21,7 @@ func TestHandleConnection_ConcurrentGatewayWritesAreSerialized(t *testing.T) {
 		}
 	}
 	out := &bytes.Buffer{}
-	handleConnection(&mockReadWriter{reader: strings.NewReader(sb.String()), writer: out}, &mockRouter{}, &mockGatewayTools{}, &mockPool{})
+	handleConnection(&mockReadWriter{reader: strings.NewReader(authedInput(sb.String())), writer: out}, &mockRouter{}, &mockGatewayTools{}, &mockPool{}, testServeConnOptions())
 
 	lines := bytes.Split(bytes.TrimRight(out.Bytes(), "\n"), []byte("\n"))
 	if len(lines) != n {

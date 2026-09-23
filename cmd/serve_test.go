@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -305,7 +306,7 @@ func TestHandleConnection_GatewayTool(t *testing.T) {
 	readBuf := &bytes.Buffer{}
 	writer := bufio.NewWriter(readBuf)
 
-	handleConnection(&mockReadWriter{reader: bytes.NewReader([]byte(input)), writer: readBuf}, mockR, mockGT, mockP)
+	handleConnection(&mockReadWriter{reader: strings.NewReader(authedInput(input)), writer: readBuf}, mockR, mockGT, mockP, testServeConnOptions())
 
 	writer.Flush()
 	output := readBuf.String()
@@ -333,7 +334,7 @@ func TestHandleConnection_ParseError(t *testing.T) {
 	readBuf := &bytes.Buffer{}
 	writer := bufio.NewWriter(readBuf)
 
-	handleConnection(&mockReadWriter{reader: bytes.NewReader([]byte(input)), writer: readBuf}, mockR, mockGT, mockP)
+	handleConnection(&mockReadWriter{reader: strings.NewReader(authedInput(input)), writer: readBuf}, mockR, mockGT, mockP, testServeConnOptions())
 
 	writer.Flush()
 	output := readBuf.String()
@@ -360,7 +361,7 @@ func TestHandleConnection_EOF(t *testing.T) {
 	input := ``
 	readBuf := &bytes.Buffer{}
 
-	handleConnection(&mockReadWriter{reader: bytes.NewReader([]byte(input)), writer: readBuf}, mockR, mockGT, mockP)
+	handleConnection(&mockReadWriter{reader: strings.NewReader(authedInput(input)), writer: readBuf}, mockR, mockGT, mockP, testServeConnOptions())
 }
 
 func TestHandleSingleRequest_RouteError(t *testing.T) {

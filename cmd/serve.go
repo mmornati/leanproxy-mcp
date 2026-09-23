@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -68,6 +67,8 @@ var serveFlags struct {
 	sidecarURL         string
 	dashboardBind      string
 	dashboardToken     string
+	authToken          string
+	noAuth             bool
 }
 
 var metricsServer *http.Server
@@ -148,6 +149,8 @@ func init() {
 	serveCmd.Flags().StringVar(&serveFlags.sidecarURL, "sidecar-url", "http://localhost:11434", "Sidecar server URL")
 	serveCmd.Flags().StringVar(&serveFlags.dashboardBind, "dashboard-bind", "127.0.0.1:9090", "Dashboard endpoint bind address (e.g. 127.0.0.1:9090). Set to 'off' or empty to disable.")
 	serveCmd.Flags().StringVar(&serveFlags.dashboardToken, "dashboard-token", "", "Bearer token for dashboard access from non-loopback addresses")
+	serveCmd.Flags().StringVar(&serveFlags.authToken, "auth-token", "", "Token every client must send in its first line (default: $"+serveTokenEnv+", else ~/.config/leanproxy/serve.token, generated on first start)")
+	serveCmd.Flags().BoolVar(&serveFlags.noAuth, "no-auth", false, "Disable the client auth handshake (only allowed on a loopback --listen address)")
 	RootCmd.AddCommand(serveCmd)
 }
 
@@ -166,6 +169,20 @@ func runServe(cmd *cobra.Command, args []string) {
 		})
 		fmt.Println("Dry-run mode: server start skipped")
 		return
+	}
+
+	// Resolve authentication before starting anything (#298): --no-auth is
+	// refused on a non-loopback address, and the token file is created on
+	// first start.
+	home, _ := os.UserHomeDir()
+	authToken, authSource, err := serveAuthSettings(serveFlags.listenAddr, serveFlags.authToken, serveFlags.noAuth, os.Getenv(serveTokenEnv), home)
+	if err != nil {
+		logError("%v", err)
+	}
+	if serveFlags.noAuth {
+		slog.Warn("serve authentication disabled (--no-auth): any local process can drive the upstream servers", "listen", serveFlags.listenAddr)
+	} else {
+		slog.Info("serve authentication enabled", "token_source", authSource)
 	}
 
 	serverReg = registry.NewRegistry(slog.Default(), "")
@@ -498,64 +515,24 @@ func runServe(cmd *cobra.Command, args []string) {
 
 	slog.Info("server ready", "address", ln.Addr().String())
 
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			slog.Warn("accept error", "error", err)
-			continue
-		}
-		slog.Debug("connection accepted", "remote", conn.RemoteAddr())
-		go handleConnection(conn, r, gatewayTools, unifiedPool)
+	listener := &serveListener{
+		router:  r,
+		gateway: gatewayTools,
+		pool:    unifiedPool,
+		conn: serveConnOptions{
+			AuthToken:     authToken,
+			NoAuth:        serveFlags.noAuth,
+			MaxLineBytes:  loadedCfg.EffectiveMaxLineBytes(),
+			MaxConcurrent: loadedCfg.EffectiveMaxConcurrentRequests(),
+		},
+		maxConns: loadedCfg.EffectiveMaxConnections(),
 	}
-}
-
-func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p Pool) {
-	defer func() {
-		if closer, ok := conn.(net.Conn); ok {
-			closer.Close()
-		}
-	}()
-
-	connCtx, connCancel := context.WithCancel(context.Background())
-	defer connCancel()
-
-	reader := bufio.NewReader(conn)
-	writer := bufio.NewWriter(conn)
-	writerMu := &sync.Mutex{}
-
-	var wg sync.WaitGroup
-
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			slog.Warn("read error", "error", err)
-			break
-		}
-
-		if len(line) == 0 {
-			continue
-		}
-
-		line = trimNewline(line)
-
-		wg.Add(1)
-		if isBatchRequest(line) {
-			go func(l []byte) {
-				defer wg.Done()
-				handleBatchRequestAsync(connCtx, l, writer, writerMu, r, gt, p)
-			}(line)
-		} else {
-			go func(l []byte) {
-				defer wg.Done()
-				handleSingleRequestAsync(connCtx, l, writer, writerMu, r, gt, p)
-			}(line)
-		}
+	if err := listener.Serve(ln); err != nil {
+		logError("serve listener stopped: %v", err)
 	}
-
-	wg.Wait()
+	// The listener is closed only by the shutdown handler, which exits
+	// the process; wait for it instead of returning early.
+	select {}
 }
 
 func handleSingleRequestAsync(ctx context.Context, line []byte, writer *bufio.Writer, writerMu *sync.Mutex, r Router, gt gateway.GatewayTools, p Pool) {

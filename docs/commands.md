@@ -130,6 +130,8 @@ leanproxy-mcp serve [flags]
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--listen` | string | `127.0.0.1:8080` | Address to listen on |
+| `--auth-token` | string | `""` | Token every client must send in its first line. Default: `$LEANPROXY_SERVE_TOKEN`, else `~/.config/leanproxy/serve.token` (generated on first start). At least 16 characters, no whitespace |
+| `--no-auth` | bool | false | Disable the auth handshake. Only allowed when `--listen` is a loopback address (`127.0.0.0/8`, `::1`, `localhost`); `serve` refuses to start otherwise. Logs a warning |
 | `--upstream` | string | `http://localhost:8081` | Upstream JSON-RPC server URL |
 | `--dashboard-bind` | string | `127.0.0.1:9090` | Dashboard bind address. Set to `off` or empty to disable |
 | `--dashboard-token` | string | `""` | Bearer token for dashboard access from non-loopback addresses |
@@ -147,14 +149,64 @@ leanproxy-mcp serve [flags]
 | `--sidecar-model` | string | `llama3.1:8b` | Sidecar model name |
 | `--sidecar-url` | string | `http://localhost:11434` | Sidecar server URL |
 
+### Client protocol and authentication
+
+`serve` speaks newline-delimited JSON-RPC 2.0 over TCP: one message per line,
+responses in completion order. Authentication is **on by default**: the
+**first line** of every connection must be the auth handshake
+
+```json
+{"jsonrpc":"2.0","method":"auth","params":{"token":"<token>"}}
+```
+
+- The token is `--auth-token`, else `$LEANPROXY_SERVE_TOKEN`, else the
+  contents of `~/.config/leanproxy/serve.token`. On first start `serve`
+  creates that file (mode `0600`, directory `0700`) with a random 32-byte
+  hex token. The token is never logged.
+- The token is compared in constant time. If the first line is missing,
+  malformed or carries the wrong token, the connection is closed **without
+  executing or answering anything**, including any lines sent after it.
+- The handshake is a notification and gets no answer. Add an `id` to get
+  `{"jsonrpc":"2.0","result":{"authenticated":true},"id":...}` back.
+- The first line must arrive within 10 seconds and is limited to 4 KiB.
+- A connection whose first line looks like HTTP (`GET `, `POST `, ... or
+  `HTTP/1.`) is closed immediately, with or without `--no-auth`. This blocks
+  the cross-protocol attack where a web page `fetch`es a `text/plain` POST to
+  `127.0.0.1:8080` and the JSON body line is executed.
+- With `--no-auth` (loopback only) the first line is a normal request; an
+  auth line is still accepted and ignored, so clients can always send it.
+
+Example client (bash):
+
+```bash
+TOKEN=$(cat ~/.config/leanproxy/serve.token)
+{ printf '{"jsonrpc":"2.0","method":"auth","params":{"token":"%s"}}\n' "$TOKEN"
+  printf '{"jsonrpc":"2.0","id":1,"method":"list_servers"}\n'; sleep 2; } | nc 127.0.0.1 8080
+```
+
+Limits (see [configuration](configuration.md#serve-listener-limits)):
+
+| Setting | Default | Behavior |
+|---------|---------|----------|
+| `server.max_line_bytes` | 64 MiB | A longer message gets an `Invalid Request` error and the connection is closed |
+| `server.max_concurrent_requests` | 64 | Requests running at once **per connection**; the reader waits at the cap |
+| `server.max_connections` | 32 | Connections open at once; extra connections are closed immediately |
+
+When the client disconnects (EOF or read error), its in-flight requests are
+canceled, including the upstream calls. Half-closing the socket counts as a
+disconnect: keep the write side open until you have read every response.
+
 ### Examples
 
 ```bash
-# Start proxy server
+# Start proxy server (clients authenticate with ~/.config/leanproxy/serve.token)
 leanproxy-mcp serve
 
-# Listen on custom address
-leanproxy-mcp serve --listen 0.0.0.0:9090
+# Listen on all interfaces (authentication is mandatory there)
+leanproxy-mcp serve --listen 0.0.0.0:9090 --auth-token "$(openssl rand -hex 32)"
+
+# Local development without the handshake (loopback only)
+leanproxy-mcp serve --no-auth
 
 # Custom upstream server
 leanproxy-mcp serve --upstream http://localhost:9000

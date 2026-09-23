@@ -1077,5 +1077,34 @@ server:
 		if got := cfg.EffectiveMaxConcurrentRequests(); got != DefaultMaxConcurrentRequests {
 			t.Errorf("nil EffectiveMaxConcurrentRequests() = %d", got)
 		}
+		if got := cfg.EffectiveMaxLineBytes(); got != DefaultMaxLineBytes {
+			t.Errorf("nil EffectiveMaxLineBytes() = %d", got)
+		}
+		if got := cfg.EffectiveMaxConnections(); got != DefaultMaxConnections {
+			t.Errorf("nil EffectiveMaxConnections() = %d", got)
+		}
+	})
+
+	t.Run("serve listener caps", func(t *testing.T) {
+		cfg, err := LoadConfig(ctx, write(t, servers+`
+server:
+  max_line_bytes: 1024
+  max_connections: 4
+`))
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v", err)
+		}
+		if got := cfg.EffectiveMaxLineBytes(); got != 1024 {
+			t.Errorf("EffectiveMaxLineBytes() = %d, want 1024", got)
+		}
+		if got := cfg.EffectiveMaxConnections(); got != 4 {
+			t.Errorf("EffectiveMaxConnections() = %d, want 4", got)
+		}
+		for _, key := range []string{"max_line_bytes", "max_connections"} {
+			_, err := LoadConfig(ctx, write(t, servers+"\nserver:\n  "+key+": -1\n"))
+			if err == nil || !contains(err.Error(), key+" must be >= 0") {
+				t.Fatalf("LoadConfig(%s: -1) error = %v, want validation error", key, err)
+			}
+		}
 	})
 }

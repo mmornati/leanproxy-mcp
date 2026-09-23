@@ -300,6 +300,9 @@ func TestServerLifecycle_Serve(t *testing.T) {
 	}
 	defer conn.Close()
 	t.Logf("serve accepted a connection %v after start", time.Since(start))
+	if _, err := conn.Write(serveAuthLine()); err != nil {
+		t.Fatalf("authenticate: %v", err)
+	}
 
 	reader := bufio.NewReader(conn)
 	call := func(id int, tool string, args interface{}) map[string]json.RawMessage {
