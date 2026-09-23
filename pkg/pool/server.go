@@ -128,15 +128,19 @@ type StdioServerV2 struct {
 	// slots is the per-server in-flight semaphore (capacity maxInFlight).
 	slots chan struct{}
 	// inFlight counts requests holding a slot. Guarded by mu.
-	inFlight       int
-	healthTicker   *time.Ticker
-	genStopCh      chan struct{}
-	genStopOnce    *sync.Once
-	restartMu      sync.Mutex
-	logger         *slog.Logger
-	wg             sync.WaitGroup
-	mcpInitialized atomic.Bool
-	stderrLines    *stderrRing
+	inFlight     int
+	healthTicker *time.Ticker
+	genStopCh    chan struct{}
+	genStopOnce  *sync.Once
+	restartMu    sync.Mutex
+	logger       *slog.Logger
+	wg           sync.WaitGroup
+	stderrLines  *stderrRing
+	// initResult is the InitializeResult of the most recent successful MCP
+	// handshake (kept across generations until the next one succeeds).
+	initResult atomic.Pointer[InitializeResult]
+	// events receives this server's lifecycle events (set by the pool).
+	events *eventHub
 	// autoRestartDisabled is the reconnect.enabled=false master switch: the
 	// crash path (scheduleRestart) leaves the server in the error state
 	// instead of respawning it. Explicit restarts (request/manual) still work.
@@ -249,12 +253,43 @@ func toServerState(state int32) ServerState {
 	}
 }
 
-func (s *StdioServerV2) IsMCPInitialized() bool {
-	return s.mcpInitialized.Load()
+// currentConn returns the current process generation's connection and
+// generation number.
+func (s *StdioServerV2) currentConn() (*stdioConn, uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn, s.generation.Load()
 }
 
+// IsMCPInitialized reports whether the current process generation completed
+// its MCP initialize handshake.
+func (s *StdioServerV2) IsMCPInitialized() bool {
+	conn, _ := s.currentConn()
+	return conn != nil && conn.handshake.initialized()
+}
+
+// SetMCPInitialized marks the current process generation as initialized
+// without performing the handshake. The pool performs the handshake itself;
+// this only exists for callers (tests) that set the session up out of band.
 func (s *StdioServerV2) SetMCPInitialized() {
-	s.mcpInitialized.Store(true)
+	if conn, _ := s.currentConn(); conn != nil {
+		conn.handshake.markInitialized()
+	}
+}
+
+// InitializeResult returns the stored result of the most recent successful
+// MCP handshake, or nil.
+func (s *StdioServerV2) InitializeResult() *InitializeResult {
+	return s.initResult.Load()
+}
+
+// handleServerNotification is the stdout reader's hook for server
+// notifications of generation gen.
+func (s *StdioServerV2) handleServerNotification(method string, gen uint64) {
+	if method == MethodToolsListChanged {
+		s.logger.Info("server tool list changed", "name", s.name, "generation", gen)
+		s.events.emit(ServerEvent{Server: s.name, Kind: EventToolsListChanged, Generation: gen})
+	}
 }
 
 // spawn starts a new process generation. It serializes against concurrent
@@ -352,7 +387,6 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	s.backoff = s.initialBackoff
 	s.lastSpawnAt = time.Now()
 	s.lastRequestAt = time.Now()
-	s.mcpInitialized.Store(false)
 	s.stats.RestartCount++
 	s.stats.CurrentBackoff = s.backoff
 
@@ -367,8 +401,11 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	// A fresh connection (and pending map) per generation: late answers to
 	// requests of a previous generation can never reach a new waiter.
 	conn := newStdioConn(s.name, stdin, s.logger)
+	gen := s.generation.Add(1)
+	conn.onNotification = func(method string, _ json.RawMessage) {
+		s.handleServerNotification(method, gen)
+	}
 	s.conn = conn
-	s.generation.Add(1)
 
 	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", s.config.Args)
 
@@ -397,6 +434,9 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 		return fmt.Errorf("pool: server %s process not alive after spawn (recent stderr: %s)", s.name, s.stderrLines.String())
 	}
 
+	// A new generation needs a new handshake (done lazily by the first
+	// request) and may expose a different tool list.
+	s.events.emit(ServerEvent{Server: s.name, Kind: EventSessionStarted, Generation: gen})
 	return nil
 }
 
@@ -944,13 +984,10 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request) (*Respo
 // sendRequest multiplexes one request over the current process generation's
 // pipe and waits for its own response. Any number of callers may be in
 // sendRequest concurrently, up to max_in_flight; further callers wait for a
-// slot.
+// slot. The generation's MCP handshake runs first (once, shared).
 //
-// The effective timeout is min(server request timeout, req.Timeout). When
-// the caller's context ends (or the timeout elapses) before the response
-// arrives, the pending entry is removed, the MCP cancellation notification is sent to
-// the server and a late response is discarded by the reader. A request whose
-// context is already done before it is written is never written.
+// The effective timeout is min(server request timeout, req.Timeout); see
+// roundTrip for what happens when it elapses.
 func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawMessage, error) {
 	timeout := s.requestTimeout
 	if req.Timeout > 0 && req.Timeout < timeout {
@@ -965,22 +1002,53 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 	}
 	defer release()
 
-	s.mu.Lock()
-	conn := s.conn
-	s.mu.Unlock()
+	conn, gen := s.currentConn()
 	if conn == nil {
 		return nil, fmt.Errorf("pool: stdin not available")
 	}
 
+	// The pool owns the MCP handshake: every process generation performs
+	// initialize + notifications/initialized exactly once, before any other
+	// request of that generation is written. Concurrent callers share it.
+	if err := s.ensureHandshake(callCtx, conn, gen); err != nil {
+		if callCtx.Err() != nil {
+			return nil, s.waitError(ctx, timeout)
+		}
+		return nil, err
+	}
+	if req.Method == methodInitialize {
+		// An explicit initialize never reaches the server a second time:
+		// the caller gets this generation's stored result.
+		conn.handshake.mu.Lock()
+		res := conn.handshake.result
+		conn.handshake.mu.Unlock()
+		return initializeResultJSON(res), nil
+	}
+
+	result, err := s.roundTrip(callCtx, conn, req.Method, req.Params)
+	if errstd.Is(err, errWaitEnded) {
+		return nil, s.waitError(ctx, timeout)
+	}
+	return result, err
+}
+
+// errWaitEnded marks a roundTrip that ended because its context did, before
+// any reply arrived.
+var errWaitEnded = errstd.New("wait ended")
+
+// roundTrip writes one request on conn under a fresh wire ID and waits for
+// its reply. When ctx ends first, the pending entry is removed, the MCP
+// cancellation notification is sent to the server and a late response is
+// discarded by the reader. A request whose context is already done before
+// it is written is never written.
+func (s *StdioServerV2) roundTrip(ctx context.Context, conn *stdioConn, method string, params json.RawMessage) (json.RawMessage, error) {
 	// Give the request a unique internal wire ID so the response can be
 	// matched to this exact in-flight request. Callers across generations
 	// and retries routinely reuse the same JSON-RPC ID (handlers default to
 	// id 1), so the caller's ID is never put on the wire; it is restored on
 	// the response by processRequest.
 	wireID := s.nextRequestID.Add(1)
-	wireReq := req
-	wireReq.ID = wireID
-	encoded, err := json.Marshal(wireReq)
+	encoded, err := json.Marshal(Request{Method: method, Params: params, ID: wireID})
 	if err != nil {
 		return nil, fmt.Errorf("pool: marshal request: %w", err)
 	}
@@ -991,13 +1059,13 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 	}
 
 	// Never write a request nobody is waiting for any more.
-	if callCtx.Err() != nil {
+	if ctx.Err() != nil {
 		conn.unregister(wireID)
-		return nil, s.waitError(ctx, timeout)
+		return nil, fmt.Errorf("%w: %w", errWaitEnded, ctx.Err())
 	}
 
-	s.logger.Debug("sending request to server", "name", s.name, "method", req.Method, "id", wireID)
-	if sent, err := conn.writeLine(callCtx, encoded); err != nil {
+	s.logger.Debug("sending request to server", "name", s.name, "method", method, "id", wireID)
+	if sent, err := conn.writeLine(ctx, encoded); err != nil {
 		if !conn.unregister(wireID) {
 			// A connection failure was delivered meanwhile.
 			reply := <-replyCh
@@ -1009,7 +1077,7 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 			go conn.notifyCancelled(context.WithoutCancel(ctx), wireID, "timeout")
 		}
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("%w: %w", errWaitEnded, ctx.Err())
 		}
 		return nil, fmt.Errorf("pool: write stdin: %w", err)
 	}
@@ -1017,7 +1085,7 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 	select {
 	case reply := <-replyCh:
 		return reply.result, reply.err
-	case <-callCtx.Done():
+	case <-ctx.Done():
 		if !conn.unregister(wireID) {
 			// The response (or a connection failure) was delivered at the
 			// same moment the context ended; the channel already holds it.
@@ -1025,13 +1093,13 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 			return reply.result, reply.err
 		}
 		reason := "timeout"
-		if errstd.Is(callCtx.Err(), context.Canceled) {
+		if errstd.Is(ctx.Err(), context.Canceled) {
 			reason = "canceled"
 		}
 		// Asynchronous so a server that stopped reading stdin can never
 		// block a caller past its deadline.
 		go conn.notifyCancelled(context.WithoutCancel(ctx), wireID, reason)
-		return nil, s.waitError(ctx, timeout)
+		return nil, fmt.Errorf("%w: %w", errWaitEnded, ctx.Err())
 	}
 }
 
@@ -1047,6 +1115,11 @@ func (s *StdioServerV2) waitError(ctx context.Context, timeout time.Duration) er
 }
 
 func (s *StdioServerV2) sendNotification(ctx context.Context, method string, params map[string]interface{}) error {
+	if method == methodInitializedNotification {
+		// Part of the handshake the pool performs itself (once per
+		// generation); a caller's copy would be a duplicate.
+		return nil
+	}
 	notification := map[string]interface{}{
 		"jsonrpc": "2.0",
 		"method":  method,

@@ -328,9 +328,19 @@ Implements the MCP protocol handling including:
 ### Tool Store (`pkg/toolstore/`)
 
 Persistent tool cache that stores tool signatures to disk:
-- `FileCache`: Persists tools to `~/.config/leanproxy/toolcache/`
+- `FileCache`: Persists tools to `~/.config/leanproxy/toolcache/` (override with `LEANPROXY_TOOLCACHE_DIR`)
 - Per-server cache files (e.g., `garmin.json`, `Intervals_icu.json`)
-- Avoids starting servers for tool discovery
+- Loaded at startup so both front ends serve immediately; the handler then refreshes each server's
+  `tools/list` in the background (`pkg/mcp/toolrefresh.go`)
+
+### Server sessions (`pkg/pool/session.go`)
+
+The pool owns the MCP handshake. For stdio servers every process generation (a counter bumped on each
+spawn or respawn) sends `initialize` and `notifications/initialized` exactly once, before any other request
+of that generation; concurrent first callers share it. HTTP/SSE servers use the mcp-go client's own
+`Initialize` on each connection. The `InitializeResult` is stored per server (`ServerInitializeResult`), and
+the pools report lifecycle events (`EventSessionStarted`, `EventToolsListChanged`, surfaced from the stdout
+reader and the mcp-go notification handler) that trigger a background refresh of that server's tools.
 
 ### Status File (`pkg/statusfile/`)
 

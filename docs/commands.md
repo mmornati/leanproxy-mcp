@@ -898,18 +898,30 @@ get_sleep_data: Get sleep data [start_date: string, end_date: string] {}
 
 ### How Tool Caching Works
 
-1. **On First Call**: When `list_tools` is called for a specific server for the first time (or after cache invalidation), LeanProxy-MCP:
-   - Starts the specified MCP server (if not running)
-   - Sends `initialize` request to the server
-   - Sends `tools/list` request to the server
-   - Caches the tool signatures locally in `~/.config/leanproxy/toolcache/`
+1. **At Startup**: `server run --stdio` and `serve` load the persistent cache and start serving immediately.
+   Every server's `tools/list` is then refreshed in the background, in parallel (one refresh per server), so
+   a hung or slow server never delays startup or requests to other servers.
 
-2. **On Subsequent Calls**: Tool signatures are loaded from the persistent cache, avoiding server startup.
+2. **On `list_tools` for a server with no cached tools**: LeanProxy-MCP refreshes **that server only** and
+   waits at most that server's `timeout`. Concurrent calls share one refresh. If the refresh fails, the
+   response says why.
 
-3. **Cache Invalidation**: Cache is invalidated when:
-   - `leanproxy cache --clear --server <name>` is called
-   - Server configuration changes
-   - Tool list changes are detected (if `listChanged` capability is supported)
+3. **Kept current**: a server's tools are refreshed again when
+   - it sends `notifications/tools/list_changed`,
+   - it is restarted (a new stdio process, or a reconnected HTTP/SSE session),
+   - its tool list is still unknown (retried every 30 s, e.g. for a server that was down at startup).
+   In `serve`, the router entries of a server are replaced each time its tool list changes, so it becomes
+   routable without restarting the proxy.
+
+4. **Session handshake**: the MCP `initialize` + `notifications/initialized` handshake is performed by the
+   server pool, exactly once per stdio process generation (and by the MCP client on each HTTP/SSE
+   connection). The server's answer (protocol version, capabilities, `serverInfo`, `instructions`) is stored;
+   `list_servers` shows the `serverInfo` and the first 120 characters of the `instructions`.
+
+5. **Cache Invalidation**: `leanproxy cache --clear --server <name>` removes a server's cached tools.
+
+The cache directory can be overridden with the `LEANPROXY_TOOLCACHE_DIR` environment variable (it otherwise
+lives under `$HOME/.config/leanproxy/toolcache/`).
 
 ### Status File
 

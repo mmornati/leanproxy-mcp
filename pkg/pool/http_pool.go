@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mark3labs/mcp-go/client"
@@ -24,7 +25,14 @@ type HTTPClientServer struct {
 	mu          sync.RWMutex
 	reconnectMu sync.Mutex
 	logger      *slog.Logger
-	oauthOpts   []transport.StreamableHTTPCOption
+	// initResult is the InitializeResult of the current connection, from
+	// mcp-go's own Initialize (the handshake is never sent as a tool call).
+	initResult atomic.Pointer[InitializeResult]
+	// generation counts successful (re)connections.
+	generation atomic.Uint64
+	// events receives this server's lifecycle events (set by the pool).
+	events    *eventHub
+	oauthOpts []transport.StreamableHTTPCOption
 }
 
 func NewHTTPClientServer(name string, config *migrate.ServerConfig, logger *slog.Logger) *HTTPClientServer {
@@ -145,6 +153,11 @@ func (s *HTTPClientServer) ensureConnected(ctx context.Context) (*client.Client,
 		s.setState(StateError)
 		return nil, err
 	}
+	c.OnNotification(func(n mcp.JSONRPCNotification) {
+		if n.Method == MethodToolsListChanged {
+			s.events.emit(ServerEvent{Server: s.name, Kind: EventToolsListChanged, Generation: s.generation.Load()})
+		}
+	})
 
 	s.logger.Debug("http_pool: starting StreamableHTTP client", "server", s.name)
 	startCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -158,7 +171,8 @@ func (s *HTTPClientServer) ensureConnected(ctx context.Context) (*client.Client,
 	s.logger.Debug("http_pool: initializing StreamableHTTP client", "server", s.name)
 	initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if _, err := c.Initialize(initCtx, mcpInitializeRequest()); err != nil {
+	initRes, err := c.Initialize(initCtx, mcpInitializeRequest())
+	if err != nil {
 		s.setState(StateError)
 		c.Close()
 		return nil, fmt.Errorf("http_pool: initialize: %w", err)
@@ -168,6 +182,9 @@ func (s *HTTPClientServer) ensureConnected(ctx context.Context) (*client.Client,
 	s.mcpClient = c
 	s.mu.Unlock()
 	s.setState(StateRunning)
+	gen := s.generation.Add(1)
+	s.initResult.Store(fromMCPInitializeResult(initRes, gen))
+	s.events.emit(ServerEvent{Server: s.name, Kind: EventSessionStarted, Generation: gen})
 	s.logger.Info("http_pool: server initialized", "server", s.name)
 	return c, nil
 }
@@ -175,6 +192,24 @@ func (s *HTTPClientServer) ensureConnected(ctx context.Context) (*client.Client,
 func (s *HTTPClientServer) Initialize(ctx context.Context) error {
 	_, err := s.ensureConnected(ctx)
 	return err
+}
+
+// sessionMethod answers the session-level methods the pool owns instead of
+// forwarding them as a tool call: `initialize` returns the stored result of
+// the connection's handshake (performed by mcp-go's Initialize) and `ping`
+// is a real MCP ping. handled is false for every other method.
+func (s *HTTPClientServer) sessionMethod(ctx context.Context, c *client.Client, method string) (json.RawMessage, bool, error) {
+	switch method {
+	case methodInitialize:
+		return initializeResultJSON(s.initResult.Load()), true, nil
+	case "ping":
+		if err := c.Ping(ctx); err != nil {
+			return nil, true, fmt.Errorf("http_pool: ping: %w", err)
+		}
+		return json.RawMessage(`{}`), true, nil
+	default:
+		return nil, false, nil
+	}
 }
 
 func (s *HTTPClientServer) Close() error {
@@ -245,6 +280,7 @@ type HTTPClientPool struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	rateLimiters *serverRateLimiters
+	events       eventHub
 }
 
 func NewHTTPClientPool(logger *slog.Logger) *HTTPClientPool {
@@ -276,6 +312,7 @@ func (p *HTTPClientPool) StartServer(ctx context.Context, config *migrate.Server
 	}
 
 	server := NewHTTPClientServer(config.Name, config, p.logger)
+	server.events = &p.events
 	p.servers[config.Name] = server
 
 	// Off by default; only enabled when the config sets rate_limit with a
@@ -369,6 +406,17 @@ func (p *HTTPClientPool) SendRequest(ctx context.Context, serverName string, req
 		}, nil
 	}
 
+	c, err := server.ensureConnected(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if result, handled, err := server.sessionMethod(ctx, c, req.Method); handled {
+		if err != nil {
+			return nil, err
+		}
+		return &proxy.JSONRPCResponse{JSONRPC: "2.0", Result: result, ID: req.ID}, nil
+	}
+
 	toolArgs := make(map[string]interface{})
 	if req.Params != nil {
 		_ = json.Unmarshal(req.Params, &toolArgs)
@@ -406,8 +454,16 @@ func (p *HTTPClientPool) SendRequestToServerWithID(ctx context.Context, name str
 		return nil, fmt.Errorf("http_pool: %w", err)
 	}
 
-	if _, err := server.ensureConnected(ctx); err != nil {
+	c, err := server.ensureConnected(ctx)
+	if err != nil {
 		return nil, err
+	}
+
+	if result, handled, err := server.sessionMethod(ctx, c, method); handled {
+		if err != nil {
+			return nil, err
+		}
+		return &Response{Result: result, ID: id}, nil
 	}
 
 	if method == "tools/list" {
@@ -481,11 +537,23 @@ func (p *HTTPClientPool) RestartServer(ctx context.Context, name string) error {
 	return nil
 }
 
-func (p *HTTPClientPool) IsServerMCPInitialized(name string) bool {
-	return true
+// SetServerEventHandler registers the handler that receives every server's
+// lifecycle events (new connection, tools/list_changed).
+func (p *HTTPClientPool) SetServerEventHandler(fn ServerEventHandler) {
+	p.events.set(fn)
 }
 
-func (p *HTTPClientPool) MarkServerMCPInitialized(name string) {
+// ServerInitializeResult returns the InitializeResult of the named server's
+// current connection.
+func (p *HTTPClientPool) ServerInitializeResult(name string) (*InitializeResult, bool) {
+	p.mu.RLock()
+	server, exists := p.servers[name]
+	p.mu.RUnlock()
+	if !exists {
+		return nil, false
+	}
+	res := server.initResult.Load()
+	return res, res != nil
 }
 
 func (p *HTTPClientPool) Close() error {
@@ -655,27 +723,27 @@ func (p *UnifiedPool) RestartServer(ctx context.Context, name string) error {
 	}
 }
 
-func (p *UnifiedPool) IsServerMCPInitialized(name string) bool {
+// ServerInitializeResult returns the stored InitializeResult of the named
+// server's current session, whatever its transport.
+func (p *UnifiedPool) ServerInitializeResult(name string) (*InitializeResult, bool) {
 	switch p.resolveTransport(name) {
 	case transportStdio:
-		return p.stdioPool.IsServerMCPInitialized(name)
+		return p.stdioPool.ServerInitializeResult(name)
 	case transportHTTP:
-		return p.httpPool.IsServerMCPInitialized(name)
+		return p.httpPool.ServerInitializeResult(name)
 	case transportSSE:
-		return p.ssePool.IsServerMCPInitialized(name)
+		return p.ssePool.ServerInitializeResult(name)
 	default:
-		return false
+		return nil, false
 	}
 }
 
-func (p *UnifiedPool) MarkServerMCPInitialized(name string) {
-	switch p.resolveTransport(name) {
-	case transportStdio:
-		p.stdioPool.MarkServerMCPInitialized(name)
-	case transportHTTP:
-		p.httpPool.MarkServerMCPInitialized(name)
-	case transportSSE:
-		p.ssePool.MarkServerMCPInitialized(name)
+// SetServerEventHandler registers fn with every underlying pool.
+func (p *UnifiedPool) SetServerEventHandler(fn ServerEventHandler) {
+	p.stdioPool.SetServerEventHandler(fn)
+	p.httpPool.SetServerEventHandler(fn)
+	if p.ssePool != nil {
+		p.ssePool.SetServerEventHandler(fn)
 	}
 }
 

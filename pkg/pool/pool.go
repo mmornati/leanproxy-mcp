@@ -16,7 +16,10 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 )
 
-// ServerSource is the interface for sending requests to MCP servers.
+// ServerSource is the interface for sending requests to MCP servers. The
+// MCP handshake is the pool's job (see session.go): callers just send
+// requests. Pools may also implement SessionInfoProvider and
+// ServerEventSource.
 type ServerSource interface {
 	SendRequestToServer(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration) (*Response, error)
 	SendRequestToServerWithID(ctx context.Context, name string, method string, params json.RawMessage, timeout time.Duration, id int) (*Response, error)
@@ -25,8 +28,6 @@ type ServerSource interface {
 	GetServerState(name string) (ServerState, error)
 	GetServerTransport(name string) (string, error)
 	RestartServer(ctx context.Context, name string) error
-	IsServerMCPInitialized(name string) bool
-	MarkServerMCPInitialized(name string)
 	Close() error
 }
 
@@ -124,6 +125,8 @@ type StdioPool struct {
 	// started by this pool (0 means defaultStopGracePeriod). Tests shorten
 	// it.
 	stopGrace time.Duration
+	// events dispatches server lifecycle events to the registered handler.
+	events eventHub
 }
 
 // closeDeadlineMargin is added to the longest stop grace period to bound
@@ -207,6 +210,7 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 	}
 
 	server := newServerV2(config.Name, serverConfig, p.logger)
+	server.events = &p.events
 	server.applyReconnect(p.reconnect)
 	if err := server.spawn(ctx); err != nil {
 		return fmt.Errorf("pool: start %s: %w", config.Name, err)
@@ -284,6 +288,27 @@ func (p *StdioPool) GetOrStartServer(ctx context.Context, name string) (*StdioSe
 	return server, nil
 }
 
+// SetServerEventHandler registers the handler that receives every server's
+// lifecycle events (new process generation, tools/list_changed).
+func (p *StdioPool) SetServerEventHandler(fn ServerEventHandler) {
+	p.events.set(fn)
+}
+
+// ServerInitializeResult returns the InitializeResult stored by the most
+// recent successful handshake with the named server.
+func (p *StdioPool) ServerInitializeResult(name string) (*InitializeResult, bool) {
+	p.mu.RLock()
+	server, exists := p.servers[name]
+	p.mu.RUnlock()
+	if !exists {
+		return nil, false
+	}
+	res := server.InitializeResult()
+	return res, res != nil
+}
+
+// IsServerMCPInitialized reports whether the named server's current process
+// generation completed its MCP handshake.
 func (p *StdioPool) IsServerMCPInitialized(name string) bool {
 	server, err := p.GetServer(name)
 	if err != nil {
@@ -292,6 +317,9 @@ func (p *StdioPool) IsServerMCPInitialized(name string) bool {
 	return server.IsMCPInitialized()
 }
 
+// MarkServerMCPInitialized marks the named server's current generation as
+// initialized without a handshake (for callers, e.g. tests, that set the
+// session up out of band).
 func (p *StdioPool) MarkServerMCPInitialized(name string) {
 	server, err := p.GetServer(name)
 	if err != nil {

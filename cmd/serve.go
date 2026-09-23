@@ -356,12 +356,27 @@ func runServe(cmd *cobra.Command, args []string) {
 	}
 
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), toolStore)
+	if loadedCfg != nil {
+		for _, srv := range loadedCfg.Servers {
+			if srv.TimeoutValue > 0 {
+				handler.SetTimeout(srv.Name, srv.TimeoutValue)
+			}
+		}
+	}
 
-	cacheCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	handler.PopulateToolCache(cacheCtx)
-
+	// Start serving immediately (#297): routing starts from the persistent
+	// tool cache, and every server's tools/list is refreshed in the
+	// background, in parallel. Each time a server's tool list changes (first
+	// answer, restart, tools/list_changed) its router entries are replaced,
+	// so a server that was down at startup becomes routable later.
+	handler.LoadPersistentToolCache()
 	populateRouterTools(ctx, handler, toolReg)
+	handler.OnToolsChanged(func(server string, tools []mcp.Tool) {
+		syncRouterTools(ctx, toolReg, server, tools)
+	})
+	refreshCtx, stopRefresh := context.WithCancel(ctx)
+	defer stopRefresh()
+	handler.StartBackgroundRefresh(refreshCtx)
 
 	slog.Info("starting server", "listen", serveFlags.listenAddr, "upstream", serveFlags.upstreamURL)
 
@@ -436,6 +451,7 @@ func runServe(cmd *cobra.Command, args []string) {
 				}
 				slog.Info("shutting down server")
 				signal.Stop(sigChan)
+				stopRefresh()
 				// Stop the health checker before closing the pools so no
 				// health-triggered restart can race the shutdown sweep and
 				// orphan a freshly spawned process.
@@ -968,7 +984,7 @@ func isToolCallMethod(method string) bool {
 	return method == "tools/call" || method == "invoke_tool"
 }
 
-// populateRouterTools registers every tool discovered by PopulateToolCache
+// populateRouterTools registers every tool currently in the handler's cache
 // with the router's tool registry. Without this the router has nothing to
 // resolve `namespace.tool` (or `tools/call` carrying a namespaced name)
 // against and every backend tool call fails with -32601 Method not found.
@@ -992,6 +1008,46 @@ func populateRouterTools(ctx context.Context, handler *mcp.Handler, toolReg rout
 		}
 	}
 	slog.Info("registered backend tools for routing", "count", registered)
+}
+
+// routerSyncMu serializes syncRouterTools so two refreshes of the same
+// server never interleave their unregister/register sweeps.
+var routerSyncMu sync.Mutex
+
+// syncRouterTools replaces the router entries of one server with its
+// current tool list. It runs whenever the background refresh reports that
+// the server's tools changed.
+func syncRouterTools(ctx context.Context, toolReg router.ToolRegistry, serverName string, tools []mcp.Tool) {
+	routerSyncMu.Lock()
+	defer routerSyncMu.Unlock()
+
+	existing, err := toolReg.ListTools(ctx)
+	if err != nil {
+		slog.Warn("failed to list routed tools", "server", serverName, "error", err)
+		return
+	}
+	for _, entry := range existing {
+		if entry.Namespace != serverName {
+			continue
+		}
+		if err := toolReg.UnregisterTool(ctx, entry.Name); err != nil {
+			slog.Debug("failed to unregister routed tool", "tool", entry.Name, "error", err)
+		}
+	}
+	registered := 0
+	for _, tool := range tools {
+		entry := router.ToolEntry{
+			Name:      serverName + "." + tool.Name,
+			Namespace: serverName,
+			ServerID:  serverName,
+		}
+		if err := toolReg.RegisterTool(ctx, entry); err != nil {
+			slog.Warn("failed to register tool for routing", "server", serverName, "tool", tool.Name, "error", err)
+			continue
+		}
+		registered++
+	}
+	slog.Info("updated routed tools", "server", serverName, "count", registered)
 }
 
 // routeRequest resolves the backend server that owns a tool call. Standard

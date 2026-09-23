@@ -54,16 +54,20 @@ func TestStartDuplicateServer(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	manager := NewLifecycleManager(logger).(*lifecycleManager)
 
+	// Use a long-running command: with a short-lived one ("echo") the first
+	// process can exit and be reaped before the second Start, which makes the
+	// duplicate check race-dependent (flaked on CI).
 	config := ServerConfig{
 		ID:      "dup-test",
 		Name:    "Dup Test",
-		Command: []string{"echo", "hello"},
+		Command: []string{"sleep", "30"},
 	}
 
 	_, err := manager.Start(context.Background(), config)
 	if err != nil {
 		t.Fatalf("First Start() failed: %v", err)
 	}
+	t.Cleanup(func() { _ = manager.Kill(context.Background(), config.ID) })
 
 	_, err = manager.Start(context.Background(), config)
 	if err == nil {

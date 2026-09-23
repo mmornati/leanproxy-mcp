@@ -70,6 +70,15 @@ type stdioConn struct {
 	// failErr is non-nil once the connection is dead; register refuses new
 	// requests with it.
 	failErr error
+
+	// handshake is this generation's MCP session state (initialize +
+	// notifications/initialized, performed once by the pool).
+	handshake handshakeState
+
+	// onNotification, when set, receives every server notification (a
+	// message with a method and no id). It must not block: the stdout
+	// reader calls it inline.
+	onNotification func(method string, params json.RawMessage)
 }
 
 func newStdioConn(name string, stdin io.WriteCloser, logger *slog.Logger) *stdioConn {
@@ -267,11 +276,25 @@ func (c *stdioConn) notifyCancelled(ctx context.Context, wireID int64, reason st
 	}
 }
 
+// writeNotification writes a parameterless JSON-RPC notification.
+func (c *stdioConn) writeNotification(ctx context.Context, method string) error {
+	msg, err := json.Marshal(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"method":  method,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = c.writeLine(ctx, msg)
+	return err
+}
+
 // wireMessage is the union of every JSON-RPC message shape a server can
 // write on stdout. Each line is decoded into it exactly once.
 type wireMessage struct {
 	ID     json.RawMessage    `json:"id"`
 	Method string             `json:"method"`
+	Params json.RawMessage    `json:"params"`
 	Result json.RawMessage    `json:"result"`
 	Error  *errs.JSONRPCError `json:"error"`
 }
@@ -289,7 +312,10 @@ func (c *stdioConn) handleLine(line []byte) {
 	if msg.Method != "" {
 		if !hasID {
 			// Server notification (progress, logging, list_changed, ...).
-			c.logger.Debug("received notification, ignoring", "name", c.name, "method", msg.Method)
+			c.logger.Debug("received server notification", "name", c.name, "method", msg.Method)
+			if c.onNotification != nil {
+				c.onNotification(msg.Method, msg.Params)
+			}
 			return
 		}
 		// A request from the server to the client (roots/list,

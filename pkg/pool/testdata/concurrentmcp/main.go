@@ -18,6 +18,14 @@
 //	            answer
 //	stop_reading  answer, then never read stdin again
 //	close_stdout  answer, then close stdout and keep running
+//	list_changed  send notifications/tools/list_changed, then answer
+//	add_tool      {"tag":T} add a tool named T to tools/list, then answer
+//
+// Session checks (#297): "received" counts requests other than initialize;
+// "stats" also reports how many initialize requests and
+// notifications/initialized were seen and how many other requests arrived
+// before the session was initialized (each of those is answered with an
+// error, like a strict MCP server).
 //
 // Flags (#295):
 //
@@ -25,6 +33,8 @@
 //	--stderr-bytes N       write one N-byte stderr line at startup
 //	--spawn-child FILE     start a "sleep 1000" grandchild, write its PID to FILE
 //	--ignore-sigterm       ignore SIGTERM (stop must escalate to SIGKILL)
+//	--instructions S       instructions returned by initialize
+//	--init-delay-ms N      answer initialize after N ms
 //
 // Every other method (initialize, tools/list, ping, ...) gets a minimal
 // successful result.
@@ -47,7 +57,11 @@ import (
 	"time"
 )
 
-var responseBytes = flag.Int("response-bytes", 1<<20, "default size of the big tool's text")
+var (
+	responseBytes = flag.Int("response-bytes", 1<<20, "default size of the big tool's text")
+	instructions  = flag.String("instructions", "", "instructions returned by initialize")
+	initDelayMS   = flag.Int("init-delay-ms", 0, "answer initialize after this many ms")
+)
 
 type message struct {
 	ID     json.RawMessage `json:"id,omitempty"`
@@ -74,6 +88,12 @@ type server struct {
 	mu        sync.Mutex
 	cancelled []cancelRecord
 	waiting   map[string]chan json.RawMessage
+	extra     []string
+
+	initializes    atomic.Int64
+	initializedN   atomic.Int64
+	earlyRequests  atomic.Int64
+	sessionStarted atomic.Bool
 }
 
 func main() {
@@ -153,8 +173,17 @@ func (s *server) dispatch(msg message, raw []byte) {
 		s.mu.Lock()
 		s.cancelled = append(s.cancelled, rec)
 		s.mu.Unlock()
+	case msg.Method == "notifications/initialized":
+		s.initializedN.Add(1)
+		s.sessionStarted.Store(true)
 	case !hasID:
 		// Any other notification: ignore.
+	case msg.Method == "initialize":
+		s.initializes.Add(1)
+		go s.handle(msg)
+	case !s.sessionStarted.Load():
+		s.earlyRequests.Add(1)
+		s.write(map[string]interface{}{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]interface{}{"code": -32002, "message": "session not initialized"}})
 	default:
 		s.received.Add(1)
 		go s.handle(msg)
@@ -179,17 +208,28 @@ func (s *server) reply(id json.RawMessage, result interface{}) {
 func (s *server) handle(msg message) {
 	switch msg.Method {
 	case "initialize":
-		s.reply(msg.ID, map[string]interface{}{
+		time.Sleep(time.Duration(*initDelayMS) * time.Millisecond)
+		result := map[string]interface{}{
 			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
+			"capabilities":    map[string]interface{}{"tools": map[string]interface{}{"listChanged": true}},
 			"serverInfo":      map[string]interface{}{"name": "concurrentmcp", "version": "1.0.0"},
-		})
+		}
+		if *instructions != "" {
+			result["instructions"] = *instructions
+		}
+		s.reply(msg.ID, result)
 	case "tools/list":
-		s.reply(msg.ID, map[string]interface{}{"tools": []interface{}{
+		tools := []interface{}{
 			map[string]interface{}{"name": "sleep", "description": "sleep ms milliseconds", "inputSchema": map[string]interface{}{"type": "object"}},
 			map[string]interface{}{"name": "echo", "description": "echo tag", "inputSchema": map[string]interface{}{"type": "object"}},
 			map[string]interface{}{"name": "big", "description": "answer with a text of bytes bytes", "inputSchema": map[string]interface{}{"type": "object"}},
-		}})
+		}
+		s.mu.Lock()
+		for _, name := range s.extra {
+			tools = append(tools, map[string]interface{}{"name": name, "description": name, "inputSchema": map[string]interface{}{"type": "object"}})
+		}
+		s.mu.Unlock()
+		s.reply(msg.ID, map[string]interface{}{"tools": tools})
 	case "tools/call":
 		s.toolCall(msg)
 	default:
@@ -285,7 +325,19 @@ func (s *server) toolCall(msg message) {
 			"received":      s.received.Load(),
 			"maxActive":     s.maxActive.Load(),
 			"cancellations": cancelled,
+			"initializes":   s.initializes.Load(),
+			"initialized":   s.initializedN.Load(),
+			"earlyRequests": s.earlyRequests.Load(),
+			"pid":           os.Getpid(),
 		})
+	case "list_changed":
+		s.write(map[string]interface{}{"jsonrpc": "2.0", "method": "notifications/tools/list_changed"})
+		s.reply(msg.ID, toolResult("notified"))
+	case "add_tool":
+		s.mu.Lock()
+		s.extra = append(s.extra, p.Arguments.Tag)
+		s.mu.Unlock()
+		s.reply(msg.ID, toolResult("added"))
 	default:
 		s.write(map[string]interface{}{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]interface{}{"code": -32602, "message": "unknown tool " + p.Name}})
 	}

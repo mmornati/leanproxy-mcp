@@ -44,8 +44,33 @@ type cachedToolsFile struct {
 	CachedAt time.Time    `json:"cached_at"`
 }
 
+// CacheDirEnv overrides the persistent tool cache directory. Tests (and
+// operators who want the cache elsewhere) set it; when unset the cache lives
+// in $HOME/.config/leanproxy/toolcache.
+const CacheDirEnv = "LEANPROXY_TOOLCACHE_DIR"
+
+// NewFileCache creates the persistent tool cache in DefaultCacheDir.
 func NewFileCache(logger *slog.Logger) (*FileCache, error) {
 	return newFileCacheWithDir(logger, "")
+}
+
+// DefaultCacheDir returns the persistent tool cache directory: the
+// LEANPROXY_TOOLCACHE_DIR environment variable when set, otherwise
+// $HOME/.config/leanproxy/toolcache. $HOME is honored (os.UserHomeDir) so a
+// test that points HOME at a scratch directory never touches the real one.
+func DefaultCacheDir() (string, error) {
+	if dir := os.Getenv(CacheDirEnv); dir != "" {
+		return dir, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		usr, uerr := user.Current()
+		if uerr != nil {
+			return "", fmt.Errorf("toolstore: get user home dir: %w", uerr)
+		}
+		home = usr.HomeDir
+	}
+	return filepath.Join(home, ".config", "leanproxy", "toolcache"), nil
 }
 
 func newFileCacheWithDir(logger *slog.Logger, cacheDir string) (*FileCache, error) {
@@ -54,11 +79,11 @@ func newFileCacheWithDir(logger *slog.Logger, cacheDir string) (*FileCache, erro
 	}
 
 	if cacheDir == "" {
-		usr, err := user.Current()
+		dir, err := DefaultCacheDir()
 		if err != nil {
-			return nil, fmt.Errorf("toolstore: get user home dir: %w", err)
+			return nil, err
 		}
-		cacheDir = filepath.Join(usr.HomeDir, ".config", "leanproxy", "toolcache")
+		cacheDir = dir
 	}
 
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
