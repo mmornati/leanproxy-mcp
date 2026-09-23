@@ -1,87 +1,319 @@
-# Default prompt-injection detection patterns for LeanProxy-MCP
-# These patterns use regex + weighted heuristics to compute a risk score (0-100).
-# Weights are calibrated so a single high-risk match pushes the score above 70.
+# Default prompt-injection detection patterns for LeanProxy-MCP.
+# Documentation mirror of injection.DefaultPatternDefs (pkg/bouncer/injection/patterns.go);
+# TestPatternsDefaultYAML_InSync keeps the two identical.
+# Patterns are matched against normalized text (lower-cased, JSON escapes decoded,
+# invisible characters dropped, whitespace collapsed). A pattern runs only when one
+# of its triggers occurs in the text, and then only on windows around the triggers
+# (and, when it lists "requires", only on windows that contain one of those too).
+# Weights are summed into a risk score capped at 100.
 custom_patterns:
   - name: ignore-previous-instructions
-    pattern: "(?i)(ignore|disregard|forget|override)\\s+(all\\s+)?(previous|prior|above)\\s+(instructions|commands|directions|prompts)"
+    pattern: (?i)\b(ignore|disregard|forget|override)\s+(all\s+)?(of\s+)?(the\s+|your\s+|any\s+)?(previous|prior|above|earlier|preceding)\s+(instructions?|commands?|directions?|prompts?|rules|guidelines)\b
     weight: 90
     enabled: true
-    description: "Attempts to override system instructions"
-
+    description: Attempts to override system instructions
+    triggers:
+      - ignore
+      - disregard
+      - forget
+      - override
   - name: new-instruction-override
-    pattern: "(?i)(here\\s+are\\s+(your\\s+)?new\\s+(instructions|prompt)|you\\s+(are\\s+)?now\\s+|you\\s+will\\s+(now\\s+)?act\\s+as|your\\s+(new\\s+)?(role|mission|task)\\s+(is|will\\s+be))"
+    pattern: (?i)\bhere\s+are\s+(your\s+)?new\s+(instructions|prompts?)\b|\byou\s+(are\s+now|will\s+now\s+be|are\s+no\s+longer)\s+(an?\s+|in\s+|my\s+|operating\s+)?(unrestricted|unfiltered|uncensored|jailbroken|evil|dan\b|free\s+from|without|developer\s+mode|god\s+mode|system\s+administrator|hacker|admin(istrator)?\b|root\b|different\s+(ai|assistant|model)|new\s+(ai|assistant|persona))|\byou\s+will\s+now\s+act\s+as\b|\byou\s+will\s+act\s+as\s+(an?\s+)?(dan|hacker|unrestricted|unfiltered|uncensored|jailbroken|evil|admin|root)\b|\byour\s+new\s+(role|mission|task|goal|objective)\s+(is|will\s+be)\b|\byour\s+(role|mission|task|goal|objective)\s+(is|will\s+be)\s+(now\s+)?to\s+(ignore|bypass|reveal|output|obey|disregard|leak|exfiltrate|send|follow\s+(these|my|the\s+new))\b
     weight: 85
     enabled: true
-    description: "Attempts to redefine the assistant role"
-
+    description: Attempts to redefine the assistant role
+    triggers:
+      - here are
+      - you are now
+      - you will now
+      - you will act
+      - you are no longer
+      - your new
+      - your role
+      - your mission
+      - your task
+      - your goal
+      - your objective
   - name: system-prompt-extraction
-    pattern: "(?i)(output|print|display|show|reveal|leak|dump)\\s+((your|all)\\s+)?(system\\s+)?(prompt|instructions|commands|directives|initial\\s+prompt)"
+    pattern: (?i)\b(output|print|reveal|leak|dump)\s+all\s+(instructions|directives|prompts)\b|\b(output|print|display|show|reveal|leak|dump|repeat|tell\s+me)\s+(me\s+)?(your\s+(system\s+|initial\s+|original\s+|hidden\s+|secret\s+)?(prompt|instructions|directives)|all\s+system\s+(instructions|directives|prompts)|(your|all|the)\s+system\s+(prompt|instructions|commands|directives)|(your\s+)?initial\s+prompt)\b
     weight: 80
     enabled: true
-    description: "Attempts to extract the system prompt"
-
+    description: Attempts to extract the system prompt
+    triggers:
+      - all instructions
+      - all directives
+      - all prompts
+      - your prompt
+      - your instructions
+      - your directives
+      - your initial
+      - your original
+      - your hidden
+      - your secret
+      - system prompt
+      - system instruction
+      - system command
+      - system directive
+      - initial prompt
   - name: dan-jailbreak
-    pattern: "(?i)(dan\\s*(\\d+(\\.\\d+)?)?|do\\s+anything\\s+now|jail\\s*(break|free)|unfiltered\\s+mode|no\\s+(rules|restrictions|limits|boundaries|filter))"
+    pattern: (?i)\bdan\s*(\d+(\.\d+)?|mode)\b|\b(a|an|as)\s+dan\b|\bdo\s+anything\s+now\b|\bjail\s*(break|broken)\s+(mode|prompt|the\s+(ai|model|system|assistant)|yourself|enabled|activated)\b|\bjail\s*free\s+mode\b|\bunfiltered\s+mode\b|\bno\s+(rules|restrictions|limits|filters?)\s+mode\b|\bno\s+(rules|restrictions|limits|boundaries|filters?)\s+(apply|on\s+this\s+(response|conversation|chat)|for\s+this\s+(interaction|conversation|chat|response)|needs?\s+to\s+apply)
     weight: 75
     enabled: true
-    description: "Jailbreak and DAN-style attacks"
-
+    description: Jailbreak and DAN-style attacks
+    triggers:
+      - 'dan '
+      - dan1
+      - dan2
+      - dan3
+      - dan4
+      - dan5
+      - dan6
+      - dan7
+      - dan8
+      - dan9
+      - a dan
+      - an dan
+      - as dan
+      - anything now
+      - jailbreak
+      - jail break
+      - jailbroken
+      - jail broken
+      - jail free
+      - jailfree
+      - unfiltered mode
+      - no rules
+      - no restrictions
+      - no limits
+      - no boundaries
+      - no filter
   - name: role-impersonation
-    pattern: "(?i)act\\s+as\\s+(if\\s+you\\s+are|though\\s+you\\s+are|an?\\s+(ai\\s+)?(without|with(out)?\\s+(no\\s+)?)?(restrictions|limits|filter|rules|boundaries|ethics|safety|guidelines))"
+    pattern: (?i)\bact\s+as\s+((if|though)\s+you\s+(are|have|had|were)\b|an?\s+(ai\s+)?(without|with(out)?\s+(no\s+)?)?(restrictions|limits|filter|rules|boundaries|ethics|safety|guidelines))
     weight: 70
     enabled: true
-    description: "Role impersonation and boundary removal attempts"
-
+    description: Role impersonation and boundary removal attempts
+    triggers:
+      - act as
   - name: repeat-everything
-    pattern: "(?i)(repeat|echo|mirror|copy)\\s+(everything|this\\s+entire|the\\s+(full|complete|entire)\\s+(prompt|text|message|conversation|chat))"
+    pattern: (?i)\b(repeat|echo|mirror)\s+(back\s+)?everything\s+(you\s+(know|were\s+told|have\s+been\s+told|see)|i\s+say|from\s+(the\s+start|above|before)|above)\b|\b(repeat|echo|mirror|copy)\s+(back\s+)?(this\s+entire|the\s+(full|complete|entire))\s+((prompt|conversation|chat|context)\b|(text|message)\s+(above|back|so\s+far|verbatim|from)\b)
     weight: 70
     enabled: true
-    description: "Attempts to make the model repeat the entire conversation"
-
+    description: Attempts to make the model repeat the entire conversation
+    triggers:
+      - everything
+      - this entire
+      - the full
+      - the complete
+      - the entire
   - name: token-smuggling
-    pattern: "(?i)(base64|hex|binary|rot13|rot47|cipher|encod(?:e|ed))\\s*(?:convert|transform|decode|interpret|treat|process)\\s*(?:the\\s+)?(following|above|below|text|content|payload)"
+    pattern: (?i)\b(base64|hex|binary|rot13|rot47|cipher|encod(?:e|ed))\s*(?:convert|transform|decode|interpret|treat|process)\s*(?:the\s+)?(following|above|below|text|content|payload)
     weight: 65
     enabled: true
-    description: "Token smuggling via encoded payloads"
-
+    description: Token smuggling via encoded payloads
+    triggers:
+      - base64
+      - hex
+      - binary
+      - rot13
+      - rot47
+      - cipher
+      - encode
   - name: forget-everything
-    pattern: "(?i)(forget|erase|clear|reset|remove)\\s+(everything(\\s+you\\s+(know|have))?|(all\\s+)?(your\\s+)?(memory|training|knowledge|context|instructions)|this\\s+(conversation|session|chat))"
+    pattern: (?im)\b(forget|erase)\s+everything(\s+(you\s+(know|have\s+learned|were\s+told)|i\s+(said|told\s+you)))?\s*([.,;:!]|$|\s(and|above|before|so\s+far|now|then)\b)|\b(forget|erase|clear|reset|remove|wipe)\s+(all\s+)?(of\s+)?your\s+(memory|training|knowledge|context|instructions)|\breset\s+this\s+(conversation|chat)\b
     weight: 75
     enabled: true
-    description: "Attempts to reset model context"
-
+    description: Attempts to reset model context
+    triggers:
+      - everything
+      - your memory
+      - your training
+      - your knowledge
+      - your context
+      - your instructions
+      - this conversation
+      - this chat
   - name: inject-command
-    pattern: "(?i)(new\\s+(prompt|command|instruction)|prompt\\s+(injection|override|hack)|injected|malicious\\s+(prompt|input))"
+    pattern: (?i)\bnew\s+(system\s+)?(prompt|command|instructions?)\s*:|\bnew\s+(prompt|instructions?)\s+(for\s+(you|the\s+(ai|assistant|model|agent))|below|follow)|\bas\s+new\s+(instructions|commands)\b|\bprompt\s+(override|hack)\b|\bprompt\s+injection\s+(attempt|successful|payload)|\binjected\s+(command|prompt|instruction)s?\b|\bmalicious\s+(prompt|input)\b
     weight: 80
     enabled: true
-    description: "Explicit prompt injection markers"
-
+    description: Explicit prompt injection markers
+    triggers:
+      - new prompt
+      - new command
+      - new instruction
+      - new system
+      - as new
+      - prompt override
+      - prompt hack
+      - prompt injection
+      - injected
+      - malicious
   - name: important-override
-    pattern: "(?i)^(important|critical|urgent|imperative|mandatory)\\s*(:|\\n)"
+    pattern: (?im)^(important|critical|urgent|imperative|mandatory)\s*(:|\n)
     weight: 30
     enabled: true
-    description: "Urgency-based override attempts"
-
+    description: Urgency-based override attempts
+    triggers:
+      - important
+      - critical
+      - urgent
+      - imperative
+      - mandatory
   - name: roleplay-context-switch
-    pattern: "(?i)(let\\s+us\\s+roleplay|we\\s+are\\s+(now\\s+)?playing|imagine\\s+(you\\s+are|we\\s+are)|pretend\\s+(you\\s+are|that)|from\\s+now\\s+on\\s+(you\\s+are|i\\s+want))"
+    pattern: (?i)\b(let\s+us\s+roleplay|we\s+are\s+(now\s+)?playing|imagine\s+(you\s+are|we\s+are)|pretend\s+(you\s+are|that)|from\s+now\s+on\s+(you\s+are|i\s+want))
     weight: 40
     enabled: true
-    description: "Context-switching roleplay attempts"
-
+    description: Context-switching roleplay attempts
+    triggers:
+      - roleplay
+      - playing
+      - imagine
+      - pretend
+      - from now on
   - name: hypothetical-override
-    pattern: "(?i)(in\\s+this\\s+(hypothetical|thought\\s+experiment|fictional\\s+scenario|simulation)|for\\s+(the\\s+)?purpose\\s+of\\s+this\\s+(exercise|scenario|simulation))"
+    pattern: (?i)\b(in\s+this\s+(hypothetical|thought\s+experiment|fictional\s+scenario|simulation)|for\s+(the\s+)?purpose\s+of\s+this\s+(exercise|scenario|simulation))
     weight: 25
     enabled: true
-    description: "Hypothetical scenario overrides"
-
+    description: Hypothetical scenario overrides
+    triggers:
+      - hypothetical
+      - thought experiment
+      - fictional scenario
+      - simulation
+      - purpose of this
   - name: ignore-above
-    pattern: "(?i)(ignore|disregard|skip|forget)\\s+(everything\\s+)?(above|below|the\\s+(previous|above|following))"
+    pattern: (?i)\b(ignore|disregard|skip|forget)\s+(everything\s+)?(above|below|the\s+(previous|above|following))\b
     weight: 50
     enabled: true
-    description: "Selective instruction ignoring"
-
+    description: Selective instruction ignoring
+    triggers:
+      - ignore
+      - disregard
+      - skip
+      - forget
   - name: separator-injection
-    pattern: "(?m)^[-=*]{3,}\\n*(?i)(ignore|new\\s+instructions|override|system|user\\s+said)"
+    pattern: (?m)^[-=*]{3,}\n*(?i)(ignore|new\s+instructions|override|system|user\s+said)
     weight: 85
     enabled: true
-    description: "Delimiter-based instruction injection"
+    description: Delimiter-based instruction injection
+    triggers:
+      - '---'
+      - ===
+      - '***'
+  - name: tool-call-hijack
+    pattern: (?i)\b(call|invoke|execute|run|use)\s+the\s+[\w.:/-]+\s+(tool|function)\s+(to|with|and|on)\b|\b(call|invoke)\s+the\s+tool\b
+    weight: 45
+    enabled: true
+    description: Tells the model to call a tool (tool-use hijacking)
+    triggers:
+      - tool to
+      - tool with
+      - tool and
+      - tool on
+      - function to
+      - function with
+      - function and
+      - function on
+      - the tool
+  - name: ai-directive
+    pattern: (?i)\b(ai|assistant|model|agent|llm|chatbot)s?\b[^.\n]{0,40}?\byou\s+(must|should|need\s+to|have\s+to|are\s+required\s+to)\s+(now\s+|immediately\s+|also\s+|first\s+)?(call|invoke|execute|run|use|send|read|open|fetch|delete|write|forward|email|post|upload)\b|\b(when|if|once|after)\s+(you|(the|an?|any)\s+(ai|assistant|model|agent|llm))\s+(read|reads|see|sees|process|processes|summari[sz]es?)\s+(this|these)\b
+    weight: 50
+    enabled: true
+    description: Instructions addressed to the AI reading the text
+    triggers:
+      - you must
+      - you should
+      - you need to
+      - you have to
+      - you are required
+      - read this
+      - reads this
+      - see this
+      - sees this
+      - process this
+      - processes this
+      - summari
+      - read these
+      - see these
+      - process these
+  - name: exfiltrate-secrets
+    pattern: (?i)\b(send|post|upload|forward|transmit|email|exfiltrate|leak)\s+(\S+\s+){0,6}?(~/\.ssh\S*|\S*id_rsa\S*|\S*id_ed25519\S*|\S*\.env\b|\S*\.aws/credentials|\S*\.netrc|private\s+keys?|api[\s_-]?keys?|access\s+tokens?|passwords?|credentials|secrets?|session\s+cookies?|ssh\s+keys?|environment\s+variables)\S*\s+(\S+\s+){0,4}?(to|at|into)\s+(https?://|ftp://|\S+@\S+\.\w|the\s+attacker|this\s+(url|address|endpoint|server|webhook))
+    weight: 70
+    enabled: true
+    description: Asks for secrets or files to be sent to an external destination
+    triggers:
+      - .ssh
+      - id_rsa
+      - id_ed25519
+      - .env
+      - .aws
+      - .netrc
+      - private key
+      - api key
+      - api_key
+      - api-key
+      - apikey
+      - access token
+      - password
+      - secret
+      - credentials
+      - session cookie
+      - ssh key
+      - environment variables
+    requires:
+      - ://
+      - '@'
+      - the attacker
+      - this url
+      - this address
+      - this endpoint
+      - this server
+      - this webhook
+  - name: send-to-url
+    pattern: (?i)\b(send|upload|forward|transmit|exfiltrate)\s+(\S+\s+){0,8}?to\s+(https?|ftp)://
+    weight: 30
+    enabled: true
+    description: Asks for data to be sent to a URL
+    triggers:
+      - send
+      - upload
+      - forward
+      - transmit
+      - exfiltrate
+    requires:
+      - ://
+  - name: exfiltrate-verb
+    pattern: (?i)\bexfiltrat(e|es|ing)\b
+    weight: 40
+    enabled: true
+    description: Explicit data exfiltration wording
+    triggers:
+      - exfiltrat
+  - name: markdown-image-beacon
+    pattern: (?i)(!\[[^\]\n]{0,40}\]|\[\])\(\s*https?://[^)\s]+[?&](data|payload|secrets?|leak|exfil|history|conversation|chat|prompt|context|memory)=|\]\(\s*https?://[^)\s]*[?&][\w-]+=(\{\s*[\w.$-]+\s*\}|\$\{[\w.-]+\}|<[\w .-]+>|%7b[\w.-]+%7d|\[[\w .-]+\])
+    weight: 70
+    enabled: true
+    description: Markdown image or link that would leak data through its URL
+    triggers:
+      - ']('
+  - name: hidden-instruction-tag
+    pattern: (?i)<(important|system|instructions?|admin|secret)>
+    weight: 50
+    enabled: true
+    description: Pseudo-tags used to smuggle instructions to the model
+    triggers:
+      - <important>
+      - <system>
+      - <instruction
+      - <admin>
+      - <secret>
+  - name: chat-template-token
+    pattern: (?i)<\|im_start\|>|<\|(system|assistant|user)\|>|\[/?inst\]|<<sys>>
+    weight: 70
+    enabled: true
+    description: Chat-template control tokens that fake a new conversation turn
+    triggers:
+      - <|
+      - '[inst]'
+      - '[/inst]'
+      - <<sys>>
