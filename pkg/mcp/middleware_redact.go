@@ -75,40 +75,55 @@ func (r *Redaction) PatternCount() int {
 // of being passed through. An error means the params could not be safely
 // redacted and the request must not be forwarded.
 func (r *Redaction) RedactRequest(req *Request) error {
+	return r.RedactRequestContext(context.Background(), req)
+}
+
+// RedactRequestContext is RedactRequest with a context so redaction counts
+// can be recorded against the request's telemetry span (issue #317).
+func (r *Redaction) RedactRequestContext(ctx context.Context, req *Request) error {
 	red := r.Redactor()
 	if red == nil || req == nil || len(req.Params) == 0 {
 		return nil
 	}
-	redacted, _, err := red.RedactJSON(req.Params)
+	redacted, count, err := red.RedactJSON(req.Params)
 	if err != nil {
 		return err
 	}
 	req.Params = redacted
+	RecordRedaction(ctx, int64(count))
 	return nil
 }
 
 // RedactResponse redacts resp.Result, resp.Error.Message and resp.Error.Data
 // in place.
 func (r *Redaction) RedactResponse(resp *Response) error {
+	return r.RedactResponseContext(context.Background(), resp)
+}
+
+// RedactResponseContext is RedactResponse with a context so redaction
+// counts can be recorded against the request's telemetry span (issue #317).
+func (r *Redaction) RedactResponseContext(ctx context.Context, resp *Response) error {
 	red := r.Redactor()
 	if red == nil || resp == nil {
 		return nil
 	}
 	if len(resp.Result) > 0 {
-		redacted, _, err := red.RedactJSON(resp.Result)
+		redacted, count, err := red.RedactJSON(resp.Result)
 		if err != nil {
 			return err
 		}
 		resp.Result = redacted
+		RecordRedaction(ctx, int64(count))
 	}
 	if resp.Error != nil {
 		resp.Error.Message = red.RedactText(resp.Error.Message)
 		if len(resp.Error.Data) > 0 {
-			redacted, _, err := red.RedactJSON(resp.Error.Data)
+			redacted, count, err := red.RedactJSON(resp.Error.Data)
 			if err != nil {
 				return err
 			}
 			resp.Error.Data = redacted
+			RecordRedaction(ctx, int64(count))
 		}
 	}
 	return nil
@@ -130,7 +145,7 @@ func (r *Redaction) RedactText(s string) string {
 func (r *Redaction) RequestMiddleware() Middleware {
 	return func(next Next) Next {
 		return func(ctx context.Context, req *Request) (*Response, error) {
-			if err := r.RedactRequest(req); err != nil {
+			if err := r.RedactRequestContext(ctx, req); err != nil {
 				slog.Warn("redaction: request params could not be redacted, not forwarding",
 					"method", req.Method, "error", err)
 				return errorResponse(req, ErrCodeInternalError, RedactionFailedMessage), nil
@@ -152,7 +167,7 @@ func (r *Redaction) ResponseMiddleware() Middleware {
 			if resp == nil {
 				return resp, err
 			}
-			if rerr := r.RedactResponse(resp); rerr != nil {
+			if rerr := r.RedactResponseContext(ctx, resp); rerr != nil {
 				slog.Warn("redaction: response could not be redacted, withholding it",
 					"method", req.Method, "error", rerr)
 				return &Response{

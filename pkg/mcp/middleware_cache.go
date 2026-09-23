@@ -108,11 +108,13 @@ func (rc *ResponseCache) Middleware() Middleware {
 				var resp Response
 				if err := json.Unmarshal(cached, &resp); err == nil {
 					resp.ID = req.ID
+					RecordCacheHit(ctx)
 					return &resp, nil
 				}
 				slog.Warn("response_cache: cached entry could not be decoded, treating as a miss",
 					"tool", identity)
 			}
+			RecordCacheMiss(ctx)
 
 			resp, err := next(ctx, req)
 			if err == nil && responseCacheable(resp) {
