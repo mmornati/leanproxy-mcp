@@ -108,6 +108,11 @@ type ServerConfig struct {
 	// slot (bounded by their own timeout) instead of being rejected. 0 or
 	// absent means the default (32). Only used by stdio servers.
 	MaxInFlight int `yaml:"max_in_flight,omitempty"`
+	// MaxResponseBytes caps the size of one JSON-RPC message (one stdout
+	// line) read from a stdio server. A larger response fails only the call
+	// it answers; the server keeps working. 0 or absent means the default
+	// (64 MiB). Only used by stdio servers.
+	MaxResponseBytes int `yaml:"max_response_bytes,omitempty"`
 }
 
 // RateLimitConfig is an optional, per-server request rate limit applied to
@@ -233,6 +238,9 @@ func (c *ServerConfig) Validate() error {
 	}
 	if c.MaxInFlight < 0 {
 		return fmt.Errorf("server %s: max_in_flight must be >= 0, got %d", c.Name, c.MaxInFlight)
+	}
+	if c.MaxResponseBytes < 0 {
+		return fmt.Errorf("server %s: max_response_bytes must be >= 0, got %d", c.Name, c.MaxResponseBytes)
 	}
 	return nil
 }

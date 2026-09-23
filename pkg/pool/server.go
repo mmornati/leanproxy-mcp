@@ -1,7 +1,7 @@
 package pool
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	errstd "errors"
@@ -14,9 +14,9 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	errs "github.com/mmornati/leanproxy-mcp/pkg/errors"
 )
 
@@ -40,10 +40,17 @@ type StdioServerConfig struct {
 	// over the server's stdio pipe. Callers beyond the cap wait (respecting
 	// their context) instead of being rejected. 0 means
 	// DefaultMaxInFlight.
-	MaxInFlight     int
-	IdleTimeout     time.Duration
-	RequestTimeout  time.Duration
+	MaxInFlight    int
+	IdleTimeout    time.Duration
+	RequestTimeout time.Duration
+	// MaxResponseSize caps one JSON-RPC message read from the server's
+	// stdout (max_response_bytes). A longer message fails only the request
+	// it answers. 0 means DefaultMaxResponseBytes.
 	MaxResponseSize int
+	// StopGracePeriod is how long stop waits after SIGTERM before sending
+	// SIGKILL to the server's process group. 0 means
+	// defaultStopGracePeriod.
+	StopGracePeriod time.Duration
 }
 
 type ServerHandle struct {
@@ -114,6 +121,10 @@ type StdioServerV2 struct {
 	requestTimeout  time.Duration
 	maxInFlight     int
 	maxResponseSize int
+	stopGrace       time.Duration
+	// redact scrubs secrets from stderr lines before they are kept or
+	// logged (bouncer.RedactSecrets by default).
+	redact func(string) string
 	// slots is the per-server in-flight semaphore (capacity maxInFlight).
 	slots chan struct{}
 	// inFlight counts requests holding a slot. Guarded by mu.
@@ -168,8 +179,13 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 	}
 
 	maxResponseSize := config.MaxResponseSize
-	if maxResponseSize == 0 {
-		maxResponseSize = 1024 * 1024 // 1MB default
+	if maxResponseSize <= 0 {
+		maxResponseSize = DefaultMaxResponseBytes
+	}
+
+	stopGrace := config.StopGracePeriod
+	if stopGrace <= 0 {
+		stopGrace = defaultStopGracePeriod
 	}
 
 	return &StdioServerV2{
@@ -186,6 +202,8 @@ func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *St
 		maxInFlight:     maxInFlight,
 		slots:           make(chan struct{}, maxInFlight),
 		maxResponseSize: maxResponseSize,
+		stopGrace:       stopGrace,
+		redact:          bouncer.RedactSecrets,
 		healthTicker:    time.NewTicker(30 * time.Second),
 		logger:          logger,
 		stderrLines:     newStderrRing(50),
@@ -277,19 +295,29 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 		cmd.Dir = s.config.CWD
 	}
 
-	cmd.SysProcAttr = &syscall.SysProcAttr{}
+	configureProcAttr(cmd)
 
-	stdin, err := cmd.StdinPipe()
+	// stdin is an os.Pipe we own (rather than cmd.StdinPipe) so the write
+	// end is a real *os.File: on Unix its writes honor deadlines, which is
+	// how a caller is never blocked past its context by a child that
+	// stopped reading stdin (see stdioConn.writeLine).
+	stdinR, stdin, err := os.Pipe()
 	if err != nil {
 		atomic.StoreInt32(&s.state, stateError)
 		s.mu.Unlock()
 		return fmt.Errorf("pool: stdin pipe: %w", err)
+	}
+	cmd.Stdin = stdinR
+	closeStdin := func() {
+		_ = stdinR.Close()
+		_ = stdin.Close()
 	}
 
 	stdoutR, err := cmd.StdoutPipe()
 	if err != nil {
 		atomic.StoreInt32(&s.state, stateError)
 		s.mu.Unlock()
+		closeStdin()
 		return fmt.Errorf("pool: stdout pipe: %w", err)
 	}
 
@@ -297,12 +325,14 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	if err != nil {
 		atomic.StoreInt32(&s.state, stateError)
 		s.mu.Unlock()
+		closeStdin()
 		return fmt.Errorf("pool: stderr pipe: %w", err)
 	}
 
 	if err := cmd.Start(); err != nil {
 		atomic.StoreInt32(&s.state, stateError)
 		s.mu.Unlock()
+		closeStdin()
 		s.logger.Error("failed to start server process",
 			"name", s.name,
 			"command", s.config.Command,
@@ -311,8 +341,13 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 		return fmt.Errorf("pool: start %s: %w", s.name, err)
 	}
 
+	// The child holds its own copy of the read end; ours must be closed so
+	// writes fail (instead of blocking) once the child is gone.
+	_ = stdinR.Close()
+
 	s.process = cmd
-	s.pgid = cmd.Process.Pid
+	pgid := processGroupID(cmd.Process)
+	s.pgid = pgid
 	atomic.StoreInt32(&s.state, stateIdle)
 	s.backoff = s.initialBackoff
 	s.lastSpawnAt = time.Now()
@@ -339,31 +374,37 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 
 	s.mu.Unlock()
 
-	go s.readStderr(stderrR, genStopCh)
+	// stderr is drained for as long as the pipe is open, independent of
+	// the generation's stop channel: a child whose stderr is not drained
+	// blocks on its next write.
+	go drainStderr(stderrR, s.captureStderrLine)
 	s.wg.Add(1)
-	go s.waitForExit(genCtx, cmd, conn, genStopCh, genStopOnce)
+	go s.waitForExit(genCtx, cmd, conn, stdin, genStopCh, genStopOnce)
 	s.wg.Add(1)
-	go s.readResponses(conn, stdoutR, genStopCh)
+	go s.readResponses(conn, stdoutR, cmd, pgid, genStopCh)
 	s.wg.Add(1)
 	go s.runIdleLoop(genCtx, genStopCh)
 
 	// Post-spawn verification: confirm process is alive.
-	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+	if !processAlive(cmd.Process) {
 		// Tear down the generation we just started so a failed spawn never
 		// leaks a process and its goroutines outside the pool's view.
 		// waitForExit observes the kill and drives the normal crash-recovery
 		// path (bounded by the restart budget).
 		genStopOnce.Do(func() { close(genStopCh) })
-		_ = cmd.Process.Kill()
+		killProcessTree(cmd.Process, pgid)
 		atomic.StoreInt32(&s.state, stateError)
-		return fmt.Errorf("pool: server %s process not alive after spawn: %w (recent stderr: %s)", s.name, err, s.stderrLines.String())
+		return fmt.Errorf("pool: server %s process not alive after spawn (recent stderr: %s)", s.name, s.stderrLines.String())
 	}
 
 	return nil
 }
 
-func (s *StdioServerV2) waitForExit(ctx context.Context, cmd *exec.Cmd, conn *stdioConn, stopCh chan struct{}, stopOnce *sync.Once) {
+func (s *StdioServerV2) waitForExit(ctx context.Context, cmd *exec.Cmd, conn *stdioConn, stdin io.Closer, stopCh chan struct{}, stopOnce *sync.Once) {
 	err := cmd.Wait()
+	// We own the stdin write end (see spawnLocked). Closing it also
+	// releases any writer still blocked on the dead child's full pipe.
+	_ = stdin.Close()
 
 	// Fail every request still waiting on this generation right away (the
 	// stdout reader normally does this first on EOF; this is the backstop).
@@ -429,9 +470,12 @@ const (
 	// minRestartBackoff floors the configured backoff so the jitter math can
 	// never panic and a crash loop cannot spin faster than this.
 	minRestartBackoff = 10 * time.Millisecond
-	// stopGracePeriod is how long stopLocked waits for a SIGTERMed process
-	// generation to wind down before escalating to SIGKILL.
-	stopGracePeriod = 5 * time.Second
+	// defaultStopGracePeriod is how long stopLocked waits for a SIGTERMed
+	// process group to wind down before escalating to SIGKILL.
+	defaultStopGracePeriod = 5 * time.Second
+	// readerDeathGrace is how long a dead stdout reader waits for the
+	// process to exit on its own before killing it.
+	readerDeathGrace = time.Second
 )
 
 func (s *StdioServerV2) scheduleRestart(ctx context.Context) {
@@ -576,65 +620,107 @@ func (s *StdioServerV2) exitedError() error {
 
 // readResponses is the single stdout reader of a process generation. It
 // hands every line to conn.handleLine, which decodes it once and delivers it
-// to its waiter. When the reader ends for any reason (EOF, read error,
-// oversized line, generation stopped) every pending waiter is failed
-// immediately via conn.fail.
-func (s *StdioServerV2) readResponses(conn *stdioConn, stdout io.Reader, stopCh chan struct{}) {
+// to its waiter. A line over max_response_bytes is discarded up to its
+// newline and fails only the request it answers. When the reader ends for
+// any reason other than the generation being stopped, every pending waiter
+// is failed immediately via conn.fail and the process is never left alive
+// with nobody reading its stdout (see handleReaderDeath).
+func (s *StdioServerV2) readResponses(conn *stdioConn, stdout io.Reader, cmd *exec.Cmd, pgid int, stopCh chan struct{}) {
 	defer s.wg.Done()
-	// Evaluated at exit so the error carries the stderr lines captured up
-	// to the moment the reader died.
-	defer func() { conn.fail(s.exitedError()) }()
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 1024), s.maxResponseSize)
-
-	for scanner.Scan() {
+	lr := newLineReader(stdout, s.maxResponseSize)
+	for {
+		line, over, err := lr.next()
+		if err != nil {
+			// Evaluated now so the error carries the stderr lines captured
+			// up to the moment the reader died.
+			conn.fail(s.exitedError())
+			s.logger.Debug("stdout reader ended", "name", s.name, "error", err)
+			s.handleReaderDeath(cmd, pgid, stopCh)
+			return
+		}
 		select {
 		case <-stopCh:
+			conn.fail(s.exitedError())
 			return
 		default:
 		}
-		line := scanner.Bytes()
-		if len(line) == 0 {
+		if over != nil {
+			s.handleOversized(conn, over)
 			continue
 		}
-		s.logger.Debug("read from server stdout", "name", s.name, "line", string(line))
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		s.logger.Debug("read from server stdout", "name", s.name, "bytes", len(line))
 		conn.handleLine(line)
 	}
+}
 
-	if err := scanner.Err(); err != nil {
-		if errstd.Is(err, bufio.ErrTooLong) {
-			s.logger.Error("response exceeds max buffer size", "name", s.name, "maxSize", s.maxResponseSize)
-		} else {
-			s.logger.Debug("stdout reader ended", "name", s.name, "error", err)
+// handleOversized fails the request a discarded oversized line answered:
+// the one whose "id" could be recovered from the line, or else the oldest
+// pending request.
+func (s *StdioServerV2) handleOversized(conn *stdioConn, over *oversizedLine) {
+	id, haveID := oversizedResponseID(over)
+	err := fmt.Errorf("response from %s exceeded max_response_bytes (%d)", s.name, s.maxResponseSize)
+	failed, ok := conn.failRequest(id, haveID, err)
+	s.logger.Error("discarded response larger than max_response_bytes",
+		"name", s.name,
+		"size", over.size,
+		"max_response_bytes", s.maxResponseSize,
+		"id_found", haveID,
+		"failed_request", ok,
+		"wire_id", failed)
+}
+
+// handleReaderDeath runs when the stdout reader ends (EOF or read error)
+// while the generation was not being stopped. Normally the process is
+// exiting and waitForExit takes over. If it is still alive after
+// readerDeathGrace — it closed stdout, or the read failed — nobody can read
+// its answers any more: mark the server errored and kill its process group
+// so waitForExit drives the usual crash-restart path (scheduleRestart).
+func (s *StdioServerV2) handleReaderDeath(cmd *exec.Cmd, pgid int, stopCh chan struct{}) {
+	select {
+	case <-stopCh:
+		return
+	case <-time.After(readerDeathGrace):
+	}
+	select {
+	case <-stopCh:
+		return
+	default:
+	}
+	s.logger.Error("server stdout closed while the process is still running; killing it so it can be restarted",
+		"name", s.name, "pid", cmd.Process.Pid)
+	s.markErrored()
+	killProcessTree(cmd.Process, pgid)
+}
+
+// markErrored moves a live server to the error state (a stopping server is
+// left alone).
+func (s *StdioServerV2) markErrored() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, from := range []int32{stateIdle, stateBusy, stateRunning} {
+		if atomic.CompareAndSwapInt32(&s.state, from, stateError) {
+			return
 		}
 	}
 }
 
-func (s *StdioServerV2) readStderr(stderr io.Reader, stopCh chan struct{}) {
-	scanner := bufio.NewScanner(stderr)
-
-	for {
-		select {
-		case <-stopCh:
-			return
-		default:
-			if scanner.Scan() {
-				if scanner.Err() != nil {
-					s.logger.Error("stderr scanner error", "name", s.name, "error", scanner.Err())
-					return
-				}
-
-				line := scanner.Bytes()
-				if len(line) > 0 {
-					s.stderrLines.add(string(line))
-					s.logger.Info("server stderr", "name", s.name, "output", string(line))
-				}
-			} else {
-				return
-			}
-		}
+// captureStderrLine records one (already truncated) stderr line: redacted,
+// appended to the diagnostics ring, and logged at Debug only, because
+// stderr often carries tokens.
+func (s *StdioServerV2) captureStderrLine(line []byte, truncated int) {
+	if len(bytes.TrimSpace(line)) == 0 && truncated == 0 {
+		return
 	}
+	text := formatStderrLine(line, truncated)
+	if s.redact != nil {
+		text = s.redact(text)
+	}
+	s.stderrLines.add(text)
+	s.logger.Debug("server stderr", "name", s.name, "output", text)
 }
 
 func (s *StdioServerV2) stop() error {
@@ -659,7 +745,9 @@ func (s *StdioServerV2) stopLocked() error {
 	stopCh := s.genStopCh
 	stopOnce := s.genStopOnce
 	proc := s.process
+	pgid := s.pgid
 	conn := s.conn
+	grace := s.stopGrace
 	s.mu.Unlock()
 
 	// Fail in-flight requests right away instead of letting them hang until
@@ -672,8 +760,15 @@ func (s *StdioServerV2) stopLocked() error {
 		stopOnce.Do(func() { close(stopCh) })
 	}
 
-	if proc != nil && proc.Process != nil {
-		if err := proc.Process.Signal(syscall.SIGTERM); err != nil {
+	var osProc *os.Process
+	if proc != nil {
+		osProc = proc.Process
+	}
+	deadline := time.Now().Add(grace)
+	if osProc != nil {
+		// SIGTERM the whole process group so wrapper-spawned grandchildren
+		// (npx, uvx, docker run, sh -c ...) go down with the server.
+		if err := terminateProcessTree(osProc, pgid); err != nil {
 			s.logger.Debug("SIGTERM failed", "name", s.name, "error", err)
 		}
 	}
@@ -687,14 +782,26 @@ func (s *StdioServerV2) stopLocked() error {
 		s.wg.Wait()
 		close(wgDone)
 	}()
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
 	select {
 	case <-wgDone:
-	case <-time.After(stopGracePeriod):
-		if proc != nil && proc.Process != nil {
+	case <-timer.C:
+		if osProc != nil {
 			s.logger.Warn("server ignored SIGTERM, escalating to SIGKILL", "name", s.name)
-			_ = proc.Process.Kill()
+			killProcessTree(osProc, pgid)
 		}
 		<-wgDone
+	}
+
+	// The direct child is gone; give the rest of its process group what is
+	// left of the grace period, then SIGKILL any straggler.
+	for processGroupAlive(pgid) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if processGroupAlive(pgid) {
+		s.logger.Warn("server's child processes ignored SIGTERM, escalating to SIGKILL", "name", s.name)
+		killProcessTree(nil, pgid)
 	}
 
 	return nil
@@ -890,8 +997,20 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 	}
 
 	s.logger.Debug("sending request to server", "name", s.name, "method", req.Method, "id", wireID)
-	if err := conn.writeLine(encoded); err != nil {
-		conn.unregister(wireID)
+	if sent, err := conn.writeLine(callCtx, encoded); err != nil {
+		if !conn.unregister(wireID) {
+			// A connection failure was delivered meanwhile.
+			reply := <-replyCh
+			return reply.result, reply.err
+		}
+		if sent {
+			// The request will still reach the server (the interrupted
+			// write is finished in the background): tell it we gave up.
+			go conn.notifyCancelled(context.WithoutCancel(ctx), wireID, "timeout")
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		return nil, fmt.Errorf("pool: write stdin: %w", err)
 	}
 
@@ -911,7 +1030,7 @@ func (s *StdioServerV2) sendRequest(ctx context.Context, req Request) (json.RawM
 		}
 		// Asynchronous so a server that stopped reading stdin can never
 		// block a caller past its deadline.
-		go conn.notifyCancelled(wireID, reason)
+		go conn.notifyCancelled(context.WithoutCancel(ctx), wireID, reason)
 		return nil, s.waitError(ctx, timeout)
 	}
 }
@@ -945,7 +1064,9 @@ func (s *StdioServerV2) sendNotification(ctx context.Context, method string, par
 		return fmt.Errorf("pool: stdin not available")
 	}
 
-	if err := conn.writeLine(encoded); err != nil {
+	writeCtx, cancel := context.WithTimeout(ctx, s.requestTimeout)
+	defer cancel()
+	if _, err := conn.writeLine(writeCtx, encoded); err != nil {
 		return fmt.Errorf("pool: write stdin: %w", err)
 	}
 
