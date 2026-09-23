@@ -895,3 +895,37 @@ servers:
 		t.Errorf("expected negative max_in_flight to be rejected, got %v", err)
 	}
 }
+
+func TestLoadConfigMaxResponseBytes(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: capped
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+    max_response_bytes: 1048576
+  - name: default
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+`
+	configPath := filepath.Join(t.TempDir(), "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+	cfg, err := LoadConfig(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+	if got := cfg.Servers[0].MaxResponseBytes; got != 1048576 {
+		t.Errorf("MaxResponseBytes = %d, want 1048576", got)
+	}
+	if got := cfg.Servers[1].MaxResponseBytes; got != 0 {
+		t.Errorf("MaxResponseBytes = %d, want 0 (pool default)", got)
+	}
+
+	bad := &ServerConfig{Name: "bad", Transport: TransportStdio, Stdio: &StdioConfig{Command: "x"}, MaxResponseBytes: -1}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "max_response_bytes must be >= 0") {
+		t.Errorf("expected negative max_response_bytes to be rejected, got %v", err)
+	}
+}
