@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/redistools"
@@ -110,6 +111,30 @@ func getConfig() redistools.Config {
 
 	if tls := os.Getenv("LEANPROXY_REDIS_TLS"); tls == "true" || tls == "1" {
 		cfg.UseTLS = true
+	}
+
+	if dt := os.Getenv("LEANPROXY_REDIS_DIAL_TIMEOUT"); dt != "" {
+		if d, err := time.ParseDuration(dt); err == nil && d > 0 {
+			cfg.DialTimeout = d
+		}
+	}
+
+	if ct := os.Getenv("LEANPROXY_REDIS_COMMAND_TIMEOUT"); ct != "" {
+		if d, err := time.ParseDuration(ct); err == nil && d > 0 {
+			cfg.CommandTimeout = d
+		}
+	}
+
+	if mb := os.Getenv("LEANPROXY_REDIS_MAX_BULK_LEN"); mb != "" {
+		if n, err := parseInt(mb); err == nil {
+			cfg.MaxBulkLen = int64(n)
+		}
+	}
+
+	if ma := os.Getenv("LEANPROXY_REDIS_MAX_ARRAY_LEN"); ma != "" {
+		if n, err := parseInt(ma); err == nil {
+			cfg.MaxArrayLen = int64(n)
+		}
 	}
 
 	return cfg
