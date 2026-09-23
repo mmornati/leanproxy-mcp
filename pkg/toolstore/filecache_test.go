@@ -181,8 +181,11 @@ func TestSetTools_Error(t *testing.T) {
 	fc, err := newFileCacheWithDir(nil, tmpDir)
 	require.NoError(t, err)
 
-	os.Chmod(tmpDir, 0000)
-	defer os.Chmod(tmpDir, 0755)
+	// Pre-create the cache file's path as a directory so the write fails
+	// regardless of the user's privileges (including root, which ignores
+	// permission bits such as chmod 0000).
+	filePath := fc.filePath("server")
+	require.NoError(t, os.MkdirAll(filePath, 0755))
 
 	err = fc.SetTools("server", []CachedTool{{Name: "tool"}})
 	require.Error(t, err)
@@ -214,8 +217,11 @@ func TestListCachedServers_Error(t *testing.T) {
 	fc, err := newFileCacheWithDir(nil, tmpDir)
 	require.NoError(t, err)
 
-	os.Chmod(tmpDir, 0000)
-	defer os.Chmod(tmpDir, 0755)
+	// Replace the cache directory with a regular file so ReadDir fails
+	// regardless of the user's privileges (including root, which ignores
+	// permission bits such as chmod 0000).
+	require.NoError(t, os.RemoveAll(tmpDir))
+	require.NoError(t, os.WriteFile(tmpDir, []byte("x"), 0644))
 
 	_, err = fc.ListCachedServers()
 	require.Error(t, err)
@@ -249,8 +255,13 @@ func TestFileCache_Concurrency(t *testing.T) {
 }
 
 func TestNewFileCacheWithDir_InvalidCacheDir(t *testing.T) {
-	invalidDir := "/nonexistent/path/that/cannot/be/created"
-	_, err := newFileCacheWithDir(nil, invalidDir)
+	tmpDir := t.TempDir()
+	blockingFile := filepath.Join(tmpDir, "blocker")
+	require.NoError(t, os.WriteFile(blockingFile, []byte("x"), 0644))
+
+	// blockingFile is a regular file, so using it as a directory component
+	// makes MkdirAll fail regardless of the user's privileges (including root).
+	_, err := newFileCacheWithDir(nil, filepath.Join(blockingFile, "sub"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create cache dir")
 }

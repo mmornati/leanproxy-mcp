@@ -174,14 +174,18 @@ func TestExpandPath(t *testing.T) {
 }
 
 func TestFileExists(t *testing.T) {
-	tmpFile := filepath.Join(os.TempDir(), "test_migrate_file_exists.txt")
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "test_migrate_file_exists.txt")
 	os.WriteFile(tmpFile, []byte("test"), 0644)
-	defer os.Remove(tmpFile)
 
 	if !fileExists(tmpFile) {
 		t.Errorf("fileExists(%s) = false, want true", tmpFile)
 	}
-	if fileExists("/nonexistent/path") {
-		t.Error("fileExists(/nonexistent/path) = true, want false")
+	// A path that genuinely does not exist under a fresh temp dir, rather
+	// than a hard-coded absolute path that a prior root-run test could have
+	// created on the real filesystem.
+	nonexistent := filepath.Join(tmpDir, "does", "not", "exist")
+	if fileExists(nonexistent) {
+		t.Errorf("fileExists(%s) = true, want false", nonexistent)
 	}
 }

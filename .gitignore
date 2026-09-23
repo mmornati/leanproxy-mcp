@@ -7,6 +7,12 @@ dist/
 *.so
 *.dylib
 
+# Accidental `go build ./servers/<x>` outputs at repo root (see #302)
+/github
+/postgres
+/redis
+/filesystem
+
 # Test binary, built with `go test -c`
 *.test
 

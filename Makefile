@@ -13,7 +13,7 @@ all: lint test build ## Run lint, test, and build
 .PHONY: lint-install
 lint-install: ## Install golangci-lint
 	@echo "Installing golangci-lint $(GOLANGCI_VERSION)..."
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_VERSION)
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_VERSION)
 
 .PHONY: lint
 lint: lint-install ## Run linter
@@ -170,7 +170,7 @@ changelog: ## Generate changelog from git log
 BINARY_NAME := leanproxy-mcp
 DIST_DIR := dist
 GO := go
-GOLANGCI_VERSION := v1.62.0
+GOLANGCI_VERSION := v2.1.6
 GOPATH := $(shell go env GOPATH)
 
 LATEST_TAG := $(shell git describe --tags --abbrev=0 2>/dev/null || echo "")
