@@ -95,6 +95,11 @@ func handle(req request) (interface{}, map[string]interface{}) {
 				},
 			},
 			{
+				"name":        "json_doc",
+				"description": "Returns a JSON document (with a nested secret, a large integer and HTML characters) serialized in content[0].text, for lossless-redaction tests (#306).",
+				"inputSchema": map[string]interface{}{"type": "object"},
+			},
+			{
 				"name":        "missing_owner",
 				"description": "Always fails with a -32602 Invalid params error, for error-fidelity tests (#296).",
 				"inputSchema": map[string]interface{}{"type": "object"},
@@ -122,6 +127,11 @@ func handle(req request) (interface{}, map[string]interface{}) {
 				"message": "missing owner",
 			}
 		}
+		if p.Name == "json_doc" {
+			return map[string]interface{}{
+				"content": []map[string]string{{"type": "text", "text": JSONDocText()}},
+			}, nil
+		}
 		text := fmt.Sprintf("echo %s | leaked %s %s %s", p.Arguments, awsKey, ghToken, stripeKey)
 		return map[string]interface{}{
 			"content": []map[string]string{{"type": "text", "text": text}},
@@ -129,4 +139,14 @@ func handle(req request) (interface{}, map[string]interface{}) {
 	default:
 		return nil, map[string]interface{}{"code": -32601, "message": "method not found: " + req.Method}
 	}
+}
+
+// JSONDocText is the text the json_doc tool returns: a JSON document whose
+// layout (spacing, key order, number literals, unescaped <>&) must reach the
+// client byte for byte except for the two secrets. Keep it in sync with
+// tests/e2e/stdio_firewall_test.go.
+func JSONDocText() string {
+	return `{"rows": [{"id": 12345678901234567, "html": "<b>Ann & Bob</b>", "price": 1.50,` +
+		` "config": {"db": {"password": "hunter2-nested", "host": "db.internal"}},` +
+		` "note": "deploy key ` + ghToken + ` rotated"}], "total": 1e3}`
 }

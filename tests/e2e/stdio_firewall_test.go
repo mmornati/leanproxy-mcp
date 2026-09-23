@@ -276,6 +276,29 @@ func TestStdioFirewall_EndToEnd(t *testing.T) {
 		}
 		requireNoSecrets(t, "invoke_tool result", resp.raw)
 
+		// #306: a JSON document inside content[0].text is redacted
+		// recursively and losslessly — the nested password and the token
+		// are gone, and every other byte of the text (large integer, number
+		// literals, spacing, key order, unescaped <>&) is unchanged.
+		resp = s.toolCall(40, srv+"_json_doc", map[string]string{})
+		if resp.Error != nil {
+			t.Fatalf("json_doc: %s", resp.raw)
+		}
+		var doc struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		}
+		if err := json.Unmarshal(resp.Result, &doc); err != nil || len(doc.Content) == 0 {
+			t.Fatalf("json_doc result: %v: %s", err, resp.raw)
+		}
+		wantDoc := `{"rows": [{"id": 12345678901234567, "html": "<b>Ann & Bob</b>", "price": 1.50,` +
+			` "config": {"db": {"password": "[SECRET_REDACTED]", "host": "db.internal"}},` +
+			` "note": "deploy key [SECRET_REDACTED] rotated"}], "total": 1e3}`
+		if doc.Content[0].Text != wantDoc {
+			t.Fatalf("json_doc text not redacted losslessly:\n got %s\nwant %s", doc.Content[0].Text, wantDoc)
+		}
+
 		// Upstream JSON-RPC error: message and data are redacted.
 		resp = s.toolCall(5, srv+"_fail", map[string]string{})
 		if resp.Error == nil {
