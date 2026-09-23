@@ -23,7 +23,7 @@ func renderReport(cat *Catalog, tr tokenResults, lr latencyResults, sc []check, 
 	w("| Commit | `%s` |\n", gitCommit())
 	w("| Date (UTC) | %s |\n", time.Now().UTC().Format("2006-01-02 15:04"))
 	w("| Host | %s/%s, %d CPUs, %s |\n", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.Version())
-	w("| Harness wall time | %.1f s |\n", elapsed.Seconds())
+	w("| Harness wall time (incl. build) | %.1f s |\n", elapsed.Seconds())
 	w("| Token unit | `pkg/reporter.Estimator`: 1 token ≈ 4 chars of the full JSON-RPC response line |\n\n")
 
 	w("## Assertions\n\n| Assertion | Measured | Result |\n|---|---|---|\n")
