@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/httpsec"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
 )
@@ -26,6 +27,12 @@ var viewsFS embed.FS
 type Config struct {
 	Bind  string
 	Token string
+
+	// AllowedHosts lists extra Host header values (--dashboard-allowed-hosts)
+	// accepted in addition to the bind host, localhost, 127.0.0.1 and ::1.
+	// Each is combined with the dashboard's own port unless it already
+	// names one. See pkg/httpsec.AllowedHosts.
+	AllowedHosts []string
 }
 
 type DashboardData struct {
@@ -187,7 +194,7 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 		return nil, nil
 	}
 
-	host, _, err := net.SplitHostPort(cfg.Bind)
+	host, port, err := net.SplitHostPort(cfg.Bind)
 	if err != nil {
 		if ip := net.ParseIP(cfg.Bind); ip != nil && strings.Contains(cfg.Bind, ":") {
 			return nil, fmt.Errorf("invalid dashboard bind address %q: IPv6 addresses must be bracketed, e.g. [::1]:9090", cfg.Bind)
@@ -195,7 +202,15 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 		return nil, fmt.Errorf("invalid dashboard bind address %q: %w", cfg.Bind, err)
 	}
 
-	if host == "" || (host != "127.0.0.1" && host != "localhost" && host != "::1") {
+	// Non-loopback bind without a token: refuse to start rather than warn,
+	// since every request would otherwise be served unauthenticated to
+	// anyone who can reach the bound interface (issue #316). A loopback
+	// bind without a token is allowed; Host validation below covers DNS
+	// rebinding from a malicious page in a local browser.
+	if !httpsec.IsLoopbackHost(host) {
+		if cfg.Token == "" {
+			return nil, fmt.Errorf("refusing to start dashboard on non-loopback bind %q without a token: set --dashboard-token", cfg.Bind)
+		}
 		logger.Warn("dashboard endpoint listening on non-loopback interface; data is not encrypted",
 			"bind", cfg.Bind)
 	}
@@ -204,7 +219,16 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("dashboard listen failed: %w", err)
 	}
+	// The bind address may have used port 0; use the listener's actual port
+	// for both the allowed-hosts set and the server's Addr below.
+	_, actualPort, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		actualPort = port
+	}
 
+	// mux holds every route that requires the dashboard token (when one is
+	// configured); /login is registered separately, unprotected, since it is
+	// how a browser exchanges the token for a cookie in the first place.
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/dashboard", handleDashboardJSON)
@@ -217,7 +241,12 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assetsFS))))
 	mux.HandleFunc("GET /{$}", handleDashboardIndex)
 
-	handler := requireBearerToken(cfg.Token, logger)(mux)
+	topMux := http.NewServeMux()
+	topMux.HandleFunc("GET /login", handleLogin(cfg.Token))
+	topMux.Handle("/", requireBearerToken(cfg.Token, logger)(mux))
+
+	allowedHosts := httpsec.AllowedHosts(host, actualPort, cfg.AllowedHosts)
+	handler := httpsec.SecurityHeaders()(httpsec.ValidateHost(allowedHosts)(topMux))
 
 	srv := &http.Server{
 		Addr:              ln.Addr().String(),
