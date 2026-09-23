@@ -938,6 +938,77 @@ leanproxy-mcp report --export json --output costs.json
 leanproxy-mcp report --export csv --since 2026-06-01
 ```
 
+## First-Party Servers: Postgres and Redis
+
+`servers/postgres` and `servers/redis` are small, first-party stdio MCP servers, configured entirely
+through environment variables passed to the child process (see
+[Child Process Environment](#child-process-environment-env-env_passthrough-inherit_env) for how those
+variables reach a `stdio` server declared in `leanproxy.yaml`). Bundling more first-party servers is a
+non-goal — official vendor servers exist for most databases — so these two only cover the minimum a
+proxy operator needs, and are kept intentionally small in surface area.
+
+### Postgres (`servers/postgres`)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LEANPROXY_POSTGRES_CONNECTION` | PostgreSQL connection string, e.g. `postgres://user:pass@host:5432/db` | *(required)* |
+| `LEANPROXY_POSTGRES_POOL_SIZE` | Connection pool size | `10` |
+| `LEANPROXY_POSTGRES_STATEMENT_TIMEOUT` | Per-statement timeout (Go duration, e.g. `30s`) | `30s` |
+| `LEANPROXY_POSTGRES_READ_ONLY` | `true`/`false` — see below | `true` |
+
+**Read-only mode (`LEANPROXY_POSTGRES_READ_ONLY`, default `true`):**
+
+- The `postgresql_execute` tool (INSERT/UPDATE/DELETE/DDL) is **not registered at all** — it does not
+  appear in `tools/list` and calling it by name returns "unknown tool". Set
+  `LEANPROXY_POSTGRES_READ_ONLY=false` to register it.
+- The `postgresql_query` tool always runs the query inside a real `BEGIN ... READ ONLY` transaction
+  (with `SET LOCAL statement_timeout`), rolled back afterwards, **regardless of `LEANPROXY_POSTGRES_READ_ONLY`**.
+  This is the actual security boundary. A query text starting with `SELECT`, `EXPLAIN` or `WITH` is
+  accepted by a prefix check first, but that check is a UX hint only — it rejects obvious misuse (a bare
+  `INSERT`/`UPDATE`/`DELETE`/DDL statement) with a clearer message, not the thing stopping a write. Even a
+  query that starts with `SELECT`/`EXPLAIN`/`WITH` and hides a side effect — `EXPLAIN ANALYZE DELETE ...`
+  (which executes the statement), `SELECT ... INTO ...`, `SELECT pg_terminate_backend(...)`, or
+  `WITH x AS (DELETE ... RETURNING *) SELECT * FROM x` — is stopped by Postgres itself refusing to write
+  inside a read-only transaction.
+- Queries are sent through pgx's extended query protocol (parse/bind/execute), which also rejects a
+  query string containing more than one SQL statement, closing the classic `;`-separated multi-statement
+  injection vector.
+
+!!! warning "A read-only database role is real protection; this flag is defense in depth"
+    `LEANPROXY_POSTGRES_READ_ONLY` and the read-only transaction it enforces protect against the tool
+    running writes through this server, but the database user in `LEANPROXY_POSTGRES_CONNECTION` can
+    still authenticate and, outside this server's control, do whatever that role is granted. For real
+    protection, connect with a Postgres role that only has `SELECT` on the schemas it needs
+    (`CREATE ROLE leanproxy_ro WITH LOGIN PASSWORD '...'; GRANT CONNECT ON DATABASE ... TO leanproxy_ro;
+    GRANT USAGE ON SCHEMA public TO leanproxy_ro; GRANT SELECT ON ALL TABLES IN SCHEMA public TO
+    leanproxy_ro;`), and grant a write-capable role only when `LEANPROXY_POSTGRES_READ_ONLY=false` is a
+    deliberate, reviewed choice.
+
+### Redis (`servers/redis`)
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LEANPROXY_REDIS_ADDRESS` | `host:port` of the Redis server | `127.0.0.1:6379` |
+| `LEANPROXY_REDIS_PASSWORD` | `AUTH` password | *(none)* |
+| `LEANPROXY_REDIS_POOL_SIZE` | Connection pool size | `10` |
+| `LEANPROXY_REDIS_TLS` | `true`/`1` to dial over TLS (min TLS 1.2) | `false` |
+| `LEANPROXY_REDIS_DIAL_TIMEOUT` | Timeout for opening (or re-opening) a connection, including the `AUTH`/`SELECT` handshake (Go duration) | `5s` |
+| `LEANPROXY_REDIS_COMMAND_TIMEOUT` | Read/write deadline applied to every command | `5s` |
+| `LEANPROXY_REDIS_MAX_BULK_LEN` | Max bytes accepted for one RESP bulk-string reply before it is rejected | `16777216` (16 MiB) |
+| `LEANPROXY_REDIS_MAX_ARRAY_LEN` | Max elements accepted for one RESP array reply before it is rejected | `1000000` |
+
+Only `redis_get`, `redis_set`, `redis_delete`, `redis_keys` and `redis_exists` are exposed — there is no
+`redis_execute`-style escape hatch to arbitrary commands, and that is intentional: dangerous commands
+(`FLUSHALL`, `CONFIG`, `EVAL`, ...) stay unreachable through this server.
+
+The connection pool never blocks indefinitely on a broken connection: every borrowed connection is
+always returned to the pool, even when the operation failed and re-dialing to replace it also failed, so
+`Close()` (and every other caller) can never deadlock behind a permanently drained pool. `MAX_BULK_LEN`
+and `MAX_ARRAY_LEN` cap what the client will allocate for a single reply, so a malicious or compromised
+Redis server (or a man-in-the-middle on a connection without `LEANPROXY_REDIS_TLS`) cannot force an
+out-of-memory condition by advertising a huge `$`/`*` length; exceeding either limit is an error and the
+connection is closed and re-dialed on the next use.
+
 ## Validate Configuration
 
 ```bash
