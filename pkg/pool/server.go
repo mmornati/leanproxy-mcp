@@ -34,8 +34,18 @@ type StdioServerConfig struct {
 	Name    string
 	Command string
 	Args    []string
-	Env     []string
-	CWD     string
+	// Env holds explicit "KEY=VALUE" entries added on top of the minimal
+	// base environment (#311). A value may reference "${VAR}", expanded
+	// from the parent (proxy) environment at spawn time.
+	Env []string
+	CWD string
+	// EnvPassthrough lists parent environment variable names copied to the
+	// child as-is, in addition to the minimal base environment and Env
+	// (#311).
+	EnvPassthrough []string
+	// InheritEnv restores full inheritance of the proxy's environment
+	// (pre-#311 behavior), logging one warning per spawn.
+	InheritEnv bool
 	// MaxInFlight caps the number of requests multiplexed concurrently
 	// over the server's stdio pipe. Callers beyond the cap wait (respecting
 	// their context) instead of being rejected. 0 means
@@ -318,13 +328,17 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	genCtx := context.WithoutCancel(ctx)
 
 	cmd := exec.CommandContext(genCtx, s.config.Command, s.config.Args...) // #nosec G204 -- the command is the operator's own configured MCP server
-	// Build environment: inherit current env, apply user config, then ensure
-	// PYTHONUNBUFFERED=1 so Python-based MCP servers don't buffer stdout.
-	env := os.Environ()
-	if s.config.Env != nil {
-		env = append(env, s.config.Env...)
+	// Build a least-privilege environment (#311): a minimal allowlist from
+	// the proxy's own environment, plus the server's own env_passthrough
+	// names and explicit env (with ${VAR} expansion), plus
+	// PYTHONUNBUFFERED=1. inherit_env: true opts a server back into the
+	// old full-inheritance behavior.
+	env, err := buildChildEnv(os.Environ(), s.config, s.logger)
+	if err != nil {
+		atomic.StoreInt32(&s.state, stateError)
+		s.mu.Unlock()
+		return fmt.Errorf("pool: %w", err)
 	}
-	env = append(env, "PYTHONUNBUFFERED=1")
 	cmd.Env = env
 	if s.config.CWD != "" {
 		cmd.Dir = s.config.CWD
