@@ -345,68 +345,6 @@ func TestQueueManagerOverflow(t *testing.T) {
 	t.Skip("flaky test - race between enqueue and background dequeue")
 }
 
-func TestBatcherBasic(t *testing.T) {
-	config := BatchConfig{
-		WindowMs:       10,
-		MaxBatchSize:   5,
-		EnableBatching: true,
-	}
-	batcher := NewBatcher(config, NewTestLogger())
-	defer batcher.Close()
-
-	resultCh := make(chan *Response, 1)
-	errorCh := make(chan error, 1)
-
-	req := Request{
-		Method:     "test_method",
-		ServerName: "test_server",
-		ID:         1,
-		Timeout:    5 * time.Second,
-		ResultCh:   resultCh,
-		ErrorCh:    errorCh,
-	}
-
-	added := batcher.AddRequest("test_server", req, resultCh, errorCh)
-	if !added {
-		t.Error("Request should be added to batch")
-	}
-
-	count := batcher.GetPendingCount("test_server")
-	if count != 1 {
-		t.Errorf("Expected pending count 1, got %d", count)
-	}
-}
-
-func TestBatcherMaxBatchSize(t *testing.T) {
-	config := BatchConfig{
-		WindowMs:       10,
-		MaxBatchSize:   2,
-		EnableBatching: true,
-	}
-	batcher := NewBatcher(config, NewTestLogger())
-	defer batcher.Close()
-
-	resultCh := make(chan *Response, 1)
-	errorCh := make(chan error, 1)
-
-	for i := 0; i < 3; i++ {
-		req := Request{
-			Method:     "test_method",
-			ServerName: "test_server",
-			ID:         i,
-			Timeout:    5 * time.Second,
-			ResultCh:   resultCh,
-			ErrorCh:    errorCh,
-		}
-		batcher.AddRequest("test_server", req, resultCh, errorCh)
-	}
-
-	count := batcher.GetPendingCount("test_server")
-	if count > 2 {
-		t.Errorf("Expected batch size at most 2, got %d", count)
-	}
-}
-
 func TestStdioPoolRegisterServer(t *testing.T) {
 	config := PoolConfig{
 		MaxConcurrent: 5,

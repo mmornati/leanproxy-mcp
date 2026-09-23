@@ -120,7 +120,6 @@ type StdioPool struct {
 	rateLimiters    map[string]*concurrent.RateLimiter
 	circuitBreakers map[string]*concurrent.CircuitBreaker
 	maxQueueSize    int
-	workerPool      *concurrent.WorkerPool
 	reconnect       ReconnectSettings
 }
 
@@ -144,8 +143,6 @@ func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logg
 		circuitBreakers: make(map[string]*concurrent.CircuitBreaker),
 		maxQueueSize:    1000,
 	}
-
-	pool.workerPool = concurrent.NewWorkerPool(maxPerServer*2, pool.maxQueueSize, logger)
 
 	return pool
 }
@@ -349,10 +346,6 @@ func (p *StdioPool) PutRequest(name string, req Request) error {
 
 func (p *StdioPool) Close() error {
 	p.cancel()
-
-	if p.workerPool != nil {
-		p.workerPool.Shutdown()
-	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
