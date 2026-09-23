@@ -2,7 +2,6 @@ package pool
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -57,13 +56,6 @@ func TestIsTransportError(t *testing.T) {
 			require.Equal(t, tt.want, isTransportError(tt.err))
 		})
 	}
-}
-
-func TestJSONIDEqual(t *testing.T) {
-	require.True(t, jsonIDEqual(float64(1), int64(1)), "decoded float64 ID must match int64 wire ID")
-	require.True(t, jsonIDEqual("a", "a"))
-	require.False(t, jsonIDEqual("1", int64(1)), "string and numeric IDs are distinct")
-	require.False(t, jsonIDEqual(nil, int64(1)))
 }
 
 func TestReconnectSettingsValidateClampsBackoff(t *testing.T) {
@@ -193,9 +185,9 @@ func TestStopEscalatesSIGKILLForSIGTERMIgnoringProcess(t *testing.T) {
 	require.Equal(t, StateStopped, server.getState())
 }
 
-// TestSendRequestDropsStaleResponses verifies that a stale or cross-generation
-// response buffered in the shared response channel is never delivered to an
-// unrelated in-flight request.
+// TestSendRequestDropsStaleResponses verifies that a stale or
+// cross-generation response (an ID with no pending waiter) is discarded and
+// never delivered to an unrelated in-flight request.
 func TestSendRequestDropsStaleResponses(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping process-based test in short mode")
@@ -205,11 +197,15 @@ func TestSendRequestDropsStaleResponses(t *testing.T) {
 	require.NoError(t, server.spawn(ctx))
 	defer server.stop()
 
-	// Pre-buffer a stale response whose ID cannot match the internal wire ID
-	// of the next request.
-	server.responseCh <- Response{ID: "stale-from-old-generation", Result: json.RawMessage(`{"stale":true}`)}
+	// Inject responses whose IDs match no pending request, including the
+	// wire ID the next request will get: none may be delivered to it.
+	server.mu.Lock()
+	conn := server.conn
+	server.mu.Unlock()
+	conn.handleLine([]byte(`{"jsonrpc":"2.0","id":"stale-from-old-generation","result":{"stale":true}}`))
+	conn.handleLine([]byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"result":{"stale":true}}`, server.nextRequestID.Load()+1)))
 
-	result, err := server.sendRequest(ctx, Request{Method: "tools/list", ID: 1, Timeout: 5 * time.Second}, make(chan struct{}))
+	result, err := server.sendRequest(ctx, Request{Method: "tools/list", ID: 1, Timeout: 5 * time.Second})
 	require.NoError(t, err)
 	require.NotContains(t, string(result), "stale", "stale response must be discarded, not delivered")
 }

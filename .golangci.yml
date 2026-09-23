@@ -50,14 +50,6 @@ linters:
           - unused
         path: pkg/migrate/vscode\.go
       - linters:
-          - errcheck
-        path: pkg/pool/pool\.go
-      - linters:
-          - errcheck
-          - staticcheck
-          - unused
-        path: pkg/pool/server\.go
-      - linters:
           - ineffassign
           - unused
         path: pkg/bouncer/redactor\.go
@@ -73,18 +65,6 @@ linters:
       - linters:
           - unused
         path: pkg/pool/health\.go
-      - linters:
-          - unused
-        path: pkg/pool/pool\.go
-      - linters:
-          - unused
-        path: pkg/pool/queue\.go
-      - linters:
-          - unused
-        path: pkg/concurrent/circuit\.go
-      - linters:
-          - unused
-        path: pkg/concurrent/ratelimit\.go
       - linters:
           - errcheck
         path: pkg/registry/cache\.go
@@ -102,16 +82,10 @@ linters:
         path: pkg/utils/
       - linters:
           - gosec
-        path: pkg/concurrent/circuit\.go
-      - linters:
-          - gosec
         path: pkg/registry/lifecycle\.go
       - linters:
           - prealloc
         path: pkg/statusfile/file\.go
-      - linters:
-          - gosec
-        path: pkg/pool/server\.go
       - linters:
           - prealloc
         path: pkg/migrate/

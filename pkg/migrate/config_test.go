@@ -861,3 +861,37 @@ servers:
 		t.Errorf("config without removed keys should not log a deprecation warning: %s", out)
 	}
 }
+
+func TestLoadConfigMaxInFlight(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: capped
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+    max_in_flight: 8
+  - name: default
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+`
+	configPath := filepath.Join(t.TempDir(), "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0600); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+	cfg, err := LoadConfig(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+	if got := cfg.Servers[0].MaxInFlight; got != 8 {
+		t.Errorf("MaxInFlight = %d, want 8", got)
+	}
+	if got := cfg.Servers[1].MaxInFlight; got != 0 {
+		t.Errorf("MaxInFlight = %d, want 0 (pool default)", got)
+	}
+
+	bad := &ServerConfig{Name: "bad", Transport: TransportStdio, Stdio: &StdioConfig{Command: "x"}, MaxInFlight: -1}
+	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "max_in_flight must be >= 0") {
+		t.Errorf("expected negative max_in_flight to be rejected, got %v", err)
+	}
+}

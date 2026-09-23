@@ -385,8 +385,8 @@ func (hc *HealthChecker) performPingCheck(ctx context.Context, server *StdioServ
 	case <-time.After(7 * time.Second):
 		// The outer timeout deliberately exceeds the request's own 5s
 		// timeout: if we land here, the ping never even got processed (e.g.
-		// it starved behind a long in-flight tool call), which is an
-		// artifact of probing a busy server — not a liveness signal.
+		// it waited for a slot on a server at its max_in_flight cap), which
+		// is an artifact of probing a busy server — not a liveness signal.
 		return false, time.Since(start).Seconds() * 1000
 	case <-ctx.Done():
 		return false, 0

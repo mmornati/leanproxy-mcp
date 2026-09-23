@@ -3,7 +3,6 @@ package pool
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -38,28 +37,21 @@ func TestStdioPipeConnectivity(t *testing.T) {
 	// Allow goroutines to start
 	time.Sleep(100 * time.Millisecond)
 
-	// Write a JSON-RPC initialize request to stdin
-	reqJSON := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}}`
-	_, err = fmt.Fprintln(server.stdin, reqJSON)
+	// Send a JSON-RPC initialize request and wait for the echo response.
+	result, err := server.sendRequest(ctx, Request{
+		Method: "initialize",
+		ID:     1,
+		Params: json.RawMessage(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0.0"}}`),
+	})
 	if err != nil {
-		t.Fatalf("write to stdin failed: %v", err)
+		t.Fatalf("request failed — pipe connectivity broken: %v", err)
 	}
-
-	// Wait for the echo response on stdout
-	select {
-	case resp := <-server.responseCh:
-		if resp.Result == nil {
-			t.Error("expected non-nil result")
-		}
-		var result map[string]interface{}
-		if err := json.Unmarshal(resp.Result, &result); err != nil {
-			t.Fatalf("failed to unmarshal result: %v", err)
-		}
-		if result["status"] != "ok" {
-			t.Errorf("expected status=ok, got %v", result["status"])
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for echo response — pipe connectivity broken")
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(result, &decoded); err != nil {
+		t.Fatalf("failed to unmarshal result: %v", err)
+	}
+	if decoded["status"] != "ok" {
+		t.Errorf("expected status=ok, got %v", decoded["status"])
 	}
 }
 
@@ -169,7 +161,7 @@ func TestStderrCaptureOnTimeout(t *testing.T) {
 		Method:  "test",
 		ID:      1,
 		Timeout: 500 * time.Millisecond,
-	}, make(chan struct{}))
+	})
 
 	if err == nil {
 		t.Fatal("expected timeout error")
@@ -262,9 +254,6 @@ func TestSendRequestTimeout_MinOfServerAndCaller(t *testing.T) {
 			}, slog.Default())
 			server.requestTimeout = tc.serverTimeout
 
-			// Capture the timeout the worker actually applies by wrapping
-			// sendRequest indirectly via a short-circuit: we instrument
-			// responseCh to assert the wait duration matches expectations.
 			// Since we cannot easily intercept the timer without spawning
 			// the process, we drive the selection logic directly by reading
 			// the exact lines from sendRequest (mirrors the field logic in

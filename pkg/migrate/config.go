@@ -103,6 +103,11 @@ type ServerConfig struct {
 	CacheSettings       *CacheSettings     `yaml:"cache_settings,omitempty"`
 	SummarizeSettings   *SummarizeSettings `yaml:"summarize_settings,omitempty"`
 	RateLimit           *RateLimitConfig   `yaml:"rate_limit,omitempty"`
+	// MaxInFlight caps how many requests the proxy multiplexes concurrently
+	// over one stdio server's pipe. Callers beyond the cap wait for a free
+	// slot (bounded by their own timeout) instead of being rejected. 0 or
+	// absent means the default (32). Only used by stdio servers.
+	MaxInFlight int `yaml:"max_in_flight,omitempty"`
 }
 
 // RateLimitConfig is an optional, per-server request rate limit applied to
@@ -225,6 +230,9 @@ func (c *ServerConfig) Validate() error {
 	}
 	if err := c.RateLimit.Validate(); err != nil {
 		return fmt.Errorf("server %s: rate_limit: %w", c.Name, err)
+	}
+	if c.MaxInFlight < 0 {
+		return fmt.Errorf("server %s: max_in_flight must be >= 0, got %d", c.Name, c.MaxInFlight)
 	}
 	return nil
 }

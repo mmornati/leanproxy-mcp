@@ -152,7 +152,7 @@ Measured on v0.9.0 with the same MCP server tool counts as production. Native MC
 |:--------|:--------|
 | 🛡️ **Token Firewall** | Redacts secrets in tool arguments and responses (on by default) and screens calls for prompt injection — in both `server run --stdio` and `serve` |
 | ⚡ **JIT Schema Loading** | Tool schemas load only when actually called — not on every request |
-| 🔄 **Connection Pooling** | HTTP MCP clients reuse connections with circuit breakers |
+| 🔄 **Connection Pooling** | HTTP MCP clients reuse connections; concurrent calls to a stdio server are multiplexed over its single pipe |
 | 📦 **Multi-Transport** | Supports stdio, HTTP, and SSE transport protocols |
 | 👥 **Multi-Team Namespaces** | Hierarchical organization for enterprise teams |
 | 💰 **Cost Attribution** | Track token savings per server with detailed reports |
@@ -219,7 +219,7 @@ flowchart TB
         Router["Router<br/>(3 tools, ~158 tokens)"]
         JIT["JIT Schema Cache"]
         Firewall["Token Firewall<br/>(Secret Redaction)"]
-        Pool["Connection Pool<br/>& Circuit Breaker"]
+        Pool["Connection Pool<br/>(multiplexed stdio)"]
     end
 
     subgraph Servers["MCP Servers"]

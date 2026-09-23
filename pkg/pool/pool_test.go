@@ -27,10 +27,6 @@ func TestNewStdioPool(t *testing.T) {
 		t.Fatal("expected non-nil pool")
 	}
 
-	if pool.maxPerServer != 5 {
-		t.Errorf("expected maxPerServer=5, got %d", pool.maxPerServer)
-	}
-
 	if pool.idleTimeout != 5*time.Minute {
 		t.Errorf("expected idleTimeout=5m, got %v", pool.idleTimeout)
 	}
@@ -218,11 +214,9 @@ func TestStdioPoolServerRestart(t *testing.T) {
 
 func TestServerStateTransitions(t *testing.T) {
 	server := &StdioServerV2{
-		name:          "test",
-		config:        StdioServerConfig{Name: "test"},
-		requestCh:     make(chan Request, 5),
-		maxConcurrent: 5,
-		logger:        slog.Default(),
+		name:   "test",
+		config: StdioServerConfig{Name: "test"},
+		logger: slog.Default(),
 	}
 
 	atomic.StoreInt32(&server.state, stateIdle)
@@ -241,101 +235,6 @@ func TestServerStateTransitions(t *testing.T) {
 
 	if server.isHealthy() {
 		t.Error("expected server to not be healthy in error state")
-	}
-}
-
-func TestServerCanAcceptRequest(t *testing.T) {
-	server := &StdioServerV2{
-		name:          "test",
-		config:        StdioServerConfig{Name: "test", MaxConcurrent: 3},
-		requestCh:     make(chan Request, 6),
-		maxConcurrent: 3,
-		currentLoad:   0,
-		logger:        slog.Default(),
-	}
-
-	if !server.canAcceptRequest() {
-		t.Error("expected server to accept request when idle")
-	}
-
-	server.mu.Lock()
-	server.currentLoad = 3
-	server.mu.Unlock()
-
-	if server.canAcceptRequest() {
-		t.Error("expected server to not accept request when at max")
-	}
-}
-
-func TestRequestQueue(t *testing.T) {
-	queue := NewRequestQueue(5, 30*time.Second, nil)
-
-	if queue.IsFull() {
-		t.Error("expected queue to not be full initially")
-	}
-
-	if !queue.IsEmpty() {
-		t.Error("expected queue to be empty initially")
-	}
-
-	req := Request{
-		Method:  "test",
-		Params:  nil,
-		ID:      1,
-		Timeout: 30 * time.Second,
-	}
-
-	if !queue.Enqueue(req) {
-		t.Error("expected enqueue to succeed")
-	}
-
-	if queue.IsEmpty() {
-		t.Error("expected queue to not be empty after enqueue")
-	}
-
-	if queue.Size() != 1 {
-		t.Errorf("expected size=1, got %d", queue.Size())
-	}
-}
-
-func TestServerQueue(t *testing.T) {
-	sq := NewServerQueue("test", 3, 30*time.Second, nil)
-
-	for i := 0; i < 3; i++ {
-		if !sq.Acquire(1 * time.Second) {
-			t.Errorf("expected acquire %d to succeed (within limit)", i+1)
-		}
-	}
-
-	if sq.Acquire(1 * time.Second) {
-		t.Error("expected acquire to fail when at capacity")
-	}
-
-	sq.Release()
-
-	if !sq.Acquire(1 * time.Second) {
-		t.Error("expected acquire to succeed after release")
-	}
-}
-
-func TestPoolQueueManager(t *testing.T) {
-	qm := NewPoolQueueManager(nil)
-
-	queue1 := qm.GetOrCreateQueue("server1", 5, 30*time.Second)
-	queue2 := qm.GetOrCreateQueue("server1", 5, 30*time.Second)
-
-	if queue1 != queue2 {
-		t.Error("expected same queue for same name")
-	}
-
-	queue3 := qm.GetOrCreateQueue("server2", 5, 30*time.Second)
-	if queue3 == queue1 {
-		t.Error("expected different queue for different name")
-	}
-
-	queues := qm.ListQueues()
-	if len(queues) != 2 {
-		t.Errorf("expected 2 queues, got %d", len(queues))
 	}
 }
 
@@ -453,34 +352,6 @@ func TestServerGetState(t *testing.T) {
 	}
 }
 
-func TestServerEnqueueRequest(t *testing.T) {
-	server := &StdioServerV2{
-		name:          "test",
-		config:        StdioServerConfig{Name: "test", MaxConcurrent: 2},
-		requestCh:     make(chan Request, 4),
-		maxConcurrent: 2,
-		currentLoad:   0,
-		logger:        slog.Default(),
-	}
-
-	req := Request{
-		Method:  "test",
-		Params:  nil,
-		ID:      1,
-		Timeout: 30 * time.Second,
-	}
-
-	if !server.enqueueRequest(req) {
-		t.Error("expected enqueue to succeed")
-	}
-
-	server.mu.Lock()
-	if server.currentLoad != 1 {
-		t.Errorf("expected currentLoad=1, got %d", server.currentLoad)
-	}
-	server.mu.Unlock()
-}
-
 func TestPoolGetServerStats(t *testing.T) {
 	ctx := context.Background()
 	pool := NewStdioPool(5, 5*time.Minute, nil)
@@ -591,14 +462,7 @@ func TestPoolSendRequest(t *testing.T) {
 		ErrorCh:  errorCh,
 	}
 
-	go func() {
-		server, err := pool.GetServer("test-server")
-		if err != nil {
-			errorCh <- err
-			return
-		}
-		server.requestCh <- req
-	}()
+	require.NoError(t, pool.PutRequest("test-server", req))
 
 	select {
 	case resp := <-resultCh:
@@ -666,12 +530,7 @@ func TestPoolSendRequestToServer(t *testing.T) {
 		ErrorCh:  errorCh,
 	}
 
-	go func() {
-		server, _ := pool.GetServer("test-server")
-		if server != nil {
-			server.requestCh <- req
-		}
-	}()
+	require.NoError(t, pool.PutRequest("test-server", req))
 
 	select {
 	case resp := <-resultCh:
@@ -714,12 +573,7 @@ func TestPoolSendRequestToServerWithID(t *testing.T) {
 		ErrorCh:  errorCh,
 	}
 
-	go func() {
-		server, _ := pool.GetServer("test-server")
-		if server != nil {
-			server.requestCh <- req
-		}
-	}()
+	require.NoError(t, pool.PutRequest("test-server", req))
 
 	select {
 	case resp := <-resultCh:
