@@ -2,6 +2,20 @@
 
 ## Changed in v0.10
 
+- **Server lifecycle: the pool owns the MCP handshake, tools refresh in the background** ([#297](https://github.com/mmornati/leanproxy-mcp/issues/297)).
+  The handshake moved from the request handler into the pool: each stdio process generation sends
+  `initialize` + `notifications/initialized` exactly once before any other request (a restarted server,
+  including in `serve`, is re-initialized; tool-cache refreshes no longer cause a second `initialize`), and
+  HTTP/SSE servers never receive `initialize` as a tool call. The server's `InitializeResult` is stored and
+  `list_servers` shows its `serverInfo` and the first 120 characters of its `instructions`. At startup both
+  front ends load the persistent tool cache and serve at once (`serve` used to wait up to 60 s before
+  listening); each server's `tools/list` is refreshed in the background, in parallel, again after a restart or
+  `notifications/tools/list_changed`, and retried while unknown. `list_tools` for an uncached server refreshes
+  that server only, bounded by its timeout, and the handler no longer restarts servers inline with sleeps.
+  In `serve` a server's routes are updated whenever its tool list changes, so a server that was down at
+  startup becomes routable later. The stdio front end reads `notifications/cancelled` even when every
+  concurrency slot is busy, and a `shutdown` request no longer closes the pools from inside the handler. The
+  tool cache directory honors `$HOME` and the new `LEANPROXY_TOOLCACHE_DIR` override.
 - **`server run --stdio` handles requests concurrently** ([#292](https://github.com/mmornati/leanproxy-mcp/issues/292)).
   The stdio front end used to read one request, wait for its response, then read the next, so one slow tool
   call blocked `ping`, `tools/list` and calls to every other server. Each request now runs in its own
