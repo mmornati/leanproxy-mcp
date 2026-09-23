@@ -139,9 +139,25 @@ func TestNoOpCache(t *testing.T) {
 }
 
 func TestNewFileCache(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "toolcache")
+	t.Setenv(CacheDirEnv, dir)
 	fc, err := NewFileCache(nil)
 	require.NoError(t, err)
-	assert.NotEmpty(t, fc.GetCacheDir())
+	assert.Equal(t, dir, fc.GetCacheDir())
+	_, err = os.Stat(dir)
+	require.NoError(t, err, "the cache dir from the environment must be created")
+}
+
+// TestDefaultCacheDir_HonorsHOME: without the override the cache lives
+// under $HOME (not the passwd entry), so tests that redirect HOME never
+// write to the real home directory.
+func TestDefaultCacheDir_HonorsHOME(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(CacheDirEnv, "")
+	t.Setenv("HOME", home)
+	dir, err := DefaultCacheDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".config", "leanproxy", "toolcache"), dir)
 }
 
 func TestGetCacheDir(t *testing.T) {

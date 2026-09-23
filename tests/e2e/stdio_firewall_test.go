@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -195,17 +194,11 @@ func requireNoSecrets(t *testing.T, label, text string) {
 }
 
 // uniqueServerName returns a per-run upstream name (no "_": tool names are
-// "<server>_<tool>") and removes the tool cache file `server run` persists
-// under the user's home for it.
+// "<server>_<tool>"). The tool cache `server run` persists for it lives in
+// the scratch LEANPROXY_TOOLCACHE_DIR set by TestMain, never under $HOME.
 func uniqueServerName(t *testing.T, tag string) string {
 	t.Helper()
-	name := fmt.Sprintf("fwe2e%s%d", tag, os.Getpid())
-	t.Cleanup(func() {
-		if u, err := user.Current(); err == nil {
-			_ = os.Remove(filepath.Join(u.HomeDir, ".config", "leanproxy", "toolcache", name+".json"))
-		}
-	})
-	return name
+	return fmt.Sprintf("fwe2e%s%d", tag, os.Getpid())
 }
 
 func writeFirewallConfig(t *testing.T, dir, server, fakeBin, upstreamLog, extra string) string {
