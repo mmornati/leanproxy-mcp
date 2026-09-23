@@ -130,9 +130,11 @@ func (h *Handler) timeoutFor(serverName string) time.Duration {
 // and, innermost, the handler's own method dispatch.
 func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, error) {
 	if chain := h.pipeline.Load(); chain != nil {
-		return (*chain)(ctx, req)
+		resp, err := (*chain)(ctx, req)
+		return guardResponse(resp), err
 	}
-	return h.dispatch(ctx, req)
+	resp, err := h.dispatch(ctx, req)
+	return guardResponse(resp), err
 }
 
 // dispatch routes a request to its method handler. It is the innermost Next
@@ -684,28 +686,49 @@ func matchesQuery(text string, queryWords []string) bool {
 	return true
 }
 
-func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
-	var serverName, toolName string
-	var arguments json.RawMessage
-	var err error
+// invokeToolEnvelope is the invoke_tool gateway tool's params, decoded
+// without going through map[string]interface{} so that Arguments travels to
+// the upstream server byte-for-byte (no float64 round-trip that would lose
+// precision on large integers, and no risk of silently dropping a
+// non-object payload).
+type invokeToolEnvelope struct {
+	Server    string          `json:"server"`
+	Tool      string          `json:"tool"`
+	Arguments json.RawMessage `json:"arguments"`
+}
 
+func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
+	var envelope invokeToolEnvelope
 	if params.Arguments != nil {
-		var args map[string]interface{}
-		if err := json.Unmarshal(params.Arguments, &args); err == nil {
-			args = ApplyDefaults("invoke_tool", args)
-			if s, ok := args["server"].(string); ok {
-				serverName = s
-			}
-			if t, ok := args["tool"].(string); ok {
-				toolName = t
-			}
-			if a, ok := args["arguments"].(map[string]interface{}); ok {
-				arguments, err = json.Marshal(a)
-				if err != nil {
-					h.logger.Warn("failed to marshal arguments", "error", err)
-				}
-			}
+		if err := json.Unmarshal(params.Arguments, &envelope); err != nil {
+			h.logger.Warn("failed to unmarshal invoke_tool params", "error", err)
+			return &Response{
+				JSONRPC: JSONRPCVersion,
+				Error:   NewError(ErrCodeInvalidParams, fmt.Sprintf("invalid params: %v", err)),
+				ID:      req.ID,
+			}, nil
 		}
+	}
+	// ApplyDefaults("invoke_tool", ...) is a documented no-op today (see
+	// tool_defaults.go): invoke_tool has no defaultable proxy-owned keys.
+	// It is intentionally not called here so it can never reach into
+	// (and mutate) the upstream `arguments` payload.
+
+	serverName := envelope.Server
+	toolName := envelope.Tool
+	arguments := envelope.Arguments
+
+	if len(arguments) > 0 && string(arguments) != "null" {
+		trimmed := strings.TrimSpace(string(arguments))
+		if !strings.HasPrefix(trimmed, "{") {
+			return &Response{
+				JSONRPC: JSONRPCVersion,
+				Error:   NewError(ErrCodeInvalidParams, "arguments must be a JSON object"),
+				ID:      req.ID,
+			}, nil
+		}
+	} else {
+		arguments = nil
 	}
 
 	if serverName == "" || toolName == "" {
@@ -790,13 +813,10 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	paramsBytes, _ := json.Marshal(newParams)
 
 	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
-	if err == nil && resp != nil && resp.Error != nil {
-		// An upstream JSON-RPC error used to be dropped (the client got a
-		// response with neither result nor error). Surface it with the same
-		// hint + schema enrichment as a transport failure.
-		err = fmt.Errorf("%s", resp.Error.Message)
-	}
 	if err != nil {
+		// A transport/proxy-level failure (timeout, connection error, server
+		// not reachable) rather than a structured upstream JSON-RPC error:
+		// keep the enriched, hint-carrying ErrCodeServerError.
 		h.logger.Error("invoke_tool failed", "server", serverName, "tool", toolName, "error", err)
 		schema := h.lookupToolSchema(serverName, toolName)
 		enrichedError := FormatErrorWithHint(fmt.Sprintf("tool invocation failed: %v", err), serverName, toolName)
@@ -815,6 +835,30 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		}, nil
 	}
 
+	if resp != nil && resp.Error != nil {
+		// Forward the upstream JSON-RPC error unchanged (same code and
+		// message the upstream server sent, redacted downstream by the
+		// firewall middleware). This used to be dropped entirely, leaving
+		// the client with a response that had neither result nor error.
+		h.logger.Error("invoke_tool: upstream error", "server", serverName, "tool", toolName, "code", resp.Error.Code, "message", resp.Error.Message)
+		errResp := &Error{Code: resp.Error.Code, Message: resp.Error.Message, Data: resp.Error.Data}
+		if schema := h.lookupToolSchema(serverName, toolName); schema != nil {
+			dataBytes, marshalErr := json.Marshal(map[string]interface{}{
+				"tool":          toolName,
+				"schema":        json.RawMessage(schema),
+				"upstream_data": rawOrNull(resp.Error.Data),
+			})
+			if marshalErr == nil {
+				errResp.Data = dataBytes
+			}
+		}
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   errResp,
+			ID:      req.ID,
+		}, nil
+	}
+
 	return &Response{
 		JSONRPC: JSONRPCVersion,
 		Result:  resp.Result,
@@ -822,12 +866,20 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	}, nil
 }
 
-func (h *Handler) parseToolName(fullName string) (serverName, toolName string, err error) {
-	parts := strings.SplitN(fullName, "_", 2)
-	if len(parts) < 2 {
-		return "", "", fmt.Errorf("invalid tool name '%s': expected format is 'serverName_toolName'", fullName)
+// rawOrNull returns data unchanged, or a JSON null literal when data is
+// empty, so it always marshals to a valid JSON value inside a map.
+func rawOrNull(data json.RawMessage) json.RawMessage {
+	if len(data) == 0 {
+		return json.RawMessage("null")
 	}
-	return parts[0], parts[1], nil
+	return data
+}
+
+// parseToolName splits a namespaced tool reference into its server and tool
+// parts by matching the longest configured server name that is a prefix of
+// fullName, followed by '_' or '.'. See SplitToolName.
+func (h *Handler) parseToolName(fullName string) (serverName, toolName string, err error) {
+	return SplitToolName(fullName, h.pool.ListServers())
 }
 
 func (h *Handler) handleResourcesList(ctx context.Context, req *Request) (*Response, error) {

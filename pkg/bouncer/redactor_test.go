@@ -110,6 +110,31 @@ func TestRedactJSONStructurePreservation(t *testing.T) {
 	}
 }
 
+// TestRedactJSONPreservesLargeIntegers is the regression test for #296
+// point 5: RedactJSON used to decode numbers as float64, so a large integer
+// argument (beyond float64's 53-bit mantissa) lost precision on every
+// redact→re-marshal round trip, even when it never matched a secret
+// pattern. The redactor must now preserve it byte-identical.
+func TestRedactJSONPreservesLargeIntegers(t *testing.T) {
+	const bigInt = "12345678901234567"
+	input := `{"n": ` + bigInt + `, "api_key": "AKIAIOSFODNN7EXAMPLE"}`
+
+	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
+	result, count, err := redactor.RedactJSON([]byte(input))
+	if err != nil {
+		t.Fatalf("RedactJSON failed: %v", err)
+	}
+	if count == 0 {
+		t.Fatal("expected the api_key to be redacted")
+	}
+	if !bytes.Contains(result, []byte(bigInt)) {
+		t.Fatalf("expected the large integer %s to survive byte-identical, got: %s", bigInt, result)
+	}
+	if bytes.Contains(result, []byte("AKIAIOSFODNN7EXAMPLE")) {
+		t.Fatalf("expected the secret to be redacted, got: %s", result)
+	}
+}
+
 func TestRedactStreamBasic(t *testing.T) {
 	input := `{"api_key": "AKIAIOSFODNN7EXAMPLE"}`
 	expected := `{"api_key": "[SECRET_REDACTED]"}`

@@ -586,6 +586,17 @@ func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Rout
 	resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
 	if err != nil {
 		slog.Warn("upstream send failed", "server", server.ID, "error", serveFirewall.Redaction.RedactText(err.Error()))
+		// A structured upstream JSON-RPC error (tool error, timeout signaled
+		// by the pool, rate limit, ...) keeps its original code, message and
+		// data instead of collapsing to a generic internal error.
+		var rpcErr *errors.JSONRPCError
+		if stderrors.As(err, &rpcErr) {
+			return &proxy.JSONRPCResponse{
+				JSONRPC: "2.0",
+				Error:   &errors.JSONRPCError{Code: rpcErr.Code, Message: rpcErr.Message, Data: rpcErr.Data},
+				ID:      req.ID,
+			}
+		}
 		return errorResponse(req.ID, errors.ErrCodeInternalError, err.Error())
 	}
 
@@ -980,14 +991,45 @@ func toolCallName(req *proxy.JSONRPCRequest) string {
 // canonicalToolMethod normalizes a tool reference to the namespace.tool form
 // the router resolves. Both `server.tool` and `server_tool` (the convention
 // used by the handler's lazy-loading stubs) are accepted.
+//
+// The underscore form is split using mcp.SplitToolName against the servers
+// currently registered in serverReg - the same longest-prefix-match helper
+// pkg/mcp's handler uses - so a server literally named "my_srv" is
+// reachable via "my_srv_tool" and overlapping names (e.g. "git" and
+// "github") resolve to the correct owner. When no registry is available
+// (e.g. a unit test calling this in isolation) it falls back to splitting
+// on the first underscore.
 func canonicalToolMethod(ref string) string {
 	if strings.Contains(ref, ".") {
 		return ref
+	}
+	if server, tool, err := mcp.SplitToolName(ref, knownServerNames()); err == nil {
+		return server + "." + tool
 	}
 	if i := strings.Index(ref, "_"); i > 0 {
 		return ref[:i] + "." + ref[i+1:]
 	}
 	return ref
+}
+
+// knownServerNames returns the names currently registered in serverReg, or
+// nil when the registry is unset (not yet initialized, or a test calling a
+// routing helper directly).
+func knownServerNames() []string {
+	if serverReg == nil {
+		return nil
+	}
+	entries, err := serverReg.List(ctx)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e != nil {
+			names = append(names, e.ID)
+		}
+	}
+	return names
 }
 
 // bareToolName strips the server prefix from a tool reference, turning

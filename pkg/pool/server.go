@@ -808,7 +808,18 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request, stopCh 
 
 	result, sendErr := s.sendRequest(ctx, req, stopCh)
 	if sendErr != nil {
-		resp.Error = &errs.JSONRPCError{Code: errs.ErrCodeServerError, Message: sendErr.Error()}
+		// A structured upstream JSON-RPC error (the subprocess's own
+		// {"error":{"code":...,"message":...,"data":...}}) keeps its
+		// original code, message and data instead of being collapsed into
+		// a generic ErrCodeServerError with a "jsonrpc: error N: msg"
+		// string for a message. Only a real transport/proxy failure
+		// (timeout, broken pipe, ...) gets the generic wrapping.
+		var upstreamErr *errs.JSONRPCError
+		if errstd.As(sendErr, &upstreamErr) {
+			resp.Error = &errs.JSONRPCError{Code: upstreamErr.Code, Message: upstreamErr.Message, Data: upstreamErr.Data}
+		} else {
+			resp.Error = &errs.JSONRPCError{Code: errs.ErrCodeServerError, Message: sendErr.Error()}
+		}
 		s.mu.Lock()
 		s.stats.ErrorCount++
 		s.stats.LastError = sendErr.Error()

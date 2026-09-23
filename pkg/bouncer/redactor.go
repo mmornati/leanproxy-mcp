@@ -507,9 +507,23 @@ func (r *Redactor) redactChunk(chunk []byte) []byte {
 func (r *Redactor) RedactJSON(data []byte) ([]byte, int, error) {
 	slog.Debug("redacting message", "size", len(data))
 
+	// UseNumber decodes JSON numbers as json.Number (its original literal
+	// text) instead of float64, so a large integer argument (e.g.
+	// 12345678901234567) survives this redact→re-marshal round trip
+	// byte-identical instead of losing precision (#296 point 5: lossless
+	// arguments end-to-end, not just at the handler).
 	var raw interface{}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		slog.Warn("invalid JSON input, falling back to byte-level redaction", "error", err)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	// Decoder.Decode only consumes the first JSON value, so a second value
+	// (json.Unmarshal's "not exactly one value" case) is checked explicitly
+	// to keep the same strictness as before.
+	if err := dec.Decode(&raw); err != nil || dec.More() {
+		if err == nil {
+			slog.Warn("invalid JSON input, falling back to byte-level redaction", "error", "trailing data after JSON value")
+		} else {
+			slog.Warn("invalid JSON input, falling back to byte-level redaction", "error", err)
+		}
 		redacted, count := r.redactChunkWithCount(data)
 		if count > 0 {
 			slog.Info("redaction complete", "secrets_found", count, "mode", "bytes")
