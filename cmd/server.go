@@ -530,6 +530,13 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	// explanation on mcp.ResponseCache.
 	respCache := mcp.NewResponseCache(cfg.ResponseCache)
 	handler.Use(tracedMiddlewares(respCache, firewall)...)
+
+	// Server-to-client requests, progress and resource updates from the
+	// upstreams (#308): per-server policy (allow_sampling, roots), the same
+	// firewall on relayed traffic.
+	handler.ConfigureRelay(cfg.Servers)
+	handler.SetRelayFirewall(firewall)
+	handler.AttachUpstreamRelay(refreshCtx)
 	logFirewallStatus(firewall)
 	logResponseCacheStatus(respCache)
 	metrics.SetResponseCacheProvider(func() metrics.ResponseCacheMetric {
