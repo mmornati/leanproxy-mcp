@@ -54,7 +54,7 @@ client → redact request params → injection check → dispatch/upstream → r
 - Redaction is **on by default** with the built-in patterns when there is no
   `bouncer:` block. Only `bouncer.enabled: false` turns it off (in both
   modes). At startup the proxy logs one line such as
-  `redaction enabled, 16 patterns; injection disabled`.
+  `redaction enabled, 29 patterns; injection disabled`.
 
 ## In-Memory Redaction
 
@@ -62,14 +62,118 @@ LeanProxy-MCP intercepts all data flowing through the proxy and redacts sensitiv
 
 ### Built-in Patterns
 
-LeanProxy-MCP includes redaction patterns for common secrets:
+Every match is replaced by `[SECRET_REDACTED]`, whatever its severity (the
+severity is informational; `leanproxy-mcp bouncer list-patterns` prints it).
+Patterns marked "only ... is replaced" keep the surrounding context readable,
+for example `postgres://app:[SECRET_REDACTED]@db:5432/app`.
 
-- AWS Access Key IDs
-- GitHub Personal Access Tokens (Classic and Fine-grained)
-- Stripe API Keys
-- Generic API Keys
-- JWT Bearer Tokens
-- Environment Variables
+| Pattern | Severity | Matches |
+|---------|----------|---------|
+| `aws-access-key` | critical | AWS Access Key ID (20 characters, starts with `AKIA`) |
+| `aws-temporary-access-key` | critical | AWS temporary (STS) Access Key ID (20 characters, starts with `ASIA`) |
+| `aws-secret-access-key` | critical | AWS Secret Access Key (40 base64 characters after `aws_secret_access_key`; only the key is replaced) |
+| `github-classic-pat` | critical | GitHub classic personal access token (`ghp_` + 36 or more characters) |
+| `github-app-token` | critical | GitHub OAuth, user-to-server, server-to-server and refresh tokens (`gho_`, `ghu_`, `ghs_`, `ghr_`) |
+| `github-fine-grained-pat` | critical | GitHub fine-grained personal access token (`github_pat_`) |
+| `gitlab-pat` | critical | GitLab personal access token (`glpat-`) |
+| `stripe-secret-key` | critical | Stripe secret key, live or test mode (`sk_live_`, `sk_test_`) |
+| `stripe-restricted-key` | critical | Stripe restricted key, live or test mode (`rk_live_`, `rk_test_`) |
+| `stripe-publishable-key` | low | Stripe live publishable key (`pk_live_`) |
+| `pem-private-key` | critical | PEM private keys (RSA, EC, DSA, OpenSSH, PKCS#8, encrypted) |
+| `pgp-private-key` | critical | ASCII-armored PGP/GPG private key blocks |
+| `pem-certificate` | low | PEM X.509 certificates |
+| `gcp-service-account` | low | `"type": "service_account"` marker in free text (in JSON, the `private_key` field is redacted by key name) |
+| `gcp-oauth-token` | high | Google OAuth2 access token (`ya29.`) |
+| `google-api-key` | high | Google API key (Maps, Firebase, Gemini, ...: `AIza` + 35 characters) |
+| `slack-token` | high | Slack bot, user, app and refresh tokens (`xoxb-`, `xoxp-`, `xoxa-`, `xoxr-`, `xoxs-`) |
+| `slack-webhook` | high | Slack incoming-webhook URL |
+| `openai-api-key` | critical | OpenAI API key, legacy format (`sk-` + 40 or more alphanumerics) |
+| `openai-project-key` | critical | OpenAI project, service-account and admin keys (`sk-proj-`, `sk-svcacct-`, `sk-admin-`) |
+| `anthropic-api-key` | critical | Anthropic API key (`sk-ant-`) |
+| `npm-token` | high | npm access token (`npm_`) |
+| `generic-api-key` | medium | `api_key=...` / `apikey...` followed by 16 or more alphanumerics (case-insensitive) |
+| `bearer-token` | high | `Bearer` followed by a JWT |
+| `jwt` | high | JSON Web Token without a `Bearer` prefix (`eyJ...` `.` `eyJ...` `.` signature) |
+| `basic-auth-header` | high | `Authorization: Basic <base64>` (only the credentials are replaced) |
+| `dsn-credentials` | critical | Password in a connection string or URL: `postgres://`, `mysql://`, `mongodb+srv://`, `redis://`, `amqp://`, `https://user:pass@...` (only the password is replaced) |
+| `env-var-value` | medium | `$NAME=value` shell assignment |
+| `env-file-secret` | high | `.env` / shell line whose UPPER_CASE name ends in `PASSWORD`, `SECRET`, `TOKEN`, `API_KEY`, `PRIVATE_KEY` or `ACCESS_KEY` (only the value is replaced) |
+
+### Sensitive JSON keys
+
+In JSON payloads, the value of a sensitive key is redacted whatever it is: a
+string, a number (`"password": 12345678`), an array or an object. Keys are
+compared case-insensitively after removing `-`, `_` and spaces, so `API-Key`,
+`api_key` and `apiKey` are the same key.
+
+- Exact names: `password`, `passwd`, `pwd`, `passphrase`, `secret`, `token`,
+  `apikey`, `apisecret`, `appsecret`, `apitoken`, `accesstoken`,
+  `refreshtoken`, `idtoken`, `authtoken`, `bearertoken`, `sessiontoken`,
+  `csrftoken`, `xsrftoken`, `clientsecret`, `privatekey`, `secretkey`,
+  `secretaccesskey`, `authorization`, `proxyauthorization`, `cookie`,
+  `setcookie`, `sessionid`, `awssecretaccesskey`, `awssessiontoken`,
+  `xapikey`, `xauthtoken`.
+- Suffixes (so `db_password`, `stripeApiKey` and `github_access_token` are
+  covered too): `password`, `passwd`, `passphrase`, `secret`, `apikey`,
+  `secretkey`, `privatekey`, `accesstoken`, `refreshtoken`, `authtoken`,
+  `sessiontoken`, `apitoken`, `clientsecret`. `token` on its own is not a
+  suffix: `next_page_token` and `max_tokens` are not credentials.
+- `true`, `false`, `null` and empty strings are kept (they hide nothing).
+- An **object** under a sensitive key inside a JSON Schema `properties`,
+  `patternProperties`, `definitions` or `$defs` map is a parameter
+  definition, not a value, and is kept, so a `tools/list`
+  entry with a `password` or `token` parameter stays usable. Strings inside
+  it are still scanned with the patterns.
+- Object **keys** are scanned with the patterns too: a secret used as a key
+  is replaced.
+
+### How JSON payloads are redacted
+
+Request params and response results are redacted **losslessly**: the
+redactor copies every byte through unchanged except the string literals that
+contain a secret and the values of sensitive keys. Numbers (including
+integers beyond 2^53), key order, whitespace, escaping and `<`, `>`, `&`
+reach the other side byte for byte. A payload without secrets is forwarded
+as is.
+
+- Patterns see the **decoded** string, so a secret written with JSON escapes
+  (`\u0041KIA...`) is still found; only the matched part of the literal is
+  rewritten.
+- A string whose value is itself a JSON object or array (MCP returns tool
+  data this way, in `result.content[].text`) is redacted recursively, with
+  the key rules above, up to 3 levels deep and 8 MiB per string. Only the
+  redacted parts of the inner document change.
+- Input that is not valid JSON is scanned byte by byte with the patterns
+  instead of being passed through.
+- Error messages, upstream stderr lines and logged payloads use the same
+  engine.
+
+### High-entropy detector (optional)
+
+For tokens no pattern knows, you can turn on a generic detector:
+
+```yaml
+bouncer:
+  entropy_detection: true   # default: false
+```
+
+It redacts runs of 20 or more characters from `[A-Za-z0-9+/=_-]` whose
+Shannon entropy is at least 4.0 bits per character, **only** when a
+key-like word (`key`, `secret`, `token`, `password`) is within 20
+characters of the run, or when the run is the value of a JSON key containing
+such a word (`"signing_key": "..."`). Hex digests, UUIDs and ordinary
+identifiers stay below the threshold; base64 blobs are left alone unless a
+key-like word sits right next to them. It is off by default because it can
+still redact random-looking values that are not secrets.
+
+### Measured coverage
+
+`pkg/bouncer/testdata/corpus/` holds realistic MCP tool results (a GitHub
+`.env` file and service-account key, Postgres rows, a Slack export, an HTTP
+request log) with labeled fake secrets, plus a negative set (UUIDs, SHAs, a
+base64 image, lorem ipsum, a `tools/list` response, source code).
+`TestRedactionCorpus` reports recall and the false-positive rate and fails
+below 95% recall or at one false positive per 100 KB or more.
 
 ### Custom Patterns
 

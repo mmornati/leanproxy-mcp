@@ -250,6 +250,7 @@ limiter, so a busy limiter can never make a server look unhealthy.
 | `bouncer.enabled` | bool | `true` | Enable/disable redaction |
 | `bouncer.patterns` | array | (see below) | Custom patterns |
 | `bouncer.sidecar_always_call` | bool | `false` | When `false`, the sidecar LLM is consulted only when the regex layer matched zero secrets. When `true`, the sidecar runs on every request regardless of regex outcome. |
+| `bouncer.entropy_detection` | bool | `false` | Also redact high-entropy tokens (20+ characters, Shannon entropy >= 4.0) that sit within 20 characters of `key`, `secret`, `token` or `password`, or under a JSON key containing one of those words. See [Security: high-entropy detector](security.md#high-entropy-detector-optional). |
 
 #### `bouncer.sidecar_always_call`
 
