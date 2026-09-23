@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -314,9 +315,9 @@ func TestHandleSingleRequest_RealRouterRoutesBackendTool(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleSingleRequest(ctx,
+	handleSingleRequestAsync(ctx,
 		[]byte(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"test-server.echo","arguments":{"message":"`+testAWSKey+`"}},"id":1}`),
-		w, realR, &mockGatewayTools{}, mockP)
+		w, &sync.Mutex{}, realR, &mockGatewayTools{}, mockP)
 	w.Flush()
 
 	if forwarded == nil {
@@ -377,7 +378,7 @@ func TestHandleBatchRequest_RealRouterRoutesBackendTools(t *testing.T) {
 
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	handleBatchRequest(ctx, line, w, realR, &mockGatewayTools{}, mockP)
+	handleBatchRequestAsync(ctx, line, w, &sync.Mutex{}, realR, &mockGatewayTools{}, mockP)
 	w.Flush()
 
 	if len(forwarded) != 2 {

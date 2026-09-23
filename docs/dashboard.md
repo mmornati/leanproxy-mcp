@@ -122,6 +122,5 @@ leanproxy-mcp report --export csv --since 2026-06-01
 
 ## Next Steps
 
-- [Budget Management](./budget.md) — Set team/project spending limits
 - [Configuration Reference](./configuration.md) — Dashboard config options
 - [Commands Reference](./commands.md) — Full CLI documentation

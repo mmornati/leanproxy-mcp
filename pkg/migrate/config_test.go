@@ -1,8 +1,10 @@
 package migrate
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -626,5 +628,122 @@ bouncer:
 	}
 	if !strings.Contains(err.Error(), "redos") {
 		t.Errorf("LoadConfig() error = %v, want it to mention the offending pattern name", err)
+	}
+}
+
+// captureDefaultLogs redirects slog.Default() to a buffer for the duration
+// of the test and restores the previous default logger on cleanup.
+func captureDefaultLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
+}
+
+// Removed-key configs (issue #303): a leanproxy.yaml that still sets
+// `federation:` or `optimization.lazy_loading:` must keep loading (never
+// fail), with exactly one startup warning logged per deprecated key.
+
+func TestLoadConfigFederationKeyStillLoadsWithOneWarning(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: test-server
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+federation:
+  enabled: true
+  peers:
+    - name: peer-a
+      url: https://peer-a.example.com
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "leanproxy.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+
+	buf := captureDefaultLogs(t)
+
+	cfg, err := LoadConfig(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() should not fail on a config with a removed `federation:` key, got: %v", err)
+	}
+	if cfg == nil || len(cfg.Servers) != 1 {
+		t.Fatal("LoadConfig() should still parse the rest of the config")
+	}
+
+	out := buf.String()
+	want := `config key \"federation\" is no longer supported and is ignored`
+	if n := strings.Count(out, want); n != 1 {
+		t.Errorf("expected exactly one federation deprecation warning, got %d in log output: %s", n, out)
+	}
+	if strings.Contains(out, "optimization.lazy_loading") {
+		t.Errorf("federation-only config should not also warn about lazy_loading: %s", out)
+	}
+}
+
+func TestLoadConfigLazyLoadingKeyStillLoadsWithOneWarning(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: test-server
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+optimization:
+  lazy_loading:
+    enabled: true
+    stub_tokens: 54
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "leanproxy.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+
+	buf := captureDefaultLogs(t)
+
+	cfg, err := LoadConfig(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() should not fail on a config with a removed `optimization.lazy_loading:` key, got: %v", err)
+	}
+	if cfg == nil || len(cfg.Servers) != 1 {
+		t.Fatal("LoadConfig() should still parse the rest of the config")
+	}
+
+	out := buf.String()
+	want := `config key \"optimization.lazy_loading\" is no longer supported and is ignored`
+	if n := strings.Count(out, want); n != 1 {
+		t.Errorf("expected exactly one lazy_loading deprecation warning, got %d in log output: %s", n, out)
+	}
+	if strings.Contains(out, `"federation"`) {
+		t.Errorf("lazy_loading-only config should not also warn about federation: %s", out)
+	}
+}
+
+func TestLoadConfigWithoutRemovedKeysLogsNoDeprecationWarning(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: test-server
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "leanproxy.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+
+	buf := captureDefaultLogs(t)
+
+	if _, err := LoadConfig(context.Background(), configPath); err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+
+	if out := buf.String(); strings.Contains(out, "no longer supported") {
+		t.Errorf("config without removed keys should not log a deprecation warning: %s", out)
 	}
 }

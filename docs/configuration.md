@@ -121,110 +121,15 @@ bouncer:
 |--------|------|---------|-------------|
 | `watch.interval` | string | `"1s"` | Status refresh interval |
 
-### Optimization Options
+### Removed in v0.10
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `optimization.lazy_loading.enabled` | bool | `true` | Enable lazy-loading tool schemas |
-| `optimization.lazy_loading.stub_tokens` | int | `54` | Expected token count per stub |
-| `optimization.lazy_loading.cache_ttl` | duration | `24h` | Cache validity duration |
-| `optimization.lazy_loading.prewarm` | []string | `[]` | Tools to pre-load on startup |
-
-#### Lazy Loading
-
-Lazy-loading reduces initial context overhead by sending only compact tool stubs (~54 tokens each) at startup instead of full schemas. Full schemas are loaded on-demand when a tool is first invoked.
-
-**Benefits:**
-- 6-7x token reduction at startup
-- Only loads full schemas for tools that are actually used
-- In-memory caching with TTL for frequently accessed schemas
-
-**Example:**
-
-```yaml
-optimization:
-  lazy_loading:
-    enabled: true
-    stub_tokens: 54
-    cache_ttl: 24h
-    prewarm:
-      - github_search_code
-      - filesystem_read_file
-```
-
-### Federation Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `federation.enabled` | bool | `false` | Enable federation with other LeanProxy instances |
-| `federation.peers` | array | `[]` | List of federated peer configurations |
-
-#### Federation Configuration
-
-Federation allows connecting multiple LeanProxy instances across organizations to share and route tool requests.
-
-```yaml
-federation:
-  enabled: true
-  peers:
-    - name: "company-a"
-      url: "https://proxy.company-a.internal:8080"
-      auth_token: "optional-shared-secret"
-    - name: "company-b"
-      url: "https://proxy.company-b.internal:8080"
-```
-
-#### Peer Configuration Fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | yes | Unique identifier for the peer |
-| `url` | string | yes | HTTP endpoint of the peer |
-| `auth_token` | string | no | Bearer token for authentication |
-
-#### Federation Features
-
-- **Peer Discovery**: Automatically discover available tools from federated peers
-- **Cross-Instance Routing**: Route tool requests to the appropriate peer
-- **Failover Handling**: Automatically switch to backup peers if primary fails
-
-#### Federation API Endpoints
-
-When federation is enabled, the following endpoints are available:
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Health check for peer status |
-| `/federation/list-tools` | POST | List available tools on the peer |
-| `/federation/invoke` | POST | Invoke a tool on the peer |
-
-**list-tools Request:**
-```json
-{}
-```
-
-**list-tools Response:**
-```json
-{
-  "tools": ["github@create_issue", "github@list_repos", "jira@create_ticket"]
-}
-```
-
-**invoke Request:**
-```json
-{
-  "server": "github",
-  "tool": "create_issue",
-  "params": {"title": "Bug report", "body": "..."}
-}
-```
-
-**invoke Response:**
-```json
-{
-  "result": {"id": 123, "url": "https://..."}
-}
-```
+The `optimization.lazy_loading` and `federation` config blocks were never
+wired into any command — they parsed but had no effect — and were removed in
+v0.10 (see the [changelog](../CHANGELOG.md#removed-in-v010) and issue
+[#303](https://github.com/mmornati/leanproxy-mcp/issues/303)). Tool discovery
+is instead handled by [JIT Discovery](architecture.md#jit-discovery), which
+is wired into every transport. Existing configs that still contain either
+key keep loading; LeanProxy logs one startup warning per key and ignores it.
 
 ## Built-in Redaction Patterns
 
@@ -259,54 +164,6 @@ Output:
   - bearer-token: JWT Bearer token (three base64url segments)
   - env-var-value: Environment variable assignment
 ```
-
-## Socket Authentication
-
-The socket server supports optional token-based authentication to prevent unauthorized access.
-
-### Enabling Authentication
-
-To enable authentication, set the `auth_token` in your socket configuration:
-
-```yaml
-socket:
-  auth_token: "your-secret-token"
-```
-
-### Using Authenticated Requests
-
-When authentication is enabled, all JSON-RPC requests must include the `auth_token` field:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "token.resolve",
-  "params": {"uri": "api://example"},
-  "id": 1,
-  "auth_token": "your-secret-token"
-}
-```
-
-### Error Responses
-
-When authentication fails (missing or invalid token), the server returns:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "error": {
-    "code": -32604,
-    "message": "authentication required"
-  }
-}
-```
-
-### Security Notes
-
-- Without an auth token configured, all requests are allowed
-- The auth token is transmitted in plain text - use TLS or Unix socket permissions for security
-- Token comparison is exact (no hashing)
 
 ## Custom Redaction Patterns
 
@@ -595,59 +452,6 @@ leanproxy-mcp cache --semantic
 leanproxy-mcp cache --semantic --json
 ```
 
-## Model Routing
-
-Route tool calls to different LLM models based on complexity tier, configured per-server.
-
-### Configuration
-
-Separate YAML file referenced by `--model-router-config`:
-
-```yaml
-default_tier: medium
-tiers:
-  low:
-    provider: "anthropic"
-    model: "claude-3-haiku-20240307"
-    api_key_env: "ANTHROPIC_API_KEY"
-  medium:
-    provider: "anthropic"
-    model: "claude-3-sonnet-20240229"
-    api_key_env: "ANTHROPIC_API_KEY"
-  high:
-    provider: "anthropic"
-    model: "claude-3-opus-20240229"
-    api_key_env: "ANTHROPIC_API_KEY"
-```
-
-### Per-Server Assignment
-
-Declare the tier in each server entry within `leanproxy_servers.yaml`:
-
-```yaml
-servers:
-  - name: github
-    complexity_tier: "low"
-  - name: code-review
-    complexity_tier: "high"
-```
-
-### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `default_tier` | string | `medium` | Fallback tier |
-| `tiers.<tier>.provider` | string | — | LLM provider |
-| `tiers.<tier>.model` | string | — | Model identifier |
-| `tiers.<tier>.api_key` | string | — | API key inline |
-| `tiers.<tier>.api_key_env` | string | — | API key from env var |
-
-### CLI
-
-```bash
-leanproxy-mcp serve --model-router --model-router-config ./model-router.yaml
-```
-
 ## Auto-Reconnect
 
 LeanProxy-MCP monitors proxied MCP servers and reconnects them automatically when a server crashes, hangs, or loses its transport connection. This applies to all transports (`stdio`, `http`, `sse`).
@@ -700,13 +504,13 @@ reconnect:
 
 ## Sidecar LLM Redaction
 
-Offload sensitive content redaction to a local LLM (Ollama or MLX) for context-aware redaction beyond regex patterns.
+Offload sensitive content redaction to a local Ollama model for context-aware redaction beyond regex patterns.
 
 ### Configuration
 
 ```yaml
 sidecar:
-  provider: ollama    # "ollama" or "mlx"
+  provider: ollama
   model: llama3.1:8b
   url: http://localhost:11434
 ```
@@ -715,7 +519,7 @@ sidecar:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--sidecar-provider` | `""` | Sidecar provider (`ollama`, `mlx`); empty = disabled |
+| `--sidecar-provider` | `""` | Sidecar provider (`ollama`); empty = disabled |
 | `--sidecar-model` | `llama3.1:8b` | Model name |
 | `--sidecar-url` | `http://localhost:11434` | Server URL |
 
@@ -731,37 +535,6 @@ sidecar:
 ```bash
 leanproxy-mcp serve --sidecar-provider ollama --sidecar-model llama3.1:8b
 ```
-
-## Budget Management
-
-Configure spending limits per team and project with soft/hard caps and webhook alerts.
-
-### Configuration
-
-```yaml
-budgets:
-  webhook_url: "https://hooks.example.com/alert"
-  teams:
-    engineering:
-      daily: 1000000
-      monthly: 20000000
-      hard_cap: true
-      soft_cap_pct: 80.0
-      projects:
-        frontend:
-          daily: 500000
-          monthly: 10000000
-```
-
-### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `daily` | int | 0 | Daily token budget (0 = unlimited) |
-| `monthly` | int | 0 | Monthly token budget (0 = unlimited) |
-| `hard_cap` | bool | false | Reject when exceeded |
-| `soft_cap_pct` | float | 90.0 | Downgrade threshold (0-100) |
-| `webhook_url` | string | — | Override global webhook URL |
 
 ## Dashboard
 

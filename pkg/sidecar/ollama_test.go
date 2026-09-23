@@ -107,13 +107,13 @@ func TestNewClient(t *testing.T) {
 		}
 	})
 
-	t.Run("mlx config returns error without mlx build tag", func(t *testing.T) {
+	t.Run("unrecognized provider is treated as disabled", func(t *testing.T) {
 		c, err := NewClient(Config{Provider: "mlx", Model: "test"}, nil)
-		if err == nil {
-			t.Fatal("expected error for mlx provider without mlx build tag")
+		if err != nil {
+			t.Fatalf("NewClient() error = %v", err)
 		}
 		if c != nil {
-			t.Error("expected nil client on error")
+			t.Error("expected nil client for an unrecognized provider")
 		}
 	})
 }

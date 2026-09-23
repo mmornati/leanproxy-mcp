@@ -255,20 +255,6 @@ leanproxy-mcp serve --embed-provider ollama
 leanproxy-mcp cache --semantic
 ```
 
-### Set Budget Limits
-
-Control spending per team and project:
-
-```yaml
-# leanproxy.yaml
-budgets:
-  teams:
-    engineering:
-      daily: 1000000
-      monthly: 20000000
-      hard_cap: true
-```
-
 ### Install IDE Extensions
 
 Real-time cost monitoring in the editor status bar:
@@ -283,5 +269,4 @@ Requires the metrics endpoint: `leanproxy-mcp serve --metrics-bind 127.0.0.1:909
 - [Commands Reference](./commands.md) - Full command documentation
 - [Configuration](./configuration.md) - Customize LeanProxy-MCP
 - [Web Dashboard](./dashboard.md) - Real-time monitoring
-- [Budget Management](./budget.md) - Spending limits
 - [Troubleshooting](./troubleshooting.md) - Common issues and solutions

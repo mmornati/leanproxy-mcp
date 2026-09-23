@@ -168,27 +168,6 @@ flowchart TB
 
 ## Key Concepts
 
-### Shadow Manifesting
-
-```mermaid
-graph LR
-    subgraph Config["Configuration Merge"]
-        Global["~/.config/mcp.json<br/>Global Config"]
-        Project["./.mcp.json<br/>Project Config"]
-        Merge[Merge Priority]
-    end
-    
-    Global --> Merge
-    Project -->|Higher Priority| Merge
-    Merge --> Final["Final Config"]
-```
-
-Automatically merges:
-- Global config: `~/.config/mcp.json`
-- Project config: `./.mcp.json`
-
-Project config takes precedence over global.
-
 ### JIT Discovery
 
 ```mermaid

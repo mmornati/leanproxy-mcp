@@ -50,9 +50,6 @@ linters:
         path: cmd/report\.go
       - linters:
           - errcheck
-        path: pkg/proxy/socket/server\.go
-      - linters:
-          - errcheck
           - unused
         path: pkg/migrate/vscode\.go
       - linters:
@@ -87,16 +84,10 @@ linters:
         path: pkg/pool/queue\.go
       - linters:
           - unused
-        path: pkg/concurrent/batch\.go
-      - linters:
-          - unused
         path: pkg/concurrent/circuit\.go
       - linters:
           - unused
         path: pkg/concurrent/ratelimit\.go
-      - linters:
-          - unused
-        path: pkg/proxy/health_monitor\.go
       - linters:
           - errcheck
         path: pkg/registry/cache\.go
@@ -118,16 +109,10 @@ linters:
         path: pkg/bouncer/boilerplate\.go
       - linters:
           - gosec
-        path: pkg/proxy/socket/
-      - linters:
-          - gosec
         path: pkg/utils/
       - linters:
           - gosec
         path: pkg/concurrent/circuit\.go
-      - linters:
-          - gosec
-        path: pkg/proxy/process_health\.go
       - linters:
           - gosec
         path: pkg/registry/lifecycle\.go

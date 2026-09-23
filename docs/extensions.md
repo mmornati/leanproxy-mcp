@@ -77,5 +77,4 @@ leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 ## Next Steps
 
 - [Web Dashboard](./dashboard.md) — Browser-based monitoring
-- [Budget Management](./budget.md) — Team/project spending limits
 - [Commands Reference](./commands.md) — Full CLI documentation
