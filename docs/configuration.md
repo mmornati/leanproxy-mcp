@@ -67,7 +67,7 @@ watch:
 | `servers[].timeout` | duration | `30s` | **Per-server** request timeout. Each server entry in `servers:` can set its own `timeout` (e.g. `timeout: 60s` for `garmin`). The proxy honors the per-server value end-to-end: the handler dispatches with it and the worker uses `min(per-server, caller)`. Use a larger value for servers that return slow / large payloads (FIT data, big search results). |
 | `server.max_batch_size` | int | `100` | Maximum batch size for JSON-RPC batch requests (0 = unlimited) |
 | `server.max_concurrent_requests` | int | `64` | Maximum number of client requests `server run --stdio` handles in parallel (for `serve`: per connection). `0` or absent means the default; negative values are rejected. See below. |
-| `server.max_line_bytes` | int | `67108864` (64 MiB) | `serve` only: largest JSON-RPC message (one line). A longer line gets an error and the connection is closed. `0` or absent means the default |
+| `server.max_line_bytes` | int | `67108864` (64 MiB) | Largest incoming JSON-RPC message (one line), for both `serve` and `server run --stdio`. A longer line gets a parse-error response and is skipped; `serve` also closes the connection. `0` or absent means the default |
 | `server.max_connections` | int | `32` | `serve` only: client connections open at once; extra ones are closed right away. `0` or absent means the default |
 
 ### Concurrent Client Requests (`server.max_concurrent_requests`)
@@ -96,6 +96,10 @@ server:
   upstream server.
 - **Invalid JSON** is answered with a parse error whose `id` is `null`. The
   raw line is never logged, only its length.
+- **Oversized lines:** a message over `server.max_line_bytes` (default 64
+  MiB, shared with `serve`; see below) also gets a parse-error response with
+  `id` `null`. It is discarded up to its next newline and the connection
+  keeps serving.
 
 ### Serve Listener Limits
 

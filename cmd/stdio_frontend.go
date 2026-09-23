@@ -42,7 +42,11 @@ type stdioFrontendOptions struct {
 	MaxConcurrent int
 	// ShutdownGrace is how long shutdown/EOF waits for in-flight requests.
 	ShutdownGrace time.Duration
-	Logger        *slog.Logger
+	// MaxLineBytes caps one incoming message (server.max_line_bytes). An
+	// oversized line is rejected with a JSON-RPC error (id null) and
+	// discarded up to its next newline; the connection stays open.
+	MaxLineBytes int
+	Logger       *slog.Logger
 }
 
 // stdioEnvelope decodes one incoming JSON-RPC message. ID is kept raw so an
@@ -84,9 +88,10 @@ type queuedRequest struct {
 // dispatcher through queue, so it keeps reading — and handling
 // cancel notifications — while every slot is busy.
 type stdioFrontend struct {
-	handler requestHandler
-	logger  *slog.Logger
-	grace   time.Duration
+	handler      requestHandler
+	logger       *slog.Logger
+	grace        time.Duration
+	maxLineBytes int
 
 	writeMu sync.Mutex
 	w       *bufio.Writer
@@ -117,14 +122,19 @@ func serveStdio(ctx context.Context, r io.Reader, w io.Writer, handler requestHa
 	if logger == nil {
 		logger = slog.Default()
 	}
+	maxLineBytes := opts.MaxLineBytes
+	if maxLineBytes <= 0 {
+		maxLineBytes = migrate.DefaultMaxLineBytes
+	}
 	f := &stdioFrontend{
-		handler:  handler,
-		logger:   logger,
-		grace:    grace,
-		w:        bufio.NewWriter(w),
-		sem:      make(chan struct{}, maxConc),
-		queue:    make(chan *queuedRequest, stdioQueueSize(maxConc)),
-		inflight: make(map[string]*inflightRequest),
+		handler:      handler,
+		logger:       logger,
+		grace:        grace,
+		maxLineBytes: maxLineBytes,
+		w:            bufio.NewWriter(w),
+		sem:          make(chan struct{}, maxConc),
+		queue:        make(chan *queuedRequest, stdioQueueSize(maxConc)),
+		inflight:     make(map[string]*inflightRequest),
 	}
 
 	// Every request context derives from reqCtx so the end of the grace
@@ -160,7 +170,15 @@ func serveStdio(ctx context.Context, r io.Reader, w io.Writer, handler requestHa
 // `shutdown` request (returned, not yet handled) or ctx ends.
 func (f *stdioFrontend) readLoop(ctx context.Context, reader *bufio.Reader) (*mcp.Request, error) {
 	for {
-		line, err := reader.ReadBytes('\n')
+		line, tooLong, err := readLineCapped(reader, f.maxLineBytes)
+		if tooLong {
+			f.logger.Warn("stdin message exceeds server.max_line_bytes, discarding", "max_line_bytes", f.maxLineBytes)
+			f.write(&mcp.Response{
+				JSONRPC: mcp.JSONRPCVersion,
+				Error:   mcp.NewError(mcp.ErrCodeParseError, "request exceeds maximum message size"),
+				ID:      nil,
+			})
+		}
 		if len(line) > 0 {
 			if req := f.handleLine(ctx, line); req != nil {
 				return req, nil
@@ -176,6 +194,32 @@ func (f *stdioFrontend) readLoop(ctx context.Context, reader *bufio.Reader) (*mc
 		}
 		if ctx.Err() != nil {
 			return nil, nil
+		}
+	}
+}
+
+// readLineCapped reads one newline-delimited line from r. It always
+// consumes through the next newline (or EOF), even when the line exceeds
+// maxBytes, so the reader resynchronizes on the following message instead
+// of misreading its tail as more of the oversized one. When tooLong is
+// true, line is nil: the oversized content is discarded rather than
+// buffered in full.
+func readLineCapped(r *bufio.Reader, maxBytes int) (line []byte, tooLong bool, err error) {
+	var total int
+	for {
+		frag, ferr := r.ReadSlice('\n')
+		total += len(frag)
+		if total > maxBytes {
+			tooLong = true
+		}
+		if !tooLong {
+			line = append(line, frag...)
+		}
+		if ferr == nil {
+			return line, tooLong, nil
+		}
+		if !errors.Is(ferr, bufio.ErrBufferFull) {
+			return nil, tooLong, ferr
 		}
 	}
 }
