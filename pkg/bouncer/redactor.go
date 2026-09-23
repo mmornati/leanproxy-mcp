@@ -66,27 +66,42 @@ type RedactionMeta struct {
 
 type Redactor struct {
 	patterns     []*regexp.Regexp
+	rules        []rule
+	always       []int
+	kw           *kwMatcher
+	entropy      bool
+	entropyIdx   int
 	alertManager *AlertManager
 	bufferSize   int
 	maxOverlap   int
 }
 
+// NewRedactor builds a redactor for patterns. Built-in patterns keep their
+// keyword prefilter and secret capture group; custom patterns are
+// prefiltered on their literal prefix when they have one.
 func NewRedactor(patterns []*regexp.Regexp) *Redactor {
-	return &Redactor{
-		patterns:   patterns,
-		bufferSize: 4096,
-		maxOverlap: defaultMaxOverlap,
-	}
+	return NewRedactorWithOptions(patterns, RedactorOptions{})
 }
 
 func NewRedactorWithAlerts(patterns []*regexp.Regexp, alertManager *AlertManager) *Redactor {
-	return &Redactor{
+	return NewRedactorWithOptions(patterns, RedactorOptions{Alerts: alertManager})
+}
+
+// NewRedactorWithOptions builds a redactor for patterns with opts.
+func NewRedactorWithOptions(patterns []*regexp.Regexp, opts RedactorOptions) *Redactor {
+	r := &Redactor{
 		patterns:     patterns,
-		alertManager: alertManager,
+		alertManager: opts.Alerts,
+		entropy:      opts.Entropy,
 		bufferSize:   4096,
 		maxOverlap:   defaultMaxOverlap,
 	}
+	r.compileRules()
+	return r
 }
+
+// EntropyEnabled reports whether the generic high-entropy detector is on.
+func (r *Redactor) EntropyEnabled() bool { return r.entropy }
 
 // span is a half-open [start, end) byte range of a pattern match.
 type span struct{ start, end int }
@@ -228,18 +243,10 @@ func (r *Redactor) findSpans(data []byte) []span {
 // flat: the same backing array is reused across all scans inside one
 // RedactStream invocation and across calls.
 func (r *Redactor) findSpansInto(data []byte, dst []span) []span {
-	dst = dst[:0]
-	for _, pattern := range r.patterns {
-		for _, loc := range pattern.FindAllIndex(data, -1) {
-			if loc[1] > loc[0] {
-				dst = append(dst, span{loc[0], loc[1]})
-			}
-		}
-	}
-	if len(dst) == 0 {
-		return dst
-	}
-	return mergeSpans(dst)
+	mask := r.acquireMask()
+	defer releaseMask(mask)
+	r.kw.scan(data, mask)
+	return r.findSpansMasked(data, mask, false, dst)
 }
 
 // mergeSpans coalesces overlapping or adjacent spans in place. The input
@@ -397,6 +404,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 			if flushErr := writerBuf.Flush(); flushErr != nil {
 				slog.Warn("bouncer redact: flush after read error failed", "write_error", flushErr)
 			}
+			slog.Debug("streaming redaction aborted by read error", "bytes_read", totalRead, "bytes_written", totalWritten, "secrets_found", matchCount)
 			return fmt.Errorf("bouncer redact: %w", err)
 		}
 
@@ -483,117 +491,46 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 	return nil
 }
 
-// redactChunkWithCount redacts a self-contained byte slice and reports how
-// many distinct secret spans were replaced.
-func (r *Redactor) redactChunkWithCount(chunk []byte) ([]byte, int) {
-	spans := r.findSpans(chunk)
-	if len(spans) == 0 {
-		out := make([]byte, len(chunk))
-		copy(out, chunk)
-		return out, 0
-	}
-	return applySpans(make([]byte, 0, len(chunk)), chunk, spans, len(chunk)), len(spans)
-}
-
-func (r *Redactor) redactChunk(chunk []byte) []byte {
-	out, _ := r.redactChunkWithCount(chunk)
-	return out
-}
-
-// RedactJSON redacts every string value in a JSON document. If the input is
-// not valid JSON it falls back to a byte-level scan of the raw input rather
-// than passing it through unchanged, so a malformed or truncated payload can
-// never be used to smuggle a secret past the redactor.
+// RedactJSON redacts a JSON document losslessly: every byte is copied
+// through unchanged except string literals (values or object keys) that
+// contain a secret and the values of sensitive keys, so numbers, key order,
+// whitespace and escaping survive byte for byte. Strings holding a JSON
+// document (for example an MCP result's content[].text) are redacted
+// recursively. See jsonredact.go for the details.
+//
+// If the input is not valid JSON it falls back to a byte-level scan of the
+// raw input rather than passing it through unchanged, so a malformed or
+// truncated payload can never be used to smuggle a secret past the
+// redactor. When nothing needs redacting the input slice itself is
+// returned.
 func (r *Redactor) RedactJSON(data []byte) ([]byte, int, error) {
-	slog.Debug("redacting message", "size", len(data))
-
-	// UseNumber decodes JSON numbers as json.Number (its original literal
-	// text) instead of float64, so a large integer argument (e.g.
-	// 12345678901234567) survives this redact→re-marshal round trip
-	// byte-identical instead of losing precision (#296 point 5: lossless
-	// arguments end-to-end, not just at the handler).
-	var raw interface{}
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	// Decoder.Decode only consumes the first JSON value, so a second value
-	// (json.Unmarshal's "not exactly one value" case) is checked explicitly
-	// to keep the same strictness as before.
-	if err := dec.Decode(&raw); err != nil || dec.More() {
-		if err == nil {
-			slog.Warn("invalid JSON input, falling back to byte-level redaction", "error", "trailing data after JSON value")
-		} else {
-			slog.Warn("invalid JSON input, falling back to byte-level redaction", "error", err)
-		}
-		redacted, count := r.redactChunkWithCount(data)
-		if count > 0 {
-			slog.Info("redaction complete", "secrets_found", count, "mode", "bytes")
-		}
-		return redacted, count, nil
+	out, count, lossless := r.redactPayload(data)
+	if !lossless {
+		slog.Debug("invalid JSON input, fell back to byte-level redaction", "size", len(data))
 	}
-
-	redactedRaw, count := r.redactInterface(raw)
-	redacted, err := json.Marshal(redactedRaw)
-	if err != nil {
-		return nil, 0, fmt.Errorf("bouncer redact: marshal: %w", err)
-	}
-
 	if count > 0 {
-		slog.Info("redaction complete", "secrets_found", count)
+		mode := "json"
+		if !lossless {
+			mode = "bytes"
+		}
+		slog.Info("redaction complete", "secrets_found", count, "mode", mode)
 	}
-
-	return redacted, count, nil
+	return out, count, nil
 }
 
-func (r *Redactor) redactInterface(val interface{}) (interface{}, int) {
-	switch v := val.(type) {
-	case string:
-		return r.redactString(v)
-	case map[string]interface{}:
-		totalCount := 0
-		for k, val := range v {
-			// Sensitive-field-name pass: a value sitting behind a key
-			// in SensitiveJSONFieldNames (e.g. "api_key", "private_key",
-			// "client_secret") is always treated as a credential,
-			// regardless of whether the value matches any built-in
-			// regex. This catches tokens whose value the operator has
-			// not enumerated, and is the documented behavior for #279
-			// acceptance criterion (sensitive JSON fields at any depth).
-			// The field-name pass is JSON-aware, so it preserves the
-			// surrounding key/value framing: only the value is redacted.
-			if _, ok := val.(string); ok && sensitiveJSONFieldLookup(k) {
-				v[k] = SecretRedacted
-				totalCount++
-				continue
-			}
-			newVal, count := r.redactInterface(val)
-			v[k] = newVal
-			totalCount += count
-		}
-		return v, totalCount
-	case []interface{}:
-		totalCount := 0
-		for i, val := range v {
-			newVal, count := r.redactInterface(val)
-			v[i] = newVal
-			totalCount += count
-		}
-		return v, totalCount
-	default:
-		return v, 0
-	}
+// RedactPayload is RedactJSON without logging, for callers that run while
+// a log record is being formatted (see internal/logx).
+func (r *Redactor) RedactPayload(data []byte) ([]byte, int) {
+	out, count, _ := r.redactPayload(data)
+	return out, count
 }
 
-func (r *Redactor) redactString(data string) (string, int) {
-	result := data
-	totalCount := 0
-	for _, pattern := range r.patterns {
-		matches := pattern.FindAllString(result, -1)
-		if len(matches) > 0 {
-			totalCount += len(matches)
-			result = pattern.ReplaceAllString(result, SecretRedacted)
-		}
+func (r *Redactor) redactPayload(data []byte) (out []byte, count int, lossless bool) {
+	if out, count, ok := r.redactJSONLossless(data, 0); ok {
+		return out, count, true
 	}
-	return result, totalCount
+	out, count = r.RedactBytes(data)
+	return out, count, false
 }
 
 func NewRedactorFromLoaded(loaded *LoadedPatterns) *Redactor {

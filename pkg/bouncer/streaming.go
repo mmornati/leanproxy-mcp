@@ -31,14 +31,6 @@ func (sr *StreamingRedactor) RedactStream(r io.Reader, w io.Writer, meta ...*Red
 	return sr.inner.RedactStream(r, w, meta...)
 }
 
-func (sr *StreamingRedactor) redactChunkWithCount(chunk []byte) ([]byte, int) {
-	return sr.inner.redactChunkWithCount(chunk)
-}
-
-func (sr *StreamingRedactor) redactChunk(chunk []byte) []byte {
-	return sr.inner.redactChunk(chunk)
-}
-
 // RedactToWriter is an alias for RedactStream kept for backwards
 // compatibility with callers that pre-date the RedactStream rename. Both
 // methods share the same code path — fixing one fixes both — so any future

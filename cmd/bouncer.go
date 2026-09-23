@@ -42,6 +42,9 @@ var validatePatternsCmd = &cobra.Command{
 		if cfg.ShouldAlwaysCallSidecar() {
 			fmt.Fprintln(cmd.OutOrStdout(), "Note: bouncer.sidecar_always_call is true; the sidecar LLM will run on every request")
 		}
+		if cfg.EntropyEnabled() {
+			fmt.Fprintln(cmd.OutOrStdout(), "Note: bouncer.entropy_detection is true; the high-entropy detector is on")
+		}
 		loaded, err := cfg.CompilePatterns()
 		if err != nil {
 			return fmt.Errorf("failed to compile patterns: %w", err)
@@ -59,8 +62,10 @@ var listPatternsCmd = &cobra.Command{
 		loaded := bouncer.GetBuiltInPatterns()
 		fmt.Println("# Built-in Patterns")
 		for _, p := range loaded {
-			fmt.Printf("  - %s: %s\n", p.Name, p.Description)
+			fmt.Printf("  - %s [%s]: %s\n", p.Name, p.Severity, p.Description)
 		}
+		fmt.Println("# Optional detectors")
+		fmt.Println("  - high-entropy (bouncer.entropy_detection, off by default): 20+ char tokens with Shannon entropy >= 4.0 near key/secret/token/password")
 	},
 }
 

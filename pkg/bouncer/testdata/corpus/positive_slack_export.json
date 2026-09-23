@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "id": 11,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"ok\": true, \"channel\": \"C0123DEPLOY\", \"messages\": [{\"ts\": \"1714560000.000100\", \"user\": \"U024BE7LH\", \"text\": \"deploying now, bot token is {{SLACK_BOT}}\"}, {\"ts\": \"1714560000.000200\", \"user\": \"U024BE7LJ\", \"text\": \"curl -H 'Authorization: Bearer {{JWT}}' https://api.example.com/v1/me\"}, {\"ts\": \"1714560000.000300\", \"user\": \"U024BE7LH\", \"text\": \"staging uses Authorization: Basic {{BASIC}}\"}, {\"ts\": \"1714560000.000400\", \"user\": \"U024BE7LK\", \"text\": \"the session cookie jwt was {{JWT}} (expired)\"}, {\"ts\": \"1714560000.000500\", \"user\": \"U024BE7LK\", \"text\": \"publish with NPM_TOKEN={{NPM}}\"}, {\"ts\": \"1714560000.000600\", \"user\": \"U024BE7LH\", \"text\": \"anthropic key for the eval job: {{ANTHROPIC}}\"}, {\"ts\": \"1714560000.000700\", \"user\": \"U024BE7LJ\", \"text\": \"gitlab mirror token {{GITLAB}}\"}, {\"ts\": \"1714560000.000800\", \"user\": \"U024BE7LJ\", \"text\": \"here is the release signing key, please rotate after use:\\n{{PEM_PGP:2}}\"}, {\"ts\": \"1714560000.000900\", \"user\": \"U024BE7LK\", \"text\": \"stripe test key {{STRIPE_TEST}} and restricted {{STRIPE_RK}}\"}, {\"ts\": \"1714560000.001000\", \"user\": \"U024BE7LH\", \"text\": \"the GitHub App installation token is {{GH_OAUTH}}\"}, {\"ts\": \"1714560000.001100\", \"user\": \"U024BE7LK\", \"text\": \"gcloud auth print-access-token -> {{GCP_OAUTH}}\"}, {\"ts\": \"1714560000.001200\", \"user\": \"U024BE7LJ\", \"text\": \"old openai key {{OPENAI}} still in the notebook\"}, {\"ts\": \"1714560000.001300\", \"user\": \"U024BE7LJ\", \"text\": \"aws_secret_access_key = {{AWS_SECRET}}\"}, {\"ts\": \"1714560000.001400\", \"user\": \"U024BE7LH\", \"text\": \"lunch at noon? :taco:\"}], \"has_more\": false}"
+      }
+    ]
+  }
+}

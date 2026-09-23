@@ -1,0 +1,28 @@
+{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "Contents of .env (branch main, 16 lines)"
+      },
+      {
+        "type": "resource",
+        "resource": {
+          "uri": "repo://acme/shop/contents/.env",
+          "mimeType": "text/plain",
+          "text": "# production settings\nAPP_NAME=shop\nPORT=8080\nDATABASE_URL=postgres://app:{{DSN_PW}}@db.internal:5432/shop\nREDIS_URL=redis://:{{DSN_PW}}@cache.internal:6379/0\nAMQP_URL=amqp://orders:{{DSN_PW}}@mq.internal:5672/\nAWS_ACCESS_KEY_ID={{AWS_KEY_ID}}\nAWS_SECRET_ACCESS_KEY={{AWS_SECRET}}\nSTRIPE_SECRET_KEY={{STRIPE_LIVE}}\nOPENAI_API_KEY={{OPENAI_PROJ}}\nGITHUB_TOKEN={{GH_PAT}}\nSESSION_SECRET={{PASSWORD}}\nDB_PASSWORD={{PASSWORD}}\nSLACK_WEBHOOK_URL={{SLACK_WEBHOOK}}\nLOG_LEVEL=info\n"
+        }
+      },
+      {
+        "type": "resource",
+        "resource": {
+          "uri": "repo://acme/shop/contents/deploy/sa.json",
+          "mimeType": "application/json",
+          "text": "{\n  \"type\": \"service_account\",\n  \"project_id\": \"shop-prod-123456\",\n  \"private_key_id\": \"0123456789abcdef0123456789abcdef01234567\",\n  \"private_key\": \"{{PEM_RSA:2}}\",\n  \"client_email\": \"deployer@shop-prod-123456.iam.gserviceaccount.com\",\n  \"client_id\": \"123456789012345678901\",\n  \"auth_uri\": \"https://accounts.google.com/o/oauth2/auth\"\n}"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "jsonrpc": "2.0",
+  "id": 12,
+  "result": {
+    "content": [
+      {
+        "type": "text",
+        "text": "request captured"
+      }
+    ],
+    "structuredContent": {
+      "request": {
+        "method": "POST",
+        "url": "https://api.example.com/v1/charges",
+        "headers": {
+          "Authorization": "Bearer {{JWT}}",
+          "Cookie": "sid={{PASSWORD}}",
+          "X-Api-Key": "{{PASSWORD}}",
+          "Accept": "application/json"
+        },
+        "body": {
+          "amount": 1999,
+          "currency": "eur",
+          "source": "tok_visa"
+        }
+      },
+      "secrets_by_key": {
+        "{{GH_PAT}}": "leaked as an object key"
+      },
+      "env": [
+        "HOME=/root",
+        "AWS_SESSION_TOKEN={{PASSWORD}}"
+      ]
+    }
+  }
+}

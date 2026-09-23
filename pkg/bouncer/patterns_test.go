@@ -133,8 +133,8 @@ func TestBuiltInPatterns(t *testing.T) {
 }
 
 func TestPatternCount(t *testing.T) {
-	if len(BuiltInPatterns) != 16 {
-		t.Errorf("expected 16 built-in patterns, got %d", len(BuiltInPatterns))
+	if len(BuiltInPatterns) != 29 {
+		t.Errorf("expected 29 built-in patterns, got %d", len(BuiltInPatterns))
 	}
 }
 
