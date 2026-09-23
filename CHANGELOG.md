@@ -78,6 +78,36 @@
 
 ## Added in v0.11
 
+- **MCP protocol upgrade, part 2: server-to-client requests, progress, cancellation and resource updates** ([#308](https://github.com/mmornati/leanproxy-mcp/issues/308)).
+  - **What.** An upstream's `elicitation/create`, `roots/list` and `sampling/createMessage` requests used to
+    be answered `-32601` (the feature was lost); they are now relayed to the client — on both front ends
+    (`server run --stdio` and every `serve` connection), for stdio and Streamable HTTP upstreams — and the
+    client's answer is sent back. The client sees the request under a proxy id (`lp-<n>`), so ids of
+    different upstreams and clients never collide; the upstream keeps its own. Only a client that declared
+    the capability in `initialize` is asked; otherwise the upstream gets `-32601` at once, nothing hangs.
+  - **Policy.** Elicitation is relayed by default with `[<server>] ` prepended to the message (spoofing
+    protection). Sampling is **off by default** and relayed only with the new `servers[].allow_sampling: true`
+    (each use logged). `roots/list` is relayed, or answered from the new static `servers[].roots` list.
+    What the proxy declares to each upstream follows the same policy.
+  - **Progress.** A client `_meta.progressToken` on `tools/call`/`invoke_tool` (and `resources/read`,
+    `prompts/get`) is forwarded upstream as a proxy token unique per call; the upstream's
+    `notifications/progress` reach that client only, with its own token.
+  - **Cancellation, both ways.** A client cancel reaches stdio *and* HTTP/SSE upstreams as
+    `notifications/cancelled` with the upstream's request id (HTTP/SSE used to send none), and the
+    canceled request gets no response (`serve` now honors client cancels too). An upstream cancel of a
+    relayed request reaches the client. Pending entries are freed at once in every case.
+  - **Resource updates.** `resources.subscribe` is now advertised when an upstream supports it; upstream
+    `notifications/resources/updated` reach the subscribed clients, namespaced. Clients share one upstream
+    subscription (unsubscribe is forwarded when the last subscriber leaves or disconnects).
+  - **Firewall.** Relayed requests are secret-redacted before the client and the client's answers before
+    the upstream; sampling and elicitation text goes through the prompt-injection guard's response policy.
+    See [`docs/security.md`](docs/security.md#server-to-client-traffic-308).
+  - **Telemetry.** Each relayed request gets a SERVER span `<method> <server>`.
+  - **Not yet.** Legacy SSE upstreams cannot send server-to-client requests (mcp-go's SSE transport drops
+    them), so nothing is declared to them; their progress and resource updates are relayed. Upstream
+    `notifications/message` (logging) is not relayed. stdio upstreams still get no `traceparent` in
+    `params._meta`.
+
 - **OpenTelemetry traces & metrics for the MCP pipeline** ([#317](https://github.com/mmornati/leanproxy-mcp/issues/317)).
   - **What.** Optional OTLP export, off by default, enabled by the standard `OTEL_EXPORTER_OTLP_ENDPOINT`
     / `OTEL_EXPORTER_OTLP_PROTOCOL` env vars or a `telemetry:` config block. Both front ends
@@ -180,6 +210,16 @@
   - **Removed.** The dead substring matchers `matchesQuery` and `gateway.SearchTools`.
 
 ## Fixed in v0.11
+
+- **A canceled HTTP/SSE call no longer tears down the upstream connection** ([#308](https://github.com/mmornati/leanproxy-mcp/issues/308)).
+  The raw relay treated the error of a request whose caller gave up (a client cancel, a timeout) as a
+  transport failure: it marked the server disconnected and reconnected — under every other call in flight
+  on that connection — and retried the request on the caller's dead context. It now only reconnects on a
+  real transport failure, and tells the upstream the request was canceled.
+- **`SendServerNotification` reaches HTTP and SSE upstreams** ([#308](https://github.com/mmornati/leanproxy-mcp/issues/308)).
+  It was a silent no-op for both (so, for example, a client's `notifications/roots/list_changed` could
+  not be forwarded); an unknown server is now an error, as for stdio. A stdio server whose session is not
+  initialized yet no longer gets a notification before its `initialize`.
 
 - **Injection actions return valid, honest results** ([#315](https://github.com/mmornati/leanproxy-mcp/issues/315)).
   The dispatcher's `redact` action produced `[CONTENT_REDACTED]` as the new params (not valid JSON), and the

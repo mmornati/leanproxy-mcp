@@ -425,6 +425,41 @@ injection:
 leanproxy-mcp doctor security
 ```
 
+## Server-to-client traffic (#308)
+
+Upstream servers can send requests to the client (`elicitation/create`,
+`sampling/createMessage`, `roots/list`) and notifications (progress,
+resource updates). LeanProxy relays them (see
+[configuration](./configuration.md#server-to-client-requests-allow_sampling-roots)),
+and the Token Firewall covers that traffic as follows:
+
+| Traffic | Secret redaction | Prompt-injection guard | Why |
+|---------|------------------|------------------------|-----|
+| Server → client request params (elicitation, sampling, roots) | yes | sampling and elicitation, with `response_policies` | The text is written by the upstream and put in front of the client's LLM (a sampling prompt) or its user (an elicitation message): the same untrusted direction as a tool result. `annotate` prepends the warning to the elicitation `message` or the sampling `systemPrompt`; `block` (and `quarantine`) refuses the request and the server gets a JSON-RPC error; `redact` replaces only the matching spans. Runs only when response scanning is enabled. |
+| Client → server answers (elicitation input, sampling output, roots) | yes | no | The answer is the user's own input or the client LLM's output, i.e. the side the guard protects; it can carry the user's data (a pasted token), so it is redacted before it reaches the server. |
+| Server → client notifications (progress `message`, resource updates, elicitation completion) | yes | no | Short status text; redacted like any other upstream output. |
+
+Other safeguards:
+
+- **Spoofing.** An elicitation message is always prefixed with
+  `[<server>] `, so a server cannot pose as the IDE or as another server.
+- **Sampling is opt-in** (`servers[].allow_sampling`, default `false`): a
+  server cannot spend the user's LLM tokens unless the operator allows it,
+  and every relayed sampling request is logged.
+- **Only declared capabilities.** A request is relayed only to a client
+  that declared the capability, and the proxy declares to each upstream
+  only what it can relay (nothing to legacy SSE upstreams; `sampling` only
+  with `allow_sampling`).
+- **No cross-client leakage.** With several `serve` connections, a request
+  goes to the client whose call to that server is in flight; when that is
+  ambiguous it is refused rather than shown to another client. Progress
+  notifications are routed by a proxy token unique per call, never
+  broadcast; an unknown token is dropped.
+- **Bounded.** At most 32 concurrent server-to-client requests per upstream
+  connection and 64 pending requests per client; a request the client never
+  answers is failed after 10 minutes; a disconnect or an upstream
+  cancellation frees everything at once.
+
 ## Sidecar LLM Redaction
 
 For context-aware redaction beyond regex patterns, deploy a sidecar LLM (Ollama). The sidecar analyzes already-redacted content and replaces any remaining sensitive data using an LLM.

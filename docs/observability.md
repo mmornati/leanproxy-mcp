@@ -90,6 +90,13 @@ status codes — `mcp.method.name`, `mcp.tool.name`, `mcp.server.name`,
 redaction counts, cache hit/miss, injection guard action. **Tool arguments
 and results never appear on a span or a metric.**
 
+A request an upstream sends to the client (`elicitation/create`,
+`sampling/createMessage`, `roots/list`; #308) gets its own SERVER span,
+`<method> <server>` (for example `elicitation/create github`), with
+`mcp.method.name` and `mcp.server.name`, and an error status when it is
+refused or fails. Its params and the client's answer are never recorded
+either.
+
 ## Config file instead of environment variables
 
 ```yaml

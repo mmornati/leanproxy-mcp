@@ -337,6 +337,14 @@ Implements the MCP protocol handling including:
   methods to the upstreams that advertise the capability (paginated, per-server
   timeouts), `leanproxy://<server>/<uri>` and `<server>.<prompt>` namespacing,
   routing of `resources/read`, `resources/subscribe` and `prompts/get`
+- Relay of what the upstreams initiate (`relay.go`, `session_requests.go`;
+  #308): the pool hands server-to-client requests and notifications to the
+  handler (`pool.ServerMessageHandler`), which picks the client session
+  (declared capability, call in flight), sends the request under a session id
+  of its own (`lp-<n>`) through the front end's writer, and routes the answer
+  back; progress tokens are remapped per call, resource updates go to the
+  subscribed sessions, and the Token Firewall redacts (and injection-checks)
+  the relayed traffic
 
 ### Tool Search (`pkg/toolsearch/`)
 
