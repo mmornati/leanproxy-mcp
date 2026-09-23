@@ -1175,3 +1175,44 @@ func TestLoadConfigToolSearch_Invalid(t *testing.T) {
 		}
 	}
 }
+
+// #315: the injection block is validated at load time (policy actions per
+// direction, bands, judge settings).
+func TestConfigValidateInjection(t *testing.T) {
+	dir := t.TempDir()
+	load := func(block string) error {
+		t.Helper()
+		path := filepath.Join(dir, "leanproxy.yaml")
+		if err := os.WriteFile(path, []byte("version: \"1.0\"\nservers: []\n"+block), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadConfig(context.Background(), path)
+		return err
+	}
+	valid := `injection:
+  enabled: true
+  threshold: 70
+  request_policies:
+    - {min_risk: 80, max_risk: 100, action: block}
+    - {min_risk: 50, max_risk: 79, action: quarantine}
+  response_policies:
+    - {min_risk: 70, max_risk: 100, action: annotate}
+  judge:
+    provider: ollama
+    model: llama3.1:8b
+    threshold: 50
+    timeout: 2s
+`
+	if err := load(valid); err != nil {
+		t.Fatalf("valid injection block rejected: %v", err)
+	}
+	for name, block := range map[string]string{
+		"annotate on requests":    "injection:\n  enabled: true\n  request_policies:\n    - {min_risk: 1, max_risk: 100, action: annotate}\n",
+		"quarantine on responses": "injection:\n  enabled: true\n  response_policies:\n    - {min_risk: 1, max_risk: 100, action: quarantine}\n",
+		"unknown judge provider":  "injection:\n  enabled: true\n  judge: {provider: remote, model: m}\n",
+	} {
+		if err := load(block); err == nil || !strings.Contains(err.Error(), "injection") {
+			t.Errorf("%s: err = %v", name, err)
+		}
+	}
+}

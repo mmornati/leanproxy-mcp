@@ -10,7 +10,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | **Dashboard & Metrics Hardening** | Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
 | **First-Party Servers Hardening** | Postgres: real read-only transaction, not just a text prefix check. Redis: pool that can't deadlock, bounded RESP allocations, per-command deadlines (#318) |
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
-| **Prompt Injection Protection** | Classifies payloads against injection patterns with risk scoring and configurable actions |
+| **Prompt Injection Protection** | Classifies the decoded text of requests and tool outputs (indirect injection) with risk scoring and per-direction actions |
 | **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model for sensitive data beyond regex |
 | **Batch Size Limits** | Prevents DoS via large JSON-RPC batch requests |
 | **ReDoS Protection** | Validates regex patterns to prevent catastrophic backtracking |
@@ -136,7 +136,7 @@ front ends:
 Pipeline order for every request:
 
 ```
-client → redact request params → injection check → dispatch/upstream → redact response → client
+client → redact request params → injection check → dispatch/upstream → injection check (response) → redact response → client
 ```
 
 - **Request redaction** covers every nested value of `params`, including the
@@ -152,7 +152,8 @@ client → redact request params → injection check → dispatch/upstream → r
 - Redaction is **on by default** with the built-in patterns when there is no
   `bouncer:` block. Only `bouncer.enabled: false` turns it off (in both
   modes). At startup the proxy logs one line such as
-  `redaction enabled, 29 patterns; injection disabled`.
+  `redaction enabled, 29 patterns; injection disabled` (or
+  `injection enabled (requests and responses)`).
 
 ## In-Memory Redaction
 
@@ -289,105 +290,132 @@ bouncer:
 
 ## Prompt Injection Protection
 
-LeanProxy-MCP includes a classification engine that detects and responds to prompt injection attacks, jailbreak attempts, and system prompt extraction in tool call payloads.
+LeanProxy-MCP classifies what goes **to** tools and what comes **back** from
+them. Indirect prompt injection — instructions planted in a web page, an
+issue, an e-mail or a file that a tool returns — is the main real-world MCP
+threat, so since v0.11 ([#315](https://github.com/mmornati/leanproxy-mcp/issues/315))
+tool results, resource reads and prompts are classified too, with their own
+policy. Configuration: [`injection:`](./configuration.md#prompt-injection-protection).
 
-### How It Works
+### How it works
 
-The injection classifier runs against every tool call payload:
+1. **Decoded text, not raw JSON.** The guard walks the message with the same
+   lossless JSON scanner as the redactor and collects the *decoded* string
+   values in scope (keys included for requests and `structuredContent`).
+   Strings that are JSON documents themselves (a tool's text is often one)
+   are opened, up to three levels. `ignore\u0020previous instructions` and
+   `ignore\tprevious…` therefore score like the plain phrase, and a phrase
+   split across two fields is still seen (strings are joined by line
+   breaks).
+2. **Normalization.** Compatibility folding (full-width and mathematical
+   letters, ligatures) with accents removed; zero-width, bidi-control and
+   other invisible characters dropped; Unicode "tag" characters (ASCII
+   smuggling) mapped back to ASCII; common Cyrillic/Greek look-alikes mapped
+   to Latin; lower-casing; whitespace collapsed.
+3. **Cap.** At most `max_scan_bytes` (256 KiB) of text per message is
+   classified; beyond that the head and the tail are sampled. An injection
+   in the middle of a larger output is not seen.
+4. **Pattern matching.** 22 weighted patterns (below); matched weights add up
+   to a risk score capped at 100. Each pattern declares *triggers* (literal
+   words one of which every match contains): one pass over the text finds
+   them all, a pattern whose triggers are absent is skipped, and the regex
+   only runs on small windows around the trigger occurrences. Custom
+   patterns may declare `triggers` too; without them they run on the whole
+   text.
+5. **Optional judge.** Scores in the grey band (30-80) can be sent to a
+   local model for a strict-JSON verdict ([`injection.judge`](./configuration.md#local-judge-injectionjudge)).
+6. **Policy.** The risk selects an action from `request_policies` or
+   `response_policies`.
 
-1. **Pattern matching**: 14 built-in regex patterns scan the payload (e.g., `ignore-previous-instructions`, `dan-jailbreak`, `system-prompt-extraction`)
-2. **Risk scoring**: Each matched pattern contributes its weight to a total score, capped at 100
-3. **Policy action**: The dispatcher applies the configured action based on the risk score range
+| Direction | Default policy | Actions |
+|-----------|----------------|---------|
+| Requests (`params`) | block ≥ 80, quarantine 50-79, log 1-49 | `block`, `quarantine`, `redact`, `log` |
+| Tool results, `resources/read`, `prompts/get` | annotate ≥ `threshold` (70), log below | `annotate`, `redact`, `block`, `log` |
 
-### Risk Scoring
+Every action keeps the message valid JSON: `redact` replaces only the
+matching spans inside string values (routing fields such as the tool name
+are never touched), `annotate` inserts one warning item and leaves every
+other byte alone, `quarantine` and `block` never look like a success
+(`isError: true` or a JSON-RPC error). A message the policy lets through is
+relayed byte for byte.
 
-The classifier evaluates all enabled patterns against the payload. Each match contributes its weight to a cumulative score (0-100).
+### Measured
 
-### Policy Configuration
+`TestClassify_ResponseCorpus` (`pkg/bouncer/injection`) reports detection on
+the response side of [`tests/security/injection_corpus.json`](https://github.com/mmornati/leanproxy-mcp/blob/main/tests/security/injection_corpus.json)
+(32 indirect injections in pages, issues, e-mails, READMEs and code; 96
+benign READMEs, docs, issues, chat, code, e-mails and web pages, many of
+them chosen to look like attacks):
 
-Configured in `leanproxy.yaml`:
+| Threshold | Precision | Recall | False-positive rate |
+|-----------|-----------|--------|---------------------|
+| risk ≥ 70 (default annotate) | 100% | 90.6% | 0% |
+| any risk > 0 (logged) | 72.7% | 100% | 12.5% |
 
-```yaml
-injection:
-  enabled: true
-  threshold: 70
-  policies:
-    - min_risk: 80
-      max_risk: 100
-      action: block
-    - min_risk: 50
-      max_risk: 79
-      action: quarantine
-    - min_risk: 1
-      max_risk: 49
-      action: log
-```
-
-### Dispatcher Actions
-
-| Action | Description |
-|--------|-------------|
-| `block` | Rejects the request with a JSON-RPC error; the upstream is not called |
-| `quarantine` | Saves the payload to disk for analysis and returns a tool result with `isError: true` telling the model the call was quarantined; the upstream is not called |
-| `redact` | Replaces every string value in the tool `arguments` with `[CONTENT_REDACTED]` (params stay valid JSON; `invoke_tool` routing fields `server`/`tool` are kept) and forwards the call |
-| `log` | Forwards the request unchanged and logs it |
-
-The injection guard runs only when the config has an `injection:` block with
-`enabled: true`.
+The 200 request-side samples keep 100% recall and 0 false positives. On
+text the patterns were not tuned on — 4,474 Markdown files from the Go
+module cache and the Go standard library sources (7,340 files) — no file
+reaches the default threshold (0.65% and 0.23% get a log-level score).
+Classifying a benign 2 KiB tool round trip costs about 26 µs, a 64 KiB
+result about 0.6 ms.
 
 ### Quarantine
 
-Quarantined payloads are saved to `~/.leanproxy/quarantine/<uuid>.json`:
-
-```json
-{
-  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "timestamp": "2026-07-22T10:30:00Z",
-  "server": "filesystem",
-  "tool": "read_file",
-  "risk_score": 85,
-  "matched_patterns": ["ignore-previous-instructions"],
-  "payload": "{...}"
-}
-```
-
-View quarantine status:
+Quarantined request payloads (already secret-redacted) are saved to
+`~/.leanproxy/quarantine/<uuid>.json` with the matched patterns. The client
+receives the quarantine ID. View the quarantine status:
 
 ```bash
 leanproxy-mcp doctor security
 ```
 
-### Built-in Patterns (14)
+### Built-in Patterns (22)
 
 | Pattern | Weight | Description |
 |---------|--------|-------------|
 | `ignore-previous-instructions` | 90 | Override system instructions |
 | `new-instruction-override` | 85 | Redefine assistant role |
+| `separator-injection` | 85 | Delimiter-based injection |
 | `system-prompt-extraction` | 80 | Extract system prompt |
+| `inject-command` | 80 | Explicit injection markers |
 | `dan-jailbreak` | 75 | DAN-style jailbreaks |
+| `forget-everything` | 75 | Context reset |
 | `role-impersonation` | 70 | Boundary removal |
 | `repeat-everything` | 70 | Conversation dump attempts |
+| `exfiltrate-secrets` | 70 | Secrets or files sent to an external destination |
+| `markdown-image-beacon` | 70 | Markdown image/link leaking data through its URL (`![](https://x/?data=…)`) |
+| `chat-template-token` | 70 | Fake conversation turns (`<\|im_start\|>`, `[INST]`, `<<SYS>>`) |
 | `token-smuggling` | 65 | Encoded payloads |
-| `forget-everything` | 75 | Context reset |
-| `inject-command` | 80 | Explicit injection markers |
-| `separator-injection` | 85 | Delimiter-based injection |
-| `important-override` | 30 | Urgency-based |
-| `roleplay-context-switch` | 40 | Roleplay |
-| `hypothetical-override` | 25 | Hypothetical scenarios |
 | `ignore-above` | 50 | Selective ignoring |
+| `ai-directive` | 50 | Instructions addressed to the AI reading the text |
+| `hidden-instruction-tag` | 50 | `<IMPORTANT>`-style pseudo-tags |
+| `tool-call-hijack` | 45 | Tells the model to call a tool |
+| `roleplay-context-switch` | 40 | Roleplay |
+| `exfiltrate-verb` | 40 | Explicit exfiltration wording |
+| `important-override` | 30 | Urgency-based |
+| `send-to-url` | 30 | Data sent to a URL |
+| `hypothetical-override` | 25 | Hypothetical scenarios |
+
+The original 14 patterns keep their names and weights; v0.11 anchored them on
+word boundaries and narrowed the phrasings that fired on ordinary documents
+("you are now logged in", "no limits on file size", "show all commands",
+"dependency injected", the name "Dan"). The full definitions are in
+[`patterns_default.yaml`](https://github.com/mmornati/leanproxy-mcp/blob/main/pkg/bouncer/injection/patterns_default.yaml).
 
 ### Custom Patterns
 
-Add custom patterns to catch organization-specific injection attempts:
+Add custom patterns to catch organization-specific injection attempts.
+They are matched against normalized (lower-case) text:
 
 ```yaml
 injection:
   custom_patterns:
-    - name: "my-pattern"
-      pattern: "(?i)ignore previous instructions"
-      weight: 90
+    - name: "acme-roster"
+      pattern: "send\\s+the\\s+acme\\s+roster"
+      weight: 80
       enabled: true
-      description: "Detect instruction override attempts"
+      description: "Exfiltration of the ACME roster"
+      triggers: ["acme"]   # optional: skip the regex when "acme" is absent
 ```
 
 ### Diagnostic CLI
@@ -407,6 +435,15 @@ For context-aware redaction beyond regex patterns, deploy a sidecar LLM (Ollama)
 2. Sidecar LLM receives the redacted content
 3. LLM replaces remaining sensitive data (API keys, passwords, tokens, PII) with `[VALUE_REDACTED]`
 4. Falls back to aggressive redact if LLM is unavailable
+5. The LLM output is **verified** before use ([#315](https://github.com/mmornati/leanproxy-mcp/issues/315)):
+   it must have the same structure as its input — same keys, array lengths and
+   value types, unchanged numbers, booleans and routing fields (`name`,
+   `server`, `tool`, `uri`, ...) — and every other string may only lose parts or
+   have them replaced by a redaction marker. Text planted in the arguments can
+   otherwise steer the model into rewriting the call (e.g. `read_file` into
+   `write_file`). Output that fails the check is discarded with a warning and
+   the regex-redacted params are forwarded. The tool name is always taken from
+   the request as it was before the sidecar ran.
 
 ### Configuration
 

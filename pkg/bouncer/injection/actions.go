@@ -17,6 +17,9 @@ const (
 	ActionQuarantine Action = "quarantine"
 	ActionRedact     Action = "redact"
 	ActionLog        Action = "log"
+	// ActionAnnotate (responses only) prepends a warning to the output and
+	// forwards it otherwise unchanged.
+	ActionAnnotate Action = "annotate"
 )
 
 type Rule struct {
@@ -25,13 +28,16 @@ type Rule struct {
 	Action  Action `yaml:"action"`
 }
 
+// ActionResult is the decision of the dispatcher. The dispatcher only
+// decides and records (quarantine files, logs); applying an action to a
+// message (redacting the matching spans, annotating or blocking a
+// response) is up to the caller, which knows the message's structure.
 type ActionResult struct {
-	Action             Action `json:"action"`
-	Message            string `json:"message,omitempty"`
-	RiskScore          int    `json:"risk_score"`
-	QuarantineID       string `json:"quarantine_id,omitempty"`
-	QuarantineDir      string `json:"-"`
-	TransformedPayload string `json:"-"`
+	Action        Action `json:"action"`
+	Message       string `json:"message,omitempty"`
+	RiskScore     int    `json:"risk_score"`
+	QuarantineID  string `json:"quarantine_id,omitempty"`
+	QuarantineDir string `json:"-"`
 }
 
 type Dispatcher struct {
@@ -107,6 +113,8 @@ func (d *Dispatcher) applyAction(action Action, result Result) ActionResult {
 		return d.redact(result)
 	case ActionLog:
 		return d.logOnly(result)
+	case ActionAnnotate:
+		return ActionResult{Action: ActionAnnotate, Message: "annotated", RiskScore: result.RiskScore}
 	default:
 		return d.logOnly(result)
 	}
@@ -164,24 +172,25 @@ func (d *Dispatcher) quarantine(result Result) ActionResult {
 
 	return ActionResult{
 		Action:        ActionQuarantine,
-		Message:       fmt.Sprintf("[CONTENT_QUARANTINED - review at %s]", qPath),
+		Message:       fmt.Sprintf("quarantine ID %s", id),
 		RiskScore:     result.RiskScore,
 		QuarantineID:  id,
 		QuarantineDir: qDir,
 	}
 }
 
+// redact decides the redact action. The caller replaces only the matching
+// spans inside string values, so the message stays valid JSON (#315); the
+// dispatcher no longer produces a replacement payload.
 func (d *Dispatcher) redact(result Result) ActionResult {
-	redacted := "[CONTENT_REDACTED]"
-	slog.Warn("injection: redacting payload",
+	slog.Warn("injection: redacting matching spans",
 		"risk_score", result.RiskScore,
 		"matches", len(result.Matches),
 	)
 	return ActionResult{
-		Action:             ActionRedact,
-		Message:            "[CONTENT_REDACTED]",
-		RiskScore:          result.RiskScore,
-		TransformedPayload: redacted,
+		Action:    ActionRedact,
+		Message:   "matching spans redacted",
+		RiskScore: result.RiskScore,
 	}
 }
 

@@ -253,9 +253,10 @@ func TestInjectionGuard_Actions(t *testing.T) {
 				require.Nil(t, resp.Error)
 				var res ToolsCallResult
 				require.NoError(t, json.Unmarshal(resp.Result, &res))
-				assert.True(t, res.IsError)
+				assert.True(t, res.IsError, "a quarantined call must not look like a success")
 				require.Len(t, res.Content, 1)
 				assert.Contains(t, res.Content[0].Text, "quarantined")
+				assert.Regexp(t, `quarantine ID [0-9a-f-]{36}`, res.Content[0].Text)
 			},
 		},
 		{
@@ -267,7 +268,9 @@ func TestInjectionGuard_Actions(t *testing.T) {
 				}
 				require.NoError(t, json.Unmarshal(fwd, &p), "params must stay valid JSON: %s", fwd)
 				assert.Equal(t, "s_t", p.Name, "tool name must survive so the call still routes")
-				assert.Equal(t, InjectionRedacted, p.Arguments["q"])
+				q, _ := p.Arguments["q"].(string)
+				assert.Contains(t, q, InjectionRedacted, "matching spans are replaced")
+				assert.NotContains(t, q, "previous instructions")
 				assert.EqualValues(t, 3, p.Arguments["n"], "non-string values are kept")
 			},
 		},
@@ -287,10 +290,10 @@ func TestInjectionGuard_Actions(t *testing.T) {
 			name: "enabled: false config passes", guard: NewInjectionGuard(&injection.Config{Enabled: false}), params: attackParams, wantForward: true,
 		},
 		{
-			name: "redact on non-object params fails closed", guard: guardWithRules(t, only(injection.ActionRedact)), params: `"` + attack + `"`,
-			check: func(t *testing.T, resp *Response, _ []byte) {
-				require.NotNil(t, resp.Error)
-				assert.Equal(t, ErrCodeInvalidRequest, resp.Error.Code)
+			name: "redact on non-object params keeps them valid JSON", guard: guardWithRules(t, only(injection.ActionRedact)), params: `"` + attack + `"`, wantForward: true,
+			check: func(t *testing.T, _ *Response, fwd []byte) {
+				assert.True(t, json.Valid(fwd), "params must stay valid JSON: %s", fwd)
+				assert.Contains(t, string(fwd), InjectionRedacted)
 			},
 		},
 	}
@@ -319,43 +322,6 @@ func TestInjectionGuard_BlockedNotificationIsDropped(t *testing.T) {
 	assert.Nil(t, *seen)
 }
 
-func TestNeutralizeArguments(t *testing.T) {
-	tests := []struct {
-		name   string
-		method string
-		params string
-		want   string
-	}{
-		{"tools/call", MethodToolsCall,
-			`{"name":"s_t","arguments":{"a":"x","b":["y",1,true],"c":{"d":"z"}}}`,
-			`{"name":"s_t","arguments":{"a":"[CONTENT_REDACTED]","b":["[CONTENT_REDACTED]",1,true],"c":{"d":"[CONTENT_REDACTED]"}}}`},
-		{"tools/call invoke_tool keeps routing", MethodToolsCall,
-			`{"name":"invoke_tool","arguments":{"server":"s","tool":"t","note":"x","arguments":{"q":"y"}}}`,
-			`{"name":"invoke_tool","arguments":{"server":"s","tool":"t","note":"[CONTENT_REDACTED]","arguments":{"q":"[CONTENT_REDACTED]"}}}`},
-		{"serve invoke_tool envelope", "invoke_tool",
-			`{"server_name":"s","tool_name":"t","arguments":{"q":"y"}}`,
-			`{"server_name":"s","tool_name":"t","arguments":{"q":"[CONTENT_REDACTED]"}}`},
-		{"other method without arguments", "resources/read",
-			`{"uri":"file:///x","n":12345678901234567890}`,
-			`{"uri":"[CONTENT_REDACTED]","n":12345678901234567890}`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := neutralizeArguments(tt.method, json.RawMessage(tt.params))
-			require.NoError(t, err)
-			assert.JSONEq(t, tt.want, string(got))
-			if strings.Contains(tt.params, "12345678901234567890") {
-				assert.Contains(t, string(got), "12345678901234567890", "numbers keep full precision")
-			}
-		})
-	}
-
-	for _, bad := range []string{`[1,2]`, `null`, `{"a":`, `"s"`} {
-		_, err := neutralizeArguments(MethodToolsCall, json.RawMessage(bad))
-		assert.Error(t, err, "params %s", bad)
-	}
-}
-
 // --- Firewall (full chain) ------------------------------------------------
 
 func TestFirewall_DefaultsAndSummary(t *testing.T) {
@@ -366,7 +332,10 @@ func TestFirewall_DefaultsAndSummary(t *testing.T) {
 
 	off := false
 	fw = NewFirewall(&bouncer.Config{Enabled: &off}, &injection.Config{Enabled: true, Threshold: 70})
-	assert.Equal(t, "redaction disabled; injection enabled", fw.Summary())
+	assert.Equal(t, "redaction disabled; injection enabled (requests and responses)", fw.Summary())
+	noResponses := false
+	fw = NewFirewall(&bouncer.Config{Enabled: &off}, &injection.Config{Enabled: true, ScanResponses: &noResponses})
+	assert.Equal(t, "redaction disabled; injection enabled (requests only)", fw.Summary())
 	assert.Equal(t, "redaction disabled; injection disabled", (*Firewall)(nil).Summary())
 	assert.Nil(t, (*Firewall)(nil).Middlewares())
 }

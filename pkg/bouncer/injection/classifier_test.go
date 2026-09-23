@@ -14,6 +14,40 @@ type CorpusEntry struct {
 	Categories      []string `json:"categories"`
 	ExpectedRiskMin int      `json:"expected_risk_min"`
 	Notes           string   `json:"notes"`
+	// Direction is "request" (the default: a tool-call argument) or
+	// "response" (text a tool, resource or prompt returned, #315).
+	Direction string `json:"direction,omitempty"`
+	// Source is the kind of document a response sample comes from
+	// (readme, issue, code, email, web, ...).
+	Source string `json:"source,omitempty"`
+}
+
+func loadCorpus(t *testing.T) []CorpusEntry {
+	t.Helper()
+	data, err := os.ReadFile(corpusPath())
+	if err != nil {
+		t.Fatalf("failed to read injection corpus: %v", err)
+	}
+	var corpus []CorpusEntry
+	if err := json.Unmarshal(data, &corpus); err != nil {
+		t.Fatalf("failed to parse injection corpus: %v", err)
+	}
+	return corpus
+}
+
+func corpusByDirection(t *testing.T, direction string) []CorpusEntry {
+	t.Helper()
+	var out []CorpusEntry
+	for _, e := range loadCorpus(t) {
+		d := e.Direction
+		if d == "" {
+			d = "request"
+		}
+		if d == direction {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func corpusPath() string {
@@ -366,11 +400,11 @@ func TestDefaultPatternDefs_AllCompilable(t *testing.T) {
 }
 
 func TestDefaultPatternCount(t *testing.T) {
-	if len(DefaultPatternDefs) != 14 {
-		t.Errorf("expected 14 default patterns, got %d", len(DefaultPatternDefs))
+	if len(DefaultPatternDefs) != 22 {
+		t.Errorf("expected 22 default patterns, got %d", len(DefaultPatternDefs))
 	}
-	if len(defaultPatterns) != 14 {
-		t.Errorf("expected 14 compiled default patterns, got %d", len(defaultPatterns))
+	if len(defaultPatterns) != 22 {
+		t.Errorf("expected 22 compiled default patterns, got %d", len(defaultPatterns))
 	}
 }
 
@@ -489,18 +523,10 @@ func TestPatternDef_CompileInvalid(t *testing.T) {
 }
 
 func TestClassify_InjectionCorpus(t *testing.T) {
-	data, err := os.ReadFile(corpusPath())
-	if err != nil {
-		t.Fatalf("failed to read injection corpus: %v", err)
-	}
-
-	var corpus []CorpusEntry
-	if err := json.Unmarshal(data, &corpus); err != nil {
-		t.Fatalf("failed to parse injection corpus: %v", err)
-	}
+	corpus := corpusByDirection(t, "request")
 
 	if len(corpus) != 200 {
-		t.Errorf("expected 200 corpus entries, got %d", len(corpus))
+		t.Errorf("expected 200 request corpus entries, got %d", len(corpus))
 	}
 
 	c := NewClassifier()

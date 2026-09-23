@@ -78,6 +78,35 @@
 
 ## Added in v0.11
 
+- **Prompt-injection defense v2: decoded text, tool outputs, valid actions, optional local judge** ([#315](https://github.com/mmornati/leanproxy-mcp/issues/315)).
+  - **Decoded text.** The classifier ran its regexes over the raw JSON of `params`, so a JSON escape
+    (`ignore\u0020previous instructions`, `ignore\tprevious…`) scored 0. The guard now walks the message
+    with the redactor's lossless JSON scanner, classifies the *decoded* strings (keys included; JSON inside a
+    string is opened) after normalization — compatibility folding, accents, zero-width/bidi/tag characters,
+    Cyrillic/Greek look-alikes, case, whitespace — and samples head and tail beyond `max_scan_bytes`
+    (256 KiB).
+  - **Responses.** Tool results (`content[].text`, `structuredContent`), `resources/read` and `prompts/get`
+    are classified too — indirect injection arrives there. New `injection.response_policies` (default:
+    `annotate` from `threshold`, 70): `annotate` prepends a warning item, `redact` replaces the matching
+    spans, `block` returns `isError: true` (a JSON-RPC error for resources/prompts), `log`. Requests use
+    `injection.request_policies` (the old `policies` still works). `scan_responses: false` turns response
+    classification off. Both front ends behave identically.
+  - **Patterns.** Eight new patterns for tool-use hijacking and exfiltration (`tool-call-hijack`,
+    `ai-directive`, `exfiltrate-secrets`, `send-to-url`, `exfiltrate-verb`, `markdown-image-beacon`,
+    `hidden-instruction-tag`, `chat-template-token`); the original 14 keep names and weights but match on
+    word boundaries and no longer fire on ordinary documents. Patterns declare `triggers`: one pass finds
+    them and the regex runs only on small windows around them — a benign request check went from ~110 µs to
+    ~3 µs; a 2 KiB tool round trip (request + response) costs ~26 µs, a 64 KiB result ~0.6 ms.
+  - **Measured** (`TestClassify_ResponseCorpus`, 32 indirect injections vs 96 benign READMEs, docs, issues,
+    code, e-mails, pages): precision 100%, recall 90.6% at the default threshold; 100% recall at any
+    (logged) score. No false positive at the threshold on 4,474 Markdown files of the Go module cache nor on
+    the Go standard library sources.
+  - **Local judge.** Optional `injection.judge` (Ollama, off by default): regex scores in 30-80 get a
+    strict-JSON yes/no verdict with a confidence, applied above `threshold`; 2 s timeout, falls back to the
+    regex score.
+  - **Behavior change.** With an `injection:` block enabled, flagged tool outputs are now annotated. Set
+    `scan_responses: false` to keep the old request-only behavior.
+
 - **MCP protocol upgrade, part 1: version negotiation, tool metadata and result passthrough, resources & prompts aggregation** ([#307](https://github.com/mmornati/leanproxy-mcp/issues/307)).
   - **Versions.** Both front ends negotiate MCP `2024-11-05`, `2025-03-26`, `2025-06-18` and `2025-11-25`
     (one list, `pkg/mcp/protocol.go`): a supported requested revision is echoed, anything else gets the
@@ -126,6 +155,18 @@
   - **Removed.** The dead substring matchers `matchesQuery` and `gateway.SearchTools`.
 
 ## Fixed in v0.11
+
+- **Injection actions return valid, honest results** ([#315](https://github.com/mmornati/leanproxy-mcp/issues/315)).
+  The dispatcher's `redact` action produced `[CONTENT_REDACTED]` as the new params (not valid JSON), and the
+  middleware replaced every string argument; now only the matching spans are replaced and the params stay
+  valid JSON (routing fields kept). A quarantined request returns `isError: true` (or a JSON-RPC error for a
+  non-tool method) carrying the quarantine ID, never a success.
+- **Sidecar output can no longer rewrite a call** ([#315](https://github.com/mmornati/leanproxy-mcp/issues/315), audit S10).
+  `RedactJSONWithSidecar` accepted any valid JSON the local LLM returned as the new params, and `serve`
+  re-read the tool name from it, so text planted in the arguments could steer the model into calling another
+  tool (`read_file` → `write_file`). The output must now have the input's structure (same keys, types,
+  numbers, routing fields; strings may only shrink or be masked); otherwise it is discarded with a warning
+  and the regex-redacted params are forwarded. The tool name always comes from the original request.
 
 - **`serve` never answers `resources/read` / `prompts/get` from the semantic cache** ([#307](https://github.com/mmornati/leanproxy-mcp/issues/307)).
   The semantic (embedding-similarity) cache in `serve` was consulted for every routed method other than

@@ -417,7 +417,7 @@ func TestRedactJSONWithSidecar_RegexNoMatch_SidecarCalled(t *testing.T) {
 	sidecar := &mockSidecarClient{
 		redactFunc: func(ctx context.Context, content string) string {
 			sidecarCalled = true
-			return `{"key":"sidecar_redacted"}`
+			return `{"key":"[VALUE_REDACTED]"}`
 		},
 	}
 	input := []byte(`{"key": "safe_value"}`)
@@ -428,7 +428,7 @@ func TestRedactJSONWithSidecar_RegexNoMatch_SidecarCalled(t *testing.T) {
 	if !sidecarCalled {
 		t.Error("expected sidecar to be called when regex finds no matches")
 	}
-	if string(result) != `{"key":"sidecar_redacted"}` {
+	if string(result) != `{"key":"[VALUE_REDACTED]"}` {
 		t.Errorf("expected sidecar redacted result, got %q", string(result))
 	}
 }
@@ -438,7 +438,7 @@ func TestRedactJSONWithSidecar_NilRedactor_CallsSidecar(t *testing.T) {
 	sidecar := &mockSidecarClient{
 		redactFunc: func(ctx context.Context, content string) string {
 			sidecarCalled = true
-			return `{"key":"sidecar_redacted"}`
+			return `{"key":"[VALUE_REDACTED]"}`
 		},
 	}
 	input := []byte(`{"key": "value"}`)
@@ -449,7 +449,7 @@ func TestRedactJSONWithSidecar_NilRedactor_CallsSidecar(t *testing.T) {
 	if !sidecarCalled {
 		t.Error("expected sidecar to be called when redactor is nil")
 	}
-	if string(result) != `{"key":"sidecar_redacted"}` {
+	if string(result) != `{"key":"[VALUE_REDACTED]"}` {
 		t.Errorf("expected sidecar redacted result, got %q", string(result))
 	}
 }
@@ -552,7 +552,7 @@ func TestRedactJSONWithSidecar_AlwaysCallCallsSidecarOnRegexMatch(t *testing.T) 
 			if strings.Contains(content, "AKIAIOSFODNN7EXAMPLE") {
 				t.Error("sidecar received unredacted secret in always-call mode")
 			}
-			return `{"key":"sidecar_value"}`
+			return `{"key":"[VALUE_REDACTED]"}`
 		},
 	}
 	input := []byte(`{"key": "AKIAIOSFODNN7EXAMPLE"}`)
@@ -563,7 +563,7 @@ func TestRedactJSONWithSidecar_AlwaysCallCallsSidecarOnRegexMatch(t *testing.T) 
 	if !sidecarCalled {
 		t.Fatal("sidecar must be called when alwaysCallSidecar=true even after regex match")
 	}
-	if string(out) != `{"key":"sidecar_value"}` {
+	if string(out) != `{"key":"[VALUE_REDACTED]"}` {
 		t.Errorf("expected sidecar output, got %q", string(out))
 	}
 }

@@ -641,11 +641,15 @@ func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Rout
 
 	timeout := serverTimeout(server)
 
+	// Routing fields (the tool name) are always taken from the params as
+	// they were before the sidecar ran: the sidecar output only ever
+	// replaces the arguments (#315).
+	routing := req.Params
 	if err := redactWithSidecar(ctx, req); err != nil {
 		return errorResponse(req.ID, errors.ErrCodeInternalError, mcp.RedactionFailedMessage)
 	}
 
-	resp, err := p.SendRequest(ctx, server.ID, forwardableRequest(req, server.ID), timeout)
+	resp, err := p.SendRequest(ctx, server.ID, forwardableRequestFrom(req, routing, server.ID), timeout)
 	if err != nil {
 		slog.Warn("upstream send failed", "server", server.ID, "error", serveFirewall.Redaction.RedactText(err.Error()))
 		// A structured upstream JSON-RPC error (tool error, timeout signaled
@@ -1204,16 +1208,24 @@ func bareToolName(ref, serverID string) string {
 // untouched so the upstream redaction, embedding and caching pipeline keeps
 // seeing the unmodified (but already redacted) payload.
 func forwardableRequest(req *proxy.JSONRPCRequest, serverID string) *proxy.JSONRPCRequest {
+	return forwardableRequestFrom(req, req.Params, serverID)
+}
+
+// forwardableRequestFrom is forwardableRequest with the tool name read from
+// routing (the params before the sidecar LLM rewrote them) and only the
+// arguments from req.Params, so a sidecar steered by the payload can never
+// redirect the call to another tool.
+func forwardableRequestFrom(req *proxy.JSONRPCRequest, routing json.RawMessage, serverID string) *proxy.JSONRPCRequest {
 	fwd := *req
 	tool := ""
 	args := req.Params
 	if isToolCallMethod(req.Method) {
-		var p struct {
+		var p, r struct {
 			Name      string          `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
 		}
-		if json.Unmarshal(req.Params, &p) == nil {
-			tool = bareToolName(p.Name, serverID)
+		if json.Unmarshal(req.Params, &p) == nil && json.Unmarshal(routing, &r) == nil {
+			tool = bareToolName(r.Name, serverID)
 			if len(p.Arguments) > 0 && string(p.Arguments) != "null" {
 				args = p.Arguments
 			} else {
