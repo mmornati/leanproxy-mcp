@@ -117,7 +117,7 @@ type StdioPool struct {
 	cancel          context.CancelFunc
 	requestWaiters  map[string][]chan Request
 	waiterMu        sync.Mutex
-	rateLimiters    map[string]*concurrent.RateLimiter
+	rateLimiters    *serverRateLimiters
 	circuitBreakers map[string]*concurrent.CircuitBreaker
 	maxQueueSize    int
 	reconnect       ReconnectSettings
@@ -139,7 +139,7 @@ func NewStdioPool(maxPerServer int, idleTimeout time.Duration, logger *slog.Logg
 		ctx:             ctx,
 		cancel:          cancel,
 		requestWaiters:  make(map[string][]chan Request),
-		rateLimiters:    make(map[string]*concurrent.RateLimiter),
+		rateLimiters:    newServerRateLimiters(),
 		circuitBreakers: make(map[string]*concurrent.CircuitBreaker),
 		maxQueueSize:    1000,
 	}
@@ -203,7 +203,10 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 
 	p.servers[config.Name] = server
 
-	p.rateLimiters[config.Name] = concurrent.NewRateLimiter(10, time.Second)
+	// No rate limit by default: local stdio servers don't need one. A
+	// server only gets a limiter when its config sets rate_limit with a
+	// positive requests_per_second.
+	p.rateLimiters.set(config.Name, config.RateLimit)
 	p.circuitBreakers[config.Name] = concurrent.NewCircuitBreaker(5, 50*time.Second, 10*time.Second)
 
 	p.logger.Info("server started in pool", "name", config.Name)
@@ -319,12 +322,6 @@ func (p *StdioPool) PutRequest(name string, req Request) error {
 		}
 	}
 
-	if rl, exists := p.rateLimiters[name]; exists {
-		if !rl.Allow() {
-			return fmt.Errorf("pool: rate limit exceeded for %s", name)
-		}
-	}
-
 	if !server.canAcceptRequest() {
 		return fmt.Errorf("pool: server %s at max capacity", name)
 	}
@@ -334,10 +331,21 @@ func (p *StdioPool) PutRequest(name string, req Request) error {
 		timeout = 30 * time.Second
 	}
 
+	// A single deadline bounds both the (optional) rate-limit wait and the
+	// subsequent hand-off to the server's request channel, so a configured
+	// limit waits for a token rather than rejecting outright, but still
+	// respects the request's own timeout overall.
+	waitCtx, cancel := context.WithTimeout(p.ctx, timeout)
+	defer cancel()
+
+	if err := p.rateLimiters.wait(waitCtx, name, req.Method); err != nil {
+		return fmt.Errorf("pool: %w", err)
+	}
+
 	select {
 	case server.requestCh <- req:
 		return nil
-	case <-time.After(timeout):
+	case <-waitCtx.Done():
 		return fmt.Errorf("pool: request timeout for %s", name)
 	case <-p.ctx.Done():
 		return p.ctx.Err()
@@ -359,11 +367,9 @@ func (p *StdioPool) Close() error {
 		p.logger.Info("server stopped", "name", name)
 	}
 
-	for name, limiter := range p.rateLimiters {
-		limiter.Close()
-		p.logger.Info("rate limiter closed", "name", name)
-	}
-	p.rateLimiters = make(map[string]*concurrent.RateLimiter)
+	// golang.org/x/time/rate.Limiter holds no background goroutine or
+	// resources to release, so the rate limiters just get a fresh map.
+	p.rateLimiters = newServerRateLimiters()
 
 	p.servers = make(map[string]*StdioServerV2)
 	return nil

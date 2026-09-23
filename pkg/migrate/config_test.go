@@ -54,6 +54,79 @@ servers:
 	}
 }
 
+func TestLoadConfigRateLimit(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: github
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+    rate_limit:
+      requests_per_second: 20
+      burst: 40
+  - name: unlimited-server
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+
+	ctx := context.Background()
+	cfg, err := LoadConfig(ctx, configPath)
+	if err != nil {
+		t.Fatalf("LoadConfig() failed: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+
+	limited := cfg.Servers[0]
+	if limited.RateLimit == nil {
+		t.Fatal("expected rate_limit to be parsed")
+	}
+	if limited.RateLimit.RequestsPerSecond != 20 {
+		t.Errorf("RequestsPerSecond = %v, want 20", limited.RateLimit.RequestsPerSecond)
+	}
+	if limited.RateLimit.Burst != 40 {
+		t.Errorf("Burst = %v, want 40", limited.RateLimit.Burst)
+	}
+
+	unlimited := cfg.Servers[1]
+	if unlimited.RateLimit != nil {
+		t.Errorf("expected no rate_limit block for unlimited-server, got %+v", unlimited.RateLimit)
+	}
+}
+
+func TestLoadConfigRateLimitNegativeRejected(t *testing.T) {
+	yamlContent := `
+servers:
+  - name: bad
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+    rate_limit:
+      requests_per_second: -5
+`
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "leanproxy_servers.yaml")
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("WriteFile() failed: %v", err)
+	}
+
+	ctx := context.Background()
+	_, err := LoadConfig(ctx, configPath)
+	if err == nil {
+		t.Fatal("expected LoadConfig() to reject a negative requests_per_second")
+	}
+	if !contains(err.Error(), "requests_per_second must be >= 0") {
+		t.Errorf("LoadConfig() error = %v, want it to mention requests_per_second", err)
+	}
+}
+
 func TestLoadConfigFull(t *testing.T) {
 	yamlContent := `
 version: "1.0"
@@ -295,6 +368,47 @@ func TestServerConfigValidate(t *testing.T) {
 			server:  &ServerConfig{Name: "test", Transport: "websocket"},
 			wantErr: true,
 			errMsg:  "invalid transport type",
+		},
+		{
+			name: "nil rate_limit is valid (unlimited)",
+			server: &ServerConfig{
+				Name:      "test",
+				Transport: TransportStdio,
+				Stdio:     &StdioConfig{Command: "/bin/server"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid rate_limit",
+			server: &ServerConfig{
+				Name:      "test",
+				Transport: TransportStdio,
+				Stdio:     &StdioConfig{Command: "/bin/server"},
+				RateLimit: &RateLimitConfig{RequestsPerSecond: 20, Burst: 40},
+			},
+			wantErr: false,
+		},
+		{
+			name: "negative requests_per_second",
+			server: &ServerConfig{
+				Name:      "test",
+				Transport: TransportStdio,
+				Stdio:     &StdioConfig{Command: "/bin/server"},
+				RateLimit: &RateLimitConfig{RequestsPerSecond: -1},
+			},
+			wantErr: true,
+			errMsg:  "requests_per_second must be >= 0",
+		},
+		{
+			name: "negative burst",
+			server: &ServerConfig{
+				Name:      "test",
+				Transport: TransportStdio,
+				Stdio:     &StdioConfig{Command: "/bin/server"},
+				RateLimit: &RateLimitConfig{RequestsPerSecond: 1, Burst: -1},
+			},
+			wantErr: true,
+			errMsg:  "burst must be >= 0",
 		},
 	}
 

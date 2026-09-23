@@ -230,11 +230,12 @@ func (s *SSEServer) CallTool(ctx context.Context, name string, args map[string]i
 }
 
 type SSEPool struct {
-	servers map[string]*SSEServer
-	mu      sync.RWMutex
-	logger  *slog.Logger
-	ctx     context.Context
-	cancel  context.CancelFunc
+	servers      map[string]*SSEServer
+	mu           sync.RWMutex
+	logger       *slog.Logger
+	ctx          context.Context
+	cancel       context.CancelFunc
+	rateLimiters *serverRateLimiters
 }
 
 func NewSSEPool(logger *slog.Logger) *SSEPool {
@@ -244,10 +245,11 @@ func NewSSEPool(logger *slog.Logger) *SSEPool {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SSEPool{
-		servers: make(map[string]*SSEServer),
-		logger:  logger,
-		ctx:     ctx,
-		cancel:  cancel,
+		servers:      make(map[string]*SSEServer),
+		logger:       logger,
+		ctx:          ctx,
+		cancel:       cancel,
+		rateLimiters: newServerRateLimiters(),
 	}
 }
 
@@ -266,6 +268,10 @@ func (p *SSEPool) StartServer(ctx context.Context, config *migrate.ServerConfig)
 
 	server := NewSSEServer(config.Name, config, p.logger)
 	p.servers[config.Name] = server
+
+	// Off by default; only enabled when the config sets rate_limit with a
+	// positive requests_per_second (see pkg/pool/ratelimit.go).
+	p.rateLimiters.set(config.Name, config.RateLimit)
 
 	p.logger.Info("sse_pool: server created", "name", config.Name, "url", config.HTTP.URL)
 
@@ -310,6 +316,12 @@ func (p *SSEPool) SendRequest(ctx context.Context, serverName string, req *proxy
 
 	if !exists {
 		return nil, fmt.Errorf("sse_pool: server %s not found", serverName)
+	}
+
+	waitCtx, cancel := boundedContext(ctx, timeout)
+	defer cancel()
+	if err := p.rateLimiters.wait(waitCtx, serverName, req.Method); err != nil {
+		return nil, fmt.Errorf("sse_pool: %w", err)
 	}
 
 	if req.Method == "tools/call" {
@@ -364,6 +376,12 @@ func (p *SSEPool) SendRequestToServerWithID(ctx context.Context, name string, me
 
 	if !exists {
 		return nil, fmt.Errorf("sse_pool: server %s not found", name)
+	}
+
+	waitCtx, cancel := boundedContext(ctx, timeout)
+	defer cancel()
+	if err := p.rateLimiters.wait(waitCtx, name, method); err != nil {
+		return nil, fmt.Errorf("sse_pool: %w", err)
 	}
 
 	if _, err := server.ensureConnected(ctx); err != nil {

@@ -239,11 +239,12 @@ func (s *HTTPClientServer) CallTool(ctx context.Context, name string, args map[s
 }
 
 type HTTPClientPool struct {
-	servers map[string]*HTTPClientServer
-	mu      sync.RWMutex
-	logger  *slog.Logger
-	ctx     context.Context
-	cancel  context.CancelFunc
+	servers      map[string]*HTTPClientServer
+	mu           sync.RWMutex
+	logger       *slog.Logger
+	ctx          context.Context
+	cancel       context.CancelFunc
+	rateLimiters *serverRateLimiters
 }
 
 func NewHTTPClientPool(logger *slog.Logger) *HTTPClientPool {
@@ -253,10 +254,11 @@ func NewHTTPClientPool(logger *slog.Logger) *HTTPClientPool {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	return &HTTPClientPool{
-		servers: make(map[string]*HTTPClientServer),
-		logger:  logger,
-		ctx:     ctx,
-		cancel:  cancel,
+		servers:      make(map[string]*HTTPClientServer),
+		logger:       logger,
+		ctx:          ctx,
+		cancel:       cancel,
+		rateLimiters: newServerRateLimiters(),
 	}
 }
 
@@ -275,6 +277,10 @@ func (p *HTTPClientPool) StartServer(ctx context.Context, config *migrate.Server
 
 	server := NewHTTPClientServer(config.Name, config, p.logger)
 	p.servers[config.Name] = server
+
+	// Off by default; only enabled when the config sets rate_limit with a
+	// positive requests_per_second (see pkg/pool/ratelimit.go).
+	p.rateLimiters.set(config.Name, config.RateLimit)
 
 	p.logger.Info("http_pool: server created", "name", config.Name, "url", config.HTTP.URL)
 
@@ -319,6 +325,12 @@ func (p *HTTPClientPool) SendRequest(ctx context.Context, serverName string, req
 
 	if !exists {
 		return nil, fmt.Errorf("http_pool: server %s not found", serverName)
+	}
+
+	waitCtx, cancel := boundedContext(ctx, timeout)
+	defer cancel()
+	if err := p.rateLimiters.wait(waitCtx, serverName, req.Method); err != nil {
+		return nil, fmt.Errorf("http_pool: %w", err)
 	}
 
 	if req.Method == "tools/call" {
@@ -373,6 +385,12 @@ func (p *HTTPClientPool) SendRequestToServerWithID(ctx context.Context, name str
 
 	if !exists {
 		return nil, fmt.Errorf("http_pool: server %s not found", name)
+	}
+
+	waitCtx, cancel := boundedContext(ctx, timeout)
+	defer cancel()
+	if err := p.rateLimiters.wait(waitCtx, name, method); err != nil {
+		return nil, fmt.Errorf("http_pool: %w", err)
 	}
 
 	if _, err := server.ensureConnected(ctx); err != nil {
