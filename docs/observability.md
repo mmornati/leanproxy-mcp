@@ -90,6 +90,15 @@ status codes — `mcp.method.name`, `mcp.tool.name`, `mcp.server.name`,
 redaction counts, cache hit/miss, injection guard action. **Tool arguments
 and results never appear on a span or a metric.**
 
+Tool pinning (#310) adds the `leanproxy.tool_pin.events` counter, with the
+attributes `event` (`server_pinned`, `tool_added`, `tool_changed`,
+`tool_removed`, `tool_reverted`, `server_identity_changed`, `tool_flagged`,
+`tool_shadowed`, and `call_blocked` for a call refused in `block` mode) and
+`mcp.server.name`. A refused call's SERVER span carries
+`leanproxy.tool_pin.status` (`new` / `changed`) and
+`leanproxy.tool_pin.blocked: true`. Tool definitions and diffs are never
+recorded, only logged.
+
 A request an upstream sends to the client (`elicitation/create`,
 `sampling/createMessage`, `roots/list`; #308) gets its own SERVER span,
 `<method> <server>` (for example `elicitation/create github`), with
@@ -110,5 +119,5 @@ telemetry:
 
 `leanproxy-mcp serve --metrics-bind 127.0.0.1:9091` keeps working exactly as
 before; it now has a `telemetry` section fed by the same counters
-OpenTelemetry records, useful when you want a quick number without standing
+OpenTelemetry records (including `tool_pin_events_total`), useful when you want a quick number without standing
 up a collector.

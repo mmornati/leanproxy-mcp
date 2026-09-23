@@ -78,6 +78,31 @@
 
 ## Added in v0.11
 
+- **Tool pinning and rug-pull detection** ([#310](https://github.com/mmornati/leanproxy-mcp/issues/310), OWASP MCP03).
+  - **What.** Upstream tool definitions used to reach the model unchecked: a server could hide
+    instructions in a description (tool poisoning), change a tool after it was approved (rug pull), or
+    shadow another server's tool. Every tool refresh (startup, `tools/list_changed`, restart) is now
+    compared with a pin file (`~/.config/leanproxy/pins.json`, mode 0600, written atomically) holding,
+    per server, its `serverInfo` and, per tool, a SHA-256 of the canonical JSON of
+    `{name, title, description, inputSchema, outputSchema, annotations}` (key order and whitespace never
+    change it; see `docs/security.md`), first-seen time and approval status. A server seen for the
+    first time is trusted on first use (one info line per server).
+  - **Policy** (`security.tool_pinning.mode`): `warn` (**default**) logs `tool_added` / `tool_changed`
+    (with a unified diff) / `tool_removed` / `server_identity_changed` / `tool_flagged` /
+    `tool_shadowed`, reports them in `doctor security`, the dashboard and the new
+    `leanproxy.tool_pin.events` metric, and adds a one-line warning to `list_tools` / `search_tools`;
+    `block` hides new or changed tools from discovery and refuses calls to them (in both front ends,
+    whatever the call form) with an error naming the approval command; `off` disables it.
+  - **Description scanner.** New and changed tools (including on first use) are scanned with the
+    injection classifier's engine and a dedicated pattern set plus the injection guard's defaults:
+    hidden instructions (`<IMPORTANT>`, "before using this tool", "do not tell the user"), secrets
+    files (`~/.ssh/id_rsa`, `.env`), invisible or bidi unicode, external URLs, base64 blobs, overlong
+    descriptions. A high-severity finding keeps the tool pending even on first use.
+  - **Always, in every mode,** invisible and bidi characters are stripped from tool metadata before it
+    reaches the client.
+  - **CLI.** `leanproxy-mcp tools pins list | diff [server] | approve <server> [tool…|--all] | reset <server>`;
+    running proxies pick an approval up within a second.
+
 - **MCP protocol upgrade, part 2: server-to-client requests, progress, cancellation and resource updates** ([#308](https://github.com/mmornati/leanproxy-mcp/issues/308)).
   - **What.** An upstream's `elicitation/create`, `roots/list` and `sampling/createMessage` requests used to
     be answered `-32601` (the feature was lost); they are now relayed to the client — on both front ends

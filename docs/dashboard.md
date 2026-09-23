@@ -76,6 +76,14 @@ Real-time table of all servers with per-server token counts, automatically updat
 
 Click any server to drill into per-tool breakdown, then click a tool to see individual prompt hashes.
 
+### Tool Pinning
+
+The latest tool pinning events of the `serve` process (#310), newest first,
+refreshed every 10 seconds: servers pinned on first use, tools added, changed
+or removed, server identity changes, scanner findings and cross-server name
+collisions, with server, tool and severity. Review and approve them with
+`leanproxy-mcp tools pins diff` / `approve` (see [Commands](./commands.md#tools-pins-tool-pinning)).
+
 ## API Endpoints
 
 | Endpoint | Method | Description |
@@ -86,6 +94,7 @@ Click any server to drill into per-tool breakdown, then click a tool to see indi
 | `/api/dashboard/servers` | GET | HTML table of all servers |
 | `/api/dashboard/servers/{server}` | GET | Drill-down for a specific server |
 | `/api/dashboard/servers/{server}/tools/{tool}/prompts` | GET | Prompt hashes for a tool |
+| `/api/dashboard/tool-pins` | GET | HTML table of the latest tool pinning events (#310) |
 | `/static/...` | GET | Static assets (htmx.min.js) |
 | `/login?token=…` | GET | Exchanges a valid dashboard token for an `HttpOnly` session cookie |
 
