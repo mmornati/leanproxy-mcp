@@ -83,9 +83,29 @@ func (h *Handler) StartBackgroundRefresh(ctx context.Context) {
 
 // handleServerEvent refreshes a server's tools when the pool reports that
 // they may have changed.
+//
+// Resource and prompt list changes are not cached: the aggregated lists are
+// fetched on demand, so the clients are only told to fetch them again
+// (notifications/resources/list_changed, notifications/prompts/list_changed).
+// A restarted or reconnected server may serve different lists, so a new
+// session after the first one notifies too.
 func (h *Handler) handleServerEvent(ev pool.ServerEvent) {
 	if h.backgroundContext().Err() != nil {
 		return
+	}
+	switch ev.Kind {
+	case pool.EventResourcesListChanged:
+		h.logger.Debug("server resource list changed", "server", ev.Server)
+		h.notifySessions(NotificationResourcesListChanged)
+		return
+	case pool.EventPromptsListChanged:
+		h.logger.Debug("server prompt list changed", "server", ev.Server)
+		h.notifySessions(NotificationPromptsListChanged)
+		return
+	case pool.EventSessionStarted:
+		if ev.Generation > 1 {
+			h.notifyListChangedFor(ev.Server)
+		}
 	}
 	h.logger.Debug("server event, refreshing its tools", "server", ev.Server, "event", ev.Kind.String(), "generation", ev.Generation)
 	h.startRefresh(ev.Server, true)
@@ -234,29 +254,23 @@ func (h *Handler) runRefresh(name string, call *refreshCall) {
 	}
 }
 
-// fetchServerTools sends tools/list to one server (bounded by its timeout)
-// and stores the result. The request is detached from any caller: a
-// list_tools caller that gives up does not abort the shared refresh.
+// fetchServerTools sends tools/list to one server (every page, following
+// nextCursor, bounded by its timeout) and stores the result. The request is
+// detached from any caller: a list_tools caller that gives up does not
+// abort the shared refresh.
 func (h *Handler) fetchServerTools(name string) error {
 	h.cacheRefreshes.Add(1)
-	timeout := h.timeoutFor(name)
-	ctx, cancel := context.WithTimeout(h.backgroundContext(), timeout)
-	defer cancel()
-
 	h.logger.Debug("refreshing tools", "server", name)
-	resp, err := h.pool.SendRequestToServer(ctx, name, MethodToolsList, nil, timeout)
-	if err == nil && resp == nil {
-		err = fmt.Errorf("no response")
-	}
-	if err == nil && resp.Error != nil {
-		err = fmt.Errorf("server error: %s", resp.Error.Message)
-	}
-	var result ToolsListResult
+	items, err := h.listUpstream(h.backgroundContext(), name, MethodToolsList, "tools")
+	tools := make([]Tool, 0, len(items))
 	if err == nil {
-		if len(resp.Result) == 0 || string(resp.Result) == "null" {
-			err = fmt.Errorf("empty tools/list result")
-		} else if uerr := json.Unmarshal(resp.Result, &result); uerr != nil {
-			err = fmt.Errorf("invalid tools/list result: %w", uerr)
+		for _, item := range items {
+			var t Tool
+			if uerr := json.Unmarshal(item, &t); uerr != nil {
+				err = fmt.Errorf("invalid tools/list result: %w", uerr)
+				break
+			}
+			tools = append(tools, t)
 		}
 	}
 	if err != nil {
@@ -265,7 +279,7 @@ func (h *Handler) fetchServerTools(name string) error {
 		return err
 	}
 
-	h.setServerTools(name, result.Tools)
+	h.setServerTools(name, tools)
 	return nil
 }
 
@@ -319,14 +333,7 @@ func (h *Handler) loadFromPersistentCache() {
 			continue
 		}
 
-		tools := make([]Tool, len(cachedTools))
-		for i, ct := range cachedTools {
-			tools[i] = Tool{
-				Name:        ct.Name,
-				Description: ct.Description,
-				InputSchema: ct.InputSchema,
-			}
-		}
+		tools := cachedToolsToTools(cachedTools)
 
 		h.searchIndex().SetServerTools(serverName, toSearchTools(tools))
 		h.toolCache.mu.Lock()

@@ -74,6 +74,18 @@ type Handler struct {
 	pipelineMu  sync.Mutex
 	middlewares []Middleware
 	pipeline    atomic.Pointer[Next]
+
+	// Client sessions (see protocol.go). defaultSession serves requests
+	// whose context carries none.
+	sessionsMu     sync.Mutex
+	sessions       map[*ClientSession]struct{}
+	defaultSession *ClientSession
+
+	// resourceOwners maps an upstream resource URI (as the upstream lists
+	// it) to its server, from the last resources/list fan-out, so a raw URI
+	// (e.g. from a resource_link) can still be routed (see aggregate.go).
+	ownersMu       sync.RWMutex
+	resourceOwners map[string]string
 }
 
 type AggregatedManifest struct {
@@ -93,10 +105,11 @@ func NewHandler(p pool.ServerSource, logger *slog.Logger) *Handler {
 		toolCache: &ToolCache{
 			tools: make(map[string][]Tool),
 		},
-		refreshing:    make(map[string]*refreshCall),
-		refreshErrs:   make(map[string]error),
-		bgCtx:         context.Background(),
-		retryInterval: DefaultToolRefreshRetryInterval,
+		refreshing:     make(map[string]*refreshCall),
+		refreshErrs:    make(map[string]error),
+		bgCtx:          context.Background(),
+		retryInterval:  DefaultToolRefreshRetryInterval,
+		defaultSession: &ClientSession{},
 	}
 	h.search.Store(toolsearch.New(toolsearch.Options{Logger: logger}))
 	return h
@@ -174,8 +187,16 @@ func (h *Handler) dispatch(ctx context.Context, req *Request) (*Response, error)
 		return nil, nil
 	case MethodResourcesList:
 		return h.handleResourcesList(ctx, req)
+	case MethodResourcesTemplatesList:
+		return h.handleResourceTemplatesList(ctx, req)
+	case MethodResourcesRead:
+		return h.handleResourcesRead(ctx, req)
+	case MethodResourcesSubscribe, MethodResourcesUnsubscribe:
+		return h.handleResourcesSubscription(ctx, req)
 	case MethodPromptsList:
 		return h.handlePromptsList(ctx, req)
+	case MethodPromptsGet:
+		return h.handlePromptsGet(ctx, req)
 	case MethodToolsList:
 		return h.handleToolsList(ctx, req)
 	case MethodToolsCall:
@@ -195,6 +216,9 @@ func (h *Handler) dispatch(ctx context.Context, req *Request) (*Response, error)
 
 func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response, error) {
 	var params InitializeParams
+	var caps struct {
+		Capabilities json.RawMessage `json:"capabilities"`
+	}
 	if req.Params != nil {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return &Response{
@@ -203,19 +227,33 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 				ID:      req.ID,
 			}, nil
 		}
+		_ = json.Unmarshal(req.Params, &caps)
 	}
 
+	negotiated := NegotiateProtocolVersion(params.ProtocolVersion)
+	upstream := h.upstreamFeatures(ctx)
+
 	result := InitializeResult{
-		ProtocolVersion: "2024-11-05",
+		ProtocolVersion: negotiated,
 		Capabilities: ServerCapabilities{
-			Tools:     &ToolsCapability{ListChanged: false},
-			Resources: &ResourcesCapability{ListChanged: false},
-			Prompts:   &PromptsCapability{ListChanged: false},
+			Tools: &ToolsCapability{ListChanged: false},
 		},
 		ServerInfo: ServerInfo{
 			Name:    "leanproxy-mcp",
 			Version: version.Get().Version,
 		},
+	}
+	// Resources and prompts are only advertised when an upstream serves
+	// them; the aggregated lists change with the upstreams, hence
+	// listChanged.
+	if upstream.resources {
+		result.Capabilities.Resources = &ResourcesCapability{ListChanged: true}
+	}
+	if upstream.prompts {
+		result.Capabilities.Prompts = &PromptsCapability{ListChanged: true}
+	}
+	if ProtocolAtLeast(negotiated, ProtocolVersion20250618) {
+		result.ServerInfo.Title = "LeanProxy"
 	}
 
 	resultBytes, err := json.Marshal(result)
@@ -227,7 +265,12 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 		}, nil
 	}
 
-	h.logger.Info("initialized leanproxy-mcp", "client", params.ClientInfo.Name, "version", params.ClientInfo.Version)
+	if s := h.sessionFor(ctx); s != nil {
+		s.setInitialized(negotiated, params, caps.Capabilities)
+	}
+	h.logger.Info("initialized leanproxy-mcp", "client", params.ClientInfo.Name, "version", params.ClientInfo.Version,
+		"requested_protocol", params.ProtocolVersion, "protocol", negotiated,
+		"resources", upstream.resources, "prompts", upstream.prompts)
 
 	return &Response{
 		JSONRPC: JSONRPCVersion,
@@ -239,13 +282,21 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response, error) {
 	h.logger.Debug("tools/list request received, returning gateway tools only")
 
+	// Annotations exist since 2025-03-26: an older client gets exactly the
+	// fields it knows.
+	annotate := h.sessionFor(ctx).AtLeast(ProtocolVersion20250326)
 	gatewayTools := make([]Tool, 0)
 	for _, def := range GetAllToolDefinitions() {
-		gatewayTools = append(gatewayTools, Tool{
+		tool := Tool{
 			Name:        def.Name,
 			Description: def.Description,
 			InputSchema: def.InputSchema,
-		})
+		}
+		if annotate && def.ReadOnly {
+			readOnly := true
+			tool.Annotations = &ToolAnnotations{ReadOnlyHint: &readOnly}
+		}
+		gatewayTools = append(gatewayTools, tool)
 	}
 
 	result := ToolsListResult{Tools: gatewayTools}
@@ -460,18 +511,38 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 
 	h.logger.Info("list_tools completed", "server", serverName, "results", len(formattedTools))
 
+	text := fmt.Sprintf("%s tools (%d):\n%s", serverName, len(tools), strings.Join(formattedTools, "\n"))
+	var structured []StructuredTool
+	if h.sessionFor(ctx).AtLeast(ProtocolVersion20250618) {
+		structured = make([]StructuredTool, 0, len(tools))
+		for _, tool := range tools {
+			structured = append(structured, StructuredTool{Server: serverName, Tool: tool})
+		}
+	}
+	return toolListingResult(req.ID, text, structured), nil
+}
+
+// StructuredTool is one entry of the structuredContent list_tools and
+// search_tools return to clients that negotiated 2025-06-18 or newer: the
+// full upstream tool object (outputSchema, annotations, icons, _meta, ...)
+// and the server that owns it.
+type StructuredTool struct {
+	Server string `json:"server"`
+	Tool   Tool   `json:"tool"`
+}
+
+// toolListingResult is a tools/call result carrying the compact text
+// listing and, when structured is non-nil, the full tool objects as
+// structuredContent ({"tools": [...]}).
+func toolListingResult(id interface{}, text string, structured []StructuredTool) *Response {
 	result := map[string]interface{}{
-		"content": []map[string]string{
-			{"type": "text", "text": fmt.Sprintf("%s tools (%d):\n%s", serverName, len(tools), strings.Join(formattedTools, "\n"))},
-		},
+		"content": []map[string]string{{"type": "text", "text": text}},
+	}
+	if structured != nil {
+		result["structuredContent"] = map[string]interface{}{"tools": structured}
 	}
 	resultBytes, _ := json.Marshal(result)
-
-	return &Response{
-		JSONRPC: JSONRPCVersion,
-		Result:  resultBytes,
-		ID:      req.ID,
-	}, nil
+	return &Response{JSONRPC: JSONRPCVersion, Result: resultBytes, ID: id}
 }
 
 // listServersInstructionsChars caps the server instructions list_servers
@@ -754,32 +825,6 @@ func (h *Handler) parseToolName(fullName string) (serverName, toolName string, e
 	return SplitToolName(fullName, h.pool.ListServers())
 }
 
-func (h *Handler) handleResourcesList(ctx context.Context, req *Request) (*Response, error) {
-	result := ResourcesListResult{
-		Resources: make([]Resource, 0),
-	}
-	resultBytes, _ := json.Marshal(result)
-
-	return &Response{
-		JSONRPC: JSONRPCVersion,
-		Result:  resultBytes,
-		ID:      req.ID,
-	}, nil
-}
-
-func (h *Handler) handlePromptsList(ctx context.Context, req *Request) (*Response, error) {
-	result := PromptsListResult{
-		Prompts: make([]Prompt, 0),
-	}
-	resultBytes, _ := json.Marshal(result)
-
-	return &Response{
-		JSONRPC: JSONRPCVersion,
-		Result:  resultBytes,
-		ID:      req.ID,
-	}, nil
-}
-
 func (h *Handler) handlePing(ctx context.Context, req *Request) (*Response, error) {
 	result := map[string]string{"status": "ok"}
 	resultBytes, _ := json.Marshal(result)
@@ -865,10 +910,21 @@ func parseInputSchema(schema json.RawMessage) (required, optional []ParamInfo) {
 }
 
 func formatToolSearchResult(serverName, toolName, description string, required, optional []ParamInfo, maxDescChars int) string {
+	return formatToolLine(serverName, toolName, "", description, required, optional, maxDescChars)
+}
+
+// formatToolLine renders one tool as `server_tool [tags]: description
+// [required] {optional}`. tags is the compact annotation marker
+// (annotationTags), or "".
+func formatToolLine(serverName, toolName, tags, description string, required, optional []ParamInfo, maxDescChars int) string {
 	var sb strings.Builder
 	sb.WriteString(serverName)
 	sb.WriteString("_")
 	sb.WriteString(toolName)
+	if tags != "" {
+		sb.WriteString(" ")
+		sb.WriteString(tags)
+	}
 	sb.WriteString(": ")
 	sb.WriteString(truncateDescription(description, maxDescChars))
 
@@ -903,7 +959,22 @@ func formatToolSearchResult(serverName, toolName, description string, required, 
 
 func formatTool(tool Tool, serverName string, maxDescChars int) string {
 	required, optional := parseInputSchema(tool.InputSchema)
-	return formatToolSearchResult(serverName, tool.Name, tool.Description, required, optional, maxDescChars)
+	return formatToolLine(serverName, tool.Name, annotationTags(tool), tool.Description, required, optional, maxDescChars)
+}
+
+// annotationTags is the compact text form of a tool's behavior hints shown
+// by list_tools and search_tools: "[read-only]" or "[destructive]" (only an
+// explicit destructiveHint: true counts; the spec's implicit default does
+// not, or every unannotated tool would be flagged).
+func annotationTags(tool Tool) string {
+	switch {
+	case tool.ReadOnly():
+		return "[read-only]"
+	case tool.Destructive():
+		return "[destructive]"
+	default:
+		return ""
+	}
 }
 
 func truncateDescription(description string, maxChars int) string {
@@ -933,14 +1004,54 @@ func (h *Handler) lookupToolSchema(serverName, toolName string) json.RawMessage 
 	return nil
 }
 
+// toolsToCachedTools converts tools for the persistent tool cache, keeping
+// the MCP 2025 metadata (title, outputSchema, annotations, icons, _meta) so
+// a restart serves the same tool objects before the first refresh.
 func toolsToCachedTools(tools []Tool) []toolstore.CachedTool {
 	result := make([]toolstore.CachedTool, len(tools))
 	for i, t := range tools {
-		result[i] = toolstore.CachedTool{
-			Name:        t.Name,
-			Description: t.Description,
-			InputSchema: t.InputSchema,
+		ct := toolstore.CachedTool{
+			Name:         t.Name,
+			Title:        t.Title,
+			Description:  t.Description,
+			InputSchema:  t.InputSchema,
+			OutputSchema: t.OutputSchema,
+			Meta:         t.Meta,
 		}
+		if t.Annotations != nil {
+			ct.Annotations, _ = json.Marshal(t.Annotations)
+		}
+		if len(t.Icons) > 0 {
+			ct.Icons, _ = json.Marshal(t.Icons)
+		}
+		result[i] = ct
 	}
 	return result
+}
+
+// cachedToolsToTools is the inverse of toolsToCachedTools. Metadata that
+// no longer decodes is dropped (the next refresh restores it).
+func cachedToolsToTools(cached []toolstore.CachedTool) []Tool {
+	tools := make([]Tool, len(cached))
+	for i, ct := range cached {
+		t := Tool{
+			Name:         ct.Name,
+			Title:        ct.Title,
+			Description:  ct.Description,
+			InputSchema:  ct.InputSchema,
+			OutputSchema: ct.OutputSchema,
+			Meta:         ct.Meta,
+		}
+		if len(ct.Annotations) > 0 {
+			var a ToolAnnotations
+			if json.Unmarshal(ct.Annotations, &a) == nil {
+				t.Annotations = &a
+			}
+		}
+		if len(ct.Icons) > 0 {
+			_ = json.Unmarshal(ct.Icons, &t.Icons)
+		}
+		tools[i] = t
+	}
+	return tools
 }

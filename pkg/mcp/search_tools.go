@@ -104,8 +104,21 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 
 	hits := h.searchIndex().Search(ctx, toolsearch.Query{Text: args.Query, K: k, Server: args.Server})
 	lines := make([]string, 0, len(hits)+1)
+	var structured []StructuredTool
+	if h.sessionFor(ctx).AtLeast(ProtocolVersion20250618) {
+		structured = make([]StructuredTool, 0, len(hits))
+	}
 	for _, hit := range hits {
-		lines = append(lines, formatTool(Tool{Name: hit.Tool.Name, Description: hit.Tool.Description, InputSchema: hit.Tool.InputSchema}, hit.Tool.Server, searchDescChars))
+		// The index only keeps what ranking needs; the cache has the full
+		// tool (annotations, outputSchema, ...).
+		tool, ok := h.cachedTool(hit.Tool.Server, hit.Tool.Name)
+		if !ok {
+			tool = Tool{Name: hit.Tool.Name, Description: hit.Tool.Description, InputSchema: hit.Tool.InputSchema}
+		}
+		lines = append(lines, formatTool(tool, hit.Tool.Server, searchDescChars))
+		if structured != nil {
+			structured = append(structured, StructuredTool{Server: hit.Tool.Server, Tool: tool})
+		}
 	}
 	if len(lines) == 0 {
 		lines = append(lines, fmt.Sprintf("No tools match %q. Try other words, or browse with list_servers and list_tools.", args.Query))
@@ -114,7 +127,19 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 		lines = append(lines, fmt.Sprintf("(tools of %s not known yet: unreachable or still starting)", strings.Join(unknown, ", ")))
 	}
 	h.logger.Info("search_tools completed", "results", len(hits), "k", k, "server", args.Server)
-	return textResult(req.ID, strings.Join(lines, "\n")), nil
+	return toolListingResult(req.ID, strings.Join(lines, "\n"), structured), nil
+}
+
+// cachedTool returns the cached definition of one tool of server.
+func (h *Handler) cachedTool(server, name string) (Tool, bool) {
+	h.toolCache.mu.RLock()
+	defer h.toolCache.mu.RUnlock()
+	for _, t := range h.toolCache.tools[server] {
+		if t.Name == name {
+			return t, true
+		}
+	}
+	return Tool{}, false
 }
 
 // awaitColdServers refreshes, in parallel, the servers whose tool list has

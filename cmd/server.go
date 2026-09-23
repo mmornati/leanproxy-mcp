@@ -879,7 +879,7 @@ func runServerHealth(cmd *cobra.Command, args []string) error {
 
 	switch serverCfg.Transport {
 	case "stdio":
-		_, initErr := stdioP.SendRequestToServerWithID(ctx, serverName, mcp.MethodInitialize, []byte(`{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"leanproxy-healthcheck","version":"1.0"}}`), healthTimeout, 1)
+		_, initErr := stdioP.SendRequestToServerWithID(ctx, serverName, mcp.MethodInitialize, []byte(`{"protocolVersion":"`+mcp.LatestProtocolVersion+`","capabilities":{},"clientInfo":{"name":"leanproxy-healthcheck","version":"1.0"}}`), healthTimeout, 1)
 		if initErr != nil {
 			return fmt.Errorf("failed to initialize server: %w", initErr)
 		}
