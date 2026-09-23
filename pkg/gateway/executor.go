@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -77,9 +78,9 @@ func (g *gatewayTools) InvokeTool(ctx context.Context, params InvokeToolParams) 
 		return nil, errors.NewJSONRPCError(errors.ErrCodeInvalidParams, fmt.Sprintf("tool %s not found on server %s", params.ToolName, params.ServerName))
 	}
 
-	argsJSON, err := json.Marshal(params.Arguments)
+	argsJSON, err := invokeArguments(params.Arguments)
 	if err != nil {
-		return nil, errors.NewJSONRPCError(errors.ErrCodeInvalidParams, "invalid arguments format")
+		return nil, err
 	}
 
 	req := proxy.JSONRPCRequest{
@@ -97,4 +98,18 @@ func (g *gatewayTools) InvokeTool(ctx context.Context, params InvokeToolParams) 
 		"tool":    params.ToolName,
 		"request": req,
 	}, nil
+}
+
+// invokeArguments validates invoke_tool's arguments and returns them
+// unchanged: a JSON object, relayed byte for byte. Absent or null
+// arguments become an empty object.
+func invokeArguments(args json.RawMessage) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(args)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return json.RawMessage(`{}`), nil
+	}
+	if trimmed[0] != '{' || !json.Valid(trimmed) {
+		return nil, errors.NewJSONRPCError(errors.ErrCodeInvalidParams, "invalid arguments format: arguments must be a JSON object")
+	}
+	return args, nil
 }
