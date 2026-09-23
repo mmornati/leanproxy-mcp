@@ -100,7 +100,7 @@ test-e2e-short: ## Run E2E tests (short mode, requires built binary)
 	$(GO) test -v -short -timeout 2m ./tests/e2e/...
 
 .PHONY: bench
-bench: ## Run token-economy + NFR benchmarks, capture into bench-results/
+bench: ## Run the tests/bench micro-benchmarks, capture into bench-results/
 	@echo "Running token-economy benchmarks..."
 	@mkdir -p bench-results
 	$(GO) test -run=^$ -bench=. -benchmem -benchtime=3s -count=1 \
@@ -108,6 +108,11 @@ bench: ## Run token-economy + NFR benchmarks, capture into bench-results/
 	@echo ""
 	@echo "Results written to bench-results/"
 	@ls -la bench-results/
+
+.PHONY: harness
+harness: ## End-to-end benchmark + conformance harness through the real binary; writes bench-results/harness.md
+	@mkdir -p bench-results
+	$(GO) test -tags harness -count=1 -timeout 5m -v ./tests/harness/
 
 .PHONY: bench-compare
 bench-compare: ## Compare two bench result files (FILES=old.txt new.txt)

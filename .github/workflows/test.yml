@@ -28,3 +28,32 @@ jobs:
           file: coverage.out
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # End-to-end benchmark + conformance harness (#301): builds the real
+  # binary, drives `server run --stdio` against the 118-tool catalog mock and
+  # fails on any broken assertion (redaction, burst errors, parallel wall
+  # time, 5 MB relay, p95 overhead). Behind the `harness` build tag, so the
+  # `test` job above never runs it.
+  harness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run harness
+        run: make harness
+
+      - name: Upload harness results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-results
+          path: bench-results/harness.md
+          if-no-files-found: warn

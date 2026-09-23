@@ -1,0 +1,2620 @@
+{
+ "_comment": "Realistic 118-tool, 5-server MCP catalog for the end-to-end harness (tests/harness). Ported from docs/audit/experiments/catalog.py (#301).",
+ "servers": [
+  {
+   "name": "github",
+   "tools": [
+    {
+     "name": "create_issue",
+     "description": "Create a new issue in a GitHub repository with a title, body, labels and assignees.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "title": {
+        "type": "string",
+        "description": "The title parameter."
+       },
+       "body": {
+        "type": "string",
+        "description": "The body parameter."
+       },
+       "labels": {
+        "type": "string",
+        "description": "The labels parameter."
+       },
+       "assignees": {
+        "type": "string",
+        "description": "The assignees parameter."
+       }
+      },
+      "required": [
+       "owner",
+       "repo",
+       "title"
+      ]
+     }
+    },
+    {
+     "name": "get_issue",
+     "description": "Get details of a specific issue in a GitHub repository, including comments count and state.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "issue_number": {
+        "type": "string",
+        "description": "The issue number parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_issues",
+     "description": "List issues in a GitHub repository with filtering by state, labels, assignee and sorting options.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "state": {
+        "type": "string",
+        "description": "The state parameter."
+       },
+       "labels": {
+        "type": "string",
+        "description": "The labels parameter."
+       },
+       "sort": {
+        "type": "string",
+        "description": "The sort parameter."
+       },
+       "direction": {
+        "type": "string",
+        "description": "The direction parameter."
+       },
+       "since": {
+        "type": "string",
+        "description": "The since parameter."
+       },
+       "perPage": {
+        "type": "string",
+        "description": "The perPage parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "update_issue",
+     "description": "Update an existing issue: change title, body, state (open/closed), labels, assignees or milestone.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "issue_number": {
+        "type": "string",
+        "description": "The issue number parameter."
+       },
+       "title": {
+        "type": "string",
+        "description": "The title parameter."
+       },
+       "body": {
+        "type": "string",
+        "description": "The body parameter."
+       },
+       "state": {
+        "type": "string",
+        "description": "The state parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "add_issue_comment",
+     "description": "Add a comment to an existing issue or pull request.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "issue_number": {
+        "type": "string",
+        "description": "The issue number parameter."
+       },
+       "body": {
+        "type": "string",
+        "description": "The body parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "search_issues",
+     "description": "Search for issues and pull requests across GitHub repositories using GitHub search syntax.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "query": {
+        "type": "string",
+        "description": "The query parameter."
+       },
+       "sort": {
+        "type": "string",
+        "description": "The sort parameter."
+       },
+       "order": {
+        "type": "string",
+        "description": "The order parameter."
+       },
+       "perPage": {
+        "type": "string",
+        "description": "The perPage parameter."
+       }
+      },
+      "required": [
+       "query"
+      ]
+     }
+    },
+    {
+     "name": "create_pull_request",
+     "description": "Create a new pull request from a head branch into a base branch.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "title": {
+        "type": "string",
+        "description": "The title parameter."
+       },
+       "head": {
+        "type": "string",
+        "description": "The head parameter."
+       },
+       "base": {
+        "type": "string",
+        "description": "The base parameter."
+       },
+       "body": {
+        "type": "string",
+        "description": "The body parameter."
+       },
+       "draft": {
+        "type": "string",
+        "description": "The draft parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "get_pull_request",
+     "description": "Get details of a specific pull request including mergeable state and head/base refs.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "pullNumber": {
+        "type": "string",
+        "description": "The pullNumber parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_pull_requests",
+     "description": "List pull requests in a repository filtered by state, head, base and sort order.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "state": {
+        "type": "string",
+        "description": "The state parameter."
+       },
+       "head": {
+        "type": "string",
+        "description": "The head parameter."
+       },
+       "base": {
+        "type": "string",
+        "description": "The base parameter."
+       },
+       "sort": {
+        "type": "string",
+        "description": "The sort parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "merge_pull_request",
+     "description": "Merge a pull request using merge, squash or rebase method.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "pullNumber": {
+        "type": "string",
+        "description": "The pullNumber parameter."
+       },
+       "merge_method": {
+        "type": "string",
+        "description": "The merge method parameter."
+       },
+       "commit_title": {
+        "type": "string",
+        "description": "The commit title parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "get_pull_request_files",
+     "description": "Get the list of files changed in a pull request with patch hunks.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "pullNumber": {
+        "type": "string",
+        "description": "The pullNumber parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "get_pull_request_diff",
+     "description": "Get the unified diff of a pull request.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "pullNumber": {
+        "type": "string",
+        "description": "The pullNumber parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "get_pull_request_status",
+     "description": "Get the combined status of all CI status checks for a pull request head commit.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "pullNumber": {
+        "type": "string",
+        "description": "The pullNumber parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "create_pull_request_review",
+     "description": "Create a review on a pull request: approve, request changes or comment, with optional inline comments.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "pullNumber": {
+        "type": "string",
+        "description": "The pullNumber parameter."
+       },
+       "event": {
+        "type": "string",
+        "description": "The event parameter."
+       },
+       "body": {
+        "type": "string",
+        "description": "The body parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "request_copilot_review",
+     "description": "Request an automated Copilot code review for a pull request.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "pullNumber": {
+        "type": "string",
+        "description": "The pullNumber parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "update_pull_request_branch",
+     "description": "Update a pull request branch with the latest changes from the base branch.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "pullNumber": {
+        "type": "string",
+        "description": "The pullNumber parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "create_branch",
+     "description": "Create a new branch in a GitHub repository from an existing ref.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "branch": {
+        "type": "string",
+        "description": "The branch parameter."
+       },
+       "from_branch": {
+        "type": "string",
+        "description": "The from branch parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_branches",
+     "description": "List branches in a GitHub repository.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "page": {
+        "type": "string",
+        "description": "The page parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_commits",
+     "description": "Get the list of commits of a branch in a GitHub repository.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "sha": {
+        "type": "string",
+        "description": "The sha parameter."
+       },
+       "author": {
+        "type": "string",
+        "description": "The author parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "get_commit",
+     "description": "Get details for a single commit including files changed and stats.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "sha": {
+        "type": "string",
+        "description": "The sha parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "get_file_contents",
+     "description": "Get the contents of a file or directory from a GitHub repository at a given ref.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "path": {
+        "type": "string",
+        "description": "The path parameter."
+       },
+       "ref": {
+        "type": "string",
+        "description": "The ref parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "create_or_update_file",
+     "description": "Create or update a single file in a GitHub repository with a commit message.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "path": {
+        "type": "string",
+        "description": "The path parameter."
+       },
+       "content": {
+        "type": "string",
+        "description": "The content parameter."
+       },
+       "message": {
+        "type": "string",
+        "description": "The message parameter."
+       },
+       "branch": {
+        "type": "string",
+        "description": "The branch parameter."
+       },
+       "sha": {
+        "type": "string",
+        "description": "The sha parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "delete_file",
+     "description": "Delete a file from a GitHub repository with a commit.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "path": {
+        "type": "string",
+        "description": "The path parameter."
+       },
+       "message": {
+        "type": "string",
+        "description": "The message parameter."
+       },
+       "branch": {
+        "type": "string",
+        "description": "The branch parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "push_files",
+     "description": "Push multiple files to a GitHub repository in a single commit.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "branch": {
+        "type": "string",
+        "description": "The branch parameter."
+       },
+       "files": {
+        "type": "string",
+        "description": "The files parameter."
+       },
+       "message": {
+        "type": "string",
+        "description": "The message parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "search_code",
+     "description": "Search for code across GitHub repositories using code search syntax.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "query": {
+        "type": "string",
+        "description": "The query parameter."
+       },
+       "perPage": {
+        "type": "string",
+        "description": "The perPage parameter."
+       }
+      },
+      "required": [
+       "query"
+      ]
+     }
+    },
+    {
+     "name": "search_repositories",
+     "description": "Search for GitHub repositories by name, topic, language or stars.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "query": {
+        "type": "string",
+        "description": "The query parameter."
+       },
+       "perPage": {
+        "type": "string",
+        "description": "The perPage parameter."
+       }
+      },
+      "required": [
+       "query"
+      ]
+     }
+    },
+    {
+     "name": "search_users",
+     "description": "Search for GitHub users by username, location or followers.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "query": {
+        "type": "string",
+        "description": "The query parameter."
+       }
+      },
+      "required": [
+       "query"
+      ]
+     }
+    },
+    {
+     "name": "create_repository",
+     "description": "Create a new GitHub repository in your account or an organization.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "type": "string",
+        "description": "The name parameter."
+       },
+       "description": {
+        "type": "string",
+        "description": "The description parameter."
+       },
+       "private": {
+        "type": "string",
+        "description": "The private parameter."
+       },
+       "autoInit": {
+        "type": "string",
+        "description": "The autoInit parameter."
+       }
+      },
+      "required": [
+       "name"
+      ]
+     }
+    },
+    {
+     "name": "fork_repository",
+     "description": "Fork a GitHub repository to your account or a specified organization.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "organization": {
+        "type": "string",
+        "description": "The organization parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_tags",
+     "description": "List git tags in a GitHub repository.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "get_tag",
+     "description": "Get details about a specific git tag.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "tag": {
+        "type": "string",
+        "description": "The tag parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_releases",
+     "description": "List releases of a repository.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "get_latest_release",
+     "description": "Get the latest published release of a repository.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_workflow_runs",
+     "description": "List GitHub Actions workflow runs for a repository, filterable by branch, status and event.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "workflow_id": {
+        "type": "string",
+        "description": "The workflow id parameter."
+       },
+       "branch": {
+        "type": "string",
+        "description": "The branch parameter."
+       },
+       "status": {
+        "type": "string",
+        "description": "The status parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "get_job_logs",
+     "description": "Download logs for a GitHub Actions workflow job, or all failed jobs in a run.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "job_id": {
+        "type": "string",
+        "description": "The job id parameter."
+       },
+       "run_id": {
+        "type": "string",
+        "description": "The run id parameter."
+       },
+       "failed_only": {
+        "type": "string",
+        "description": "The failed only parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "rerun_workflow_run",
+     "description": "Re-run an entire GitHub Actions workflow run.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "run_id": {
+        "type": "string",
+        "description": "The run id parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "run_workflow",
+     "description": "Trigger a workflow_dispatch event to run a GitHub Actions workflow.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "workflow_id": {
+        "type": "string",
+        "description": "The workflow id parameter."
+       },
+       "ref": {
+        "type": "string",
+        "description": "The ref parameter."
+       },
+       "inputs": {
+        "type": "string",
+        "description": "The inputs parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_notifications",
+     "description": "List GitHub notifications for the authenticated user.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "filter": {
+        "type": "string",
+        "description": "The filter parameter."
+       },
+       "since": {
+        "type": "string",
+        "description": "The since parameter."
+       }
+      },
+      "required": [
+       "filter"
+      ]
+     }
+    },
+    {
+     "name": "get_me",
+     "description": "Get details of the authenticated GitHub user.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "reason": {
+        "type": "string",
+        "description": "The reason parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "list_code_scanning_alerts",
+     "description": "List code scanning (CodeQL) security alerts for a repository.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "state": {
+        "type": "string",
+        "description": "The state parameter."
+       },
+       "severity": {
+        "type": "string",
+        "description": "The severity parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_secret_scanning_alerts",
+     "description": "List secret scanning alerts for leaked credentials in a repository.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "state": {
+        "type": "string",
+        "description": "The state parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    },
+    {
+     "name": "list_dependabot_alerts",
+     "description": "List Dependabot vulnerable dependency alerts for a repository.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "owner": {
+        "type": "string",
+        "description": "The owner parameter."
+       },
+       "repo": {
+        "type": "string",
+        "description": "The repo parameter."
+       },
+       "severity": {
+        "type": "string",
+        "description": "The severity parameter."
+       }
+      },
+      "required": [
+       "owner"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "jira",
+   "tools": [
+    {
+     "name": "jira_create_issue",
+     "description": "Create a Jira issue (story, bug, task, epic) in a project with summary, description and fields.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "project_key": {
+        "type": "string",
+        "description": "The project key parameter."
+       },
+       "summary": {
+        "type": "string",
+        "description": "The summary parameter."
+       },
+       "issue_type": {
+        "type": "string",
+        "description": "The issue type parameter."
+       },
+       "description": {
+        "type": "string",
+        "description": "The description parameter."
+       },
+       "assignee": {
+        "type": "string",
+        "description": "The assignee parameter."
+       },
+       "priority": {
+        "type": "string",
+        "description": "The priority parameter."
+       }
+      },
+      "required": [
+       "project_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_get_issue",
+     "description": "Get a Jira issue by key, including status, fields, comments and changelog.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "issue_key": {
+        "type": "string",
+        "description": "The issue key parameter."
+       },
+       "fields": {
+        "type": "string",
+        "description": "The fields parameter."
+       },
+       "expand": {
+        "type": "string",
+        "description": "The expand parameter."
+       }
+      },
+      "required": [
+       "issue_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_search",
+     "description": "Search Jira issues using JQL (Jira Query Language).",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "jql": {
+        "type": "string",
+        "description": "The jql parameter."
+       },
+       "fields": {
+        "type": "string",
+        "description": "The fields parameter."
+       },
+       "limit": {
+        "type": "string",
+        "description": "The limit parameter."
+       }
+      },
+      "required": [
+       "jql"
+      ]
+     }
+    },
+    {
+     "name": "jira_update_issue",
+     "description": "Update fields of an existing Jira issue.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "issue_key": {
+        "type": "string",
+        "description": "The issue key parameter."
+       },
+       "fields": {
+        "type": "string",
+        "description": "The fields parameter."
+       }
+      },
+      "required": [
+       "issue_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_transition_issue",
+     "description": "Move a Jira issue to a new workflow status (e.g. To Do, In Progress, Done).",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "issue_key": {
+        "type": "string",
+        "description": "The issue key parameter."
+       },
+       "transition_id": {
+        "type": "string",
+        "description": "The transition id parameter."
+       },
+       "comment": {
+        "type": "string",
+        "description": "The comment parameter."
+       }
+      },
+      "required": [
+       "issue_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_get_transitions",
+     "description": "List the workflow transitions available for a Jira issue.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "issue_key": {
+        "type": "string",
+        "description": "The issue key parameter."
+       }
+      },
+      "required": [
+       "issue_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_add_comment",
+     "description": "Add a comment to a Jira issue.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "issue_key": {
+        "type": "string",
+        "description": "The issue key parameter."
+       },
+       "comment": {
+        "type": "string",
+        "description": "The comment parameter."
+       }
+      },
+      "required": [
+       "issue_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_add_worklog",
+     "description": "Log time spent working on a Jira issue.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "issue_key": {
+        "type": "string",
+        "description": "The issue key parameter."
+       },
+       "time_spent": {
+        "type": "string",
+        "description": "The time spent parameter."
+       },
+       "comment": {
+        "type": "string",
+        "description": "The comment parameter."
+       },
+       "started": {
+        "type": "string",
+        "description": "The started parameter."
+       }
+      },
+      "required": [
+       "issue_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_get_worklog",
+     "description": "Get worklog entries for a Jira issue.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "issue_key": {
+        "type": "string",
+        "description": "The issue key parameter."
+       }
+      },
+      "required": [
+       "issue_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_link_issues",
+     "description": "Create a link (blocks, relates to, duplicates) between two Jira issues.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "link_type": {
+        "type": "string",
+        "description": "The link type parameter."
+       },
+       "inward_issue_key": {
+        "type": "string",
+        "description": "The inward issue key parameter."
+       },
+       "outward_issue_key": {
+        "type": "string",
+        "description": "The outward issue key parameter."
+       }
+      },
+      "required": [
+       "link_type"
+      ]
+     }
+    },
+    {
+     "name": "jira_get_project_issues",
+     "description": "Get all issues belonging to a Jira project.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "project_key": {
+        "type": "string",
+        "description": "The project key parameter."
+       },
+       "limit": {
+        "type": "string",
+        "description": "The limit parameter."
+       }
+      },
+      "required": [
+       "project_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_list_projects",
+     "description": "List all Jira projects visible to the user.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "include_archived": {
+        "type": "string",
+        "description": "The include archived parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "jira_get_sprints_from_board",
+     "description": "List sprints of a Jira agile board (active, future, closed).",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "board_id": {
+        "type": "string",
+        "description": "The board id parameter."
+       },
+       "state": {
+        "type": "string",
+        "description": "The state parameter."
+       }
+      },
+      "required": [
+       "board_id"
+      ]
+     }
+    },
+    {
+     "name": "jira_get_sprint_issues",
+     "description": "Get issues in a specific Jira sprint.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "sprint_id": {
+        "type": "string",
+        "description": "The sprint id parameter."
+       }
+      },
+      "required": [
+       "sprint_id"
+      ]
+     }
+    },
+    {
+     "name": "jira_create_sprint",
+     "description": "Create a new sprint on a Jira agile board.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "board_id": {
+        "type": "string",
+        "description": "The board id parameter."
+       },
+       "sprint_name": {
+        "type": "string",
+        "description": "The sprint name parameter."
+       },
+       "start_date": {
+        "type": "string",
+        "description": "The start date parameter."
+       },
+       "end_date": {
+        "type": "string",
+        "description": "The end date parameter."
+       }
+      },
+      "required": [
+       "board_id"
+      ]
+     }
+    },
+    {
+     "name": "jira_update_sprint",
+     "description": "Update a sprint: name, goal, dates or state (start/close).",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "sprint_id": {
+        "type": "string",
+        "description": "The sprint id parameter."
+       },
+       "state": {
+        "type": "string",
+        "description": "The state parameter."
+       },
+       "goal": {
+        "type": "string",
+        "description": "The goal parameter."
+       }
+      },
+      "required": [
+       "sprint_id"
+      ]
+     }
+    },
+    {
+     "name": "jira_get_agile_boards",
+     "description": "List Jira agile boards, optionally filtered by project.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "project_key": {
+        "type": "string",
+        "description": "The project key parameter."
+       },
+       "board_type": {
+        "type": "string",
+        "description": "The board type parameter."
+       }
+      },
+      "required": [
+       "project_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_get_user_profile",
+     "description": "Retrieve a Jira user's profile by account id or email.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "user_identifier": {
+        "type": "string",
+        "description": "The user identifier parameter."
+       }
+      },
+      "required": [
+       "user_identifier"
+      ]
+     }
+    },
+    {
+     "name": "jira_delete_issue",
+     "description": "Delete a Jira issue permanently.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "issue_key": {
+        "type": "string",
+        "description": "The issue key parameter."
+       }
+      },
+      "required": [
+       "issue_key"
+      ]
+     }
+    },
+    {
+     "name": "jira_batch_create_issues",
+     "description": "Create multiple Jira issues in one request.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "issues": {
+        "type": "string",
+        "description": "The issues parameter."
+       }
+      },
+      "required": [
+       "issues"
+      ]
+     }
+    },
+    {
+     "name": "confluence_search",
+     "description": "Search Confluence pages with CQL or plain text.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "query": {
+        "type": "string",
+        "description": "The query parameter."
+       },
+       "limit": {
+        "type": "string",
+        "description": "The limit parameter."
+       }
+      },
+      "required": [
+       "query"
+      ]
+     }
+    },
+    {
+     "name": "confluence_get_page",
+     "description": "Get the content of a Confluence page by id or title.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "page_id": {
+        "type": "string",
+        "description": "The page id parameter."
+       },
+       "space_key": {
+        "type": "string",
+        "description": "The space key parameter."
+       },
+       "title": {
+        "type": "string",
+        "description": "The title parameter."
+       }
+      },
+      "required": [
+       "page_id"
+      ]
+     }
+    },
+    {
+     "name": "confluence_create_page",
+     "description": "Create a new Confluence page in a space.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "space_key": {
+        "type": "string",
+        "description": "The space key parameter."
+       },
+       "title": {
+        "type": "string",
+        "description": "The title parameter."
+       },
+       "content": {
+        "type": "string",
+        "description": "The content parameter."
+       },
+       "parent_id": {
+        "type": "string",
+        "description": "The parent id parameter."
+       }
+      },
+      "required": [
+       "space_key"
+      ]
+     }
+    },
+    {
+     "name": "confluence_update_page",
+     "description": "Update the content of an existing Confluence page.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "page_id": {
+        "type": "string",
+        "description": "The page id parameter."
+       },
+       "title": {
+        "type": "string",
+        "description": "The title parameter."
+       },
+       "content": {
+        "type": "string",
+        "description": "The content parameter."
+       }
+      },
+      "required": [
+       "page_id"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "slack",
+   "tools": [
+    {
+     "name": "slack_post_message",
+     "description": "Post a new message to a Slack channel.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "channel_id": {
+        "type": "string",
+        "description": "The channel id parameter."
+       },
+       "text": {
+        "type": "string",
+        "description": "The text parameter."
+       }
+      },
+      "required": [
+       "channel_id"
+      ]
+     }
+    },
+    {
+     "name": "slack_reply_to_thread",
+     "description": "Reply to a specific message thread in Slack.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "channel_id": {
+        "type": "string",
+        "description": "The channel id parameter."
+       },
+       "thread_ts": {
+        "type": "string",
+        "description": "The thread ts parameter."
+       },
+       "text": {
+        "type": "string",
+        "description": "The text parameter."
+       }
+      },
+      "required": [
+       "channel_id"
+      ]
+     }
+    },
+    {
+     "name": "slack_add_reaction",
+     "description": "Add an emoji reaction to a Slack message.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "channel_id": {
+        "type": "string",
+        "description": "The channel id parameter."
+       },
+       "timestamp": {
+        "type": "string",
+        "description": "The timestamp parameter."
+       },
+       "reaction": {
+        "type": "string",
+        "description": "The reaction parameter."
+       }
+      },
+      "required": [
+       "channel_id"
+      ]
+     }
+    },
+    {
+     "name": "slack_get_channel_history",
+     "description": "Get recent messages from a Slack channel.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "channel_id": {
+        "type": "string",
+        "description": "The channel id parameter."
+       },
+       "limit": {
+        "type": "string",
+        "description": "The limit parameter."
+       }
+      },
+      "required": [
+       "channel_id"
+      ]
+     }
+    },
+    {
+     "name": "slack_get_thread_replies",
+     "description": "Get all replies in a Slack message thread.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "channel_id": {
+        "type": "string",
+        "description": "The channel id parameter."
+       },
+       "thread_ts": {
+        "type": "string",
+        "description": "The thread ts parameter."
+       }
+      },
+      "required": [
+       "channel_id"
+      ]
+     }
+    },
+    {
+     "name": "slack_list_channels",
+     "description": "List public or pre-defined channels in the Slack workspace with pagination.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "limit": {
+        "type": "string",
+        "description": "The limit parameter."
+       },
+       "cursor": {
+        "type": "string",
+        "description": "The cursor parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "slack_get_users",
+     "description": "Get a list of all users in the Slack workspace with their basic profile information.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "cursor": {
+        "type": "string",
+        "description": "The cursor parameter."
+       },
+       "limit": {
+        "type": "string",
+        "description": "The limit parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "slack_get_user_profile",
+     "description": "Get detailed profile information for a specific Slack user.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "user_id": {
+        "type": "string",
+        "description": "The user id parameter."
+       }
+      },
+      "required": [
+       "user_id"
+      ]
+     }
+    },
+    {
+     "name": "slack_search_messages",
+     "description": "Search messages across the Slack workspace.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "query": {
+        "type": "string",
+        "description": "The query parameter."
+       },
+       "count": {
+        "type": "string",
+        "description": "The count parameter."
+       }
+      },
+      "required": [
+       "query"
+      ]
+     }
+    },
+    {
+     "name": "slack_upload_file",
+     "description": "Upload a file to a Slack channel.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "channel_id": {
+        "type": "string",
+        "description": "The channel id parameter."
+       },
+       "filename": {
+        "type": "string",
+        "description": "The filename parameter."
+       },
+       "content": {
+        "type": "string",
+        "description": "The content parameter."
+       }
+      },
+      "required": [
+       "channel_id"
+      ]
+     }
+    },
+    {
+     "name": "slack_set_status",
+     "description": "Set the authenticated user's Slack status text and emoji.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "status_text": {
+        "type": "string",
+        "description": "The status text parameter."
+       },
+       "status_emoji": {
+        "type": "string",
+        "description": "The status emoji parameter."
+       }
+      },
+      "required": [
+       "status_text"
+      ]
+     }
+    },
+    {
+     "name": "slack_create_channel",
+     "description": "Create a new Slack channel.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "type": "string",
+        "description": "The name parameter."
+       },
+       "is_private": {
+        "type": "string",
+        "description": "The is private parameter."
+       }
+      },
+      "required": [
+       "name"
+      ]
+     }
+    },
+    {
+     "name": "slack_invite_to_channel",
+     "description": "Invite users to a Slack channel.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "channel_id": {
+        "type": "string",
+        "description": "The channel id parameter."
+       },
+       "users": {
+        "type": "string",
+        "description": "The users parameter."
+       }
+      },
+      "required": [
+       "channel_id"
+      ]
+     }
+    },
+    {
+     "name": "slack_schedule_message",
+     "description": "Schedule a message to be sent to a Slack channel at a future time.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "channel_id": {
+        "type": "string",
+        "description": "The channel id parameter."
+       },
+       "text": {
+        "type": "string",
+        "description": "The text parameter."
+       },
+       "post_at": {
+        "type": "string",
+        "description": "The post at parameter."
+       }
+      },
+      "required": [
+       "channel_id"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "garmin",
+   "tools": [
+    {
+     "name": "get_activities",
+     "description": "List recent Garmin Connect activities (runs, rides, swims) with basic stats.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "start": {
+        "type": "string",
+        "description": "The start parameter."
+       },
+       "limit": {
+        "type": "string",
+        "description": "The limit parameter."
+       },
+       "activity_type": {
+        "type": "string",
+        "description": "The activity type parameter."
+       }
+      },
+      "required": [
+       "start"
+      ]
+     }
+    },
+    {
+     "name": "get_activity",
+     "description": "Get detailed data for a single Garmin activity: distance, duration, pace, heart rate, splits.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "activity_id": {
+        "type": "string",
+        "description": "The activity id parameter."
+       }
+      },
+      "required": [
+       "activity_id"
+      ]
+     }
+    },
+    {
+     "name": "get_activity_splits",
+     "description": "Get lap/split data for a Garmin activity.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "activity_id": {
+        "type": "string",
+        "description": "The activity id parameter."
+       }
+      },
+      "required": [
+       "activity_id"
+      ]
+     }
+    },
+    {
+     "name": "get_activity_hr_zones",
+     "description": "Get time spent in each heart rate zone for an activity.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "activity_id": {
+        "type": "string",
+        "description": "The activity id parameter."
+       }
+      },
+      "required": [
+       "activity_id"
+      ]
+     }
+    },
+    {
+     "name": "download_activity_fit",
+     "description": "Download the original FIT file of an activity.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "activity_id": {
+        "type": "string",
+        "description": "The activity id parameter."
+       }
+      },
+      "required": [
+       "activity_id"
+      ]
+     }
+    },
+    {
+     "name": "get_sleep_data",
+     "description": "Get sleep data for a date: sleep stages, duration, sleep score.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_stress_data",
+     "description": "Get all-day stress levels for a date.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_body_battery",
+     "description": "Get Body Battery energy levels over a date range.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "start_date": {
+        "type": "string",
+        "description": "The start date parameter."
+       },
+       "end_date": {
+        "type": "string",
+        "description": "The end date parameter."
+       }
+      },
+      "required": [
+       "start_date"
+      ]
+     }
+    },
+    {
+     "name": "get_heart_rates",
+     "description": "Get resting and all-day heart rate data for a date.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_hrv_data",
+     "description": "Get heart rate variability (HRV) status and overnight readings for a date.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_training_readiness",
+     "description": "Get the training readiness score and its contributing factors.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_training_status",
+     "description": "Get training status: productive, maintaining, overreaching, acute load and VO2 max trend.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_race_predictions",
+     "description": "Get predicted race times for 5K, 10K, half marathon and marathon.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "reason": {
+        "type": "string",
+        "description": "The reason parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "get_max_metrics",
+     "description": "Get VO2 max and fitness age metrics.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_steps_data",
+     "description": "Get step counts for a date.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_body_composition",
+     "description": "Get weight, BMI, body fat and muscle mass over a date range.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "start_date": {
+        "type": "string",
+        "description": "The start date parameter."
+       },
+       "end_date": {
+        "type": "string",
+        "description": "The end date parameter."
+       }
+      },
+      "required": [
+       "start_date"
+      ]
+     }
+    },
+    {
+     "name": "add_weigh_in",
+     "description": "Record a new body weight measurement.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "weight": {
+        "type": "string",
+        "description": "The weight parameter."
+       },
+       "unit_key": {
+        "type": "string",
+        "description": "The unit key parameter."
+       },
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "weight"
+      ]
+     }
+    },
+    {
+     "name": "get_hydration_data",
+     "description": "Get water intake hydration data for a date.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_respiration_data",
+     "description": "Get breathing rate respiration data for a date.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_spo2_data",
+     "description": "Get pulse oximeter blood oxygen SpO2 data for a date.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_workouts",
+     "description": "List saved structured workouts in Garmin Connect.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "limit": {
+        "type": "string",
+        "description": "The limit parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "create_workout",
+     "description": "Create a structured workout (intervals, targets) in Garmin Connect.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "name": {
+        "type": "string",
+        "description": "The name parameter."
+       },
+       "sport": {
+        "type": "string",
+        "description": "The sport parameter."
+       },
+       "steps": {
+        "type": "string",
+        "description": "The steps parameter."
+       }
+      },
+      "required": [
+       "name"
+      ]
+     }
+    },
+    {
+     "name": "schedule_workout",
+     "description": "Schedule a saved workout on the Garmin calendar for a date.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "workout_id": {
+        "type": "string",
+        "description": "The workout id parameter."
+       },
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "workout_id"
+      ]
+     }
+    },
+    {
+     "name": "get_devices",
+     "description": "List Garmin devices registered to the account.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "reason": {
+        "type": "string",
+        "description": "The reason parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "get_gear",
+     "description": "List gear (shoes, bikes) and their accumulated distance.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "reason": {
+        "type": "string",
+        "description": "The reason parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "get_personal_records",
+     "description": "Get personal records (fastest 5K, longest ride, etc.).",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "reason": {
+        "type": "string",
+        "description": "The reason parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "get_daily_summary",
+     "description": "Get the daily summary: calories, steps, intensity minutes, floors.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    },
+    {
+     "name": "get_intensity_minutes",
+     "description": "Get moderate and vigorous intensity minutes for a date.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "date": {
+        "type": "string",
+        "description": "The date parameter."
+       }
+      },
+      "required": [
+       "date"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "postgres",
+   "tools": [
+    {
+     "name": "pg_query",
+     "description": "Run a read-only SQL SELECT query against the PostgreSQL database.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "sql": {
+        "type": "string",
+        "description": "The sql parameter."
+       },
+       "params": {
+        "type": "string",
+        "description": "The params parameter."
+       }
+      },
+      "required": [
+       "sql"
+      ]
+     }
+    },
+    {
+     "name": "pg_execute",
+     "description": "Execute a SQL statement that modifies data (INSERT, UPDATE, DELETE).",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "sql": {
+        "type": "string",
+        "description": "The sql parameter."
+       },
+       "params": {
+        "type": "string",
+        "description": "The params parameter."
+       }
+      },
+      "required": [
+       "sql"
+      ]
+     }
+    },
+    {
+     "name": "pg_list_schemas",
+     "description": "List schemas in the PostgreSQL database.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "reason": {
+        "type": "string",
+        "description": "The reason parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "pg_list_tables",
+     "description": "List tables in a PostgreSQL schema.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "schema": {
+        "type": "string",
+        "description": "The schema parameter."
+       }
+      },
+      "required": [
+       "schema"
+      ]
+     }
+    },
+    {
+     "name": "pg_describe_table",
+     "description": "Describe a table's columns, types, indexes and constraints.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "schema": {
+        "type": "string",
+        "description": "The schema parameter."
+       },
+       "table": {
+        "type": "string",
+        "description": "The table parameter."
+       }
+      },
+      "required": [
+       "schema"
+      ]
+     }
+    },
+    {
+     "name": "pg_explain_query",
+     "description": "Show the EXPLAIN ANALYZE execution plan for a SQL query.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "sql": {
+        "type": "string",
+        "description": "The sql parameter."
+       }
+      },
+      "required": [
+       "sql"
+      ]
+     }
+    },
+    {
+     "name": "pg_list_indexes",
+     "description": "List indexes on a table with size and usage stats.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "schema": {
+        "type": "string",
+        "description": "The schema parameter."
+       },
+       "table": {
+        "type": "string",
+        "description": "The table parameter."
+       }
+      },
+      "required": [
+       "schema"
+      ]
+     }
+    },
+    {
+     "name": "pg_table_size",
+     "description": "Get the on-disk size of tables and their indexes.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "schema": {
+        "type": "string",
+        "description": "The schema parameter."
+       }
+      },
+      "required": [
+       "schema"
+      ]
+     }
+    },
+    {
+     "name": "pg_active_queries",
+     "description": "List currently running queries and locks (pg_stat_activity).",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "min_duration": {
+        "type": "string",
+        "description": "The min duration parameter."
+       }
+      },
+      "required": []
+     }
+    },
+    {
+     "name": "pg_slow_queries",
+     "description": "Get the slowest queries from pg_stat_statements.",
+     "inputSchema": {
+      "type": "object",
+      "properties": {
+       "limit": {
+        "type": "string",
+        "description": "The limit parameter."
+       }
+      },
+      "required": []
+     }
+    }
+   ]
+  }
+ ]
+}
