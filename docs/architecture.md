@@ -270,7 +270,7 @@ graph TD
     pkg --> sf["statusfile/"]
 
     mc --> mc_handlers["handlers.go"]
-    mc --> mc_gateway["gateway_server.go"]
+    mc --> mc_tools["tool_index.go"]
     mc --> mc_types["types.go"]
 
     ts --> ts_filecache["filecache.go"]
@@ -305,7 +305,7 @@ leanproxy-mcp/
 │   ├── bouncer/    # Redaction engine
 │   ├── mcp/        # MCP protocol implementation
 │   │   ├── handlers.go    # MCP request handlers
-│   │   ├── gateway_server.go  # Gateway tool implementation
+│   │   ├── tool_index.go  # Gateway tool definitions (list_servers, list_tools, invoke_tool)
 │   │   └── types.go     # MCP types
 │   ├── toolstore/  # Persistent tool cache
 │   │   └── filecache.go  # File-based cache

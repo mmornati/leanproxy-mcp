@@ -29,12 +29,12 @@ Measured on a 3-server production-shaped MCP setup (GitHub + Garmin + Intervals.
 
 | Metric | Measured | Threshold | Status |
 |---|---|---|---|
-| Token savings, 1 server (GitHub) | **96.5%** | ≥90% | ✅ |
-| Token savings, 1 server (Garmin) | **98.6%** | ≥90% | ✅ |
-| Token savings, 1 server (Intervals.icu) | **86.0%** | ≥90% | ✅ (small server) |
-| Session savings, Morning Sport (4 prompts) | **94.0%** | ≥90% | ✅ |
-| Session savings, Dev Workflow (5 prompts) | **87.0%** | ≥77% | ✅ |
-| Session savings, Full Day (7 prompts) | **95.6%** | ≥93% | ✅ |
+| Token savings, 1 server (GitHub) | **94.8%** | ≥90% | ✅ |
+| Token savings, 1 server (Garmin) | **97.9%** | ≥90% | ✅ |
+| Token savings, 1 server (Intervals.icu) | **79.0%** | ≥90% | ✅ (small server) |
+| Session savings, Morning Sport (4 prompts) | **91.4%** | ≥90% | ✅ |
+| Session savings, Dev Workflow (5 prompts) | **81.5%** | ≥77% | ✅ |
+| Session savings, Full Day (7 prompts) | **93.7%** | ≥93% | ✅ |
 | Proxy overhead, p50 (parse + cost track) | **~12 µs/op** | <50 ms | ✅ |
 | 50 MB payload estimate, p50 | **~7 ms** | <200 ms | ✅ |
 | Throughput (in-process mock MCP) | **~25,000 q/s** | ≥500 q/s | ✅ |
@@ -83,14 +83,14 @@ flowchart LR
 
 ## Enter LeanProxy: Your Token Firewall
 
-LeanProxy sits between your IDE and MCP servers as a smart gateway. It loads tool schemas **only when needed** — reducing the schema tax to a single 158-token router payload.
+LeanProxy sits between your IDE and MCP servers as a smart gateway. It loads tool schemas **only when needed** — reducing the schema tax to a single 237-token router payload (3 tools: `list_servers`, `list_tools`, `invoke_tool`).
 
 ```mermaid
 flowchart LR
     IDE["Your IDE"] --> Gateway["LeanProxy Gateway"]
 
     subgraph Gateway["LeanProxy Gateway"]
-        Router["Router: 3 tools (~158 tokens)"]
+        Router["Router: 3 tools (~237 tokens)"]
         JIT["JIT Schema Loading"]
         Cache["Automatic Caching"]
         Firewall["Token Firewall"]
@@ -120,13 +120,13 @@ flowchart LR
 
 ## Real Results, Real Savings
 
-### 86-99% Token Reduction in Production Sessions (Measured v0.9.0)
+### 79-99% Token Reduction in Production Sessions (Measured v0.9.0)
 
 | Session Type | Native MCP (raw, 0.25x cache read) | LeanProxy | Savings |
 |:-------------|:-----------------------------------|:----------|:--------|
-| Morning Sport (2 servers, 4 prompts) | ~12,260 | ~740 | **94.0%** |
-| Dev Workflow (2 servers, 5 prompts) | ~7,120 | ~925 | **87.0%** |
-| Full Day (3 servers, 7 prompts) | ~29,450 | ~1,295 | **95.6%** |
+| Morning Sport (2 servers, 4 prompts) | ~12,260 | ~1,056 | **91.4%** |
+| Dev Workflow (2 servers, 5 prompts) | ~7,120 | ~1,320 | **81.5%** |
+| Full Day (3 servers, 7 prompts) | ~29,450 | ~1,848 | **93.7%** |
 
 ### The Math Doesn't Lie
 
@@ -134,11 +134,11 @@ Measured on v0.9.0 with the same MCP server tool counts as production. Native MC
 
 | Configuration | Native MCP (raw) | LeanProxy (router) | Savings |
 |:--------------|:-----------------|:-------------------|:--------|
-| 1 server (Garmin, 100 tools) | 11,130 tokens | 158 tokens | **98.6%** |
-| 1 server (GitHub, 41 tools) | 4,570 tokens | 158 tokens | **96.5%** |
-| 1 server (Intervals.icu, 10 tools) | 1,130 tokens | 158 tokens | **86.0%** |
-| 2 servers (Garmin + GitHub) | 15,700 tokens | 158 tokens | **99.0%** |
-| 3 servers (all) | 16,830 tokens | 158 tokens | **99.1%** |
+| 1 server (Garmin, 100 tools) | 11,130 tokens | 237 tokens | **97.9%** |
+| 1 server (GitHub, 41 tools) | 4,570 tokens | 237 tokens | **94.8%** |
+| 1 server (Intervals.icu, 10 tools) | 1,130 tokens | 237 tokens | **79.0%** |
+| 2 servers (Garmin + GitHub) | 15,700 tokens | 237 tokens | **98.5%** |
+| 3 servers (all) | 16,830 tokens | 237 tokens | **98.6%** |
 
 > The earlier "4 servers" row is no longer applicable — the Stitch MCP server is no longer available, so the canonical production shape is 3 servers. See [docs/benchmark-results.md](docs/benchmark-results.md) for the full table and methodology.
 
@@ -216,7 +216,7 @@ flowchart TB
     end
 
     subgraph Gateway["LeanProxy Gateway"]
-        Router["Router<br/>(3 tools, ~158 tokens)"]
+        Router["Router<br/>(3 tools, ~237 tokens)"]
         JIT["JIT Schema Cache"]
         Firewall["Token Firewall<br/>(Secret Redaction)"]
         Pool["Connection Pool<br/>(multiplexed stdio)"]

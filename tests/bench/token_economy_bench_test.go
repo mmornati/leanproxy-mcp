@@ -23,7 +23,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
 	"github.com/mmornati/leanproxy-mcp/tests/bench/mockmcp"
 )
@@ -85,47 +85,28 @@ func loadSnapshot(tb testing.TB) *snapshot {
 	return &s
 }
 
-// routerListResponse mirrors the JSON the LeanProxy gateway returns for
-// `tools/list` (3 tools: list_servers, invoke_tool, list_tools). We don't
-// re-derive it from pkg/gateway to keep this benchmark a pure accounting
-// test — pkg/gateway itself is exercised by pkg/gateway/gateway_test.go.
+// routerTool mirrors the JSON shape a `tools/list` response sends to
+// clients: name, description and inputSchema only (Examples, Returns and
+// Categories from mcp.ToolDefinition are internal and never serialized).
 type routerTool struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	InputSchema any    `json:"inputSchema,omitempty"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
 }
 
+// routerListJSON marshals the real, production `tools/list` payload
+// (pkg/mcp.GetAllToolDefinitions: list_servers, list_tools, invoke_tool —
+// the same list `server run --stdio` returns) instead of a hand-maintained
+// stub, so this benchmark can never drift from what ships. See #300.
 func routerListJSON() []byte {
-	tools := []routerTool{
-		{
-			Name:        "list_servers",
-			Description: "List all MCP servers configured in this gateway",
-			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
-		},
-		{
-			Name:        "invoke_tool",
-			Description: "Invoke a tool on a specific MCP server",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"server_name": map[string]any{"type": "string"},
-					"tool_name":   map[string]any{"type": "string"},
-					"arguments":   map[string]any{"type": "object"},
-				},
-				"required": []string{"server_name", "tool_name"},
-			},
-		},
-		{
-			Name:        "list_tools",
-			Description: "List all tools available on a specific MCP server",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"server_name": map[string]any{"type": "string"},
-				},
-				"required": []string{"server_name"},
-			},
-		},
+	defs := mcp.GetAllToolDefinitions()
+	tools := make([]routerTool, 0, len(defs))
+	for _, def := range defs {
+		tools = append(tools, routerTool{
+			Name:        def.Name,
+			Description: def.Description,
+			InputSchema: def.InputSchema,
+		})
 	}
 	envelope := map[string]any{
 		"jsonrpc": "2.0",
@@ -566,14 +547,15 @@ func TestBinarySize_NFR3(t *testing.T) {
 	}
 }
 
-// --- Bonus: Gateway ListTools() call exercises the production path -----
+// --- Bonus: real router ToolDefinitions exercise the production path ----
 
 func TestGatewayRouterToolsList(t *testing.T) {
-	// Sanity check that the production pkg/gateway package's ListTools
-	// (used by the proxy) returns exactly the 3 tools we expect.
-	tools := gatewayListTools()
+	// Sanity check that the production pkg/mcp package's tool definitions
+	// (used by `server run --stdio` tools/list) return exactly the 3 tools
+	// we expect.
+	tools := mcp.GetAllToolDefinitions()
 	if len(tools) != 3 {
-		t.Fatalf("gateway ListTools() = %d tools, want 3 (list_servers, invoke_tool, list_tools)", len(tools))
+		t.Fatalf("mcp.GetAllToolDefinitions() = %d tools, want 3 (list_servers, list_tools, invoke_tool)", len(tools))
 	}
 	names := map[string]bool{}
 	for _, tool := range tools {
@@ -584,83 +566,18 @@ func TestGatewayRouterToolsList(t *testing.T) {
 			t.Errorf("router is missing tool %q", expected)
 		}
 	}
-	// Estimated token count of the router payload.
+
+	// Estimated token count of the real router payload, using the same
+	// pkg/reporter.Estimator the #300 unit test budget uses.
 	estimator := reporter.NewEstimator()
-	tools2 := []routerTool{}
-	for _, tool := range tools {
-		tools2 = append(tools2, routerTool{
-			Name:        tool.Name,
-			Description: tool.Description,
-			InputSchema: tool.InputSchema,
-		})
-	}
-	envelope := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"result":  map[string]any{"tools": tools2},
-	}
-	payload, _ := json.Marshal(envelope)
+	payload := routerListJSON()
 	tokens := estimator.EstimateTokens(string(payload))
 	if tokens <= 0 {
 		t.Fatalf("router tokens = %d, want > 0", tokens)
 	}
-	t.Logf("router payload: %d bytes, %d tokens (via pkg/gateway ListTools)", len(payload), tokens)
-}
-
-func gatewayListTools() []gateway.Tool {
-	// gateway.GatewayTools is an interface, so we construct a minimal
-	// implementation. We only need ListTools() here, so we bypass the
-	// other dependencies.
-	return (&gatewayStub{}).ListTools()
-}
-
-type gatewayStub struct{}
-
-func (s *gatewayStub) ListTools() []gateway.Tool { return defaultTools() }
-
-// defaultTools mirrors pkg/gateway/tools.go:defaultTools exactly. We
-// duplicate the var-decl list here (rather than importing) because the
-// package private list is not exported; this is the single source of
-// router shape used by the README and the docs.
-func defaultTools() []gateway.Tool {
-	return []gateway.Tool{
-		{
-			Name:        "list_servers",
-			Description: "List all MCP servers configured in this gateway",
-			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
-		},
-		{
-			Name:        "invoke_tool",
-			Description: "Invoke a tool on a specific MCP server",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"server_name": map[string]any{"type": "string"},
-					"tool_name":   map[string]any{"type": "string"},
-					"arguments":   map[string]any{"type": "object"},
-				},
-				"required": []string{"server_name", "tool_name"},
-			},
-		},
-		{
-			Name:        "list_tools",
-			Description: "List all tools available on a specific MCP server",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"server_name": map[string]any{"type": "string"},
-				},
-				"required": []string{"server_name"},
-			},
-		},
+	const budget = 250
+	if tokens >= budget {
+		t.Errorf("router tools/list tokens = %d, want < %d", tokens, budget)
 	}
-}
-
-// --- RunInfo helpers ----------------------------------------------------
-
-func init() {
-	// Make sure the gateway package compiles. This catches the case where
-	// a future change breaks the public API that the benchmark depends
-	// on.
-	_ = gateway.Tool{}
+	t.Logf("router payload: %d bytes, %d tokens (via pkg/mcp.GetAllToolDefinitions)", len(payload), tokens)
 }

@@ -318,6 +318,19 @@ func (p *HTTPClientPool) GetServerState(name string) (ServerState, error) {
 	return server.getState(), nil
 }
 
+// GetServerTransport reports the transport this server is configured with.
+// It always returns "http" for an HTTPClientPool member.
+func (p *HTTPClientPool) GetServerTransport(name string) (string, error) {
+	p.mu.RLock()
+	_, exists := p.servers[name]
+	p.mu.RUnlock()
+
+	if !exists {
+		return "", fmt.Errorf("http_pool: server %s not found", name)
+	}
+	return "http", nil
+}
+
 func (p *HTTPClientPool) SendRequest(ctx context.Context, serverName string, req *proxy.JSONRPCRequest, timeout time.Duration) (*proxy.JSONRPCResponse, error) {
 	p.mu.RLock()
 	server, exists := p.servers[serverName]
@@ -575,6 +588,21 @@ func (p *UnifiedPool) GetServerState(name string) (ServerState, error) {
 			return "", fmt.Errorf("unified_pool: %w", err)
 		}
 		return state, nil
+	default:
+		return "", fmt.Errorf("server %s not found in any pool", name)
+	}
+}
+
+// GetServerTransport reports which transport ("stdio", "http" or "sse")
+// owns the named server.
+func (p *UnifiedPool) GetServerTransport(name string) (string, error) {
+	switch p.resolveTransport(name) {
+	case transportStdio:
+		return p.stdioPool.GetServerTransport(name)
+	case transportHTTP:
+		return p.httpPool.GetServerTransport(name)
+	case transportSSE:
+		return p.ssePool.GetServerTransport(name)
 	default:
 		return "", fmt.Errorf("server %s not found in any pool", name)
 	}

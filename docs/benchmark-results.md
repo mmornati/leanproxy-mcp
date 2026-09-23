@@ -7,10 +7,12 @@ test in `tests/bench/token_economy_bench_test.go` and re-validated by
 `make bench`. No number here is hand-edited.
 
 > **TL;DR** — All headline claims from the README pass. Measured savings are
-> **86-99%** (depending on server shape), proxy overhead is **~12 µs/op**
+> **79-99%** (depending on server shape), proxy overhead is **~12 µs/op**
 > (NFR1 wants <50 ms), and throughput is **~25,000 q/s in-process** (NFR
-> AC 16-3 wants ≥500 q/s). One previously-claimed number is corrected:
-> the **router payload is 158 tokens**, not the older ~110 / 27.5 — see
+> AC 16-3 wants ≥500 q/s). The router payload is **237 tokens** (3 tools:
+> `list_servers`, `list_tools`, `invoke_tool`, measured from the real
+> `pkg/mcp.GetAllToolDefinitions()` router since #300 — it was previously a
+> stub that didn't match the production tool set) — see
 > [§3 Why the router number moved](#3-why-the-router-number-moved).
 
 ## 1. How to reproduce
@@ -75,16 +77,17 @@ column at 0.25× to mirror the original table.
 
 ### 2.3 LeanProxy router payload
 
-The router is a 3-tool definition exposed by `pkg/gateway/tools.go`:
+The router is the real 3-tool definition list `server run --stdio` serves,
+`pkg/mcp.GetAllToolDefinitions()` (`pkg/mcp/tool_index.go`):
 
-- `list_servers` — list MCP servers configured
-- `invoke_tool` — invoke a tool on a specific server
+- `list_servers` — list configured MCP servers with transport, state and tool count
 - `list_tools` — list tools on a specific server
+- `invoke_tool` — invoke a tool on a specific server
 
 The benchmark marshals this into the same `{"jsonrpc":"2.0","id":1,
 "result":{"tools":[...]}}` envelope the production proxy returns, so
-the 158-token figure includes the JSON-RPC envelope (id, jsonrpc
-version, result wrapper).
+the 237-token figure includes the JSON-RPC envelope (id, jsonrpc
+version, result wrapper) — not a hand-maintained stub (see #300).
 
 ### 2.4 Session replays
 
@@ -131,7 +134,8 @@ For comparison:
 |---|---|---|
 | Hand-counted 3-tool field sum (old) | ~27 | previous `docs/index.md` |
 | Hand-counted 3-tool schema (old) | ~110 | previous README |
-| Full `tools/list` envelope (current) | **158** | `tests/bench` + Estimator |
+| Stub router payload (pre-#300, didn't match production) | 158 | `tests/bench` stub + Estimator |
+| Real `tools/list` envelope (current) | **237** | `tests/bench` (`pkg/mcp.GetAllToolDefinitions()`) + Estimator |
 | Per-stub on-demand schema (current) | **26** | `tests/bench` + `registry.ToolStub` |
 
 ## 4. Raw results (latest run, v0.9.0)
@@ -147,18 +151,18 @@ cpu: Apple M4
 
 | Server | Tools | Native tokens | Router tokens | Savings |
 |---|---:|---:|---:|---:|
-| Garmin | 100 | 11,134 | 158 | **98.6%** |
-| GitHub | 41 | 4,570 | 158 | **96.5%** |
-| Intervals.icu | 10 | 1,129 | 158 | **86.0%** |
-| All 3 | 151 | 16,833 | 158 | **99.1%** |
+| Garmin | 100 | 11,134 | 237 | **97.9%** |
+| GitHub | 41 | 4,570 | 237 | **94.8%** |
+| Intervals.icu | 10 | 1,129 | 237 | **79.0%** |
+| All 3 | 151 | 16,833 | 237 | **98.6%** |
 
 ### 4.2 Session replays (0.25× cache-read model)
 
 | Session | Prompts | Native tokens | Lean tokens | Savings |
 |---|---:|---:|---:|---:|
-| Morning Sport | 4 | 12,260 | 740 | **94.0%** |
-| Dev Workflow | 5 | 7,120 | 925 | **87.0%** |
-| Full Day | 7 | 29,449 | 1,295 | **95.6%** |
+| Morning Sport | 4 | 12,260 | 1,056 | **91.4%** |
+| Dev Workflow | 5 | 7,120 | 1,320 | **81.5%** |
+| Full Day | 7 | 29,449 | 1,848 | **93.7%** |
 
 ### 4.3 NFRs
 
@@ -180,12 +184,13 @@ cpu: Apple M4
 
 | Old claim | Source | New claim | Notes |
 |---|---|---|---|
-| "90%+" headline | README | "86-99%" | Per-server variation is real |
-| "~110 router tokens" | README, architecture | **158 tokens** | Now includes the JSON-RPC envelope (full `tools/list`) |
-| "27.5 LeanProxy tokens" | index.md | **158 tokens** | Same correction; old number was a hand-counted schema-field sum, not the on-wire payload |
+| "90%+" headline | README | "79-99%" | Per-server variation is real |
+| "~110 router tokens" | README, architecture | **237 tokens** | Full JSON-RPC `tools/list` envelope, measured from the real router (`pkg/mcp.GetAllToolDefinitions()`), not a hand-maintained stub |
+| "27.5 LeanProxy tokens" | index.md | **237 tokens** | Same correction; old number was a hand-counted schema-field sum, not the on-wire payload |
+| "158 router tokens" | this doc (pre-#300) | **237 tokens** | The 158 figure came from a benchmark stub that had drifted from the production `list_servers`/`list_tools`/`invoke_tool` definitions; #300 fixed the router contract (added `list_servers`, real version) and the bench now measures the real tool defs |
 | "~54 tokens per stub" | configuration.md, architecture | **~26 tokens per stub** | Stub is `{name, description, category?}` — measured from the production `registry.ToolStub` |
 | "11 µs overhead at 5,000 RPS" | architecture.md | **~12 µs/op (p50)** | Same order of magnitude; quoted from Bifrost originally — now our own number |
-| "6-7× token reduction" | configuration.md, architecture | **86-99% reduction** | Per-server ratio varies; use the new tables |
+| "6-7× token reduction" | configuration.md, architecture | **79-99% reduction** | Per-server ratio varies; use the new tables |
 | 4-server column | README, index.md | **3-server (Stitch removed)** | Stitch MCP is no longer available |
 | Garmin 55 / Intervals 67 (README) | README | **Garmin 100 / Intervals 10** | Resolved against `docs/index.md`; now consistent across both docs |
 

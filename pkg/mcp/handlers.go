@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/internal/version"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
@@ -198,7 +200,7 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 		},
 		ServerInfo: ServerInfo{
 			Name:    "leanproxy-mcp",
-			Version: "1.0.0",
+			Version: version.Get().Version,
 		},
 	}
 
@@ -316,7 +318,7 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		}, nil
 	}
 
-	if params.Name == "list_tools" || params.Name == "invoke_tool" {
+	if params.Name == "list_servers" || params.Name == "list_tools" || params.Name == "invoke_tool" {
 		return h.handleLeanproxyTool(ctx, req, params)
 	}
 
@@ -375,6 +377,8 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 
 func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
 	switch params.Name {
+	case "list_servers":
+		return h.handleListServers(ctx, req)
 	case "list_tools":
 		return h.handleListTools(ctx, req, params)
 	case "invoke_tool":
@@ -495,6 +499,76 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 		Result:  resultBytes,
 		ID:      req.ID,
 	}, nil
+}
+
+// handleListServers implements the list_servers gateway tool: one compact
+// line per configured server with its transport, state and cached tool
+// count. It takes no parameters and never forces a backend round-trip, so
+// it stays cheap to call before every session.
+//
+// The stored InitializeResult (server instructions / serverInfo) that
+// Story 19.7 will add is not available yet, so the `instructions` field is
+// omitted for now (see AGENTS.md / issue #300).
+func (h *Handler) handleListServers(ctx context.Context, req *Request) (*Response, error) {
+	servers := h.pool.ListServers()
+	sort.Strings(servers)
+
+	lines := make([]string, 0, len(servers))
+	for _, name := range servers {
+		state, err := h.pool.GetServerState(name)
+		if err != nil {
+			state = pool.StateUnknown
+		}
+
+		transport, err := h.pool.GetServerTransport(name)
+		if err != nil {
+			transport = "unknown"
+		}
+
+		count := h.toolCountFor(name)
+		lines = append(lines, fmt.Sprintf("%s (%s, %s, %d tools)", name, transport, healthLabel(state), count))
+	}
+
+	text := "No servers configured."
+	if len(lines) > 0 {
+		text = strings.Join(lines, "\n")
+	}
+
+	h.logger.Info("list_servers completed", "count", len(servers))
+
+	result := map[string]interface{}{
+		"content": []map[string]string{
+			{"type": "text", "text": text},
+		},
+	}
+	resultBytes, _ := json.Marshal(result)
+
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Result:  resultBytes,
+		ID:      req.ID,
+	}, nil
+}
+
+// healthLabel maps a pool.ServerState to the compact word list_servers
+// reports: "healthy" for a server that can serve requests right now, and
+// "unreachable" for anything else (stopped, errored, disconnected,
+// unknown, ...).
+func healthLabel(state pool.ServerState) string {
+	switch state {
+	case pool.StateIdle, pool.StateRunning, pool.StateBusy:
+		return "healthy"
+	default:
+		return "unreachable"
+	}
+}
+
+// toolCountFor returns the number of cached tools for a server, without
+// forcing a cache refresh (list_servers must stay cheap).
+func (h *Handler) toolCountFor(serverName string) int {
+	h.toolCache.mu.RLock()
+	defer h.toolCache.mu.RUnlock()
+	return len(h.toolCache.tools[serverName])
 }
 
 func (h *Handler) PopulateToolCache(ctx context.Context) {

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/internal/version"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
@@ -88,6 +89,13 @@ func (m *mockPool) GetServerState(name string) (pool.ServerState, error) {
 		return "", fmt.Errorf("server not found")
 	}
 	return pool.ServerState(state), nil
+}
+
+func (m *mockPool) GetServerTransport(name string) (string, error) {
+	if _, ok := m.servers[name]; !ok {
+		return "", fmt.Errorf("server not found")
+	}
+	return "stdio", nil
 }
 
 func (m *mockPool) RestartServer(ctx context.Context, name string) error {
@@ -245,7 +253,7 @@ func TestHandleInitialize(t *testing.T) {
 			expectError:   false,
 			expectedProto: "2024-11-05",
 			expectedName:  "leanproxy-mcp",
-			expectedVer:   "1.0.0",
+			expectedVer:   version.Get().Version,
 		},
 		{
 			name:          "nil params",
@@ -253,7 +261,7 @@ func TestHandleInitialize(t *testing.T) {
 			expectError:   false,
 			expectedProto: "2024-11-05",
 			expectedName:  "leanproxy-mcp",
-			expectedVer:   "1.0.0",
+			expectedVer:   version.Get().Version,
 		},
 	}
 
@@ -291,6 +299,33 @@ func TestHandleInitialize(t *testing.T) {
 			assert.NotNil(t, result.Capabilities.Prompts)
 		})
 	}
+}
+
+// TestHandleInitialize_ReportsBuildVersion simulates the -ldflags injected
+// build version (internal/version.Version, e.g. set via
+// -X .../internal/version.Version=v9.9.9) and asserts serverInfo.version
+// reflects it, per #300 acceptance criteria (no more hard-coded "1.0.0").
+func TestHandleInitialize_ReportsBuildVersion(t *testing.T) {
+	original := version.Version
+	version.Version = "v9.9.9"
+	t.Cleanup(func() { version.Version = original })
+
+	h := NewHandler(newMockPool(), slog.New(slog.NewTextHandler(os.Stderr, nil)))
+	req := &Request{
+		JSONRPC: "2.0",
+		Method:  MethodInitialize,
+		ID:      1,
+	}
+
+	resp, err := h.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	assert.Nil(t, resp.Error)
+
+	var result InitializeResult
+	require.NoError(t, json.Unmarshal(resp.Result, &result))
+	assert.Equal(t, "v9.9.9", result.ServerInfo.Version)
+	assert.Equal(t, "leanproxy-mcp", result.ServerInfo.Name)
 }
 
 func TestHandleInitialized(t *testing.T) {
@@ -688,6 +723,82 @@ func TestHandleListTools(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestHandleListServers covers the #300 acceptance criterion: tools/call
+// list_servers returns every configured server with transport, state and
+// tool count, and an unreachable server is labeled "unreachable".
+func TestHandleListServers(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	p := newMockPool()
+	p.SetServerState("github", pool.StateIdle)
+	p.SetServerState("jira", pool.StateError)
+	p.SetTools("github", []Tool{
+		{Name: "list_issues", Description: "List GitHub issues", InputSchema: json.RawMessage(`{}`)},
+	})
+
+	h := NewHandler(p, logger)
+	// Seed the handler's own tool cache directly (list_servers reads from
+	// it, not from the mock pool's per-test tool map). We avoid
+	// PopulateToolCache here because it restarts (and thus "heals") any
+	// server not already idle/running/busy, which would defeat the
+	// "jira is unreachable" case below.
+	h.toolCache.tools["github"] = []Tool{
+		{Name: "list_issues", Description: "List GitHub issues", InputSchema: json.RawMessage(`{}`)},
+	}
+
+	req := &Request{
+		JSONRPC: "2.0",
+		Method:  MethodToolsCall,
+		Params:  mustMarshal(t, ToolsCallParams{Name: "list_servers"}),
+		ID:      1,
+	}
+
+	resp, err := h.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Nil(t, resp.Error)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(resp.Result, &result))
+	content := result["content"].([]interface{})
+	textBlock := content[0].(map[string]interface{})
+	text := textBlock["text"].(string)
+
+	assert.Contains(t, text, "github (stdio, healthy, 1 tools)")
+	assert.Contains(t, text, "jira (stdio, unreachable, 0 tools)")
+}
+
+func TestHandleListServers_NoServers(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	h := NewHandler(newMockPool(), logger)
+
+	req := &Request{
+		JSONRPC: "2.0",
+		Method:  MethodToolsCall,
+		Params:  mustMarshal(t, ToolsCallParams{Name: "list_servers"}),
+		ID:      1,
+	}
+
+	resp, err := h.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Nil(t, resp.Error)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(resp.Result, &result))
+	content := result["content"].([]interface{})
+	textBlock := content[0].(map[string]interface{})
+	text := textBlock["text"].(string)
+
+	assert.Contains(t, text, "No servers configured")
+}
+
+func mustMarshal(t *testing.T, params ToolsCallParams) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(params)
+	require.NoError(t, err)
+	return b
 }
 
 func TestHandleInvokeTool(t *testing.T) {
