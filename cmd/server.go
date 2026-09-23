@@ -175,7 +175,7 @@ func runServerRemove(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Remove server %q? [y/N]: ", name)
 	var response string
-	fmt.Scanln(&response)
+	_, _ = fmt.Scanln(&response) // EOF / empty input means "no"
 	if response != "y" && response != "Y" {
 		fmt.Println("Canceled.")
 		return nil
@@ -490,7 +490,22 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Token Firewall: the same redaction + injection middlewares `serve`
+	// runs, on by default (built-in patterns when there is no bouncer block).
+	firewall := mcp.NewFirewall(cfg.Bouncer, cfg.Injection)
+	handler.Use(firewall.Middlewares()...)
+	logFirewallStatus(firewall)
+
 	return handleStdio(ctx, handler, stdioPool, statusStore)
+}
+
+// logFirewallStatus logs the one-line firewall summary at startup, plus a
+// warning when redaction was explicitly turned off.
+func logFirewallStatus(fw *mcp.Firewall) {
+	slog.Info(fw.Summary())
+	if !fw.Redaction.Enabled() {
+		slog.Warn("bouncer: secret redaction explicitly disabled in config; secrets will pass through verbatim")
+	}
 }
 
 func updateStdioServerStatusOnce(statusStore *statusfile.FileStatusStore, stdioPool *pool.StdioPool) {
