@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -457,26 +457,35 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		updateStdioServerStatusOnce(statusStore, stdioPool)
 	}
 
+	// closePools stops the health checker before closing the pools so no
+	// health-triggered restart can race the shutdown sweep and orphan a
+	// freshly spawned process. It runs once, from the signal handler or
+	// after the stdio front end returns (EOF / shutdown).
+	var closeOnce sync.Once
+	closePools := func() {
+		closeOnce.Do(func() {
+			if healthCancel != nil {
+				healthCancel()
+			}
+			if healthChecker != nil {
+				healthChecker.Stop()
+			}
+			stdioPool.Close()
+			httpPool.Close()
+			ssePool.Close()
+		})
+	}
+
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
 		<-sigChan
 		slog.Info("shutting down server")
-		// Stop the health checker before closing the pools so no
-		// health-triggered restart can race the shutdown sweep and orphan a
-		// freshly spawned process.
-		if healthCancel != nil {
-			healthCancel()
-		}
-		if healthChecker != nil {
-			healthChecker.Stop()
-		}
 		if statusStore != nil {
 			statusStore.RemoveFile()
 		}
-		stdioPool.Close()
-		httpPool.Close()
+		closePools()
 		os.Exit(0)
 	}()
 
@@ -507,7 +516,11 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		return toMetricsResponseCache(respCache)
 	})
 
-	return handleStdio(ctx, handler, stdioPool, statusStore)
+	frontendOpts := stdioFrontendOptions{
+		MaxConcurrent: cfg.EffectiveMaxConcurrentRequests(),
+		ShutdownGrace: defaultStdioShutdownGrace,
+	}
+	return handleStdio(ctx, handler, frontendOpts, closePools, statusStore)
 }
 
 // logFirewallStatus logs the one-line firewall summary at startup, plus a
@@ -681,11 +694,11 @@ func joinStrings(strs []string) string {
 	return result
 }
 
-func handleStdio(ctx context.Context, handler *mcp.Handler, stdioPool *pool.StdioPool, statusStore *statusfile.FileStatusStore) error {
-	reader := bufio.NewReader(os.Stdin)
-	writer := bufio.NewWriter(os.Stdout)
-
-	slog.Info("leanproxy-mcp stdio mode started")
+// handleStdio runs the concurrent stdio front end on os.Stdin/os.Stdout
+// until EOF or a `shutdown` request, then runs cleanup (which stops the
+// health checker and closes the pools, so no child process is orphaned).
+func handleStdio(ctx context.Context, handler *mcp.Handler, opts stdioFrontendOptions, cleanup func(), statusStore *statusfile.FileStatusStore) error {
+	slog.Info("leanproxy-mcp stdio mode started", "max_concurrent_requests", opts.MaxConcurrent)
 
 	defer func() {
 		if statusStore != nil {
@@ -693,50 +706,9 @@ func handleStdio(ctx context.Context, handler *mcp.Handler, stdioPool *pool.Stdi
 		}
 	}()
 
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil {
-			if err == io.EOF {
-				slog.Info("stdin closed, shutting down")
-				return nil
-			}
-			slog.Error("failed to read stdin", "error", err)
-			return err
-		}
-
-		if len(line) == 0 {
-			continue
-		}
-
-		line = trimStdioNewline(line)
-
-		var req mcp.Request
-		if err := json.Unmarshal(line, &req); err != nil {
-			slog.Warn("failed to parse JSON-RPC request", "error", err, "line", string(line))
-			resp := mcp.Response{
-				JSONRPC: mcp.JSONRPCVersion,
-				Error:   mcp.NewError(mcp.ErrCodeParseError, "invalid JSON-RPC request"),
-				ID:      nil,
-			}
-			writeStdioResponse(writer, &resp)
-			continue
-		}
-
-		resp, err := handler.HandleRequest(ctx, &req)
-		if err != nil {
-			slog.Error("handler error", "error", err, "method", req.Method)
-		}
-
-		if resp != nil {
-			writeStdioResponse(writer, resp)
-		}
-
-		if req.Method == mcp.MethodShutdown {
-			slog.Info("shutdown request received")
-			stdioPool.Close()
-			return nil
-		}
-	}
+	err := serveStdio(ctx, os.Stdin, os.Stdout, handler, opts)
+	cleanup()
+	return err
 }
 
 func writeStdioResponse(writer *bufio.Writer, resp *mcp.Response) {
