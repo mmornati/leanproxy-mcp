@@ -67,6 +67,40 @@ watch:
 | `servers[].timeout` | duration | `30s` | **Per-server** request timeout. Each server entry in `servers:` can set its own `timeout` (e.g. `timeout: 60s` for `garmin`). The proxy honors the per-server value end-to-end: the handler dispatches with it and the worker uses `min(per-server, caller)`. Use a larger value for servers that return slow / large payloads (FIT data, big search results). |
 | `server.max_batch_size` | int | `100` | Maximum batch size for JSON-RPC batch requests (0 = unlimited) |
 
+### Concurrent Requests per Stdio Server (`max_in_flight`)
+
+A stdio server is one child process with one stdin/stdout pipe, but the
+proxy does **not** serialize calls to it: concurrent requests are multiplexed
+over the pipe and matched back to their callers by JSON-RPC ID, so a slow
+tool call does not block the others. `max_in_flight` caps how many requests
+may be outstanding on one server at a time:
+
+```yaml
+servers:
+  - name: github
+    transport: stdio
+    stdio:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+    max_in_flight: 8   # default 32
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `servers[].max_in_flight` | int | `32` | Maximum number of requests multiplexed concurrently over one stdio server's pipe. `0` or absent means the default. |
+
+When a server is at its cap, further callers **wait** for a free slot
+(bounded by their own timeout) instead of being rejected. When a caller
+times out or gives up, the proxy removes its pending entry and sends the
+server a `notifications/cancelled` message; a late response is discarded.
+If the server process exits, every pending call fails immediately with
+`server <name> exited` rather than waiting for its timeout.
+
+Requests the server sends to the client (`roots/list`,
+`sampling/createMessage`, `elicitation/create`, `ping`) are not relayed yet;
+the proxy answers them with JSON-RPC error `-32601 Method not found` so the
+server never hangs waiting.
+
 ### Per-Server Rate Limiting
 
 There is **no rate limit by default** — local stdio servers don't need one. A

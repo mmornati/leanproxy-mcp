@@ -1,5 +1,21 @@
 # Changelog
 
+## Changed in v0.10
+
+- **Concurrent requests to one stdio server are multiplexed** ([#294](https://github.com/mmornati/leanproxy-mcp/issues/294)).
+  The stdio pool used to serve one request at a time per server (50 parallel 100 ms calls took ~5 s); it now
+  keeps a pending map keyed by the internal wire ID, so calls run concurrently up to the new per-server
+  `max_in_flight` setting (default 32; callers beyond it wait instead of being rejected). A caller that times
+  out sends `notifications/cancelled` to the server, a server that exits fails every pending call at once,
+  and server-to-client requests are answered with `-32601` instead of being left unanswered. The stdout
+  reader no longer drops responses when a buffer is full.
+- **Removed the never-fed circuit breaker and `pkg/concurrent`.** The stdio pool created a circuit breaker
+  per server but never recorded a success or failure, so it could not open. Crash recovery (restart budget
+  plus health checks) already covers the failure modes it was meant for, so it was deleted rather than wired.
+  With it went the rest of `pkg/concurrent` (an unused duplicate `StdioPool`, `RateLimiter`,
+  `MultiServerRateLimiter`, `QueueManager`, `WorkerPool`) and `pkg/pool`'s unused request queues, none of
+  which had non-test callers.
+
 ## Removed in v0.10
 
 Epic 19 (["Make the README true"](https://github.com/mmornati/leanproxy-mcp/issues/288)) audited every

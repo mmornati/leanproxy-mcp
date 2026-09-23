@@ -12,8 +12,6 @@ LeanProxy-MCP components that require graceful shutdown:
 | SSEPool | `pkg/pool` | `Close()` |
 | HTTPClientPool | `pkg/pool` | `Close()` |
 | UnifiedPool | `pkg/pool` | `Close()` |
-| RateLimiter | `pkg/concurrent` | `Close()` |
-| MultiServerRateLimiter | `pkg/concurrent` | `Close()` |
 | LifecycleManager | `pkg/registry` | `Close()` |
 
 ## Shutdown Sequence
@@ -34,7 +32,6 @@ flowchart TD
 ```go
 type Application struct {
     pool             *pool.StdioPool
-    rateLimiter      *concurrent.MultiServerRateLimiter
     lifecycleManager registry.LifecycleManager
 }
 
@@ -48,12 +45,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
         }
     }
 
-    // 2. Close rate limiter (stops background cleanup goroutines)
-    if a.rateLimiter != nil {
-        a.rateLimiter.Close()
-    }
-
-    // 3. Close lifecycle manager (stops process reaper goroutine)
+    // 2. Close lifecycle manager (stops process reaper goroutine)
     if a.lifecycleManager != nil {
         a.lifecycleManager.Close()
     }
@@ -82,25 +74,14 @@ if err := pool.Close(); err != nil {
 
 The pool's `Close()` method:
 - Stops accepting new requests
+- Fails every in-flight stdio request immediately (`server <name> is stopping`) instead of letting it wait for its timeout
 - Signals all server processes to stop (SIGTERM)
 - Waits for all goroutines to complete
 - Closes all connections
 
-### RateLimiter (`pkg/concurrent`)
-
-```go
-// Single server rate limiter
-rl := concurrent.NewRateLimiter(10, time.Second)
-defer rl.Close()
-
-// Multi-server rate limiter
-msrl := concurrent.NewMultiServerRateLimiter(config)
-defer msrl.Close()
-```
-
-The `Close()` method:
-- Closes the stop channel
-- Waits for the cleanup goroutine to finish using WaitGroup
+Per-server rate limiters (`rate_limit` in the server config) are
+`golang.org/x/time/rate` limiters owned by the pool; they hold no goroutine
+and need no separate shutdown.
 
 ### LifecycleManager (`pkg/registry`)
 
@@ -233,14 +214,12 @@ import (
     "syscall"
     "time"
 
-    "github.com/mmornati/leanproxy-mcp/pkg/concurrent"
     "github.com/mmornati/leanproxy-mcp/pkg/pool"
 )
 
 type Application struct {
     logger  *slog.Logger
     pool    *pool.StdioPool
-    limiter *concurrent.MultiServerRateLimiter
     wg      sync.WaitGroup
     ctx     context.Context
     cancel  context.CancelFunc
@@ -249,11 +228,6 @@ type Application struct {
 func NewApplication() *Application {
     ctx, cancel := context.WithCancel(context.Background())
     logger := slog.Default()
-
-    limiter := concurrent.NewMultiServerRateLimiter(concurrent.RateLimiterConfig{
-        MaxRequests: 10,
-        Window:      time.Second,
-    })
 
     p, err := pool.NewStdioPool(5, 5*time.Minute, logger)
     if err != nil {
@@ -264,7 +238,6 @@ func NewApplication() *Application {
     return &Application{
         logger:  logger,
         pool:    p,
-        limiter: limiter,
         ctx:     ctx,
         cancel:  cancel,
     }
@@ -288,9 +261,6 @@ func (a *Application) Shutdown() error {
     if err := a.pool.Close(); err != nil {
         errs = append(errs, fmt.Errorf("pool: %w", err))
     }
-
-    // Close rate limiter (stops cleanup goroutine)
-    a.limiter.Close()
 
     a.logger.Info("shutdown complete")
     return errors.Join(errs...)
@@ -326,7 +296,6 @@ func main() {
     // Create components
     logger := slog.Default()
     cache, _ := toolstore.NewFileCache(logger)
-    limiter := concurrent.NewMultiServerRateLimiter(config)
     p, _ := pool.NewStdioPool(maxConn, timeout, logger)
 
     // Create handler
@@ -337,7 +306,6 @@ func main() {
     // On shutdown:
     handler.Close()           // Stop accepting requests
     p.Close()                 // Close pool
-    limiter.Close()           // Close rate limiter
     cache = nil              // Let GC handle it
 }
 ```

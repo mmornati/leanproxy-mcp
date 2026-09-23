@@ -262,7 +262,6 @@ graph TD
     pkg --> rt["router/"]
     pkg --> rg["registry/"]
     pkg --> pl["pool/"]
-    pkg --> cn["concurrent/"]
     pkg --> cp["compactor/"]
     pkg --> ut["utils/"]
     pkg --> bc["bouncer/"]
@@ -302,7 +301,6 @@ leanproxy-mcp/
 │   ├── router/     # Tool routing
 │   ├── registry/   # Tool registry
 │   ├── pool/       # Connection pooling
-│   ├── concurrent/ # Concurrency utilities
 │   ├── compactor/  # Token optimization
 │   ├── bouncer/    # Redaction engine
 │   ├── mcp/        # MCP protocol implementation
