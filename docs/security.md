@@ -14,6 +14,18 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | **Path Validation** | Prevents path traversal attacks on configuration files |
 | **Graceful Shutdown** | Ensures all goroutines are properly terminated |
 
+## `serve` listener authentication
+
+`leanproxy-mcp serve` accepts JSON-RPC over TCP only from clients whose first
+line is `{"jsonrpc":"2.0","method":"auth","params":{"token":"…"}}` with the
+token from `~/.config/leanproxy/serve.token` (created with mode 0600 on first
+start), `--auth-token` or `$LEANPROXY_SERVE_TOKEN`. Connections that fail the
+handshake, or whose first line looks like an HTTP request (the browser
+cross-protocol attack), are closed without executing anything. `--no-auth` is
+only accepted on loopback addresses. See
+[`serve`](commands.md#client-protocol-and-authentication) for the protocol and
+limits.
+
 ## Which modes are protected
 
 Secret redaction and the prompt-injection guard (together, the **Token

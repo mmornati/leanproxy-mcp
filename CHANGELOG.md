@@ -2,6 +2,21 @@
 
 ## Changed in v0.10
 
+- **Breaking: `serve` clients must authenticate; the listener rejects HTTP and caps size and concurrency** ([#298](https://github.com/mmornati/leanproxy-mcp/issues/298)).
+  The `serve` TCP port had no authentication, so any local process, or any web page through a `text/plain`
+  POST to `127.0.0.1:8080` (the HTTP header lines failed to parse and the JSON body line was executed), could
+  call every upstream tool. The first line of each connection must now be
+  `{"jsonrpc":"2.0","method":"auth","params":{"token":"…"}}`; otherwise the connection is closed without
+  executing or answering anything. The token comes from `--auth-token`, `$LEANPROXY_SERVE_TOKEN`, or
+  `~/.config/leanproxy/serve.token` (0600, generated on first start). A first line that looks like HTTP is
+  rejected. `--no-auth` disables the handshake and is refused on a non-loopback `--listen` address. Lines are
+  capped by `server.max_line_bytes` (64 MiB), requests per connection by `server.max_concurrent_requests`
+  (64, the reader waits), connections by `server.max_connections` (32). A disconnect now cancels the
+  connection's in-flight upstream calls, and accept errors back off (5 ms to 1 s) instead of spinning.
+  **Migration:** make every `serve` client send the auth line first, reading the token from
+  `~/.config/leanproxy/serve.token` (or set `LEANPROXY_SERVE_TOKEN` for both sides); for local development
+  only, `serve --no-auth` keeps the old behavior on loopback. The IDE integration (`server run --stdio`) and
+  the VS Code / JetBrains extensions (which read the metrics endpoint) are unaffected.
 - **Server lifecycle: the pool owns the MCP handshake, tools refresh in the background** ([#297](https://github.com/mmornati/leanproxy-mcp/issues/297)).
   The handshake moved from the request handler into the pool: each stdio process generation sends
   `initialize` + `notifications/initialized` exactly once before any other request (a restarted server,
