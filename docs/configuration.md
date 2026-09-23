@@ -289,7 +289,7 @@ bouncer:
 
 The `optimization.lazy_loading` and `federation` config blocks were never
 wired into any command — they parsed but had no effect — and were removed in
-v0.10 (see the [changelog](../CHANGELOG.md#removed-in-v010) and issue
+v0.10 (see the [changelog](https://github.com/mmornati/leanproxy-mcp/blob/main/CHANGELOG.md#removed-in-v010) and issue
 [#303](https://github.com/mmornati/leanproxy-mcp/issues/303)). Tool discovery
 is instead handled by [JIT Discovery](architecture.md#jit-discovery), which
 is wired into every transport. Existing configs that still contain either

@@ -64,3 +64,6 @@ _bmad-output/implementation-artifacts/loop-status.yaml
 
 # Bench results (regenerated on demand via `make bench`)
 bench-results/
+
+# MkDocs build output
+site/
