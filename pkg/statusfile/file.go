@@ -37,6 +37,21 @@ type StatusInfo struct {
 	CostTracking *CostTracking  `json:"cost_tracking,omitempty"`
 }
 
+// homeDir is the directory the status file lives under: $HOME when set
+// (os.UserHomeDir), like the tool cache, so a sandboxed HOME — the
+// benchmark harness, tests — never touches the real one; otherwise the
+// account's home from the user database.
+func homeDir() (string, error) {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return home, nil
+	}
+	usr, err := user.Current()
+	if err != nil {
+		return "", fmt.Errorf("statusfile: get user home dir: %w", err)
+	}
+	return usr.HomeDir, nil
+}
+
 type FileStatusStore struct {
 	statusFile string
 	logger     *slog.Logger
@@ -49,12 +64,12 @@ func NewFileStatusStore(listenAddr string, logger *slog.Logger) (*FileStatusStor
 		logger = slog.Default()
 	}
 
-	usr, err := user.Current()
+	home, err := homeDir()
 	if err != nil {
-		return nil, fmt.Errorf("statusfile: get user home dir: %w", err)
+		return nil, err
 	}
 
-	statusDir := filepath.Join(usr.HomeDir, ".config", "leanproxy", "status")
+	statusDir := filepath.Join(home, ".config", "leanproxy", "status")
 	if err := os.MkdirAll(statusDir, 0700); err != nil {
 		return nil, fmt.Errorf("statusfile: create status dir: %w", err)
 	}
@@ -138,12 +153,12 @@ func (s *FileStatusStore) writeLocked() {
 }
 
 func ReadCurrentStatus() (*StatusInfo, error) {
-	usr, err := user.Current()
+	home, err := homeDir()
 	if err != nil {
-		return nil, fmt.Errorf("statusfile: get user home dir: %w", err)
+		return nil, err
 	}
 
-	statusFile := filepath.Join(usr.HomeDir, ".config", "leanproxy", "status", "current.json")
+	statusFile := filepath.Join(home, ".config", "leanproxy", "status", "current.json")
 	data, err := os.ReadFile(statusFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -179,12 +194,12 @@ func ReadCurrentStatusFromConfigDir(configDir string) (*StatusInfo, error) {
 }
 
 func ListStatusFiles() ([]string, error) {
-	usr, err := user.Current()
+	home, err := homeDir()
 	if err != nil {
-		return nil, fmt.Errorf("statusfile: get user home dir: %w", err)
+		return nil, err
 	}
 
-	statusDir := filepath.Join(usr.HomeDir, ".config", "leanproxy", "status")
+	statusDir := filepath.Join(home, ".config", "leanproxy", "status")
 	entries, err := os.ReadDir(statusDir)
 	if err != nil {
 		if os.IsNotExist(err) {
