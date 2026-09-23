@@ -214,6 +214,44 @@ type Config struct {
 	Injection     *injection.Config     `yaml:"injection,omitempty"`
 	Bouncer       *bouncer.Config       `yaml:"bouncer,omitempty"`
 	ResponseCache *responsecache.Config `yaml:"response_cache,omitempty"`
+	// Server holds settings for the proxy's own MCP front end (the
+	// `server run --stdio` loop the IDE talks to), as opposed to the
+	// upstream servers listed under Servers.
+	Server *FrontendConfig `yaml:"server,omitempty"`
+}
+
+// DefaultMaxConcurrentRequests is the number of client requests the stdio
+// front end processes at once when server.max_concurrent_requests is unset.
+const DefaultMaxConcurrentRequests = 64
+
+// FrontendConfig is the `server:` block. Unknown keys in the block (e.g. the
+// legacy host/port documented for `serve`) are ignored.
+type FrontendConfig struct {
+	// MaxConcurrentRequests caps how many client requests `server run
+	// --stdio` handles in parallel. When the cap is reached the reader
+	// waits for a free slot; it never rejects. 0 or absent means
+	// DefaultMaxConcurrentRequests.
+	MaxConcurrentRequests int `yaml:"max_concurrent_requests,omitempty"`
+}
+
+// Validate rejects negative values. A nil receiver is valid (defaults).
+func (c *FrontendConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.MaxConcurrentRequests < 0 {
+		return fmt.Errorf("server.max_concurrent_requests must be >= 0, got %d", c.MaxConcurrentRequests)
+	}
+	return nil
+}
+
+// EffectiveMaxConcurrentRequests returns server.max_concurrent_requests, or
+// DefaultMaxConcurrentRequests when it is unset or zero.
+func (c *Config) EffectiveMaxConcurrentRequests() int {
+	if c == nil || c.Server == nil || c.Server.MaxConcurrentRequests <= 0 {
+		return DefaultMaxConcurrentRequests
+	}
+	return c.Server.MaxConcurrentRequests
 }
 
 func (c *ServerConfig) Validate() error {
@@ -262,6 +300,9 @@ func (c *Config) Validate() error {
 		if err := validateBouncerPatterns(c.Bouncer); err != nil {
 			return err
 		}
+	}
+	if err := c.Server.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

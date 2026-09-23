@@ -1018,3 +1018,64 @@ response_cache:
 		t.Fatal("expected an invalid response_cache.ttl to fail LoadConfig")
 	}
 }
+
+func TestLoadConfigMaxConcurrentRequests(t *testing.T) {
+	write := func(t *testing.T, body string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "leanproxy_servers.yaml")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("WriteFile() failed: %v", err)
+		}
+		return path
+	}
+	const servers = `
+servers:
+  - name: a
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+`
+	ctx := context.Background()
+
+	t.Run("default when absent", func(t *testing.T) {
+		cfg, err := LoadConfig(ctx, write(t, servers))
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v", err)
+		}
+		if got := cfg.EffectiveMaxConcurrentRequests(); got != DefaultMaxConcurrentRequests {
+			t.Errorf("EffectiveMaxConcurrentRequests() = %d, want %d", got, DefaultMaxConcurrentRequests)
+		}
+	})
+
+	t.Run("explicit value, legacy keys ignored", func(t *testing.T) {
+		cfg, err := LoadConfig(ctx, write(t, servers+`
+server:
+  host: 127.0.0.1
+  port: 8080
+  max_concurrent_requests: 8
+`))
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v", err)
+		}
+		if got := cfg.EffectiveMaxConcurrentRequests(); got != 8 {
+			t.Errorf("EffectiveMaxConcurrentRequests() = %d, want 8", got)
+		}
+	})
+
+	t.Run("negative rejected", func(t *testing.T) {
+		_, err := LoadConfig(ctx, write(t, servers+`
+server:
+  max_concurrent_requests: -1
+`))
+		if err == nil || !contains(err.Error(), "max_concurrent_requests must be >= 0") {
+			t.Fatalf("LoadConfig() error = %v, want max_concurrent_requests validation error", err)
+		}
+	})
+
+	t.Run("nil config", func(t *testing.T) {
+		var cfg *Config
+		if got := cfg.EffectiveMaxConcurrentRequests(); got != DefaultMaxConcurrentRequests {
+			t.Errorf("nil EffectiveMaxConcurrentRequests() = %d", got)
+		}
+	})
+}
