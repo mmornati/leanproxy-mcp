@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -63,14 +64,6 @@ type VectorStoreConfig struct {
 
 type CacheConfig struct {
 	VectorStore *VectorStoreConfig `yaml:"vector_store,omitempty"`
-}
-
-type LazyLoadingSettings struct {
-	Enabled       bool          `yaml:"enabled"`
-	StubTokens    int           `yaml:"stub_tokens"`
-	CacheTTL      string        `yaml:"cache_ttl"`
-	CacheTTLValue time.Duration `yaml:"-"`
-	Prewarm       []string      `yaml:"prewarm"`
 }
 
 type StdioConfig struct {
@@ -171,29 +164,12 @@ func (c *Config) EffectiveReconnect() ResolvedReconnect {
 }
 
 type Config struct {
-	Version      string              `yaml:"version"`
-	Servers      []*ServerConfig     `yaml:"servers"`
-	Reconnect    *ReconnectConfig    `yaml:"reconnect,omitempty"`
-	Optimization *OptimizationConfig `yaml:"optimization,omitempty"`
-	Cache        *CacheConfig        `yaml:"cache,omitempty"`
-	Federation   *FederationConfig   `yaml:"federation,omitempty"`
-	Injection    *injection.Config   `yaml:"injection,omitempty"`
-	Bouncer      *bouncer.Config     `yaml:"bouncer,omitempty"`
-}
-
-type OptimizationConfig struct {
-	LazyLoading *LazyLoadingSettings `yaml:"lazy_loading,omitempty"`
-}
-
-type PeerConfig struct {
-	Name      string `yaml:"name"`
-	URL       string `yaml:"url"`
-	AuthToken string `yaml:"auth_token,omitempty"`
-}
-
-type FederationConfig struct {
-	Enabled bool          `yaml:"enabled"`
-	Peers   []*PeerConfig `yaml:"peers"`
+	Version   string            `yaml:"version"`
+	Servers   []*ServerConfig   `yaml:"servers"`
+	Reconnect *ReconnectConfig  `yaml:"reconnect,omitempty"`
+	Cache     *CacheConfig      `yaml:"cache,omitempty"`
+	Injection *injection.Config `yaml:"injection,omitempty"`
+	Bouncer   *bouncer.Config   `yaml:"bouncer,omitempty"`
 }
 
 func (c *ServerConfig) Validate() error {
@@ -276,6 +252,8 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse yaml: %w", err)
 	}
+
+	warnDeprecatedConfigKeys(data)
 
 	for _, server := range cfg.Servers {
 		if server.Timeout != "" {
@@ -374,23 +352,6 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 		}
 	}
 
-	if cfg.Optimization != nil && cfg.Optimization.LazyLoading != nil {
-		lazy := cfg.Optimization.LazyLoading
-		if lazy.CacheTTL != "" {
-			d, err := time.ParseDuration(lazy.CacheTTL)
-			if err != nil {
-				return nil, fmt.Errorf("invalid lazy_loading cache_ttl: %w", err)
-			}
-			lazy.CacheTTLValue = d
-		} else {
-			lazy.CacheTTLValue = 24 * time.Hour
-		}
-
-		if lazy.StubTokens == 0 {
-			lazy.StubTokens = 54
-		}
-	}
-
 	if cfg.Cache != nil && cfg.Cache.VectorStore != nil {
 		vs := cfg.Cache.VectorStore
 		if vs.Backend == "" {
@@ -414,6 +375,29 @@ func LoadConfig(ctx context.Context, path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// warnDeprecatedConfigKeys detects config keys that leanproxy.yaml used to
+// support but no longer acts on, and logs one warning per key found so
+// existing configs keep loading instead of failing outright (issue #303).
+// It re-parses the raw YAML into an untyped map because the typed Config
+// struct no longer has fields for these keys, so yaml.Unmarshal would
+// otherwise drop them silently.
+func warnDeprecatedConfigKeys(data []byte) {
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return
+	}
+
+	if _, ok := raw["federation"]; ok {
+		slog.Default().Warn(`config key "federation" is no longer supported and is ignored`)
+	}
+
+	if opt, ok := raw["optimization"].(map[string]interface{}); ok {
+		if _, ok := opt["lazy_loading"]; ok {
+			slog.Default().Warn(`config key "optimization.lazy_loading" is no longer supported and is ignored`)
+		}
+	}
 }
 
 func ptr(b bool) *bool { return &b }
