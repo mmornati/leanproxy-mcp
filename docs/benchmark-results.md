@@ -1,220 +1,287 @@
 # Benchmark Results
 
-This document is the **single source of truth** for the token-economy and
-NFR performance numbers in the [README](https://github.com/mmornati/leanproxy-mcp/blob/main/README.md) and
-[index.md](./index.md). Every number below is produced by an executable
-test in `tests/bench/token_economy_bench_test.go` and re-validated by
-`make bench`. No number here is hand-edited.
+Every number on this page, and in the README benchmark tables, is copied
+from one run of the end-to-end harness (`make harness`, `tests/harness`,
+issue #301). Nothing here is hand-edited or estimated. The run's report is
+written to `bench-results/harness.md`, and CI uploads the same file as the
+`harness-results` artifact on every push and pull request.
 
-> **TL;DR** — All headline claims from the README pass. Measured savings are
-> **79-99%** (depending on server shape), proxy overhead is **~12 µs/op**
-> (NFR1 wants <50 ms), and throughput is **~25,000 q/s in-process** (NFR
-> AC 16-3 wants ≥500 q/s). The router payload is **237 tokens** (3 tools:
-> `list_servers`, `list_tools`, `invoke_tool`, measured from the real
-> `pkg/mcp.GetAllToolDefinitions()` router since #300 — it was previously a
-> stub that didn't match the production tool set) — see
-> [§3 Why the router number moved](#3-why-the-router-number-moved).
+> **TL;DR.** Measured through the real binary: a session costs **72–87%
+> fewer tokens** than native MCP, once LeanProxy's own discovery calls are
+> counted. Each session also takes **3–4 extra LLM turns**. The router the
+> client loads is **237 tokens**, against **10,049** for the five native
+> `tools/list` payloads. The proxy adds **0.72 ms** at p95, and a
+> 500-call burst finished with **0 errors**.
+
+The README used to claim 81.5–93.7% session savings, ~12 µs overhead and
+~25,000 q/s. Those figures came from benchmarks that did not run the proxy
+(see [§6](#6-what-changed-from-the-previous-numbers)).
 
 ## 1. How to reproduce
 
 ```bash
-# from repo root
-make bench              # runs the full suite, writes bench-results/<date>.txt
-make bench-compare      # diffs two result files (FILES=old.txt new.txt)
-go test -run=^$ -bench=. -benchmem -benchtime=3s -count=3 ./tests/bench/...
+make harness                 # ~30 s cold, ~6 s warm; writes bench-results/harness.md
 ```
 
-The full suite runs in **< 1 second** end-to-end on a single core. It
-does **not** require a live MCP server, network access, or a database —
-every server-side path is exercised against the in-process
-`tests/bench/mockmcp` library.
+- The harness builds `leanproxy-mcp` and the catalog mock itself. It needs
+  no network, no real MCP server and no credentials.
+- Every process runs with a scratch `HOME` and `LEANPROXY_TOOLCACHE_DIR`, so
+  the harness never touches your real config, tool cache or status file.
+- The tests use the `harness` build tag, so `go test ./...` does not run
+  them.
 
-To refresh the canonical MCP server tool counts from a live run (e.g.
-after re-installing the GitHub / Garmin / Intervals.icu servers):
+## 2. What the harness runs
 
-```bash
-go run ./tests/bench/live_snapshot \
-    -config tests/bench/fixtures/live-snapshot.yaml \
-    -out   tests/bench/fixtures/live-snapshot.json
-```
+- **Proxy.** The real `leanproxy-mcp server run --stdio` binary. It is built
+  with the release flags (`-trimpath -ldflags="-s -w"`) and driven over
+  stdin/stdout pipes, the way an IDE drives it.
+- **Upstream servers.** `tests/harness/catalogmcp` is a Go stdio MCP server
+  that serves one server of a realistic 118-tool catalog
+  (`tests/harness/testdata/catalog.json`):
 
-Until that snapshot is refreshed, `tests/bench/fixtures/live-snapshot.json`
-contains seeded counts derived from the previous `docs/index.md` numbers
-(GitHub 41, Garmin 100, Intervals.icu 10 — Stitch is no longer available).
+  | Server | Tools |
+  |---|---:|
+  | GitHub | 42 |
+  | Jira/Confluence | 24 |
+  | Slack | 14 |
+  | Garmin | 28 |
+  | Postgres | 10 |
 
-## 2. Methodology
+  The catalog was ported from the audit prototype
+  `docs/audit/experiments/catalog.py`. The tool names, descriptions and
+  parameter names follow the real servers. Every parameter is a string with
+  a one-line description, so real schemas are usually larger.
+- **Mock flags.**
+  - `--server`: which catalog server to serve.
+  - `--delay-ms`: slow down each `tools/call`.
+  - `--response-bytes`: pad each result.
+  - `--secrets`: embed fake credentials in each result. The keys are built
+    at runtime, so no literal key is committed.
+  - `--concurrent`: answer out of order.
+- **Proxy config.** Defaults, plus the prompt-injection guard switched on:
+  - redaction on, with the built-in patterns;
+  - injection guard: block at risk ≥ 80, redact at risk 50–79;
+  - no rate limit;
+  - no response cache.
 
-### 2.1 Token counting
+## 3. Methodology
 
-All token accounting in the benchmark suite uses the **same primitive**
-the runtime cost tracker uses:
+### 3.1 Token unit
 
-```go
-import "github.com/mmornati/leanproxy-mcp/pkg/reporter"
+`pkg/reporter.Estimator` counts 1 token per 4 characters. It is the same
+estimator the runtime cost tracker uses. The harness applies it to the
+**full JSON-RPC response line** as it crosses the pipe, so both sides pay
+for the envelope. The chars/4 rule approximates BPE tokenizers. It is not
+exact, but it is consistent, and consistency is what the ratios need.
 
-estimator := reporter.NewEstimator()        // 1 token ≈ 4 chars (chars/4)
-tokens := estimator.EstimateTokens(payload)  // or EstimateJSON(v)
-```
+### 3.2 Discovery payloads
 
-This is `pkg/reporter.Estimator`, exposed as a public type in v0.9.0
-specifically so the runtime and benchmarks can never disagree. The
-`chars/4` heuristic is a well-known approximation of BPE-style
-tokenizers (OpenAI, Anthropic) for English text; it is not byte-perfect
-but is **consistent within itself**, which is what matters for the
-savings ratios reported here.
+- **Native.** Each catalog server's own `tools/list` response, read directly
+  from the mock.
+- **Router.** LeanProxy's `tools/list` response (`list_servers`,
+  `list_tools`, `invoke_tool`).
+- **`list_servers` and `list_tools(server)`.** The real outputs of those
+  router tools. `list_servers` is read once the background tool refresh has
+  filled in every server's tool count.
+- **`invoke_tool` overhead.** The token difference between an `invoke_tool`
+  request and the same call sent natively as `tools/call`, and the same
+  difference for the response.
+- **`search_tools`.** Not measured: it does not exist yet (Epic 20).
 
-### 2.2 Native MCP baseline
+### 3.3 Session model
 
-For each MCP server in the live snapshot, the benchmark synthesises a
-`tools/list` JSON payload whose byte size matches the per-server
-`schema_bytes` field. The token count of that payload is the "Native MCP"
-column. We use the **raw** token count (not the 0.25× cache-read cost)
-because the README's "Schema Tax" claim is about the on-wire payload
-size, independent of provider-side caching discounts.
+A session is a list of `(server, tool)` prompts. The harness replays each
+session through the proxy: every `list_servers`, `list_tools` and
+`invoke_tool` call below really runs. Tokens are counted per LLM turn.
 
-The cache-read comparison in `index.md` is provided as a separate
-column at 0.25× to mirror the original table.
+**Native MCP.** All 5 configured servers' `tools/list` payloads are in
+context on every turn. The first turn pays for them at full price. Later
+turns pay the provider's cache-read rate of **0.25×**. There are no extra
+turns.
 
-### 2.3 LeanProxy router payload
+**LeanProxy.**
 
-The router is the real 3-tool definition list `server run --stdio` serves,
-`pkg/mcp.GetAllToolDefinitions()` (`pkg/mcp/tool_index.go`):
+1. The router is in context from the first turn.
+2. A turn that needs discovery adds that discovery output at full price:
+   - `list_servers` on the first turn, because the router tells the model
+     to call it first;
+   - `list_tools(server)` the first time the session uses a server.
+3. Each discovery output stays in context.
+4. Every turn after the first re-reads the carried context (the router plus
+   every earlier discovery output) at 0.25×.
 
-- `list_servers` — list configured MCP servers with transport, state and tool count
-- `list_tools` — list tools on a specific server
-- `invoke_tool` — invoke a tool on a specific server
+**Extra turns.** Each discovery call is one extra LLM round-trip.
+The harness reports them in their own column. Their token cost (another
+re-read of the context) is **not** added to the LeanProxy total, so the
+savings column is an upper bound.
 
-The benchmark marshals this into the same `{"jsonrpc":"2.0","id":1,
-"result":{"tools":[...]}}` envelope the production proxy returns, so
-the 237-token figure includes the JSON-RPC envelope (id, jsonrpc
-version, result wrapper) — not a hand-maintained stub (see #300).
+**Assumptions.**
 
-### 2.4 Session replays
+- Tool results are identical on both paths, so both sides leave them out.
+  The `invoke_tool` request wrapper adds 14 tokens per call; that is
+  also left out.
+- Cache reads cost 0.25× (Anthropic's prompt-cache pricing), with a 100%
+  cache hit after the first turn on both sides.
+- On a native client, every configured server's schemas are loaded on every
+  turn, whether or not the session uses that server.
 
-The three session tables (Morning Sport / Dev / Full Day) replay the
-exact prompt sequences from the previous `docs/index.md` against the
-synthesised per-server tool counts:
+**Sessions.**
 
-- **Morning Sport** — 2 servers, 4 prompts (Garmin + Intervals.icu)
-- **Dev Workflow** — 2 servers, 5 prompts (GitHub + Intervals.icu)
-- **Full Day** — 3 servers, 7 prompts (all available)
+| Session | Prompts |
+|---|---|
+| Morning Sport | 3 Garmin, then 1 Slack |
+| Dev Workflow | GitHub ×2, Jira ×2, GitHub |
+| Full Day | GitHub ×2, Jira ×2, Slack ×2, GitHub |
 
-For each prompt, the "Native MCP" cost is the sum of the per-server
-schema tax **at 0.25× cache-read cost** (matching the "real" cost model
-in `index.md`). The "LeanProxy" cost is the router payload + one stub
-schema (~26 tokens) per tool actually invoked.
+### 3.4 Latency, throughput and memory
 
-### 2.5 NFR benchmarks
+- **Paced sequential.**
+  - 200 `invoke_tool` calls, one at a time, 5 ms apart, after 20 warm-up
+    calls.
+  - Every call has a unique argument, so no cache can serve it.
+  - The same 200 calls are also sent directly to the same mock.
+  - Overhead is the proxied percentile minus the direct percentile.
+- **Burst.** 500 `invoke_tool` calls, written back to back without waiting,
+  round-robin over the 5 servers. The harness counts errors, checks that
+  every answer carries its own request's argument, and measures wall time.
+- **Parallel.**
+  - 50 calls sent at once to a single mock server that sleeps 100 ms per
+    call and answers concurrently.
+  - The pool's default `max_in_flight` of 32 per server splits them into
+    two waves.
+- **Large response.** One 5 MiB tool result, relayed through the proxy and
+  also read directly from the mock.
+- **RSS.** `VmRSS` of the proxy process, taken once all 5 servers are warm
+  and again after the burst.
 
-- **NFR1 (proxy overhead)** — microbenchmark of the JSON-RPC parse +
-  cost-track hot path. Includes one Unmarshal of the request, one
-  Unmarshal of the response, and one `TrackAt` call.
-- **NFR2 (50 MB payload)** — single-call `EstimateTokens` on a 50 MB
-  byte buffer. This is the worst-case size a single request can hit.
-- **AC 16-3 (throughput)** — in-process `mockmcp.Server` driven in a
-  tight loop. The number is the **mockmcp** ceiling, not the
-  leanproxy binary ceiling; for a real binary-level measurement, use
-  the in-tree e2e suite (`tests/e2e/`) which currently exercises
-  ~5,000 req/s against a Python mock upstream.
-- **NFR3 (binary size)** — `os.Stat` over the `dist/leanproxy-mcp-*`
-  binaries produced by `make build`.
+### 3.5 Safety
 
-## 3. Why the router number moved
+The mock embeds three fake credentials in every result. The harness then
+checks four things:
 
-The README's previous "~110 router tokens" / "27 tokens" came from a
-hand-counted estimate of the 3-tool schema (without the JSON-RPC
-envelope) using a different token-counting rule (1 token per tool
-field, then summed). The benchmark measures the **full `tools/list`
-response as it would appear on the wire** using the runtime Estimator,
-which is the right unit for the cost-saving claim.
+- **Server → client.** No fake credential reaches the client.
+- **Client → server.** The mock counts the fake credentials that arrive in
+  the request it received. The count must be 0.
+- **Injection.** A block-level payload is refused with -32600.
+- **Server-initiated requests.** The mock sends `roots/list` in the middle
+  of a call. The proxy must answer it, and the call must complete.
 
-For comparison:
+`TestHarness_RedactionAssertionTrips` runs the same checks with
+`bouncer: {enabled: false}` and requires the redaction assertion to fail.
+The harness therefore cannot pass vacuously.
 
-| Measurement | Tokens | Source |
-|---|---|---|
-| Hand-counted 3-tool field sum (old) | ~27 | previous `docs/index.md` |
-| Hand-counted 3-tool schema (old) | ~110 | previous README |
-| Stub router payload (pre-#300, didn't match production) | 158 | `tests/bench` stub + Estimator |
-| Real `tools/list` envelope (current) | **237** | `tests/bench` (`pkg/mcp.GetAllToolDefinitions()`) + Estimator |
-| Per-stub on-demand schema (current) | **26** | `tests/bench` + `registry.ToolStub` |
+## 4. Results
 
-## 4. Raw results (latest run, v0.9.0)
-
-```
-goos: darwin
-goarch: arm64
-pkg: github.com/mmornati/leanproxy-mcp/tests/bench
-cpu: Apple M4
-```
-
-### 4.1 Schema-tax (per server)
-
-| Server | Tools | Native tokens | Router tokens | Savings |
-|---|---:|---:|---:|---:|
-| Garmin | 100 | 11,134 | 237 | **97.9%** |
-| GitHub | 41 | 4,570 | 237 | **94.8%** |
-| Intervals.icu | 10 | 1,129 | 237 | **79.0%** |
-| All 3 | 151 | 16,833 | 237 | **98.6%** |
-
-### 4.2 Session replays (0.25× cache-read model)
-
-| Session | Prompts | Native tokens | Lean tokens | Savings |
-|---|---:|---:|---:|---:|
-| Morning Sport | 4 | 12,260 | 1,056 | **91.4%** |
-| Dev Workflow | 5 | 7,120 | 1,320 | **81.5%** |
-| Full Day | 7 | 29,449 | 1,848 | **93.7%** |
-
-### 4.3 NFRs
-
-| Benchmark | Measured | Threshold | Pass |
-|---|---|---|:-:|
-| `BenchmarkProxyOverhead_NFR1` (p50) | ~12 µs/op | <50 ms | ✅ |
-| `BenchmarkLargePayload_NFR2` (50 MB) | ~7 ms | <200 ms | ✅ |
-| `BenchmarkThroughput_MockMCP` (in-process) | ~25,000 q/s | ≥500 q/s | ✅ |
-| `TestBinarySize_NFR3` (darwin-arm64) | 15.8 MB | <20 MB | ✅ |
-
-### 4.4 Per-primitive microbenchmarks
-
-| Primitive | Time | Allocs |
-|---|---:|---:|
-| `BenchmarkEstimateTokens` | ~50 ns | 0 |
-| `BenchmarkEstimateJSON` | ~250 ns | 1 |
-
-## 5. What was corrected vs the previous README
-
-| Old claim | Source | New claim | Notes |
-|---|---|---|---|
-| "90%+" headline | README | "79-99%" | Per-server variation is real |
-| "~110 router tokens" | README, architecture | **237 tokens** | Full JSON-RPC `tools/list` envelope, measured from the real router (`pkg/mcp.GetAllToolDefinitions()`), not a hand-maintained stub |
-| "27.5 LeanProxy tokens" | index.md | **237 tokens** | Same correction; old number was a hand-counted schema-field sum, not the on-wire payload |
-| "158 router tokens" | this doc (pre-#300) | **237 tokens** | The 158 figure came from a benchmark stub that had drifted from the production `list_servers`/`list_tools`/`invoke_tool` definitions; #300 fixed the router contract (added `list_servers`, real version) and the bench now measures the real tool defs |
-| "~54 tokens per stub" | configuration.md, architecture | **~26 tokens per stub** | Stub is `{name, description, category?}` — measured from the production `registry.ToolStub` |
-| "11 µs overhead at 5,000 RPS" | architecture.md | **~12 µs/op (p50)** | Same order of magnitude; quoted from Bifrost originally — now our own number |
-| "6-7× token reduction" | configuration.md, architecture | **79-99% reduction** | Per-server ratio varies; use the new tables |
-| 4-server column | README, index.md | **3-server (Stitch removed)** | Stitch MCP is no longer available |
-| Garmin 55 / Intervals 67 (README) | README | **Garmin 100 / Intervals 10** | Resolved against `docs/index.md`; now consistent across both docs |
-
-## 6. Future work
-
-- **Refresh `live-snapshot.json`** with a real run of `go run
-  ./tests/bench/live_snapshot` once the Garmin / Intervals / GitHub
-  credentials are wired into CI. The seeded numbers in
-  `fixtures/live-snapshot.json` are a placeholder.
-- **Binary-level throughput** — the in-process mockmcp number is a
-  ceiling, not the binary-level throughput. A `make bench-e2e` target
-  that spawns the leanproxy binary + a mockmcp subprocess and measures
-  end-to-end q/s is the next step (see `buildMockMCP` in
-  `token_economy_bench_test.go`).
-- **Real-tokenizer comparison** — swap the `chars/4` heuristic for
-  `tiktoken-go` to get a tokenizer-accurate number. The Estimator API
-  already supports this via `NewEstimatorWithRatio`.
-
-## 7. Commit / run metadata
+Run metadata:
 
 | Field | Value |
 |---|---|
-| Version | v0.9.0 |
-| Git | `7db8011` (Merge pull request #269) |
-| Go | 1.25+ |
-| Host | Apple M4, darwin/arm64 |
-| Date | 2026-08-12 |
+| Commit | `994d8c8` |
+| Date (UTC) | 2026-09-23 |
+| Host | linux/amd64, 4 CPUs, go1.25.5 |
+
+Latency depends on the host; token counts do not.
+
+### 4.1 Assertions (a failure fails `make harness` and CI)
+
+| Assertion | Measured | Result |
+|---|---|---|
+| Redaction active (both directions) | both directions clean | PASS |
+| Injection payload blocked | JSON-RPC error -32600 returned | PASS |
+| Server→client request does not hang | answered in 1 ms | PASS |
+| 0 errors in a 500-call pipelined burst | 0 errors | PASS |
+| 50 × 100 ms parallel calls < 1 s | 205 ms | PASS |
+| 5 MB response relayed | 5,242,881 bytes | PASS |
+| p95 proxy overhead < 5 ms | 0.72 ms | PASS |
+
+### 4.2 Discovery payloads
+
+| Payload | Tokens |
+|---|---:|
+| LeanProxy `tools/list` (router, 3 tools) | 237 |
+| LeanProxy `list_servers` (5 servers) | 80 |
+| LeanProxy `search_tools` | n/a (Epic 20) |
+| `invoke_tool` request overhead vs a native `tools/call` | +14 |
+| `invoke_tool` response overhead vs a native `tools/call` | +0 |
+
+### 4.3 Per server
+
+| Server | Tools | Native `tools/list` | LeanProxy `list_tools(server)` | LeanProxy router | Router vs native |
+|---|---:|---:|---:|---:|---:|
+| github | 42 | 4,443 | 1,638 | 237 | −94.7% |
+| jira | 24 | 2,043 | 772 | 237 | −88.4% |
+| slack | 14 | 1,128 | 441 | 237 | −79.0% |
+| garmin | 28 | 1,795 | 760 | 237 | −86.8% |
+| postgres | 10 | 640 | 282 | 237 | −63.0% |
+| **all 5** | **118** | **10,049** | **3,893** | **237** | **−97.6%** |
+
+"Router vs native" compares only what sits in context before any tool is
+used. A real session also pays for discovery; that cost is in §4.4.
+
+### 4.4 Session replay
+
+| Session | Prompts | Servers used | Native tokens | LeanProxy tokens | Savings | Extra LLM turns |
+|---|---:|---:|---:|---:|---:|---:|
+| Morning Sport | 4 | 2 | 17,586 | 2,328 | −86.8% | +3 |
+| Dev Workflow | 5 | 2 | 20,098 | 5,068 | −74.8% | +3 |
+| Full Day | 7 | 3 | 25,123 | 7,093 | −71.8% | +4 |
+
+The savings shrink as a session uses more servers and more tools. Each
+newly used server brings its `list_tools` output into context. GitHub's
+output alone is 1,638 tokens.
+
+### 4.5 Latency, throughput and memory
+
+| Measurement | Value |
+|---|---:|
+| Paced sequential `invoke_tool`, 200 unique calls: p50 / p95 / p99 via proxy | 0.80 / 1.06 / 1.65 ms |
+| Same calls direct to the mock: p50 / p95 / p99 | 0.21 / 0.34 / 0.79 ms |
+| Proxy overhead (proxy − direct): p50 / p95 / p99 | 0.59 / 0.72 / 0.85 ms |
+| 500-call pipelined burst over 5 servers: wall / throughput / errors | 43 ms / 11,570 req/s / 0 |
+| 50 parallel calls to a 100 ms tool on one server (default `max_in_flight` 32, so two waves): wall | 205 ms |
+| 5 MB tool response: via proxy / direct | 479 ms / 55 ms |
+| Proxy RSS: idle (5 servers warm) / after the burst | 20.1 MiB / 21.8 MiB |
+| Binary size (linux/amd64, `-trimpath -ldflags="-s -w"`) | 16.3 MiB |
+
+The 5 MB relay costs about 0.4 s more through the proxy than directly.
+Most of that is response-side secret redaction, which scans the whole
+result. A one-off check with `bouncer.enabled: false` relayed the same
+response several times faster; the harness does not report that
+configuration.
+
+## 5. Micro-benchmarks that remain in `tests/bench`
+
+`make bench` still runs these. Each one measures only what its name says.
+None of them is a proxy-level number, and none is quoted in the README.
+
+| Benchmark | What it measures |
+|---|---|
+| `BenchmarkSchemaTax_LeanProxyRouter` | Size of the real router `tools/list` payload (`pkg/mcp.GetAllToolDefinitions`) |
+| `BenchmarkSchemaTax_StubSchema` | Size of one lazy-loading `registry.ToolStub` |
+| `BenchmarkJSONParse_Literal` | `json.Unmarshal` of two literal strings plus one cost-tracker update, in process |
+| `BenchmarkEstimateTokens_50MB` | The chars/4 estimator over a 50 MB buffer |
+| `TestBinarySize_NFR3` | Size of the `dist/` binaries from `make build` (< 20 MB) |
+
+## 6. What changed from the previous numbers
+
+| Previous claim | Where it came from | Now (harness) |
+|---|---|---|
+| Session savings 81.5–93.7% | `SessionReplay_*` charged LeanProxy the router plus one ~26-token stub per prompt. It ignored the `list_tools` output and the extra turns, and its timing loop was empty. | **−71.8% to −86.8%**, with discovery outputs counted and 3–4 extra turns reported |
+| Per-server savings 79.0–97.9% (GitHub 41 tools = 4,570 tokens, ...) | Synthetic `tools/list` payloads padded with dots to a byte count from a seeded snapshot | Real catalog payloads: router vs native **−63.0% to −94.7%** per server, **−97.6%** for all 5 |
+| Proxy overhead ~12 µs/op (p50) | `BenchmarkProxyOverhead_NFR1`: two `json.Unmarshal` calls on literals, in process | **0.59 ms p50 / 0.72 ms p95** through the binary, measured against a direct baseline |
+| Throughput ~25,000 q/s | `BenchmarkThroughput_MockMCP`: an in-process mock, with no proxy involved | **11,570 req/s** for a 500-call pipelined burst through the binary (one run; varies by host) |
+| 50 MB payload estimate ~7 ms | Token estimator over a 50 MB buffer; no relay | **5 MB relayed in 479 ms** (estimator benchmark renamed `BenchmarkEstimateTokens_50MB`) |
+| Binary 15.8 MB (darwin-arm64) | `dist/` build on the maintainer's machine | **16.3 MiB** (linux/amd64, harness build) |
+
+## 7. Known limits and follow-ups
+
+- **`search_tools` (Epic 20).** Once it lands, the harness should add its
+  cost and a "LeanProxy with `search_tools`" session column. The audit
+  prototype estimated it at about −92% for Full Day.
+- **Extra-turn cost.** The extra turns are counted but not costed. Costing
+  them needs a model of what the model re-sends on a discovery turn.
+- **Transports.** Only the stdio front end and stdio upstreams are measured.
+  `serve`, HTTP and SSE are not.
+- **Catalog.** It is realistic but synthetic. Real servers often have
+  larger schemas, with enums, nested objects and long descriptions. That
+  raises both the native cost and the `list_tools` cost.

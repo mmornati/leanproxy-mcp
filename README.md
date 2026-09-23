@@ -23,24 +23,24 @@
 
 ---
 
-## Latest Benchmark (v0.9.0)
+## Latest Benchmark
 
-Measured on a 3-server production-shaped MCP setup (GitHub + Garmin + Intervals.icu) with the canonical `pkg/reporter.Estimator` (1 token ≈ 4 chars). Reproduce with `make bench`.
+Measured by `make harness`: the real `leanproxy-mcp server run --stdio` binary, driven over pipes, in front of 5 mock MCP servers that serve a realistic 118-tool catalog (GitHub, Jira/Confluence, Slack, Garmin, Postgres). Run on linux/amd64 (4 CPUs) at commit `994d8c8`. Tokens use `pkg/reporter.Estimator` (1 token ≈ 4 chars). Every row below is a line of `bench-results/harness.md`.
 
 | Metric | Measured | Threshold | Status |
 |---|---|---|---|
-| Token savings, 1 server (GitHub) | **94.8%** | ≥90% | ✅ |
-| Token savings, 1 server (Garmin) | **97.9%** | ≥90% | ✅ |
-| Token savings, 1 server (Intervals.icu) | **79.0%** | ≥90% | ✅ (small server) |
-| Session savings, Morning Sport (4 prompts) | **91.4%** | ≥90% | ✅ |
-| Session savings, Dev Workflow (5 prompts) | **81.5%** | ≥77% | ✅ |
-| Session savings, Full Day (7 prompts) | **93.7%** | ≥93% | ✅ |
-| Proxy overhead, p50 (parse + cost track) | **~12 µs/op** | <50 ms | ✅ |
-| 50 MB payload estimate, p50 | **~7 ms** | <200 ms | ✅ |
-| Throughput (in-process mock MCP) | **~25,000 q/s** | ≥500 q/s | ✅ |
-| Binary size (darwin-arm64) | **15.8 MB** | <20 MB | ✅ |
+| Session savings, Morning Sport (4 prompts, 2 servers) | **−86.8%** (+3 extra LLM turns) | – | measured |
+| Session savings, Dev Workflow (5 prompts, 2 servers) | **−74.8%** (+3 extra LLM turns) | – | measured |
+| Session savings, Full Day (7 prompts, 3 servers) | **−71.8%** (+4 extra LLM turns) | – | measured |
+| Proxy overhead, p50 / p95 (proxied − direct) | **0.59 / 0.72 ms** | p95 < 5 ms | ✅ |
+| 500-call pipelined burst over 5 servers | **0 errors**, 11,570 req/s | 0 errors | ✅ |
+| 50 parallel calls to a 100 ms tool | **205 ms** wall | < 1 s | ✅ |
+| 5 MB tool response relayed | **479 ms** (direct: 55 ms) | relayed intact | ✅ |
+| Secret redaction, both directions | **0 of 3** fake secrets leaked | active | ✅ |
+| Proxy RSS, idle / after burst | **20.1 / 21.8 MiB** | – | measured |
+| Binary size (linux/amd64, stripped) | **16.3 MiB** | < 20 MB | ✅ |
 
-> All numbers above come from `tests/bench/token_economy_bench_test.go` and `pkg/reporter/cost.go`. **Full results and methodology: [docs/benchmark-results.md](docs/benchmark-results.md).**
+> The savings include LeanProxy's own discovery outputs (`list_servers`, `list_tools`), and the table reports the extra turns they cost. Earlier versions of this table left both out and reported 81.5–93.7% session savings. **Methodology, assumptions and full results: [docs/benchmark-results.md](docs/benchmark-results.md).**
 
 ---
 
@@ -53,31 +53,29 @@ flowchart LR
     IDE["Your IDE"] --> MCP["MCP Gateway"]
 
     subgraph MCP["MCP Gateway"]
-        S1["GitHub (41 tools)"]
-        S2["Garmin (100 tools)"]
-        S3["Intervals.icu (10 tools)"]
+        S1["GitHub (42 tools)"]
+        S2["Jira (24 tools)"]
+        S3["Slack (14 tools)"]
+        S4["Garmin (28 tools)"]
+        S5["Postgres (10 tools)"]
     end
 
     MCP --> LLM["LLM Provider"]
 
-    note1["~4,570 tokens"]
-    note2["~11,130 tokens"]
-    note3["~1,130 tokens"]
-    total["TOTAL: ~16,830 tokens"]
+    total["TOTAL: ~10,049 tokens of tool schemas, on every request"]
 
-    S1 -.-> note1
-    S2 -.-> note2
-    S3 -.-> note3
-    note1 --- total
-    note2 --- total
-    note3 --- total
+    S1 -.-> total
+    S2 -.-> total
+    S3 -.-> total
+    S4 -.-> total
+    S5 -.-> total
     total -.-> LLM
 
     style MCP fill:#ff6b6b,color:#fff
     style LLM fill:#ee5a5a,color:#fff
 ```
 
-**The result?** You're burning tokens on tool definitions you'll never use in that session. Numbers above are measured on v0.9.0 — see [Latest Benchmark](#latest-benchmark-v090).
+**The result?** You're burning tokens on tool definitions you'll never use in that session. The numbers above are the harness catalog's native `tools/list` payloads; see [Latest Benchmark](#latest-benchmark).
 
 ---
 
@@ -120,27 +118,36 @@ flowchart LR
 
 ## Real Results, Real Savings
 
-### 79-99% Token Reduction in Production Sessions (Measured v0.9.0)
+### 72–87% Fewer Tokens per Session (measured by `make harness`)
 
-| Session Type | Native MCP (raw, 0.25x cache read) | LeanProxy | Savings |
-|:-------------|:-----------------------------------|:----------|:--------|
-| Morning Sport (2 servers, 4 prompts) | ~12,260 | ~1,056 | **91.4%** |
-| Dev Workflow (2 servers, 5 prompts) | ~7,120 | ~1,320 | **81.5%** |
-| Full Day (3 servers, 7 prompts) | ~29,450 | ~1,848 | **93.7%** |
+| Session | Native MCP (0.25× cache read) | LeanProxy | Savings | Extra LLM turns |
+|:--------|:------------------------------|:----------|:--------|:----------------|
+| Morning Sport (4 prompts, 2 of 5 servers) | 17,586 | 2,328 | **−86.8%** | +3 |
+| Dev Workflow (5 prompts, 2 of 5 servers) | 20,098 | 5,068 | **−74.8%** | +3 |
+| Full Day (7 prompts, 3 of 5 servers) | 25,123 | 7,093 | **−71.8%** | +4 |
 
-### The Math Doesn't Lie
+**How these are counted.**
 
-Measured on v0.9.0 with the same MCP server tool counts as production. Native MCP + 100% cache hit still costs you at **0.25x** (cache read isn't free!). We use the raw `tools/list` token count for Native and the same `pkg/reporter.Estimator` (1 token ≈ 4 chars) for both columns.
+- **Native MCP.** All 5 configured servers' `tools/list` payloads are in context on every turn: the first turn at full price, later turns at the 0.25× cache-read rate.
+- **LeanProxy.**
+  - The 237-token router is in context from the start.
+  - Discovery outputs join the context the turn they are fetched, at full price: `list_servers` on the first turn, and `list_tools(server)` the first time a server is used.
+  - Later turns re-read everything already in context at 0.25×.
+- **Extra LLM turns.** Each discovery call is one extra round-trip. The table counts them, but their token cost is not included, so the savings are an upper bound.
+- **Tool results.** They are the same on both paths and left out of both.
 
-| Configuration | Native MCP (raw) | LeanProxy (router) | Savings |
-|:--------------|:-----------------|:-------------------|:--------|
-| 1 server (Garmin, 100 tools) | 11,130 tokens | 237 tokens | **97.9%** |
-| 1 server (GitHub, 41 tools) | 4,570 tokens | 237 tokens | **94.8%** |
-| 1 server (Intervals.icu, 10 tools) | 1,130 tokens | 237 tokens | **79.0%** |
-| 2 servers (Garmin + GitHub) | 15,700 tokens | 237 tokens | **98.5%** |
-| 3 servers (all) | 16,830 tokens | 237 tokens | **98.6%** |
+### What Sits in Context Before the First Tool Call
 
-> The earlier "4 servers" row is no longer applicable — the Stitch MCP server is no longer available, so the canonical production shape is 3 servers. See [docs/benchmark-results.md](docs/benchmark-results.md) for the full table and methodology.
+| Configuration | Native `tools/list` | LeanProxy router | Savings |
+|:--------------|:--------------------|:-----------------|:--------|
+| 1 server (GitHub, 42 tools) | 4,443 tokens | 237 tokens | **−94.7%** |
+| 1 server (Jira/Confluence, 24 tools) | 2,043 tokens | 237 tokens | **−88.4%** |
+| 1 server (Garmin, 28 tools) | 1,795 tokens | 237 tokens | **−86.8%** |
+| 1 server (Slack, 14 tools) | 1,128 tokens | 237 tokens | **−79.0%** |
+| 1 server (Postgres, 10 tools) | 640 tokens | 237 tokens | **−63.0%** |
+| 5 servers (118 tools) | 10,049 tokens | 237 tokens | **−97.6%** |
+
+This table counts only the static schema load. LeanProxy fetches a server's tool list on demand with `list_tools` (GitHub: 1,638 tokens), and the session table above includes that cost. See [docs/benchmark-results.md](docs/benchmark-results.md) for the per-server `list_tools` sizes and the full methodology.
 
 ---
 
