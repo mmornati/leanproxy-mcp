@@ -264,6 +264,15 @@ func runServe(cmd *cobra.Command, args []string) {
 		slog.Info("no config file specified, starting in passthrough mode")
 	}
 
+	telemetryProvider := initTelemetry(ctx, loadedCfg)
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("telemetry: shutdown error", "error", err)
+		}
+	}()
+
 	// Wire the reconnect: config block exactly like `server run --stdio` does:
 	// the block is global and must not be silently ignored in serve mode.
 	var healthChecker *pool.HealthChecker
@@ -532,6 +541,11 @@ func runServe(cmd *cobra.Command, args []string) {
 						store.Close()
 					}
 				}
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
+					slog.Warn("telemetry: shutdown error", "error", err)
+				}
+				cancel()
 				os.Exit(0)
 			}
 		}
@@ -588,8 +602,7 @@ func serveRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Router, gt g
 		req.Params = mreq.Params
 		return toMCPResponse(dispatchServeRequest(ctx, req, r, gt, p)), nil
 	}
-	mws := append([]mcp.Middleware{serveResponseCache.Middleware()}, serveFirewall.Middlewares()...)
-	resp, _ := mcp.Chain(dispatch, mws...)(ctx, toMCPRequest(req))
+	resp, _ := mcp.Chain(dispatch, tracedMiddlewares(serveResponseCache, serveFirewall)...)(ctx, toMCPRequest(req))
 	return fromMCPResponse(resp)
 }
 

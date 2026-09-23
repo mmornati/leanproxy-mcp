@@ -14,6 +14,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
+	"github.com/mmornati/leanproxy-mcp/pkg/telemetry"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
@@ -238,6 +239,11 @@ type Config struct {
 	// `server run --stdio` loop the IDE talks to), as opposed to the
 	// upstream servers listed under Servers.
 	Server *FrontendConfig `yaml:"server,omitempty"`
+	// Telemetry configures the optional OpenTelemetry traces/metrics
+	// exporter (issue #317). Off by default; also enabled by the standard
+	// OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_PROTOCOL env vars,
+	// which take precedence over this block (see pkg/telemetry.Resolve).
+	Telemetry *telemetry.Config `yaml:"telemetry,omitempty"`
 }
 
 // DefaultMaxConcurrentRequests is the number of client requests the stdio

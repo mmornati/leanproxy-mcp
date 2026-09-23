@@ -15,6 +15,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
+	"github.com/mmornati/leanproxy-mcp/pkg/telemetry"
 )
 
 type SSEServer struct {
@@ -74,10 +75,13 @@ func (s *SSEServer) buildClient() (*client.Client, error) {
 	// timeout, so a blackholed endpoint would block Start (holding
 	// reconnectMu) for the OS TCP timeout. No http.Client.Timeout is set on
 	// purpose — that would also kill the long-lived SSE stream.
+	// The traceparent-injecting RoundTripper (issue #317) wraps the dial-
+	// timeout-bounded base transport; see the http_pool.go buildClient
+	// comment for why this is always installed.
 	httpClient := &http.Client{
-		Transport: &http.Transport{
+		Transport: telemetry.WrapTransport(&http.Transport{
 			DialContext: (&net.Dialer{Timeout: 15 * time.Second}).DialContext,
-		},
+		}),
 	}
 
 	c, err := client.NewSSEMCPClient(baseURL, client.WithHeaders(headers), client.WithHTTPClient(httpClient))

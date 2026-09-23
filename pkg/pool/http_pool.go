@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
+	"github.com/mmornati/leanproxy-mcp/pkg/telemetry"
 )
 
 type HTTPClientServer struct {
@@ -104,7 +106,16 @@ func (s *HTTPClientServer) buildClient() (*client.Client, error) {
 		}
 	}
 
-	opts := []transport.StreamableHTTPCOption{transport.WithHTTPHeaders(headers)}
+	// A basic http.Client whose Transport injects the W3C `traceparent`
+	// header from the calling request's context (issue #317). This is
+	// always installed, telemetry enabled or not: with telemetry disabled
+	// the global propagator is the SDK's default no-op, so injection is a
+	// cheap no-op (see telemetry.WrapTransport).
+	httpClient := &http.Client{Transport: telemetry.WrapTransport(http.DefaultTransport)}
+	opts := []transport.StreamableHTTPCOption{
+		transport.WithHTTPHeaders(headers),
+		transport.WithHTTPBasicClient(httpClient),
+	}
 	opts = append(opts, s.oauthOpts...)
 
 	c, err := client.NewStreamableHttpClient(baseURL, opts...)
