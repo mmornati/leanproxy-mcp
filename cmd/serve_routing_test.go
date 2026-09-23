@@ -41,14 +41,45 @@ func TestToolCallName(t *testing.T) {
 }
 
 func TestCanonicalToolMethod(t *testing.T) {
+	// serverReg is unset here, so canonicalToolMethod falls back to
+	// splitting on the first underscore (see TestCanonicalToolMethod_KnownServers
+	// for the longest-known-server-prefix behavior used once servers are
+	// registered).
 	tests := []struct{ in, want string }{
 		{"srv.echo", "srv.echo"},
 		{"srv_echo", "srv.echo"},
-		// The underscore form follows the handler's parseToolName convention:
-		// the FIRST underscore separates server from tool.
 		{"my_server_my_tool", "my.server_my_tool"},
 		{"echo", "echo"},
 		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := canonicalToolMethod(tt.in); got != tt.want {
+			t.Errorf("canonicalToolMethod(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestCanonicalToolMethod_KnownServers is the regression test for #296: once
+// servers are registered, canonicalToolMethod matches the longest
+// configured server name that is a prefix of the reference, so a server
+// literally named "my_server" is reachable via "my_server_my_tool" and
+// overlapping names (e.g. "git" and "github") resolve to the correct owner.
+func TestCanonicalToolMethod_KnownServers(t *testing.T) {
+	prevReg := serverReg
+	t.Cleanup(func() { serverReg = prevReg })
+
+	srvReg := registry.NewRegistry(slog.Default(), "")
+	for _, name := range []string{"my_server", "git", "github"} {
+		if err := srvReg.Register(ctx, registry.ServerEntry{ID: name, Transport: registry.TransportStdio}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	serverReg = srvReg
+
+	tests := []struct{ in, want string }{
+		{"my_server_my_tool", "my_server.my_tool"},
+		{"git_status", "git.status"},
+		{"github_search_issues", "github.search_issues"},
 	}
 	for _, tt := range tests {
 		if got := canonicalToolMethod(tt.in); got != tt.want {
