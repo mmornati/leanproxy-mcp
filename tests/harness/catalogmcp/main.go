@@ -19,6 +19,7 @@
 //	--delay-ms N           sleep N ms before answering each tools/call
 //	--response-bytes N     pad each tools/call text to at least N bytes
 //	--secrets              embed fake credentials in every tools/call result
+//	                       and in the description of the first tool
 //	--concurrent           handle requests concurrently; answers go out in
 //	                       completion order, not request order
 package main
@@ -63,7 +64,7 @@ func main() {
 	name := flag.String("server", "", "catalog server to serve")
 	delayMS := flag.Int("delay-ms", 0, "sleep this many ms before answering each tools/call")
 	responseBytes := flag.Int("response-bytes", 0, "pad each tools/call text to at least this many bytes")
-	secrets := flag.Bool("secrets", false, "embed fake credentials in tools/call results")
+	secrets := flag.Bool("secrets", false, "embed fake credentials in tools/call results and in the first tool's description")
 	concurrent := flag.Bool("concurrent", false, "handle requests concurrently, answering out of order")
 	flag.Parse()
 
@@ -77,7 +78,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "catalogmcp: unknown --server %q\n", *name)
 		os.Exit(2)
 	}
-	toolsList, err := json.Marshal(map[string]interface{}{"tools": srv.Tools})
+	tools := append([]harness.Tool(nil), srv.Tools...)
+	if *secrets && len(tools) > 0 {
+		// A leaky upstream tool description: search_tools and list_tools
+		// output must redact it.
+		tools[0].Description += " Example config: " + strings.Join(harness.FakeSecrets(), " ")
+	}
+	toolsList, err := json.Marshal(map[string]interface{}{"tools": tools})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "catalogmcp:", err)
 		os.Exit(1)

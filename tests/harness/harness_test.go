@@ -38,25 +38,37 @@ type session struct {
 	prompts []prompt
 }
 
-type prompt struct{ server, tool string }
+// prompt is one user request: the tool that serves it and, for the
+// search_tools session model, the words a model would search with. The
+// queries are written from the user's side, not from the tool
+// descriptions; a query that misses its tool is not rewritten, the session
+// model pays for the fallback instead (see replaySession).
+type prompt struct{ server, tool, query string }
 
 // sessions are the replayed prompt sequences. They touch 2-3 of the 5
 // configured servers, like a real working session does.
 var sessions = []session{
 	{"Morning Sport", []prompt{
-		{"garmin", "get_sleep_data"}, {"garmin", "get_training_readiness"},
-		{"garmin", "get_activity"}, {"slack", "slack_post_message"},
+		{"garmin", "get_sleep_data", "how well did I sleep last night"},
+		{"garmin", "get_training_readiness", "should I train hard today or rest"},
+		{"garmin", "get_activity", "pace and heart rate of this morning's run"},
+		{"slack", "slack_post_message", "post my run summary in the team slack channel"},
 	}},
 	{"Dev Workflow", []prompt{
-		{"github", "list_issues"}, {"github", "get_pull_request_files"},
-		{"jira", "jira_search"}, {"jira", "jira_transition_issue"},
-		{"github", "create_pull_request"},
+		{"github", "list_issues", "show the open issues of the octo/demo repo"},
+		{"github", "get_pull_request_files", "which files does pull request 17 change"},
+		{"jira", "jira_search", "find my jira tickets that are in progress"},
+		{"jira", "jira_transition_issue", "move PROJ-12 to done"},
+		{"github", "create_pull_request", "open a PR from my feature branch into main"},
 	}},
 	{"Full Day", []prompt{
-		{"github", "search_code"}, {"github", "get_file_contents"},
-		{"jira", "jira_search"}, {"jira", "jira_add_worklog"},
-		{"slack", "slack_post_message"}, {"slack", "slack_reply_to_thread"},
-		{"github", "create_pull_request"},
+		{"github", "search_code", "find code that calls parseConfig across repos"},
+		{"github", "get_file_contents", "read the README on the main branch"},
+		{"jira", "jira_search", "find my jira tickets that are in progress"},
+		{"jira", "jira_add_worklog", "log 2 hours on PROJ-7"},
+		{"slack", "slack_post_message", "send the status update to the team channel"},
+		{"slack", "slack_reply_to_thread", "reply in that slack thread"},
+		{"github", "create_pull_request", "open a PR from my feature branch into main"},
 	}},
 }
 
@@ -197,6 +209,7 @@ type tokenResults struct {
 	directResponse  int
 	sessionResults  []sessionResult
 	listServersText string
+	search          searchResults
 }
 
 type sessionResult struct {
@@ -206,6 +219,20 @@ type sessionResult struct {
 	native     int
 	lean       int
 	extraTurns int
+	// search_tools session model (see replaySession).
+	searchLean       int
+	searchExtraTurns int
+	searchMisses     int
+}
+
+// searchResults is search_tools measured through the binary over the
+// labeled intents of pkg/toolsearch/testdata/intents.json.
+type searchResults struct {
+	lookups      int
+	avgTokens    float64
+	maxTokens    int
+	avgListTools float64 // list_tools(gold server) tokens, same intents
+	at1, at5     int
 }
 
 func measureTokens(t *testing.T, bins binaries, cat *Catalog) tokenResults {
@@ -263,6 +290,8 @@ func measureTokens(t *testing.T, bins binaries, cat *Catalog) tokenResults {
 	res.invokeRequest = tokens(req)
 	res.invokeResponse = tokens(r.line)
 
+	res.search = measureSearch(t, p, res.listTools)
+
 	// Session replay through the proxy: every call below really runs.
 	for _, s := range sessions {
 		res.sessionResults = append(res.sessionResults, replaySession(t, p, cat, s, res))
@@ -283,20 +312,25 @@ func jsonLine(t *testing.T, id int, method string, params interface{}) ([]byte, 
 //   - Native: every configured server's tools/list is in context on every
 //     turn; the first turn pays it in full, later turns at the cache-read
 //     rate (0.25x). No extra turns.
-//   - LeanProxy: the router is in context from the start. A turn that needs
-//     discovery (list_servers on the first turn; list_tools the first time a
-//     server is used) adds that output at full price, and it stays in
-//     context. Every turn after the first re-reads the carried context
-//     (router + every discovery output so far) at 0.25x. Each discovery
-//     call is one extra LLM round-trip, counted separately.
+//   - LeanProxy (list_tools): the router is in context from the start. A
+//     turn that needs discovery (list_servers on the first turn; list_tools
+//     the first time a server is used) adds that output at full price, and
+//     it stays in context. Every turn after the first re-reads the carried
+//     context (router + every discovery output so far) at 0.25x. Each
+//     discovery call is one extra LLM round-trip, counted separately.
+//   - LeanProxy (search_tools): the same, but the discovery is one
+//     search_tools(query) the first time a tool is needed. When the tool is
+//     not in the top 5, the model falls back to list_tools(server): that
+//     output and one more extra turn are added too.
 //
-// Tool results are the same on both paths and are left out of both.
+// Tool results are the same on every path and are left out.
 func replaySession(t *testing.T, p *proc, cat *Catalog, s session, tr tokenResults) sessionResult {
 	t.Helper()
 	res := sessionResult{name: s.name, prompts: len(s.prompts)}
 	used := map[string]bool{}
-	carried := tr.router
-	var native, lean float64
+	found := map[string]bool{}
+	carried, searchCarried := tr.router, tr.router
+	var native, lean, searchLean float64
 	for i, pr := range s.prompts {
 		if srv := cat.Server(pr.server); srv == nil || !hasTool(srv, pr.tool) {
 			t.Fatalf("session %s: %s/%s is not in the catalog", s.name, pr.server, pr.tool)
@@ -307,6 +341,7 @@ func replaySession(t *testing.T, p *proc, cat *Catalog, s session, tr tokenResul
 		}
 		native += rate * float64(tr.nativeTotal)
 
+		// list_tools flow.
 		turn := rate * float64(carried)
 		discovered := 0
 		if i == 0 {
@@ -320,16 +355,94 @@ func replaySession(t *testing.T, p *proc, cat *Catalog, s session, tr tokenResul
 			discovered += tokens(r.line)
 			res.extraTurns++
 		}
+		lean += turn + float64(discovered)
+		carried += discovered
+
+		// search_tools flow.
+		turn = rate * float64(searchCarried)
+		discovered = 0
+		if key := pr.server + "/" + pr.tool; !found[key] {
+			found[key] = true
+			r := p.mustCall("tools/call", routerCall("search_tools", map[string]interface{}{"query": pr.query}))
+			discovered += tokens(r.line)
+			res.searchExtraTurns++
+			if searchRank(toolText(r), pr.server, pr.tool) == 0 {
+				res.searchMisses++
+				t.Logf("session %s: search_tools(%q) missed %s/%s; modeled as a list_tools fallback", s.name, pr.query, pr.server, pr.tool)
+				discovered += tr.listTools[pr.server]
+				res.searchExtraTurns++
+			}
+		}
+		searchLean += turn + float64(discovered)
+		searchCarried += discovered
+
 		r := p.mustCall("tools/call", invokeParams(pr.server, pr.tool, map[string]interface{}{"prompt": i}))
 		if !strings.Contains(toolText(r), `"called":"`+pr.tool+`"`) {
 			t.Fatalf("session %s: invoke %s/%s: %.300s", s.name, pr.server, pr.tool, r.line)
 		}
-		lean += turn + float64(discovered)
-		carried += discovered
 	}
 	res.servers = len(used)
 	res.native = int(math.Round(native))
 	res.lean = int(math.Round(lean))
+	res.searchLean = int(math.Round(searchLean))
+	return res
+}
+
+// searchRank is the 1-based line of server_tool in a search_tools answer,
+// or 0 when it is not there.
+func searchRank(text, server, tool string) int {
+	prefix := server + "_" + tool + ": "
+	for i, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// labeledIntent is one entry of pkg/toolsearch/testdata/intents.json.
+type labeledIntent struct {
+	Query  string `json:"query"`
+	Server string `json:"server"`
+	Tool   string `json:"tool"`
+}
+
+// measureSearch runs every labeled intent through search_tools (k=5) on
+// the real binary: tokens per lookup and recall.
+func measureSearch(t *testing.T, p *proc, listTools map[string]int) searchResults {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRoot(t), "pkg", "toolsearch", "testdata", "intents.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Intents []labeledIntent `json:"intents"`
+	}
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatal(err)
+	}
+	var res searchResults
+	var sum, listSum int
+	for _, in := range f.Intents {
+		r := p.mustCall("tools/call", routerCall("search_tools", map[string]interface{}{"query": in.Query}))
+		n := tokens(r.line)
+		sum += n
+		res.maxTokens = max(res.maxTokens, n)
+		listSum += listTools[in.Server]
+		switch rank := searchRank(toolText(r), in.Server, in.Tool); {
+		case rank == 1:
+			res.at1++
+			res.at5++
+		case rank > 1:
+			res.at5++
+		}
+		res.lookups++
+	}
+	if res.lookups == 0 {
+		t.Fatal("no labeled intents")
+	}
+	res.avgTokens = float64(sum) / float64(res.lookups)
+	res.avgListTools = float64(listSum) / float64(res.lookups)
 	return res
 }
 
@@ -410,7 +523,7 @@ func measureLatency(t *testing.T, bins binaries, cat *Catalog) latencyResults {
 	res.rssIdleKB = rssKB(p.pid())
 
 	// Burst: 500 calls written back to back, round-robin over 5 servers.
-	targets := []prompt{{"github", "create_issue"}, {"jira", "jira_search"}, {"slack", "slack_post_message"}, {"garmin", "get_activity"}, {"postgres", "pg_query"}}
+	targets := []prompt{{"github", "create_issue", ""}, {"jira", "jira_search", ""}, {"slack", "slack_post_message", ""}, {"garmin", "get_activity", ""}, {"postgres", "pg_query", ""}}
 	calls := make([]*pendingCall, burstCalls)
 	var writeErr error
 	start := time.Now()
@@ -547,6 +660,17 @@ func measureSafety(t *testing.T, bins binaries, extra string) []check {
 		name:   "Redaction server→client (tool result)",
 		pass:   leaked == 0,
 		detail: fmt.Sprintf("%d of %d fake secrets reached the client", leaked, len(secrets)),
+	})
+
+	// Server → client via search_tools: the first catalog tool's
+	// description (create_issue) carries the fake credentials.
+	r = p.mustCall("tools/call", routerCall("search_tools", map[string]interface{}{"query": "create a new issue"}))
+	leaked = CountFakeSecrets(string(r.line))
+	found := searchRank(toolText(r), "github", "create_issue") > 0
+	checks = append(checks, check{
+		name:   "Redaction server→client (search_tools output)",
+		pass:   leaked == 0 && found,
+		detail: fmt.Sprintf("%d of %d fake secrets reached the client (leaky tool found: %v)", leaked, len(secrets), found),
 	})
 
 	// Client → server: the arguments carry a fake credential; the mock
