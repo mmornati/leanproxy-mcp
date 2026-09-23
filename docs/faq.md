@@ -13,7 +13,6 @@ LeanProxy-MCP is a lightweight CLI proxy that sits between your IDE and MCP serv
 1. **Security**: Automatically redacts secrets, API keys, and PII from prompts
 2. **Cost Optimization**: Reduces token usage by removing boilerplate and sensitive data
 3. **Centralized Management**: Manage all MCP servers from one configuration
-4. **Shadow Manifesting**: Automatically merges global and project MCP configurations
 
 ### What IDEs support LeanProxy-MCP?
 

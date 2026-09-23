@@ -33,7 +33,6 @@ nav:
   - Configuration: configuration.md
   - Security: security.md
   - Web Dashboard: dashboard.md
-  - Budget Management: budget.md
   - IDE Extensions: extensions.md
   - Architecture: architecture.md
   - Benchmark Results: benchmark-results.md

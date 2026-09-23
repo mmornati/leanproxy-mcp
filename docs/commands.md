@@ -141,8 +141,8 @@ leanproxy-mcp serve [flags]
 | `--ollama-model` | string | `nomic-embed-text` | Ollama embedding model |
 | `--openai-model` | string | `text-embedding-3-small` | OpenAI embedding model |
 | `--providers-config` | string | `""` | Path to providers config file for provider detection |
-| `--model-router` | bool | false | Enable per-tool model routing based on complexity tier |
-| `--model-router-config` | string | `""` | Path to model router YAML config |
+| `--model-router` | bool | false | Deprecated, no effect: prints a warning. Removed in a future release (see [CHANGELOG.md](../CHANGELOG.md#removed-in-v010)) |
+| `--model-router-config` | string | `""` | Deprecated, no effect: prints a warning. Removed in a future release |
 | `--sidecar-provider` | string | `""` | Sidecar provider (`ollama`) for local LLM redaction (empty = disabled) |
 | `--sidecar-model` | string | `llama3.1:8b` | Sidecar model name |
 | `--sidecar-url` | string | `http://localhost:11434` | Sidecar server URL |
@@ -170,9 +170,6 @@ leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 
 # Enable semantic cache with Ollama embeddings
 leanproxy-mcp serve --embed-provider ollama --ollama-url http://localhost:11434
-
-# Enable model routing with custom config
-leanproxy-mcp serve --model-router --model-router-config ./model-router.yaml
 
 # Enable sidecar LLM redaction
 leanproxy-mcp serve --sidecar-provider ollama --sidecar-model llama3.1:8b

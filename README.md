@@ -157,7 +157,6 @@ Measured on v0.9.0 with the same MCP server tool counts as production. Native MC
 | 👥 **Multi-Team Namespaces** | Hierarchical organization for enterprise teams |
 | 💰 **Cost Attribution** | Track token savings per server with detailed reports |
 | 🧪 **Dry-Run Mode** | Simulate and preview savings without live execution |
-| 🔧 **Shadow Manifesting** | Merges global and project-local MCP configurations |
 
 </div>
 
@@ -221,7 +220,6 @@ flowchart TB
         JIT["JIT Schema Cache"]
         Firewall["Token Firewall<br/>(Secret Redaction)"]
         Pool["Connection Pool<br/>& Circuit Breaker"]
-        Federation["Federation<br/>(Multi-org)"]
     end
 
     subgraph Servers["MCP Servers"]
@@ -234,7 +232,6 @@ flowchart TB
     Router <--> JIT
     Router <--> Firewall
     Firewall <--> Pool
-    Pool <--> Federation
 
     Pool --- GH
     Pool --- Garmin
@@ -249,7 +246,6 @@ flowchart TB
     style JIT fill:#00ADD8,color:#fff
     style Firewall fill:#00ADD8,color:#fff
     style Pool fill:#00ADD8,color:#fff
-    style Federation fill:#00ADD8,color:#fff
 ```
 
 ---
@@ -261,14 +257,16 @@ flowchart TB
 | 🛒 **MCP Registry Marketplace** | Discover and install community MCP servers via `marketplace` CLI |
 | 🛡️ **Prompt Injection Protection** | Classifier engine with risk scoring, quarantine, and configurable policies |
 | 🧠 **Semantic Cache** | Vector-similarity caching with Ollama/OpenAI embeddings and SQLite/Qdrant/Pinecone |
-| 🔀 **Model Routing** | Per-tool LLM routing by complexity tier (low/medium/high) |
-| 🤖 **Sidecar LLM Redaction** | Context-aware redaction via local Ollama or MLX |
+| 🤖 **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model |
 | 📊 **Web Dashboard** | Real-time HTMX-powered dashboard with server/tool drill-down |
-| 💵 **Budget Management** | Per-team/project token budgets with hard caps, soft caps, and webhooks |
 | 🔌 **IDE Extensions** | VS Code and JetBrains plugins for status bar cost monitoring |
 | 📈 **Cache Hit Rate Report** | `cache stats` command for Anthropic prompt caching analytics |
 | 📤 **CSV/JSON Cost Export** | `report --export csv/json` for external analysis |
 | 📐 **Metrics Endpoint** | Prometheus-style JSON metrics for monitoring integrations |
+
+See [CHANGELOG.md](CHANGELOG.md#removed-in-v010) for the features removed in v0.10 (budget management,
+federation, model routing, lazy tool-schema loading, and the MLX sidecar placeholder) because they were
+never wired into any command.
 
 ---
 

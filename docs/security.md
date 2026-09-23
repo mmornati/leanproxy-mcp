@@ -8,8 +8,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 |---------|-------------|
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
 | **Prompt Injection Protection** | Classifies payloads against injection patterns with risk scoring and configurable actions |
-| **Sidecar LLM Redaction** | Context-aware redaction via local Ollama/MLX for sensitive data beyond regex |
-| **Token Authentication** | Optional Unix socket authentication for request-level access control |
+| **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model for sensitive data beyond regex |
 | **Batch Size Limits** | Prevents DoS via large JSON-RPC batch requests |
 | **ReDoS Protection** | Validates regex patterns to prevent catastrophic backtracking |
 | **Path Validation** | Prevents path traversal attacks on configuration files |
@@ -153,7 +152,7 @@ leanproxy-mcp doctor security
 
 ## Sidecar LLM Redaction
 
-For context-aware redaction beyond regex patterns, deploy a sidecar LLM (Ollama or MLX). The sidecar analyzes already-redacted content and replaces any remaining sensitive data using an LLM.
+For context-aware redaction beyond regex patterns, deploy a sidecar LLM (Ollama). The sidecar analyzes already-redacted content and replaces any remaining sensitive data using an LLM.
 
 ### How It Works
 
@@ -166,7 +165,7 @@ For context-aware redaction beyond regex patterns, deploy a sidecar LLM (Ollama 
 
 ```yaml
 sidecar:
-  provider: ollama    # "ollama" or "mlx"
+  provider: ollama
   model: llama3.1:8b
   url: http://localhost:11434
 ```
@@ -182,46 +181,6 @@ leanproxy-mcp serve --sidecar-provider ollama --sidecar-model llama3.1:8b
 | Provider | Status | Notes |
 |----------|--------|-------|
 | Ollama | Full support | Sends redaction prompt to `/api/generate`, 30s timeout |
-| MLX | Experimental | Apple Silicon only, build with `-tags mlx` |
-
-## Token Authentication
-
-Unix socket authentication provides request-level access control.
-
-### Enabling Authentication
-
-Configure an authentication token in your socket settings:
-
-```yaml
-socket:
-  auth_token: "your-secret-token"
-```
-
-### Making Authenticated Requests
-
-Include the `auth_token` in your JSON-RPC requests:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "tools/invoke",
-  "params": {"name": "github_get_issue", "arguments": {}},
-  "id": 1,
-  "auth_token": "your-secret-token"
-}
-```
-
-### Error Handling
-
-| Error Code | Message | Description |
-|------------|--------|-------------|
-| -32604 | authentication required | Token missing or empty |
-| -32605 | authentication failed | Token mismatch |
-
-### Security Considerations
-
-- Use TLS or Unix socket permissions for transport security
-- Token comparison is exact (no hashing) - choose strong tokens
 - Without a token configured, all requests are allowed
 
 ## Batch Size Limits
@@ -301,12 +260,10 @@ LeanProxy-MCP creates files with secure permissions:
 
 | File Type | Permissions | Description |
 |-----------|-------------|-------------|
-| Socket directory | 0700 | Owner-only access |
 | Config directory | 0700 | Owner-only access |
-| Socket file | 0700 | Owner-only access |
 | Config files | 0600 | Owner read/write only |
 
-This prevents unauthorized users from reading sensitive configuration or authenticating to the socket.
+This prevents unauthorized users from reading sensitive configuration.
 
 ## Graceful Shutdown
 
@@ -345,34 +302,29 @@ if err := server.Shutdown(ctx); err != nil {
 ### General Security
 
 1. **Keep Go updated**: Use the latest Go version for security fixes
-2. **Use authentication tokens**: Enable socket authentication in production
-3. **Limit batch sizes**: Set `max_batch_size` to reasonable values
-4. **Avoid logging secrets**: Ensure no sensitive data in logs
+2. **Limit batch sizes**: Set `max_batch_size` to reasonable values
+3. **Avoid logging secrets**: Ensure no sensitive data in logs
 
 ### Configuration
 
 1. **Secure config files**: Ensure `0600` permissions on config files
-2. **Use strong tokens**: Generate random tokens (32+ characters)
-3. **Validate patterns**: Test regex patterns before deployment
+2. **Validate patterns**: Test regex patterns before deployment
 
 ### Deployment
 
-1. **Restrict socket access**: Use filesystem permissions
-2. **Monitor logs**: Watch for authentication failures
-3. **Regular audits**: Review configuration patterns
+1. **Monitor logs**: Watch for errors and warnings
+2. **Regular audits**: Review configuration patterns
 
 ## Common Security Considerations
 
 ### What LeanProxy-MCP Does NOT Do
 
 - **TLS/SSL**: Use a reverse proxy (nginx, traefik) for TLS termination
-- **Secret hashing**: Tokens are compared directly - use strong tokens
 - **Rate limiting per-client**: Global rate limiting only
 - **Audit logging**: Implement externally if needed
 
 ### Known Limitations
 
-- Socket permissions depend on filesystem
 - Config file access control is filesystem-based
 - No built-in encryption for data at rest
 
@@ -380,10 +332,7 @@ if err := server.Shutdown(ctx); err != nil {
 
 | Option | Type | Default | Security Impact |
 |--------|------|---------|-----------------|
-| `socket.auth_token` | string | `""` | Enables request authentication |
-| `socket.perm` | int | `0700` | Socket file permissions |
 | `server.max_batch_size` | int | `100` | Prevents DoS attacks |
-| `socket.rate_limit` | int | `100` | Global rate limiting |
 
 ## Next Steps
 
@@ -391,4 +340,3 @@ if err := server.Shutdown(ctx); err != nil {
 - [Commands Reference](./commands.md) - `doctor security` and `bouncer` CLI commands
 - [Troubleshooting](./troubleshooting.md) - Security-related issues
 - [Architecture](./architecture.md) - Security design details
-- [Budget Management](./budget.md) - Spending limits and governance
