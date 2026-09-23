@@ -3,6 +3,7 @@ package metrics
 import (
 	"sort"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
 )
 
@@ -12,6 +13,13 @@ type MetricsSnapshot struct {
 	TotalSpend         int64                `json:"total_spend"`
 	Top5ExpensiveTools []ToolMetric         `json:"top_5_expensive_tools"`
 	ResponseCache      *ResponseCacheMetric `json:"response_cache,omitempty"`
+	// Telemetry mirrors the counters OpenTelemetry records (issue #317):
+	// requests, errors, redactions, injection detections, cache hits/misses,
+	// policy decisions, rate-limit waits and in-flight requests. Populated
+	// unconditionally (see pkg/mcp.TelemetrySnapshot), independent of
+	// whether an OTLP exporter is configured, so /metrics keeps working the
+	// same whether or not telemetry is enabled.
+	Telemetry mcp.TelemetryCounters `json:"telemetry"`
 }
 
 type ToolMetric struct {
@@ -53,5 +61,6 @@ func Snapshot() MetricsSnapshot {
 		TotalSpend:         breakdown.Total,
 		Top5ExpensiveTools: top5,
 		ResponseCache:      responseCacheSnapshot(),
+		Telemetry:          mcp.TelemetrySnapshot(),
 	}
 }

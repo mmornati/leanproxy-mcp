@@ -375,6 +375,8 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no servers configured in %s", configPath)
 	}
 
+	telemetryProvider := initTelemetry(ctx, cfg)
+
 	stdioPool := pool.NewStdioPool(5, 5*time.Minute, slog.Default())
 	httpPool := pool.NewHTTPClientPool(slog.Default())
 	ssePool := pool.NewSSEPool(slog.Default())
@@ -477,6 +479,11 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 			stdioPool.Close()
 			httpPool.Close()
 			ssePool.Close()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
+				slog.Warn("telemetry: shutdown error", "error", err)
+			}
 		})
 	}
 
@@ -522,8 +529,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	// outermost, ahead of the firewall middlewares: see the ordering
 	// explanation on mcp.ResponseCache.
 	respCache := mcp.NewResponseCache(cfg.ResponseCache)
-	mws := append([]mcp.Middleware{respCache.Middleware()}, firewall.Middlewares()...)
-	handler.Use(mws...)
+	handler.Use(tracedMiddlewares(respCache, firewall)...)
 	logFirewallStatus(firewall)
 	logResponseCacheStatus(respCache)
 	metrics.SetResponseCacheProvider(func() metrics.ResponseCacheMetric {

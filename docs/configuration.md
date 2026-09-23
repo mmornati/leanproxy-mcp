@@ -732,6 +732,102 @@ response_cache:
 - The cached *value* is the redacted response, so a cache hit can never leak
   anything a cache miss wouldn't already have redacted.
 
+## Telemetry (OpenTelemetry)
+
+leanproxy-mcp can emit OpenTelemetry traces and metrics over OTLP/HTTP: off
+by default, enabled by the standard `OTEL_EXPORTER_OTLP_ENDPOINT` /
+`OTEL_EXPORTER_OTLP_PROTOCOL` environment variables or by a `telemetry:`
+config block. It instruments the same unified middleware pipeline both
+`leanproxy-mcp server run --stdio` and `leanproxy-mcp serve` share: one
+SERVER span per front-end request, a child span for each firewall/cache
+middleware stage, and a CLIENT span for the upstream call, following the
+[OpenTelemetry GenAI/MCP semantic conventions][semconv] (`semconv v1.41.0`,
+the first release carrying `mcp.method.name`, `mcp.session.id` and
+`mcp.protocol.version`; `mcp.tool.name` and `mcp.server.name` are not yet
+standardized there, so leanproxy-mcp defines them locally in the same `mcp.`
+namespace).
+
+See [`docs/observability.md`](observability.md) for a docker-compose example
+that shows a trace end to end in Jaeger.
+
+[semconv]: https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/
+
+### Configuration
+
+```yaml
+telemetry:
+  enabled: false               # default: off; also turned on by OTEL_EXPORTER_OTLP_ENDPOINT
+  service_name: leanproxy-mcp  # service.name resource attribute
+  otlp:
+    endpoint: "http://localhost:4318"   # base URL; /v1/traces and /v1/metrics are appended
+    protocol: http/protobuf             # or http/json — see the note below
+    insecure: true                      # allow a plain-http:// endpoint
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `false` | Master opt-in switch. An OTLP endpoint (env or config) also turns telemetry on without needing this |
+| `service_name` | string | `leanproxy-mcp` | `service.name` resource attribute reported to the collector |
+| `otlp.endpoint` | string | — | Collector base URL, e.g. `http://localhost:4318`. Read from `OTEL_EXPORTER_OTLP_ENDPOINT` when unset (env wins when both are set) |
+| `otlp.protocol` | string | `http/protobuf` | `http/protobuf` or `http/json`; read from `OTEL_EXPORTER_OTLP_PROTOCOL` when unset |
+| `otlp.insecure` | bool | inferred from `http://` | Allow a plain-HTTP endpoint |
+
+The standard OTLP environment variables always win over the config block:
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
+`OTEL_EXPORTER_OTLP_INSECURE`.
+
+### What is recorded — and what never is
+
+Every span and metric carries only names, sizes, counts and status codes:
+`mcp.method.name`, `mcp.tool.name`, `mcp.server.name`, `mcp.session.id`,
+`jsonrpc.request.id`, `error.type`, response size in bytes, redaction
+counts, cache hit/miss, and the injection guard's action. **Tool
+arguments and results are never attached to a span or a metric** — the
+same discipline the Token Firewall already applies to logs.
+
+### Exporter: OTLP/HTTP JSON, not the grpc-carrying SDK exporters
+
+leanproxy-mcp ships its own small OTLP/HTTP exporter
+(`pkg/telemetry/otlpjson*.go`) instead of
+`go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp` and
+`.../otlpmetric/otlpmetrichttp`: those packages transitively pull in
+`google.golang.org/grpc` and `google.golang.org/protobuf` through an
+internal config package they share with the gRPC exporter variant, which
+alone added roughly 6 MB to the binary — well over the +3 MB budget for
+this feature. The OTLP spec requires every OTLP/HTTP receiver (Jaeger,
+the OpenTelemetry Collector, Honeycomb, Datadog, …) to accept a JSON body
+on the same `/v1/traces` and `/v1/metrics` endpoints, so this has no
+functional downside; see the exporter's doc comment for details.
+
+### Performance
+
+Telemetry is off by default and costs a couple of atomic counter increments
+per request either way (they feed the existing `/metrics` JSON endpoint's
+new `telemetry` section). The expensive part — starting a span, building
+attribute slices, calling into the OTel metrics API — only runs once
+telemetry is actually enabled; see `BenchmarkPipeline_TelemetryDisabled` in
+`pkg/mcp` for the benchmark this claim is checked against.
+
+### Metrics: `/metrics` still works
+
+The existing JSON `/metrics` endpoint keeps working exactly as before, plus
+a new `telemetry` object fed by the same counters OpenTelemetry records:
+requests, errors, redactions, injection detections, cache hits/misses,
+policy decisions, rate-limit waits and in-flight requests — whether or not
+an OTLP exporter is configured.
+
+### Trace propagation
+
+- **HTTP/SSE upstreams**: every outgoing request to an HTTP or SSE MCP
+  server carries a W3C `traceparent` header, so a trace continues into an
+  upstream server that is itself instrumented.
+- **stdio upstreams**: the MCP `_meta` field is reserved for this kind of
+  implementation-specific metadata by the spec, but leanproxy-mcp does not
+  yet inject `traceparent` into `params._meta` for stdio child processes —
+  see the PR that introduced this feature for the reasoning and the
+  follow-up tracking it.
+
 ## Tool Search (`search_tools`)
 
 `search_tools` is the recommended discovery path of `leanproxy-mcp server run

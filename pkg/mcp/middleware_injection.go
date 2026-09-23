@@ -248,6 +248,7 @@ func (st *injectionState) checkRequest(ctx context.Context, req *Request) *Respo
 	slog.Warn("injection: request flagged",
 		"method", req.Method, "tool", name, "risk_score", res.RiskScore,
 		"patterns", matchNames(res), "action", action.Action)
+	RecordInjectionDetection(ctx, string(action.Action))
 	switch action.Action {
 	case injection.ActionBlock:
 		return errorResponse(req, ErrCodeInvalidRequest, action.Message)
@@ -282,6 +283,7 @@ func (st *injectionState) checkResponse(ctx context.Context, req *Request, resp 
 	slog.Warn("injection: response flagged",
 		"method", req.Method, "tool", toolCallName(req), "risk_score", res.RiskScore,
 		"patterns", matchNames(res), "action", action.Action)
+	RecordInjectionDetection(ctx, string(action.Action))
 	switch action.Action {
 	case injection.ActionAnnotate:
 		if out, ok := annotateResult(k, resp.Result, res.RiskScore); ok {

@@ -11,6 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/mmornati/leanproxy-mcp/internal/logx"
 	"github.com/mmornati/leanproxy-mcp/internal/version"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
@@ -146,6 +149,33 @@ func (h *Handler) SetDefaultTimeout(timeout time.Duration) {
 		return
 	}
 	h.timeout = timeout
+}
+
+// sendUpstream wraps h.pool.SendRequestToServer with a CLIENT span (issue
+// #317: "child spans ... for the upstream call, kind CLIENT"), named
+// "<method> <server>" per the OTel RPC client convention, carrying
+// mcp.server.name and mcp.method.name. It never adds request or response
+// payload content to the span: only the outcome (error.type on failure).
+func (h *Handler) sendUpstream(ctx context.Context, serverName, method string, params []byte, timeout time.Duration) (*pool.Response, error) {
+	if !telemetryActive.Load() {
+		return h.pool.SendRequestToServer(ctx, serverName, method, params, timeout)
+	}
+	ctx, span := tracer().Start(ctx, method+" "+serverName,
+		trace.WithSpanKind(trace.SpanKindClient),
+		trace.WithAttributes(McpMethodNameAttr(method), UpstreamServerNameAttr(serverName)))
+	defer span.End()
+
+	resp, err := h.pool.SendRequestToServer(ctx, serverName, method, params, timeout)
+	switch {
+	case err != nil:
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	case resp != nil && resp.Error != nil:
+		span.SetStatus(codes.Error, resp.Error.Message)
+	default:
+		span.SetStatus(codes.Ok, "")
+	}
+	return resp, err
 }
 
 func (h *Handler) timeoutFor(serverName string) time.Duration {
@@ -365,7 +395,7 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 	}
 	paramsBytes, _ := json.Marshal(newParams)
 
-	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
+	resp, err := h.sendUpstream(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
 	if err != nil {
 		return &Response{
 			JSONRPC: JSONRPCVersion,
@@ -740,7 +770,7 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	}
 	paramsBytes, _ := json.Marshal(newParams)
 
-	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
+	resp, err := h.sendUpstream(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
 	if err != nil {
 		// A transport/proxy-level failure (timeout, connection error, server
 		// not reachable) rather than a structured upstream JSON-RPC error:
