@@ -33,6 +33,7 @@ nav:
   - Configuration: configuration.md
   - Security: security.md
   - Web Dashboard: dashboard.md
+  - Observability (OpenTelemetry): observability.md
   - IDE Extensions: extensions.md
   - Architecture: architecture.md
   - Benchmark Results: benchmark-results.md

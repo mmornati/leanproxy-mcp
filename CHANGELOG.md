@@ -78,6 +78,31 @@
 
 ## Added in v0.11
 
+- **OpenTelemetry traces & metrics for the MCP pipeline** ([#317](https://github.com/mmornati/leanproxy-mcp/issues/317)).
+  - **What.** Optional OTLP export, off by default, enabled by the standard `OTEL_EXPORTER_OTLP_ENDPOINT`
+    / `OTEL_EXPORTER_OTLP_PROTOCOL` env vars or a `telemetry:` config block. Both front ends
+    (`server run --stdio` and `serve`) get identical instrumentation from the unified middleware pipeline
+    (`pkg/mcp`): one SERVER span per request (`<method> <tool>`), a child span per firewall/cache stage
+    (`mcp.middleware.cache` / `.redact_request` / `.injection` / `.redact_response`), and a CLIENT span
+    around the upstream call, following the GenAI/MCP semantic conventions (semconv v1.41.0). Histograms
+    (request duration, response size), counters (requests, errors by `error.type`, redactions, injection
+    detections by action, cache hits/misses, policy decisions, rate-limit waits) and an in-flight gauge are
+    recorded; the existing `/metrics` JSON endpoint keeps working, now with a `telemetry` section fed by
+    the same counters. Every HTTP/SSE upstream call carries a W3C `traceparent` header.
+  - **Never payloads.** Spans and metrics carry only names, sizes, counts and status codes — never tool
+    argument or result content.
+  - **Performance.** Telemetry off (the default) costs a couple of atomic increments per request; the
+    span/attribute machinery only runs once telemetry is actually enabled
+    (`BenchmarkPipeline_TelemetryDisabled` in `pkg/mcp`, well under the 5% budget).
+  - **Exporter.** A small hand-written OTLP/HTTP JSON exporter (`pkg/telemetry`) instead of
+    `go.opentelemetry.io/otel/exporters/otlp/*`: those packages transitively pull in `google.golang.org/grpc`
+    and `google.golang.org/protobuf` through a shared internal config package, adding roughly 6 MB to the
+    binary — well over the +3 MB budget. The custom exporter measured about +2 MB.
+  - **Docs.** New [`docs/observability.md`](docs/observability.md) with a Jaeger/otel-collector
+    docker-compose example, and a new "Telemetry" section in `docs/configuration.md`.
+  - **Not yet.** stdio upstreams do not carry `traceparent` in `params._meta` (only HTTP/SSE upstreams get
+    the header); a follow-up can add it once the `_meta` convention for trace context is settled.
+
 - **Prompt-injection defense v2: decoded text, tool outputs, valid actions, optional local judge** ([#315](https://github.com/mmornati/leanproxy-mcp/issues/315)).
   - **Decoded text.** The classifier ran its regexes over the raw JSON of `params`, so a JSON escape
     (`ignore\u0020previous instructions`, `ignore\tprevious…`) scored 0. The guard now walks the message
