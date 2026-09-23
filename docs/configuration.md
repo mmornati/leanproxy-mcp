@@ -96,6 +96,47 @@ server a `notifications/cancelled` message; a late response is discarded.
 If the server process exits, every pending call fails immediately with
 `server <name> exited` rather than waiting for its timeout.
 
+### Maximum Response Size per Stdio Server (`max_response_bytes`)
+
+Each JSON-RPC message a stdio server writes on stdout (one line) may be at
+most `max_response_bytes` long. The default, 64 MiB, comfortably covers large
+tool results (file contents, search results, FIT data):
+
+```yaml
+servers:
+  - name: files
+    transport: stdio
+    stdio:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/data"]
+    max_response_bytes: 1048576   # 1 MiB; default 64 MiB
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `servers[].max_response_bytes` | int | `67108864` (64 MiB) | Maximum size in bytes of one message read from a stdio server's stdout. `0` or absent means the default. |
+
+A response over the limit is discarded up to its terminating newline, so the
+stream stays in sync, and **only the call it answered** fails, with
+`response from <server> exceeded max_response_bytes (<n>)` (logged at
+Error). The server keeps running and the next call to it works normally.
+
+Other stdio robustness guarantees:
+
+- **stderr** is drained continuously for the life of the process. Each line
+  is truncated to 8 KiB, redacted with the bouncer's built-in secret
+  patterns, kept in a small buffer that is quoted in error messages, and
+  logged at Debug only.
+- If the server **closes stdout** (or reading it fails) while the process is
+  still running, pending calls fail immediately and the process is killed
+  and restarted with the usual `reconnect` settings.
+- A server that **stops reading stdin** cannot block a caller past its
+  timeout (Unix; pipe write deadlines are not available on Windows).
+- On Unix each server runs in its own **process group**. Stopping a server
+  sends SIGTERM to the whole group (so grandchildren started by `npx`,
+  `uvx`, `docker run` or `sh -c` wrappers go too), then SIGKILL after a
+  5-second grace period. On shutdown all servers are stopped in parallel.
+
 Requests the server sends to the client (`roots/list`,
 `sampling/createMessage`, `elicitation/create`, `ping`) are not relayed yet;
 the proxy answers them with JSON-RPC error `-32601 Method not found` so the
