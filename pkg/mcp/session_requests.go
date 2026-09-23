@@ -37,11 +37,18 @@ const (
 	notificationQueueSize = 256
 )
 
-// queuedNotification is one relayed notification waiting to be written.
+// queuedNotification is one relayed notification waiting to be written,
+// or, when flushed is set, a marker closed once everything queued before
+// it was written.
 type queuedNotification struct {
-	method string
-	params json.RawMessage
+	method  string
+	params  json.RawMessage
+	flushed chan struct{}
 }
+
+// flushQueueWait bounds how long flushQueued waits for the queue to drain
+// (a client that stopped reading must not hold up a response forever).
+const flushQueueWait = time.Second
 
 // sendQueued writes a relayed upstream notification (progress, resource
 // update, ...) to the client in order, from a per-session goroutine: an
@@ -53,8 +60,12 @@ func (s *ClientSession) sendQueued(method string, params json.RawMessage) bool {
 		return false
 	}
 	s.queueOnce.Do(func() {
+		s.reqMu.Lock()
 		s.queue = make(chan queuedNotification, notificationQueueSize)
-		s.ensureDone()
+		if s.queueDone == nil {
+			s.queueDone = make(chan struct{})
+		}
+		s.reqMu.Unlock()
 		go s.drainQueue()
 	})
 	select {
@@ -70,22 +81,49 @@ func (s *ClientSession) sendQueued(method string, params json.RawMessage) bool {
 	}
 }
 
-func (s *ClientSession) ensureDone() {
-	s.reqMu.Lock()
-	defer s.reqMu.Unlock()
-	if s.queueDone == nil {
-		s.queueDone = make(chan struct{})
-	}
-}
-
 func (s *ClientSession) drainQueue() {
 	for {
 		select {
 		case n := <-s.queue:
+			if n.flushed != nil {
+				close(n.flushed)
+				continue
+			}
 			s.send(n.method, n.params)
 		case <-s.queueDone:
 			return
 		}
+	}
+}
+
+// flushQueued waits (at most flushQueueWait) until every notification
+// queued so far was written, so a call's last progress notification
+// reaches the client before the call's response.
+func (s *ClientSession) flushQueued() {
+	if s == nil {
+		return
+	}
+	s.reqMu.Lock()
+	started := s.queue != nil
+	done := s.queueDone
+	s.reqMu.Unlock()
+	if !started {
+		return
+	}
+	marker := make(chan struct{})
+	timer := time.NewTimer(flushQueueWait)
+	defer timer.Stop()
+	select {
+	case s.queue <- queuedNotification{flushed: marker}:
+	case <-done:
+		return
+	case <-timer.C:
+		return
+	}
+	select {
+	case <-marker:
+	case <-done:
+	case <-timer.C:
 	}
 }
 

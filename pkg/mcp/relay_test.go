@@ -674,3 +674,31 @@ func TestClientSession_QueuedNotificationsNeverBlockTheCaller(t *testing.T) {
 	var nilSession *ClientSession
 	assert.False(t, nilSession.sendQueued(NotificationProgress, nil))
 }
+
+// TestRelay_ProgressFlushedBeforeTheCallEnds: the upstream writes its last
+// progress before its answer, so ending the call waits for the queued
+// progress to be written, and the client never sees progress after the
+// response.
+func TestRelay_ProgressFlushedBeforeTheCallEnds(t *testing.T) {
+	h := relayHandler(t)
+	var mu sync.Mutex
+	written := 0
+	s, closeSession := h.OpenSession(func(string, json.RawMessage) {
+		time.Sleep(5 * time.Millisecond) // a slow client
+		mu.Lock()
+		written++
+		mu.Unlock()
+	})
+	defer closeSession()
+	s.setInitialized(LatestProtocolVersion, InitializeParams{}, nil)
+	ctx := WithClientSession(context.Background(), s)
+	up, end := h.BeginUpstreamCall(ctx, "alpha", json.RawMessage(`{"_meta":{"progressToken":"t"}}`), json.RawMessage(`{}`))
+	for i := 1; i <= 5; i++ {
+		h.HandleServerNotification(context.Background(), "alpha", NotificationProgress,
+			json.RawMessage(fmt.Sprintf(`{"progressToken":%s,"progress":%d}`, progressToken(up), i)))
+	}
+	end()
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 5, written, "every progress notification is written before the call ends")
+}

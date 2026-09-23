@@ -240,6 +240,11 @@ func (h *Handler) BeginUpstreamCall(ctx context.Context, server string, clientPa
 	var once sync.Once
 	return upstreamParams, func() {
 		once.Do(func() {
+			if proxyToken != "" {
+				// The upstream wrote its last progress before its
+				// answer: let it reach the client before the response.
+				session.flushQueued()
+			}
 			h.relay.mu.Lock()
 			defer h.relay.mu.Unlock()
 			calls := h.relay.calls[server]

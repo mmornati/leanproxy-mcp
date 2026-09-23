@@ -1015,9 +1015,11 @@ front ends relay this traffic; `serve` does it per TCP connection.
   `resources/read` or `prompts/get` carries `params._meta.progressToken`, the
   upstream call carries a proxy token instead (`"lp-progress-<n>"`, unique
   across servers and clients), and the server's `notifications/progress`
-  for it reach the calling client only, with its own token (and redacted).
-  A token the proxy did not hand out, or one whose call already ended, is
-  dropped.
+  for it reach the calling client only, with its own token (and redacted),
+  in order and before the call's response. A token the proxy did not hand
+  out, or one whose call already ended, is dropped. Relayed notifications
+  are written by a per-client queue (256 deep, overflow dropped), so a
+  client that stops reading never stalls an upstream shared with others.
 - **Cancellation** — a client's `notifications/cancelled` for one of its
   requests cancels it locally and sends `notifications/cancelled` to the
   upstream with the upstream's request id (stdio, HTTP and SSE); the
