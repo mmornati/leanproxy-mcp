@@ -16,6 +16,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
 	"github.com/mmornati/leanproxy-mcp/pkg/telemetry"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolpin"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
@@ -263,6 +264,24 @@ type Config struct {
 	// OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_PROTOCOL env vars,
 	// which take precedence over this block (see pkg/telemetry.Resolve).
 	Telemetry *telemetry.Config `yaml:"telemetry,omitempty"`
+	// Security holds the upstream-trust settings (issue #310: tool
+	// pinning). Absent means the defaults (tool pinning in warn mode).
+	Security *SecurityConfig `yaml:"security,omitempty"`
+}
+
+// SecurityConfig is the `security:` block.
+type SecurityConfig struct {
+	// ToolPinning pins upstream tool definitions and reports or blocks
+	// drift (off | warn | block; warn by default).
+	ToolPinning *toolpin.Config `yaml:"tool_pinning,omitempty"`
+}
+
+// ToolPinningConfig returns security.tool_pinning (nil: the defaults).
+func (c *Config) ToolPinningConfig() *toolpin.Config {
+	if c == nil || c.Security == nil {
+		return nil
+	}
+	return c.Security.ToolPinning
 }
 
 // DefaultMaxConcurrentRequests is the number of client requests the stdio
@@ -400,6 +419,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Injection.Validate(); err != nil {
+		return err
+	}
+	if err := c.ToolPinningConfig().Validate(); err != nil {
 		return err
 	}
 	return nil

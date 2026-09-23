@@ -93,6 +93,9 @@ type Handler struct {
 	// relay routes what the upstreams initiate (server-to-client requests,
 	// progress, resource updates) to the right client (see relay.go).
 	relay relayState
+
+	// pins is the tool pinning state (see toolpins.go); nil: disabled.
+	pins atomic.Pointer[ToolPins]
 }
 
 type AggregatedManifest struct {
@@ -528,8 +531,22 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 		h.toolCache.mu.RUnlock()
 	}
 
+	// Tool pinning (#310): block mode hides tools awaiting approval (after
+	// comparing the server's current list, if this process has not yet),
+	// warn mode adds a one-line warning.
+	h.awaitPinned(ctx, []string{serverName})
+	h.toolCache.mu.RLock()
+	if fresh, ok := h.toolCache.tools[serverName]; ok {
+		tools = fresh
+	}
+	h.toolCache.mu.RUnlock()
+	tools, pinNotice := h.pinView(serverName, tools)
+
 	if len(tools) == 0 {
 		text := fmt.Sprintf("No tools available on server '%s'. The server may be unavailable or have no tools.", serverName)
+		if pinNotice != "" {
+			text = pinNotice
+		}
 		if refreshErr != nil {
 			text = fmt.Sprintf("No tools available on server '%s': listing its tools failed: %v", serverName, refreshErr)
 		}
@@ -555,6 +572,9 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 	h.logger.Info("list_tools completed", "server", serverName, "results", len(formattedTools))
 
 	text := fmt.Sprintf("%s tools (%d):\n%s", serverName, len(tools), strings.Join(formattedTools, "\n"))
+	if pinNotice != "" {
+		text = pinNotice + "\n" + text
+	}
 	var structured []StructuredTool
 	if h.sessionFor(ctx).AtLeast(ProtocolVersion20250618) {
 		structured = make([]StructuredTool, 0, len(tools))

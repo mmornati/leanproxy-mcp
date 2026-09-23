@@ -169,7 +169,7 @@ func (hs *hybridState) fuse(ctx context.Context, snap *snapshot, q Query, bm []s
 	dense := make([]scored, 0, len(snap.docs))
 	hs.mu.RLock()
 	for i, d := range snap.docs {
-		if q.Server != "" && d.tool.Server != q.Server {
+		if q.skip(d.tool) {
 			continue
 		}
 		v, ok := hs.vectors[d.hash]
