@@ -109,10 +109,25 @@ func TestServerStateTransitions(t *testing.T) {
 		t.Fatalf("Stop() failed: %v", err)
 	}
 
-	status, err = manager.Status(context.Background(), config.ID)
-	if err != nil {
-		t.Fatalf("Status() after stop failed: %v", err)
-	}
+	// Stop() only sends SIGTERM and returns; it does not wait for the
+	// process to exit. "sleep 10" terminates (almost) immediately on
+	// SIGTERM, and waitForExit() reaps the entry from the registry as
+	// soon as it observes the exit, under the same lock it uses to
+	// record the final status. That reap can race ahead of this
+	// goroutine's very next Status() call, so a single immediate
+	// Status() after Stop() can nondeterministically see either the
+	// terminal status or a "not found" error for an already-reaped
+	// server -- both are valid post-stop outcomes. Poll instead of
+	// asserting on one immediate read, mirroring the eventual-consistency
+	// pattern used by TestProcessAlreadyExited for the same reaper race.
+	require.Eventually(t, func() bool {
+		status, err = manager.Status(context.Background(), config.ID)
+		if err != nil {
+			// Already reaped after stopping: a valid terminal outcome.
+			return true
+		}
+		return status.State != StateRunning
+	}, time.Second, 5*time.Millisecond, "server did not leave the running state after Stop()")
 }
 
 func TestKillServer(t *testing.T) {
