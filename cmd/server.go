@@ -707,6 +707,18 @@ func handleStdio(ctx context.Context, handler *mcp.Handler, stdioPool *pool.Stdi
 }
 
 func writeStdioResponse(writer *bufio.Writer, resp *mcp.Response) {
+	if resp != nil && resp.Result == nil && resp.Error == nil {
+		// Belt-and-braces: Handler.HandleRequest already guards against this,
+		// but the writer never emits invalid JSON-RPC (neither result nor
+		// error) regardless of how the response reached it.
+		slog.Error("stdio: response had neither result nor error, replacing with internal error", "id", resp.ID)
+		resp = &mcp.Response{
+			JSONRPC: mcp.JSONRPCVersion,
+			Error:   mcp.NewError(mcp.ErrCodeInternalError, "internal error: empty response"),
+			ID:      resp.ID,
+		}
+	}
+
 	data, err := json.Marshal(resp)
 	if err != nil {
 		slog.Error("failed to marshal response", "error", err)

@@ -1,6 +1,9 @@
 package mcp
 
-import "context"
+import (
+	"context"
+	"log/slog"
+)
 
 // Next is one step of the MCP request pipeline. It receives a (possibly
 // already transformed) request and returns the response that travels back
@@ -41,6 +44,27 @@ func (h *Handler) Use(mws ...Middleware) {
 	h.middlewares = append(h.middlewares, mws...)
 	chain := Chain(h.dispatch, h.middlewares...)
 	h.pipeline.Store(&chain)
+}
+
+// guardResponse enforces that a written response always carries a result or
+// an error. A handler or middleware bug that returns a Response with
+// neither (previously possible when an upstream JSON-RPC error was dropped)
+// would otherwise reach the client as invalid JSON-RPC (`{"jsonrpc":"2.0",
+// "id":3}`, no `result`, no `error`). A nil Response ("nothing to write",
+// e.g. a notification) is left alone.
+func guardResponse(resp *Response) *Response {
+	if resp == nil {
+		return nil
+	}
+	if resp.Result != nil || resp.Error != nil {
+		return resp
+	}
+	slog.Error("mcp: response had neither result nor error, replacing with internal error", "id", resp.ID)
+	return &Response{
+		JSONRPC: JSONRPCVersion,
+		Error:   NewError(ErrCodeInternalError, "internal error: empty response"),
+		ID:      resp.ID,
+	}
 }
 
 // errorResponse builds a JSON-RPC error response for req.

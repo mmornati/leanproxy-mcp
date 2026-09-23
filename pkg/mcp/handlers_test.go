@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -170,6 +171,7 @@ func TestHandlerSetDefaultTimeout(t *testing.T) {
 
 func TestHandlerToolsCallUsesPerServerTimeout(t *testing.T) {
 	mp := newMockPool()
+	mp.servers["garmin"] = "running"
 	var capturedTimeout time.Duration
 	mp.sendRequestFunc = func(_ context.Context, name, _ string, _ json.RawMessage, timeout time.Duration) (*pool.Response, error) {
 		capturedTimeout = timeout
@@ -802,6 +804,179 @@ func TestHandleInvokeTool(t *testing.T) {
 	}
 }
 
+// TestHandleInvokeTool_LosslessBigIntArguments is the regression test for
+// #296 point 5: invoke_tool must forward `arguments` byte-for-byte instead
+// of round-tripping through map[string]interface{} (which turns a large
+// integer into a float64 and loses precision).
+func TestHandleInvokeTool_LosslessBigIntArguments(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	mp := newMockPool()
+	mp.SetServerState("github", pool.StateIdle)
+
+	var capturedParams json.RawMessage
+	mp.sendRequestFunc = func(_ context.Context, _ string, method string, params json.RawMessage, _ time.Duration) (*pool.Response, error) {
+		if method == MethodToolsCall {
+			capturedParams = params
+		}
+		return &pool.Response{ID: 1, Result: json.RawMessage(`{"content":[]}`)}, nil
+	}
+
+	h := NewHandler(mp, logger)
+
+	invokeArgs := json.RawMessage(`{"server":"github","tool":"list_issues","arguments":{"n":12345678901234567,"owner":"test"}}`)
+	params := ToolsCallParams{Name: "invoke_tool", Arguments: invokeArgs}
+	paramsBytes, _ := json.Marshal(params)
+
+	resp, err := h.HandleRequest(context.Background(), &Request{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodToolsCall,
+		ID:      1,
+		Params:  paramsBytes,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Nil(t, resp.Error)
+	require.NotNil(t, capturedParams)
+
+	var forwarded ToolsCallParams
+	require.NoError(t, json.Unmarshal(capturedParams, &forwarded))
+
+	if !bytes.Contains(forwarded.Arguments, []byte("12345678901234567")) {
+		t.Fatalf("expected forwarded arguments to contain the big integer byte-identical, got: %s", forwarded.Arguments)
+	}
+}
+
+// TestHandleInvokeTool_RejectsNonObjectArguments covers #296 point 5: a
+// non-object `arguments` payload is rejected with -32602 instead of being
+// silently dropped.
+func TestHandleInvokeTool_RejectsNonObjectArguments(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	mp := newMockPool()
+	mp.SetServerState("github", pool.StateIdle)
+	h := NewHandler(mp, logger)
+
+	invokeArgs := json.RawMessage(`{"server":"github","tool":"list_issues","arguments":"not-an-object"}`)
+	params := ToolsCallParams{Name: "invoke_tool", Arguments: invokeArgs}
+	paramsBytes, _ := json.Marshal(params)
+
+	resp, err := h.HandleRequest(context.Background(), &Request{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodToolsCall,
+		ID:      1,
+		Params:  paramsBytes,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, ErrCodeInvalidParams, resp.Error.Code)
+}
+
+// TestHandleInvokeTool_PreservesUpstreamErrorCodeAndMessage is the
+// regression test for #296 acceptance criterion: when the upstream returns
+// {"error":{"code":-32602,"message":"missing owner"}}, the client receives
+// the same code and message.
+func TestHandleInvokeTool_PreservesUpstreamErrorCodeAndMessage(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	mp := newMockPool()
+	mp.SetServerState("github", pool.StateIdle)
+	mp.sendRequestFunc = func(_ context.Context, _ string, method string, _ json.RawMessage, _ time.Duration) (*pool.Response, error) {
+		if method == MethodInitialize {
+			return &pool.Response{ID: 1, Result: json.RawMessage(`{}`)}, nil
+		}
+		return &pool.Response{ID: 1, Error: &errors.JSONRPCError{Code: -32602, Message: "missing owner"}}, nil
+	}
+
+	h := NewHandler(mp, logger)
+
+	invokeArgs := json.RawMessage(`{"server":"github","tool":"list_issues","arguments":{}}`)
+	params := ToolsCallParams{Name: "invoke_tool", Arguments: invokeArgs}
+	paramsBytes, _ := json.Marshal(params)
+
+	resp, err := h.HandleRequest(context.Background(), &Request{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodToolsCall,
+		ID:      1,
+		Params:  paramsBytes,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, -32602, resp.Error.Code)
+	assert.Equal(t, "missing owner", resp.Error.Message)
+}
+
+// TestHandleToolsCall_PreservesUpstreamErrorCodeAndMessage covers the
+// direct `<server>_<tool>` tools/call path for the same acceptance
+// criterion.
+func TestHandleToolsCall_PreservesUpstreamErrorCodeAndMessage(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	mp := newMockPool()
+	mp.SetServerState("github", pool.StateIdle)
+	mp.sendRequestFunc = func(_ context.Context, _ string, method string, _ json.RawMessage, _ time.Duration) (*pool.Response, error) {
+		if method == MethodInitialize {
+			return &pool.Response{ID: 1, Result: json.RawMessage(`{}`)}, nil
+		}
+		return &pool.Response{ID: 1, Error: &errors.JSONRPCError{Code: -32602, Message: "missing owner"}}, nil
+	}
+
+	h := NewHandler(mp, logger)
+
+	params := ToolsCallParams{Name: "github_list_issues", Arguments: json.RawMessage(`{}`)}
+	paramsBytes, _ := json.Marshal(params)
+
+	resp, err := h.HandleRequest(context.Background(), &Request{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodToolsCall,
+		ID:      1,
+		Params:  paramsBytes,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.NotNil(t, resp.Error)
+	assert.Equal(t, -32602, resp.Error.Code)
+	assert.Equal(t, "missing owner", resp.Error.Message)
+}
+
+// TestHandleRequest_GuardsAgainstEmptyResponse is the unit test required by
+// #296's acceptance criteria: a response with neither result nor error is
+// never written to the client; HandleRequest replaces it with an internal
+// error instead.
+func TestHandleRequest_GuardsAgainstEmptyResponse(t *testing.T) {
+	h := NewHandler(newMockPool(), nil)
+	h.Use(func(next Next) Next {
+		return func(ctx context.Context, req *Request) (*Response, error) {
+			// Simulate a buggy handler/middleware that drops the upstream
+			// error and returns neither a result nor an error.
+			return &Response{JSONRPC: JSONRPCVersion, ID: req.ID}, nil
+		}
+	})
+
+	resp, err := h.HandleRequest(context.Background(), &Request{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodPing,
+		ID:      7,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	require.Nil(t, resp.Result)
+	require.NotNil(t, resp.Error, "a response with neither result nor error must be replaced by an internal error")
+	assert.Equal(t, ErrCodeInternalError, resp.Error.Code)
+	assert.Equal(t, 7, resp.ID)
+}
+
+// TestHandleRequest_NotificationStaysNil ensures the empty-response guard
+// does not turn a legitimate "nothing to write" notification response
+// (nil) into an error.
+func TestHandleRequest_NotificationStaysNil(t *testing.T) {
+	h := NewHandler(newMockPool(), nil)
+	resp, err := h.HandleRequest(context.Background(), &Request{
+		JSONRPC: JSONRPCVersion,
+		Method:  MethodInitialized,
+	})
+	require.NoError(t, err)
+	assert.Nil(t, resp)
+}
+
 func TestPopulateToolCache(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	mockPool := newMockPool()
@@ -1079,7 +1254,9 @@ func TestParseToolName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-			h := NewHandler(newMockPool(), logger)
+			mp := newMockPool()
+			mp.servers["github"] = "running"
+			h := NewHandler(mp, logger)
 			srv, tool, err := h.parseToolName(tt.fullName)
 
 			if tt.expectError {
@@ -1089,6 +1266,40 @@ func TestParseToolName(t *testing.T) {
 				assert.Equal(t, tt.expectedSrv, srv)
 				assert.Equal(t, tt.expectedTool, tool)
 			}
+		})
+	}
+}
+
+// TestParseToolName_OverlappingServerNames is the regression test for #296:
+// parseToolName matches the longest configured server name that is a
+// prefix, so overlapping names like "git" and "github" resolve to the
+// correct owner instead of the first partial match, and a server literally
+// named "my_srv" is reachable via both "my_srv_tool" and "my_srv.tool".
+func TestParseToolName_OverlappingServerNames(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	mp := newMockPool()
+	for _, name := range []string{"git", "github", "my_srv"} {
+		mp.servers[name] = "running"
+	}
+	h := NewHandler(mp, logger)
+
+	tests := []struct {
+		fullName     string
+		expectedSrv  string
+		expectedTool string
+	}{
+		{"git_status", "git", "status"},
+		{"github_search_issues", "github", "search_issues"},
+		{"github.search_issues", "github", "search_issues"},
+		{"my_srv_tool", "my_srv", "tool"},
+		{"my_srv.tool", "my_srv", "tool"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.fullName, func(t *testing.T) {
+			srv, tool, err := h.parseToolName(tt.fullName)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedSrv, srv)
+			assert.Equal(t, tt.expectedTool, tool)
 		})
 	}
 }
