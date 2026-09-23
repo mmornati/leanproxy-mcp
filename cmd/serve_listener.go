@@ -16,6 +16,7 @@ import (
 
 	lperrors "github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/proxy"
 )
@@ -301,6 +302,17 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 		return
 	}
 
+	// One MCP client session per connection (#307): it carries the
+	// protocol version this client negotiated, and receives the
+	// list_changed notifications through the connection's writer.
+	if h := serveMCPHandler.Load(); h != nil {
+		session, closeSession := h.OpenSession(func(method string, params json.RawMessage) {
+			writeNotificationAsync(writer, writerMu, method, params)
+		})
+		defer closeSession()
+		connCtx = mcp.WithClientSession(connCtx, session)
+	}
+
 	sem := make(chan struct{}, opts.MaxConcurrent)
 	var active atomic.Int64
 	var wg sync.WaitGroup
@@ -362,4 +374,20 @@ func handleConnection(conn io.ReadWriter, r Router, gt gateway.GatewayTools, p P
 	// then wait for the handlers to return.
 	connCancel()
 	wg.Wait()
+}
+
+// writeNotificationAsync writes one server-to-client notification on a
+// serve connection, serialized with the responses.
+func writeNotificationAsync(writer *bufio.Writer, mu *sync.Mutex, method string, params json.RawMessage) {
+	data, err := json.Marshal(jsonRPCNotification{JSONRPC: "2.0", Method: method, Params: params})
+	if err != nil {
+		slog.Warn("failed to marshal notification", "method", method, "error", err)
+		return
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	writeJSONLine(writer, data)
+	if err := writer.Flush(); err != nil {
+		slog.Debug("failed to flush notification", "method", method, "error", err)
+	}
 }

@@ -102,6 +102,14 @@ var serveFirewall = &mcp.Firewall{Redaction: &mcp.Redaction{}, Injection: &mcp.I
 // block; the zero value is disabled until then.
 var serveResponseCache = mcp.NewResponseCache(nil)
 
+// serveMCPHandler is the pkg/mcp handler behind serve's MCP protocol
+// methods (initialize with version negotiation, and the resources/prompts
+// aggregation of #307): the same handler `server run --stdio` uses, without
+// middlewares of its own (serveRequest's pipeline already wraps it with the
+// firewall). Nil until runServe builds it; the methods then fall through to
+// routing as before.
+var serveMCPHandler atomic.Pointer[mcp.Handler]
+
 // globalAlwaysCallSidecar is the operator opt-in (via
 // `bouncer.sidecar_always_call: true`) to keep #274's behavior of running
 // the sidecar LLM on every request even when the regex layer already
@@ -400,6 +408,7 @@ func runServe(cmd *cobra.Command, args []string) {
 	refreshCtx, stopRefresh := context.WithCancel(ctx)
 	defer stopRefresh()
 	handler.StartBackgroundRefresh(refreshCtx)
+	serveMCPHandler.Store(handler)
 
 	slog.Info("starting server", "listen", serveFlags.listenAddr, "upstream", serveFlags.upstreamURL)
 
@@ -593,6 +602,17 @@ func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Rout
 		return handleGatewayToolSync(ctx, req, gt)
 	}
 
+	if h := serveMCPHandler.Load(); h != nil && isMCPProtocolMethod(req.Method) {
+		// Session-level and aggregated MCP methods are answered by the
+		// shared handler (per-connection session in ctx), never routed to
+		// one backend and never served from a cache.
+		resp, err := h.HandleRequest(ctx, toMCPRequest(req))
+		if err != nil {
+			return errorResponse(req.ID, errors.ErrCodeInternalError, err.Error())
+		}
+		return fromMCPResponse(resp)
+	}
+
 	server, err := routeRequest(ctx, r, req)
 	if err != nil {
 		return errorResponse(req.ID, errors.ErrCodeMethodNotFound, "Method not found")
@@ -604,13 +624,15 @@ func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Rout
 	// tools/call caching is handled entirely by the mcp.ResponseCache
 	// middleware wrapping serveRequest (issue #299): exact-match only, keyed
 	// on the pre-redaction request, allowlisted tools only. The semantic
-	// (embedding-similarity) cache below is no longer consulted for tool
-	// calls at all — it stays available for other, non-tool-call methods
-	// that reach this path (e.g. resources/read).
+	// (embedding-similarity) cache below is never consulted for tools/call,
+	// nor for any MCP protocol method (resources/read, prompts/get, ...):
+	// only for a tool addressed by its namespaced method that the same
+	// response_cache policy allowlists (see semanticCacheable).
 	var cached *cache.SemanticCacheResult
 	var prompt string
 	var embedding []float32
-	if !isToolCallMethod(req.Method) {
+	cacheable := semanticCacheable(req)
+	if cacheable {
 		cached, prompt, embedding = semanticCacheLookup(ctx, req)
 		if cached != nil && cached.HitType != cache.HitMiss {
 			return cachedResponse(req, cached.Response)
@@ -652,7 +674,7 @@ func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Rout
 
 	if resp.Error == nil {
 		cache.ProcessResponseFor(provider, resp.Result)
-		if !isToolCallMethod(req.Method) {
+		if cacheable && !isErrorResult(resp.Result) {
 			semanticCacheStore(ctx, req, prompt, resp.Result, embedding)
 		}
 	}
@@ -974,6 +996,42 @@ func extractToolName(req *proxy.JSONRPCRequest) string {
 
 func isToolCallMethod(method string) bool {
 	return method == "tools/call" || method == "invoke_tool"
+}
+
+// isMCPProtocolMethod reports whether method is one serve answers through
+// serveMCPHandler rather than by routing it to a single backend.
+func isMCPProtocolMethod(method string) bool {
+	switch method {
+	case mcp.MethodInitialize, mcp.MethodInitialized,
+		mcp.MethodResourcesList, mcp.MethodResourcesTemplatesList, mcp.MethodResourcesRead,
+		mcp.MethodResourcesSubscribe, mcp.MethodResourcesUnsubscribe,
+		mcp.MethodPromptsList, mcp.MethodPromptsGet:
+		return true
+	default:
+		return false
+	}
+}
+
+// semanticCacheable reports whether serve's semantic cache may answer (and
+// store) req. It follows the stdio front end's cache policy: only a
+// tool call, and only one the response_cache allowlist declares cacheable
+// (an idempotent read). tools/call and invoke_tool are left to the exact
+// response cache; an MCP protocol method (any method with a '/', e.g.
+// resources/read or prompts/get) is never cached, since its answer can
+// change at any time and is not a tool result.
+func semanticCacheable(req *proxy.JSONRPCRequest) bool {
+	if req == nil || isToolCallMethod(req.Method) || isGatewayTool(req.Method) || strings.Contains(req.Method, "/") {
+		return false
+	}
+	return serveResponseCache.Allows(canonicalToolMethod(req.Method))
+}
+
+// isErrorResult reports whether a tools/call result carries isError: true.
+func isErrorResult(result json.RawMessage) bool {
+	var probe struct {
+		IsError bool `json:"isError"`
+	}
+	return json.Unmarshal(result, &probe) == nil && probe.IsError
 }
 
 // populateRouterTools registers every tool currently in the handler's cache
