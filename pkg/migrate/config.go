@@ -102,6 +102,38 @@ type ServerConfig struct {
 	IdleTimeoutValue    time.Duration      `yaml:"-"`
 	CacheSettings       *CacheSettings     `yaml:"cache_settings,omitempty"`
 	SummarizeSettings   *SummarizeSettings `yaml:"summarize_settings,omitempty"`
+	RateLimit           *RateLimitConfig   `yaml:"rate_limit,omitempty"`
+}
+
+// RateLimitConfig is an optional, per-server request rate limit applied to
+// requests forwarded to that server. It is unset by default, meaning no
+// limit: local stdio servers in particular don't need one. When set,
+// RequestsPerSecond of 0 (or an absent block) also means unlimited; a
+// positive value enables waiting-based limiting (see pkg/pool).
+type RateLimitConfig struct {
+	// RequestsPerSecond is the sustained rate of requests allowed per
+	// second. 0 or absent means unlimited.
+	RequestsPerSecond float64 `yaml:"requests_per_second"`
+	// Burst is the maximum number of requests allowed to proceed
+	// immediately before the sustained rate applies. Defaults to
+	// RequestsPerSecond (rounded up, minimum 1) when RequestsPerSecond > 0
+	// and Burst is not set.
+	Burst int `yaml:"burst"`
+}
+
+// Validate returns an error if the rate limit configuration has negative
+// values. A nil receiver is valid (unlimited).
+func (c *RateLimitConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.RequestsPerSecond < 0 {
+		return fmt.Errorf("requests_per_second must be >= 0, got %v", c.RequestsPerSecond)
+	}
+	if c.Burst < 0 {
+		return fmt.Errorf("burst must be >= 0, got %d", c.Burst)
+	}
+	return nil
 }
 
 type ReconnectConfig struct {
@@ -190,6 +222,9 @@ func (c *ServerConfig) Validate() error {
 		}
 	default:
 		return fmt.Errorf("server %s: invalid transport type %q (must be stdio, http, or sse)", c.Name, c.Transport)
+	}
+	if err := c.RateLimit.Validate(); err != nil {
+		return fmt.Errorf("server %s: rate_limit: %w", c.Name, err)
 	}
 	return nil
 }

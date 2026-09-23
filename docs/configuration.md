@@ -67,6 +67,39 @@ watch:
 | `servers[].timeout` | duration | `30s` | **Per-server** request timeout. Each server entry in `servers:` can set its own `timeout` (e.g. `timeout: 60s` for `garmin`). The proxy honors the per-server value end-to-end: the handler dispatches with it and the worker uses `min(per-server, caller)`. Use a larger value for servers that return slow / large payloads (FIT data, big search results). |
 | `server.max_batch_size` | int | `100` | Maximum batch size for JSON-RPC batch requests (0 = unlimited) |
 
+### Per-Server Rate Limiting
+
+There is **no rate limit by default** — local stdio servers don't need one. A
+server only gets one when its entry in `servers:` sets a `rate_limit` block:
+
+```yaml
+servers:
+  - name: github
+    transport: stdio
+    stdio:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+    rate_limit:
+      requests_per_second: 20   # 0 or absent = unlimited (default)
+      burst: 40                 # defaults to requests_per_second, rounded up
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `servers[].rate_limit.requests_per_second` | float | `0` (unlimited) | Sustained request rate allowed for that server. `0` or an absent `rate_limit` block means unlimited. |
+| `servers[].rate_limit.burst` | int | `requests_per_second` (rounded up, min 1) | Number of requests allowed to proceed immediately before the sustained rate applies. |
+
+When a limit is configured, requests **wait** for a token instead of being
+rejected outright: `PutRequest` blocks until either a token frees up or the
+request's own timeout/deadline elapses, at which point it fails with
+`rate limit wait exceeded deadline for <server>`. This applies to stdio,
+HTTP and SSE servers alike (`transport: http` / `sse` servers can set the
+same `rate_limit` block; it also defaults to off).
+
+Internal housekeeping traffic — health pings, the internal `initialize`
+handshake, and periodic `tools/list` cache refreshes — always bypasses the
+limiter, so a busy limiter can never make a server look unhealthy.
+
 ### Socket Options
 
 | Option | Type | Default | Description |
