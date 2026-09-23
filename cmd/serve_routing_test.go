@@ -285,6 +285,10 @@ func (f *fakeToolSource) GetServerState(string) (pool.ServerState, error) {
 	return pool.StateRunning, nil
 }
 
+func (f *fakeToolSource) GetServerTransport(string) (string, error) {
+	return "stdio", nil
+}
+
 func (f *fakeToolSource) RestartServer(context.Context, string) error { return nil }
 
 func (f *fakeToolSource) IsServerMCPInitialized(string) bool { return true }

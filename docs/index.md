@@ -96,12 +96,12 @@ This means **100% cache hit doesn't mean 100% free**. A 16,830-token MCP schema 
 
 | MCP Servers | Tools | Native MCP (100% cache hit, 0.25x) | LeanProxy | Savings |
 |-------------|-------|-----------------------------------|----------|---------|
-| 1 (GitHub) | 41 | 1,143 tokens | 158 | **86.2%** |
-| 1 (Garmin) | 100 | 2,783 tokens | 158 | **94.3%** |
-| 2 (Garmin + GitHub) | 141 | 3,925 tokens | 158 | **96.0%** |
-| 3 (all) | 151 | 4,208 tokens | 158 | **96.2%** |
+| 1 (GitHub) | 41 | 1,143 tokens | 237 | **79.3%** |
+| 1 (Garmin) | 100 | 2,783 tokens | 237 | **91.5%** |
+| 2 (Garmin + GitHub) | 141 | 3,925 tokens | 237 | **94.0%** |
+| 3 (all) | 151 | 4,208 tokens | 237 | **94.4%** |
 
-*Native MCP sends tool schemas every prompt at 0.25x cache read. LeanProxy sends only the 158-token router payload (3 tools: list_servers, invoke_tool, list_tools) regardless of backend servers.*
+*Native MCP sends tool schemas every prompt at 0.25x cache read. LeanProxy sends only the 237-token router payload (3 tools: list_servers, list_tools, invoke_tool) regardless of backend servers.*
 
 **The key insight**: With Native MCP + caching, you pay for every tool schema on every request (at 0.25x). LeanProxy sends only the router schema — the backend tool schemas only load when actually invoked.
 
@@ -111,15 +111,15 @@ For MCP tool schemas that are **identical every request**, caching only reduces 
 
 | Scenario | Input Tokens | Cache Rate | Cache Cost (0.25x) | LeanProxy | Savings |
 |----------|--------------|-----------|-------------------|----------|---------|
-| 1 server (Garmin) | 11,130 | 100% hit | 2,783 | **158** | 94% |
-| 2 servers (Garmin + GitHub) | 15,700 | 100% hit | 3,925 | 158 | 96% |
-| **3 servers (all)** | **16,830** | 100% hit | **4,208** | **158** | **96.2%** |
+| 1 server (Garmin) | 11,130 | 100% hit | 2,783 | **237** | 91.5% |
+| 2 servers (Garmin + GitHub) | 15,700 | 100% hit | 3,925 | 237 | 94.0% |
+| **3 servers (all)** | **16,830** | 100% hit | **4,208** | **237** | **94.4%** |
 
-> **Critical insight**: With "same input context" caching, 100% cache hit STILL costs at 0.25x. LeanProxy sends only 158 tokens, making the cache-read cost negligible. This is the real advantage.
+> **Critical insight**: With "same input context" caching, 100% cache hit STILL costs at 0.25x. LeanProxy sends only 237 tokens, making the cache-read cost negligible. This is the real advantage.
 
 ### Monthly Total Token Savings (100 sessions/month)
 
-Measured on v0.9.0 with 3 servers. Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy only sends the 158-token router schema.
+Measured on v0.9.0 with 3 servers. Native MCP sends tool schemas every request (at 0.25x cache read). LeanProxy only sends the 237-token router schema.
 
 | Servers | Tools | GPT-4o-mini ($0.0375/M) | Anthropic Sonnet ($0.40/M) |
 |---------|-------|--------------------------|----------------------------|
@@ -127,7 +127,7 @@ Measured on v0.9.0 with 3 servers. Native MCP sends tool schemas every request (
 | 1 (Garmin) | 100 | $2.78 → **$2.78 saved** | $29.68 → **$29.64 saved** |
 | 3 (all) | 151 | $4.21 → **$4.21 saved** | $44.88 → **$44.84 saved** |
 
-*Formula: native_tokens × 0.25x × 100 sessions / 1M × price. LeanProxy cost: 158 × 100 / 1M × price (negligible).*
+*Formula: native_tokens × 0.25x × 100 sessions / 1M × price. LeanProxy cost: 237 × 100 / 1M × price (negligible; the dollar figures below round to the same cents either way).*
 
 ### Should You Use Caching with MCP?
 
@@ -144,7 +144,7 @@ Measured on v0.9.0 with 3 servers. Native MCP sends tool schemas every request (
 
 LeanProxy uses a **gateway pattern** with JIT (Just-In-Time) schema loading:
 
-1. **Single router schema**: Only 3 tools (`list_servers`, `invoke_tool`, `list_tools`) = **158 tokens** (measured) vs 16,830 for Native MCP
+1. **Single router schema**: Only 3 tools (`list_servers`, `list_tools`, `invoke_tool`) = **237 tokens** (measured) vs 16,830 for Native MCP
 2. **On-demand tool registration**: Backend server schemas only load when actually needed (~26 tokens per stub)
 3. **Session-aware caching**: Tool schemas persist across the session without per-request overhead
 

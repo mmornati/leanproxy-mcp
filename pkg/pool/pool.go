@@ -23,6 +23,7 @@ type ServerSource interface {
 	SendServerNotification(ctx context.Context, name string, method string, params map[string]interface{}) error
 	ListServers() []string
 	GetServerState(name string) (ServerState, error)
+	GetServerTransport(name string) (string, error)
 	RestartServer(ctx context.Context, name string) error
 	IsServerMCPInitialized(name string) bool
 	MarkServerMCPInitialized(name string)
@@ -486,6 +487,19 @@ func (p *StdioPool) GetServerState(name string) (ServerState, error) {
 	}
 
 	return server.getState(), nil
+}
+
+// GetServerTransport reports the transport this server is configured with.
+// It always returns "stdio" for a StdioPool member.
+func (p *StdioPool) GetServerTransport(name string) (string, error) {
+	p.mu.RLock()
+	_, exists := p.servers[name]
+	p.mu.RUnlock()
+
+	if !exists {
+		return "", fmt.Errorf("pool: server %s not found", name)
+	}
+	return "stdio", nil
 }
 
 func (p *StdioPool) GetServerStats(name string) (ServerStats, error) {
