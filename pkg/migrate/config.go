@@ -228,11 +228,29 @@ const DefaultMaxConcurrentRequests = 64
 // legacy host/port documented for `serve`) are ignored.
 type FrontendConfig struct {
 	// MaxConcurrentRequests caps how many client requests `server run
-	// --stdio` handles in parallel. When the cap is reached the reader
+	// --stdio` handles in parallel (and, for `serve`, how many requests one
+	// TCP connection runs in parallel). When the cap is reached the reader
 	// waits for a free slot; it never rejects. 0 or absent means
 	// DefaultMaxConcurrentRequests.
 	MaxConcurrentRequests int `yaml:"max_concurrent_requests,omitempty"`
+	// MaxLineBytes caps the size of one newline-delimited JSON-RPC message
+	// read by the `serve` TCP listener. A longer line gets an error reply
+	// and the connection is closed. 0 or absent means
+	// DefaultMaxLineBytes.
+	MaxLineBytes int `yaml:"max_line_bytes,omitempty"`
+	// MaxConnections caps how many client connections the `serve` TCP
+	// listener accepts at once; extra connections are closed right away.
+	// 0 or absent means DefaultMaxConnections.
+	MaxConnections int `yaml:"max_connections,omitempty"`
 }
+
+// DefaultMaxLineBytes is the largest JSON-RPC message (one line) the `serve`
+// listener reads when server.max_line_bytes is unset: 64 MiB.
+const DefaultMaxLineBytes = 64 << 20
+
+// DefaultMaxConnections is how many client connections the `serve` listener
+// accepts at once when server.max_connections is unset.
+const DefaultMaxConnections = 32
 
 // Validate rejects negative values. A nil receiver is valid (defaults).
 func (c *FrontendConfig) Validate() error {
@@ -242,7 +260,31 @@ func (c *FrontendConfig) Validate() error {
 	if c.MaxConcurrentRequests < 0 {
 		return fmt.Errorf("server.max_concurrent_requests must be >= 0, got %d", c.MaxConcurrentRequests)
 	}
+	if c.MaxLineBytes < 0 {
+		return fmt.Errorf("server.max_line_bytes must be >= 0, got %d", c.MaxLineBytes)
+	}
+	if c.MaxConnections < 0 {
+		return fmt.Errorf("server.max_connections must be >= 0, got %d", c.MaxConnections)
+	}
 	return nil
+}
+
+// EffectiveMaxLineBytes returns server.max_line_bytes, or
+// DefaultMaxLineBytes when it is unset or zero.
+func (c *Config) EffectiveMaxLineBytes() int {
+	if c == nil || c.Server == nil || c.Server.MaxLineBytes <= 0 {
+		return DefaultMaxLineBytes
+	}
+	return c.Server.MaxLineBytes
+}
+
+// EffectiveMaxConnections returns server.max_connections, or
+// DefaultMaxConnections when it is unset or zero.
+func (c *Config) EffectiveMaxConnections() int {
+	if c == nil || c.Server == nil || c.Server.MaxConnections <= 0 {
+		return DefaultMaxConnections
+	}
+	return c.Server.MaxConnections
 }
 
 // EffectiveMaxConcurrentRequests returns server.max_concurrent_requests, or

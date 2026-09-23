@@ -48,6 +48,9 @@ func dialProxy(t *testing.T, addr string) *proxyClient {
 		t.Fatalf("dial proxy %s: %v", addr, err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
+	if _, err := conn.Write(serveAuthLine()); err != nil {
+		t.Fatalf("authenticate to proxy %s: %v", addr, err)
+	}
 	return &proxyClient{t: t, conn: conn, r: bufio.NewReader(conn)}
 }
 
