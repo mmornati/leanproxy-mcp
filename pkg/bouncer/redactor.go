@@ -557,8 +557,10 @@ const SidecarFallback = "[VALUE_REDACTED]"
 // alwaysCallSidecar is true, hands the already-redacted content to the
 // sidecar for a second pass. The sidecar therefore never sees a secret the
 // regex layer could catch (the regex pass runs first regardless), and its
-// output is accepted only if it is valid JSON or matches the sidecar's
-// documented fallback sentinel.
+// output is accepted only if it is valid JSON with the same structure as its
+// input (VerifySidecarOutput) or matches the sidecar's documented fallback
+// sentinel. Output that is valid JSON but changes the structure is discarded
+// in favor of the regex-redacted input, with a warning.
 func RedactJSONWithSidecar(ctx context.Context, data []byte, r *Redactor, sidecar SidecarClient, alwaysCallSidecar bool) ([]byte, error) {
 	if r != nil {
 		redacted, count, err := r.RedactJSON(data)
@@ -582,6 +584,15 @@ func RedactJSONWithSidecar(ctx context.Context, data []byte, r *Redactor, sideca
 		}
 		if !json.Valid(sidecarResult) {
 			return nil, fmt.Errorf("bouncer redact: sidecar returned invalid JSON")
+		}
+		if err := VerifySidecarOutput(data, sidecarResult); err != nil {
+			// Text planted in the params can steer the sidecar model into
+			// rewriting them (another tool name, other arguments): its
+			// output is only a redaction of the input, never a new
+			// request (#315).
+			slog.Warn("sidecar: output changed the request structure, discarding it and keeping the regex redaction",
+				"error", err)
+			return data, nil
 		}
 		return sidecarResult, nil
 	}
