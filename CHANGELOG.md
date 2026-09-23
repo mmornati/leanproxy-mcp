@@ -2,6 +2,15 @@
 
 ## Changed in v0.10
 
+- **`server run --stdio` handles requests concurrently** ([#292](https://github.com/mmornati/leanproxy-mcp/issues/292)).
+  The stdio front end used to read one request, wait for its response, then read the next, so one slow tool
+  call blocked `ping`, `tools/list` and calls to every other server. Each request now runs in its own
+  goroutine, capped by the new `server.max_concurrent_requests` setting (default 64; the reader waits at the
+  cap instead of rejecting). `notifications/cancelled` cancels the matching in-flight request (and, through
+  the pool, the upstream call); notifications never get a response; EOF and `shutdown` drain in-flight
+  requests for up to 5 s before canceling the rest and stopping every upstream server. Invalid JSON is no
+  longer logged verbatim (only its length). Concurrent first calls to a server now perform a single MCP
+  initialize handshake.
 - **Concurrent requests to one stdio server are multiplexed** ([#294](https://github.com/mmornati/leanproxy-mcp/issues/294)).
   The stdio pool used to serve one request at a time per server (50 parallel 100 ms calls took ~5 s); it now
   keeps a pending map keyed by the internal wire ID, so calls run concurrently up to the new per-server

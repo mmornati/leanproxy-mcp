@@ -66,6 +66,34 @@ watch:
 | `server.port` | int | `8080` | Listen port |
 | `servers[].timeout` | duration | `30s` | **Per-server** request timeout. Each server entry in `servers:` can set its own `timeout` (e.g. `timeout: 60s` for `garmin`). The proxy honors the per-server value end-to-end: the handler dispatches with it and the worker uses `min(per-server, caller)`. Use a larger value for servers that return slow / large payloads (FIT data, big search results). |
 | `server.max_batch_size` | int | `100` | Maximum batch size for JSON-RPC batch requests (0 = unlimited) |
+| `server.max_concurrent_requests` | int | `64` | Maximum number of client requests `server run --stdio` handles in parallel. `0` or absent means the default; negative values are rejected. See below. |
+
+### Concurrent Client Requests (`server.max_concurrent_requests`)
+
+`leanproxy-mcp server run --stdio` handles every request from the IDE in its
+own goroutine, so a slow tool call never blocks `ping`, `tools/list` or calls
+to other servers. Responses are written one complete line at a time (a single
+writer, flushed after every message), in whatever order the requests finish.
+
+```yaml
+server:
+  max_concurrent_requests: 16   # default 64
+```
+
+- **Cap:** when `max_concurrent_requests` requests are already running, the
+  proxy stops reading stdin until one finishes. Requests are delayed, never
+  rejected.
+- **Notifications** (messages without an `id`) never get a response.
+- **Cancellation:** `notifications/cancelled` with the `requestId` of an
+  in-flight request cancels it. The cancellation reaches the upstream server
+  (stdio servers receive their own `notifications/cancelled`) and, as the MCP
+  spec recommends, the canceled request gets no response.
+- **Shutdown:** on EOF or a `shutdown` request the proxy stops reading, waits
+  up to 5 seconds for in-flight requests to finish, cancels whatever is still
+  running, then (for `shutdown`) answers the shutdown request and stops every
+  upstream server.
+- **Invalid JSON** is answered with a parse error whose `id` is `null`. The
+  raw line is never logged, only its length.
 
 ### Concurrent Requests per Stdio Server (`max_in_flight`)
 

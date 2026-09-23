@@ -55,6 +55,11 @@ type Handler struct {
 	cacheRefreshes atomic.Uint64
 	cacheFailures  atomic.Uint64
 
+	// initLocks maps a server name to a 1-slot channel used as a
+	// context-aware mutex, so concurrent requests (the stdio front end runs
+	// them in parallel) perform the lazy MCP handshake with a server once.
+	initLocks sync.Map
+
 	// pipelineMu guards middlewares; pipeline holds the composed chain
 	// (middlewares around dispatch) so HandleRequest can load it lock-free.
 	pipelineMu  sync.Mutex
@@ -293,6 +298,35 @@ func (h *Handler) initializeServer(ctx context.Context, serverName string) error
 	return nil
 }
 
+// ensureServerInitialized performs the MCP initialize handshake with
+// serverName unless the pool already marks it initialized. Concurrent callers
+// for the same server are serialized on a per-server lock (waiting honors
+// ctx), and the flag is re-checked under the lock, so one handshake runs even
+// when the front end dispatches many requests at once.
+func (h *Handler) ensureServerInitialized(ctx context.Context, serverName string) error {
+	if h.pool.IsServerMCPInitialized(serverName) {
+		return nil
+	}
+	v, _ := h.initLocks.LoadOrStore(serverName, make(chan struct{}, 1))
+	lock := v.(chan struct{})
+	select {
+	case lock <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	defer func() { <-lock }()
+
+	if h.pool.IsServerMCPInitialized(serverName) {
+		return nil
+	}
+	h.logger.Debug("initializing MCP session with server", "name", serverName)
+	if err := h.initializeServer(ctx, serverName); err != nil {
+		return err
+	}
+	h.pool.MarkServerMCPInitialized(serverName)
+	return nil
+}
+
 func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response, error) {
 	h.logger.Debug("handleToolsCall called", "params", string(req.Params))
 
@@ -332,16 +366,12 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 	}
 
 	// Perform MCP initialize handshake if not yet done for this server instance.
-	if !h.pool.IsServerMCPInitialized(serverName) {
-		h.logger.Debug("initializing MCP session with server", "name", serverName)
-		if err := h.initializeServer(ctx, serverName); err != nil {
-			return &Response{
-				JSONRPC: JSONRPCVersion,
-				Error:   NewError(ErrCodeServerError, fmt.Sprintf("server initialization failed: %v", err)),
-				ID:      req.ID,
-			}, nil
-		}
-		h.pool.MarkServerMCPInitialized(serverName)
+	if err := h.ensureServerInitialized(ctx, serverName); err != nil {
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   NewError(ErrCodeServerError, fmt.Sprintf("server initialization failed: %v", err)),
+			ID:      req.ID,
+		}, nil
 	}
 
 	newParams := ToolsCallParams{
@@ -857,27 +887,23 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 
 	// Perform MCP initialize handshake if not yet done for this server instance.
 	// The MCP protocol requires initialize + notifications/initialized before any tool call.
-	if !h.pool.IsServerMCPInitialized(serverName) {
-		h.logger.Debug("initializing MCP session with server", "name", serverName)
-		if err := h.initializeServer(ctx, serverName); err != nil {
-			h.logger.Error("invoke_tool: server initialization failed", "server", serverName, "error", err)
-			schema := h.lookupToolSchema(serverName, toolName)
-			enrichedError := FormatErrorWithHint(fmt.Sprintf("server initialization failed: %v", err), serverName, toolName)
-			errResp := NewError(ErrCodeServerError, enrichedError)
-			if schema != nil {
-				dataBytes, _ := json.Marshal(map[string]interface{}{
-					"tool":   toolName,
-					"schema": json.RawMessage(schema),
-				})
-				errResp.Data = dataBytes
-			}
-			return &Response{
-				JSONRPC: JSONRPCVersion,
-				Error:   errResp,
-				ID:      req.ID,
-			}, nil
+	if err := h.ensureServerInitialized(ctx, serverName); err != nil {
+		h.logger.Error("invoke_tool: server initialization failed", "server", serverName, "error", err)
+		schema := h.lookupToolSchema(serverName, toolName)
+		enrichedError := FormatErrorWithHint(fmt.Sprintf("server initialization failed: %v", err), serverName, toolName)
+		errResp := NewError(ErrCodeServerError, enrichedError)
+		if schema != nil {
+			dataBytes, _ := json.Marshal(map[string]interface{}{
+				"tool":   toolName,
+				"schema": json.RawMessage(schema),
+			})
+			errResp.Data = dataBytes
 		}
-		h.pool.MarkServerMCPInitialized(serverName)
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   errResp,
+			ID:      req.ID,
+		}, nil
 	}
 
 	newParams := ToolsCallParams{
