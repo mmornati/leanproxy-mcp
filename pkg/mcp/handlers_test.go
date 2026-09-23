@@ -948,6 +948,46 @@ func TestHandleInvokeTool_LosslessBigIntArguments(t *testing.T) {
 	}
 }
 
+// TestHandleInvokeTool_ServerPrefixedToolNames: invoke_tool strips a
+// repeated server prefix ("slack_list_channels" on server "slack" when the
+// server's tool is "list_channels"), but keeps it when the server's tool is
+// really named with that prefix ("slack_post_message", as in the Slack MCP
+// server). Found by the end-to-end harness (#301).
+func TestHandleInvokeTool_ServerPrefixedToolNames(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	tests := []struct {
+		name, tool, want string
+	}{
+		{"real prefixed tool name is kept", "slack_post_message", "slack_post_message"},
+		{"repeated server prefix is stripped", "slack_list_channels", "list_channels"},
+		{"unprefixed name is unchanged", "list_channels", "list_channels"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mp := newMockPool()
+			mp.SetServerState("slack", pool.StateIdle)
+			var forwarded ToolsCallParams
+			mp.sendRequestFunc = func(_ context.Context, _ string, method string, params json.RawMessage, _ time.Duration) (*pool.Response, error) {
+				if method == MethodToolsCall {
+					_ = json.Unmarshal(params, &forwarded)
+				}
+				return &pool.Response{ID: 1, Result: json.RawMessage(`{"content":[]}`)}, nil
+			}
+			h := NewHandler(mp, logger)
+			h.toolCache.tools["slack"] = []Tool{{Name: "slack_post_message"}, {Name: "list_channels"}}
+
+			args, _ := json.Marshal(map[string]string{"server": "slack", "tool": tt.tool})
+			paramsBytes, _ := json.Marshal(ToolsCallParams{Name: "invoke_tool", Arguments: args})
+			resp, err := h.HandleRequest(context.Background(), &Request{JSONRPC: JSONRPCVersion, Method: MethodToolsCall, ID: 1, Params: paramsBytes})
+			require.NoError(t, err)
+			require.Nil(t, resp.Error)
+			if forwarded.Name != tt.want {
+				t.Fatalf("forwarded tool %q, want %q", forwarded.Name, tt.want)
+			}
+		})
+	}
+}
+
 // TestHandleInvokeTool_RejectsNonObjectArguments covers #296 point 5: a
 // non-object `arguments` payload is rejected with -32602 instead of being
 // silently dropped.

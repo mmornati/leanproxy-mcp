@@ -640,8 +640,22 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		}, nil
 	}
 
+	// Tolerate a model that repeats the server prefix ("github_create_issue"
+	// on server "github"), but never strip it from a tool that really is
+	// named that way: Slack's tools are called "slack_post_message" on a
+	// server usually named "slack".
 	if strings.HasPrefix(toolName, serverName+"_") {
-		toolName = strings.TrimPrefix(toolName, serverName+"_")
+		found, known := h.hasCachedTool(serverName, toolName)
+		if !known {
+			// Only this ambiguous case waits for the server's tool list
+			// (at most its own timeout); a failed refresh keeps the old
+			// strip-the-prefix behavior.
+			_ = h.RefreshServerTools(ctx, serverName)
+			found, _ = h.hasCachedTool(serverName, toolName)
+		}
+		if !found {
+			toolName = strings.TrimPrefix(toolName, serverName+"_")
+		}
 	}
 
 	h.logger.Info("invoke_tool called", "server", serverName, "tool", toolName)
@@ -707,6 +721,21 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 		Result:  resp.Result,
 		ID:      req.ID,
 	}, nil
+}
+
+// hasCachedTool reports whether the tool cache lists toolName on
+// serverName (found), and whether it holds any tools for that server at all
+// (known).
+func (h *Handler) hasCachedTool(serverName, toolName string) (found, known bool) {
+	h.toolCache.mu.RLock()
+	defer h.toolCache.mu.RUnlock()
+	tools := h.toolCache.tools[serverName]
+	for _, t := range tools {
+		if t.Name == toolName {
+			return true, true
+		}
+	}
+	return false, len(tools) > 0
 }
 
 // rawOrNull returns data unchanged, or a JSON null literal when data is

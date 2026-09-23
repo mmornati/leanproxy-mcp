@@ -2,6 +2,34 @@
 
 ## Changed in v0.10
 
+- **Benchmark numbers now come from an end-to-end harness that runs the real binary** ([#301](https://github.com/mmornati/leanproxy-mcp/issues/301)).
+  - **Why.** The README figures came from benchmarks that never ran the proxy:
+    - a session model that ignored `list_tools` output and extra turns;
+    - an empty timing loop;
+    - two `json.Unmarshal` calls presented as proxy overhead;
+    - an in-process mock presented as throughput.
+  - **The harness.** `make harness` (`tests/harness`, `harness` build tag, a new CI job) builds
+    `leanproxy-mcp` and drives `server run --stdio` over pipes. Behind it is a Go mock that serves a
+    118-tool, 5-server catalog. It measures:
+    - tokens, with discovery outputs counted and extra turns reported;
+    - latency, against a direct baseline;
+    - a 500-call burst, 50 parallel slow calls and a 5 MB relay;
+    - RSS;
+    - the Token Firewall.
+  - **Assertions.** The harness fails when any of these breaks:
+    - redaction in both directions;
+    - 0 burst errors;
+    - 50 × 100 ms calls in under 1 s;
+    - the 5 MB relay;
+    - p95 overhead under 5 ms.
+  - **Measured.** README and `docs/benchmark-results.md` are regenerated from its output:
+    - sessions save 72–87% of tokens, not 81.5–93.7%, and cost 3–4 extra LLM turns;
+    - overhead is 0.72 ms at p95.
+  - **Benchmarks.** Misleading `tests/bench` benchmarks were removed or renamed, and the unused
+    `tests/bench/mockmcp` package was deleted.
+  - **Fix: `invoke_tool`.** It no longer strips the server name from a tool that is really named with it,
+    such as Slack's `slack_post_message` on a server called `slack`.
+  - **Fix: status file.** It now honors `$HOME`.
 - **Breaking: `serve` clients must authenticate; the listener rejects HTTP and caps size and concurrency** ([#298](https://github.com/mmornati/leanproxy-mcp/issues/298)).
   The `serve` TCP port had no authentication, so any local process, or any web page through a `text/plain`
   POST to `127.0.0.1:8080` (the HTTP header lines failed to parse and the JSON body line was executed), could
