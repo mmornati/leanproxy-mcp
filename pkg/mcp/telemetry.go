@@ -74,6 +74,7 @@ type instrumentSet struct {
 	cacheMisses      metric.Int64Counter
 	policyDecisions  metric.Int64Counter
 	rateLimitWaits   metric.Int64Counter
+	toolPinEvents    metric.Int64Counter
 	inFlightRequests metric.Int64UpDownCounter
 }
 
@@ -103,6 +104,8 @@ func instruments() *instrumentSet {
 			metric.WithDescription("Policy engine decisions, by outcome."))
 		inst.rateLimitWaits, _ = m.Int64Counter("leanproxy.ratelimit.waits",
 			metric.WithDescription("Requests that waited on a rate limiter."))
+		inst.toolPinEvents, _ = m.Int64Counter("leanproxy.tool_pin.events",
+			metric.WithDescription("Tool pinning events (tool_added, tool_changed, tool_removed, server_identity_changed, tool_flagged, tool_shadowed, call_blocked, ...), by event and server."))
 		inst.inFlightRequests, _ = m.Int64UpDownCounter("mcp.server.requests.in_flight",
 			metric.WithDescription("Requests currently in flight, by server."))
 	})
@@ -146,6 +149,7 @@ type telemetryCounters struct {
 	cacheMisses     atomic.Int64
 	policyDecisions atomic.Int64
 	rateLimitWaits  atomic.Int64
+	toolPinEvents   atomic.Int64
 	inFlight        atomic.Int64
 }
 
@@ -160,6 +164,7 @@ type TelemetryCounters struct {
 	CacheMisses     int64 `json:"cache_misses_total"`
 	PolicyDecisions int64 `json:"policy_decisions_total"`
 	RateLimitWaits  int64 `json:"rate_limit_waits_total"`
+	ToolPinEvents   int64 `json:"tool_pin_events_total"`
 	InFlight        int64 `json:"requests_in_flight"`
 }
 
@@ -174,6 +179,7 @@ func TelemetrySnapshot() TelemetryCounters {
 		CacheMisses:     counters.cacheMisses.Load(),
 		PolicyDecisions: counters.policyDecisions.Load(),
 		RateLimitWaits:  counters.rateLimitWaits.Load(),
+		ToolPinEvents:   counters.toolPinEvents.Load(),
 		InFlight:        counters.inFlight.Load(),
 	}
 }
@@ -217,6 +223,14 @@ func RecordPolicyDecision(ctx context.Context, outcome string) {
 func RecordRateLimitWait(ctx context.Context) {
 	counters.rateLimitWaits.Add(1)
 	instruments().rateLimitWaits.Add(ctx, 1)
+}
+
+// RecordToolPinEvent counts a tool pinning event (#310) by kind and
+// upstream server. Only the event kind and the server name are recorded,
+// never a tool definition.
+func RecordToolPinEvent(ctx context.Context, event, server string) {
+	counters.toolPinEvents.Add(1)
+	instruments().toolPinEvents.Add(ctx, 1, metric.WithAttributes(attribute.String("event", event), attrMCPServerName.String(server)))
 }
 
 // TelemetryMiddleware is the outermost pipeline stage: it opens the SERVER

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/toolpin"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 )
 
@@ -101,9 +102,15 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 	}
 
 	unknown := h.awaitColdServers(ctx, servers)
+	h.awaitPinned(ctx, servers)
 
-	hits := h.searchIndex().Search(ctx, toolsearch.Query{Text: args.Query, K: k, Server: args.Server})
-	lines := make([]string, 0, len(hits)+1)
+	// Tool pinning (#310): blocked tools are never ranked (block mode).
+	exclude := h.pinExclude()
+	hits := h.searchIndex().Search(ctx, toolsearch.Query{Text: args.Query, K: k, Server: args.Server, Exclude: exclude})
+	lines := make([]string, 0, len(hits)+2)
+	if w := h.pinSearchWarning(hits); w != "" {
+		lines = append(lines, w)
+	}
 	var structured []StructuredTool
 	if h.sessionFor(ctx).AtLeast(ProtocolVersion20250618) {
 		structured = make([]StructuredTool, 0, len(hits))
@@ -120,14 +127,60 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 			structured = append(structured, StructuredTool{Server: hit.Tool.Server, Tool: tool})
 		}
 	}
-	if len(lines) == 0 {
+	if len(hits) == 0 {
 		lines = append(lines, fmt.Sprintf("No tools match %q. Try other words, or browse with list_servers and list_tools.", args.Query))
+	}
+	if exclude != nil {
+		// How many of the unfiltered top k were hidden.
+		n := 0
+		for _, hit := range h.searchIndex().Search(ctx, toolsearch.Query{Text: args.Query, K: k, Server: args.Server}) {
+			if exclude(hit.Tool.Server, hit.Tool.Name) {
+				n++
+			}
+		}
+		if n > 0 {
+			lines = append(lines, fmt.Sprintf("(%d matching tool(s) hidden by tool pinning until approved; see `leanproxy-mcp tools pins list`)", n))
+		}
 	}
 	if len(unknown) > 0 {
 		lines = append(lines, fmt.Sprintf("(tools of %s not known yet: unreachable or still starting)", strings.Join(unknown, ", ")))
 	}
 	h.logger.Info("search_tools completed", "results", len(hits), "k", k, "server", args.Server)
 	return toolListingResult(req.ID, strings.Join(lines, "\n"), structured), nil
+}
+
+// pinSearchWarning is warn mode's one-line warning about hits that are
+// awaiting approval ("" when none).
+func (h *Handler) pinSearchWarning(hits []toolsearch.Hit) string {
+	p := h.pinner()
+	if p == nil || p.Mode() != toolpin.ModeWarn {
+		return ""
+	}
+	parts := make([]string, 0, len(hits))
+	servers := map[string]bool{}
+	for _, hit := range hits {
+		st, _ := p.Check(hit.Tool.Server, hit.Tool.Name)
+		identity := p.IdentityPending(hit.Tool.Server)
+		if st != toolpin.StatusChanged && st != toolpin.StatusNew && !identity {
+			continue
+		}
+		label := string(st)
+		if identity {
+			label = "server identity changed"
+		}
+		parts = append(parts, hit.Tool.Server+"_"+hit.Tool.Name+" ("+label+")")
+		servers[hit.Tool.Server] = true
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	review := "leanproxy-mcp tools pins diff"
+	if len(servers) == 1 {
+		for s := range servers {
+			review += " " + s
+		}
+	}
+	return fmt.Sprintf("WARNING (tool pinning): not approved since they changed: %s. Review with `%s`.", strings.Join(parts, ", "), review)
 }
 
 // cachedTool returns the cached definition of one tool of server.

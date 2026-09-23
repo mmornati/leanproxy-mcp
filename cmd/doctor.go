@@ -30,7 +30,7 @@ var securityCheck bool
 
 var doctorSecurityCmd = &cobra.Command{
 	Use:   "security",
-	Short: "Show injection security policy and quarantine status",
+	Short: "Show injection security policy, quarantine and tool pinning status",
 	Run: func(cmd *cobra.Command, args []string) {
 		runSecurityDiagnostic()
 	},
@@ -120,6 +120,9 @@ func runSecurityDiagnostic() {
 	fmt.Println()
 
 	fmt.Printf("Total quarantined payloads: %d\n", len(qFiles))
+	fmt.Println()
+
+	printToolPinningStatus(os.Stdout)
 }
 
 // runEnvDiagnostic prints, per configured stdio server, the environment

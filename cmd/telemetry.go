@@ -46,8 +46,15 @@ func initTelemetry(ctx context.Context, cfg *migrate.Config) *telemetry.Provider
 // This is the single place both `server run --stdio` (Handler.Use) and
 // `serve` (the per-request mcp.Chain in serveRequest) build their pipeline
 // from, so the two front ends stay instrumented identically.
-func tracedMiddlewares(respCache *mcp.ResponseCache, firewall *mcp.Firewall) []mcp.Middleware {
+//
+// Tool pinning (#310) comes right after the telemetry span and before the
+// response cache, so a call to a tool blocked since its answer was cached
+// is still refused.
+func tracedMiddlewares(respCache *mcp.ResponseCache, firewall *mcp.Firewall, pins *mcp.ToolPins) []mcp.Middleware {
 	mws := []mcp.Middleware{mcp.TelemetryMiddleware()}
+	if pins != nil {
+		mws = append(mws, mcp.Traced("tool_pinning", pins.Middleware()))
+	}
 	if respCache != nil {
 		mws = append(mws, mcp.Traced("cache", respCache.Middleware()))
 	}

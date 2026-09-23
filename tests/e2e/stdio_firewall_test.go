@@ -92,7 +92,17 @@ type stdioSession struct {
 
 func startStdioProxy(t *testing.T, proxyBin, configPath string) *stdioSession {
 	t.Helper()
+	return startStdioProxyEnv(t, proxyBin, configPath, nil)
+}
+
+// startStdioProxyEnv is startStdioProxy with extra environment variables
+// (KEY=VALUE) on top of the test process's own.
+func startStdioProxyEnv(t *testing.T, proxyBin, configPath string, env []string) *stdioSession {
+	t.Helper()
 	cmd := exec.Command(proxyBin, "server", "run", "--stdio", "--config", configPath)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)

@@ -1216,3 +1216,33 @@ func TestConfigValidateInjection(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfigToolPinning(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "leanproxy_servers.yaml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	base := "servers:\n  - name: gh\n    transport: stdio\n    stdio:\n      command: /bin/true\n"
+	cfg, err := LoadConfig(context.Background(), write(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ToolPinningConfig() != nil || cfg.ToolPinningConfig().EffectiveMode() != "warn" {
+		t.Fatal("no security block must mean the defaults (warn)")
+	}
+	cfg, err = LoadConfig(context.Background(), write(base+"security:\n  tool_pinning:\n    mode: block\n    path: /tmp/p.json\n    allowed_domains: [docs.example.dev]\n    max_description_chars: 500\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := cfg.ToolPinningConfig()
+	if pc.EffectiveMode() != "block" || pc.Path != "/tmp/p.json" || pc.AllowedDomains[0] != "docs.example.dev" || pc.EffectiveMaxDescriptionChars() != 500 {
+		t.Fatalf("parsed %+v", pc)
+	}
+	if _, err := LoadConfig(context.Background(), write(base+"security:\n  tool_pinning:\n    mode: paranoid\n")); err == nil {
+		t.Fatal("an unknown mode must be rejected")
+	}
+}

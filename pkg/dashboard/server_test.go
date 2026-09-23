@@ -2,16 +2,19 @@ package dashboard
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolpin"
 )
 
 func waitForServer(addr string) bool {
@@ -628,5 +631,25 @@ func TestDashboardLoginCookieFlow(t *testing.T) {
 	badResp.Body.Close()
 	if badResp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status for wrong login token = %d, want 401", badResp.StatusCode)
+	}
+}
+
+func TestDashboardToolPinsEndpoint(t *testing.T) {
+	store, err := toolpin.OpenStore(filepath.Join(t.TempDir(), "pins.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := toolpin.NewWithOptions(toolpin.Options{Mode: toolpin.ModeWarn, Store: store, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	p.Observe("dashsrv", nil, []toolpin.Definition{{Name: "t", Description: "one"}})
+	p.Observe("dashsrv", nil, []toolpin.Definition{{Name: "t", Description: "<script>alert(1)</script> two"}})
+
+	rec := httptest.NewRecorder()
+	handleToolPins(rec, httptest.NewRequest(http.MethodGet, "/api/dashboard/tool-pins", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "tool_changed") || !strings.Contains(body, "dashsrv") {
+		t.Fatalf("tool pinning events missing: %s", body)
+	}
+	if strings.Contains(body, "<script>") {
+		t.Fatalf("event details must be HTML-escaped: %s", body)
 	}
 }

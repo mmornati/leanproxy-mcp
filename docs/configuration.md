@@ -609,6 +609,7 @@ leanproxy-mcp namespace assign engineering github
 | `LEANPROXY_LOG_LEVEL` | Log level |
 | `LEANPROXY_HOST` | Server host |
 | `LEANPROXY_PORT` | Server port |
+| `LEANPROXY_PINS_FILE` | Tool pinning file; wins over `security.tool_pinning.path` (see [Tool Pinning](#tool-pinning-securitytool_pinning)) |
 
 ## Prompt Injection Protection
 
@@ -742,6 +743,66 @@ score capped at 100.
 | `important-override` | 30 | Urgency-based |
 | `send-to-url` | 30 | Data sent to a URL |
 | `hypothetical-override` | 25 | Hypothetical scenarios |
+
+## Tool Pinning (`security.tool_pinning`)
+
+Tool pinning (#310) records a hash of every upstream tool definition and
+reports — or, in `block` mode, refuses — tools whose definition changed since
+you approved them ("rug pull"), tools added later, and tools whose metadata
+the description scanner flags (tool poisoning). It is **on by default in
+`warn` mode**, and `server run --stdio` and `serve` enforce it identically.
+See [Security](./security.md#tool-pinning-rug-pull-detection) for what is
+hashed and scanned.
+
+### Configuration
+
+```yaml
+security:
+  tool_pinning:
+    mode: warn                      # off | warn (default) | block
+    path: ~/.config/leanproxy/pins.json   # default; LEANPROXY_PINS_FILE wins
+    allowed_domains:                # URL hosts the scanner never reports
+      - docs.github.com
+    max_description_chars: 2000     # long-description threshold
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `mode` | string | `warn` | `off`: nothing pinned or checked. `warn`: drift is logged, reported by `doctor security` and the dashboard, and `list_tools` / `search_tools` carry a one-line warning. `block`: new or changed tools (and every tool of a server whose `serverInfo` name changed) are hidden from `list_tools` / `search_tools`, and calls to them are refused with a JSON-RPC error naming the approval command |
+| `path` | string | `~/.config/leanproxy/pins.json` | Pin file. Written atomically (temporary file, fsync, rename), mode `0600` in a `0700` directory. `LEANPROXY_PINS_FILE` overrides it |
+| `allowed_domains` | list of string | `[]` | Hosts (and their subdomains) the scanner's `external-url` rule ignores. An HTTP/SSE server's own URL host is always allowed for that server |
+| `max_description_chars` | int | `2000` | A description longer than this gets a low-severity `long-description` finding |
+
+### Lifecycle
+
+1. **Trust on first use.** The first time a server's tools are listed (no pin
+   file, or no entry for that server) every tool is pinned and approved, and
+   one info line is logged per server — except tools with a **high-severity
+   scanner finding**, which stay pending until approved.
+2. **Drift detection.** Every tool refresh — startup, `notifications/tools/list_changed`,
+   a restart of the upstream — is compared with the pins. Events:
+   `tool_added`, `tool_changed` (logged with a unified diff), `tool_removed`,
+   `server_identity_changed` (the upstream's `serverInfo.name` changed),
+   `tool_flagged` (scanner finding), `tool_shadowed` (another server exposes a
+   tool whose normalized name collides), `tool_reverted`.
+3. **Review and approve** with `leanproxy-mcp tools pins diff [server]` and
+   `leanproxy-mcp tools pins approve <server> <tool>...|--all` (see
+   [Commands](./commands.md#tools-pins-tool-pinning)). A running proxy picks the
+   change up within a second; a restart keeps it.
+   `tools pins reset <server>` forgets a server's pins (pinned again, trusted on
+   first use, at the next refresh).
+
+In `block` mode, the first call to a server after a start waits (at most 5 s)
+for that server's current tool list to be compared with the pins, so an
+upstream that changed while the proxy was down is caught before its tool runs.
+
+Independently of the mode — even with `mode: off` — invisible and bidi
+characters (U+200B–U+200F, U+202A–U+202E, U+2060–U+2064, U+2066–U+2069,
+U+FEFF and the tag characters U+E0000–U+E007F) are stripped from tool titles,
+descriptions, schema strings and annotation titles before they reach the
+client.
 
 ## Response Cache
 

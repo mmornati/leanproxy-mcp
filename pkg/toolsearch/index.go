@@ -73,6 +73,17 @@ type Query struct {
 	K int
 	// Server, when set, restricts the results to that server's tools.
 	Server string
+	// Exclude, when set, drops the tools it reports before the top K are
+	// taken (tool pinning hides tools awaiting approval, #310).
+	Exclude func(server, name string) bool
+}
+
+// skip reports whether q filters out t.
+func (q *Query) skip(t Tool) bool {
+	if q.Server != "" && t.Server != q.Server {
+		return true
+	}
+	return q.Exclude != nil && q.Exclude(t.Server, t.Name)
 }
 
 // Options configure an Index. The zero value is BM25 with the default
@@ -373,7 +384,7 @@ func (ix *Index) bm25(snap *snapshot, q Query) []scored {
 		if s <= 0 {
 			continue
 		}
-		if q.Server != "" && snap.docs[i].tool.Server != q.Server {
+		if q.skip(snap.docs[i].tool) {
 			continue
 		}
 		out = append(out, scored{doc: i, score: s})

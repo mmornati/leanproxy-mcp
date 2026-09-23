@@ -515,6 +515,12 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	// similarity) only when tool_search.hybrid is enabled.
 	configureToolSearch(refreshCtx, handler, cfg.ToolSearch)
 
+	// Tool pinning (#310): every refresh below is compared with the pins
+	// before its tools reach the cache.
+	pins := mcp.NewToolPins(newToolPinner(cfg))
+	handler.SetToolPins(pins)
+	slog.Info(pins.Summary())
+
 	// Serve immediately from the persistent tool cache and refresh every
 	// server's tools in the background (#297): no request ever waits for
 	// another server's tools/list.
@@ -529,7 +535,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	// outermost, ahead of the firewall middlewares: see the ordering
 	// explanation on mcp.ResponseCache.
 	respCache := mcp.NewResponseCache(cfg.ResponseCache)
-	handler.Use(tracedMiddlewares(respCache, firewall)...)
+	handler.Use(tracedMiddlewares(respCache, firewall, pins)...)
 
 	// Server-to-client requests, progress and resource updates from the
 	// upstreams (#308): per-server policy (allow_sampling, roots), the same

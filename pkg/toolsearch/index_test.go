@@ -234,3 +234,24 @@ func TestConfig(t *testing.T) {
 		t.Errorf("disabled hybrid block rejected: %v", err)
 	}
 }
+
+func TestSearchExclude(t *testing.T) {
+	ix := smallIndex(Options{})
+	ctx := context.Background()
+	all := ix.Search(ctx, Query{Text: "create issue", K: 3})
+	if len(all) < 2 {
+		t.Fatalf("need at least two hits, got %v", names(all))
+	}
+	first := all[0].Tool
+	hits := ix.Search(ctx, Query{Text: "create issue", K: 3, Exclude: func(server, name string) bool {
+		return server == first.Server && name == first.Name
+	}})
+	for _, h := range hits {
+		if h.Tool.Server == first.Server && h.Tool.Name == first.Name {
+			t.Fatalf("excluded tool returned: %v", names(hits))
+		}
+	}
+	if want := len(ix.Search(ctx, Query{Text: "create issue", K: MaxK})) - 1; len(hits) != min(want, 3) {
+		t.Fatalf("an excluded hit must be replaced by the next one: %v vs %v", names(hits), names(all))
+	}
+}

@@ -279,7 +279,10 @@ func (h *Handler) fetchServerTools(name string) error {
 		return err
 	}
 
-	h.setServerTools(name, tools)
+	// Tool pinning (#310) sees the definitions exactly as the upstream sent
+	// them; clients only ever see them with invisible characters stripped.
+	h.observePins(name, tools)
+	h.setServerTools(name, sanitizeTools(tools))
 	return nil
 }
 
@@ -333,7 +336,7 @@ func (h *Handler) loadFromPersistentCache() {
 			continue
 		}
 
-		tools := cachedToolsToTools(cachedTools)
+		tools := sanitizeTools(cachedToolsToTools(cachedTools))
 
 		h.searchIndex().SetServerTools(serverName, toSearchTools(tools))
 		h.toolCache.mu.Lock()

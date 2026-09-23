@@ -102,6 +102,11 @@ var serveFirewall = &mcp.Firewall{Redaction: &mcp.Redaction{}, Injection: &mcp.I
 // block; the zero value is disabled until then.
 var serveResponseCache = mcp.NewResponseCache(nil)
 
+// servePins is serve's tool pinning state (#310), configured at startup
+// from security.tool_pinning; the same middleware and handler checks as
+// `server run --stdio`.
+var servePins = &mcp.ToolPins{}
+
 // serveMCPHandler is the pkg/mcp handler behind serve's MCP protocol
 // methods (initialize with version negotiation, and the resources/prompts
 // aggregation of #307): the same handler `server run --stdio` uses, without
@@ -396,6 +401,10 @@ func runServe(cmd *cobra.Command, args []string) {
 	}
 
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), toolStore)
+	servePins.Set(newToolPinner(loadedCfg))
+	servePins.SetServerNames(knownServerNames)
+	handler.SetToolPins(servePins)
+	slog.Info(servePins.Summary())
 	if loadedCfg != nil {
 		for _, srv := range loadedCfg.Servers {
 			if srv.TimeoutValue > 0 {
@@ -607,7 +616,7 @@ func serveRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Router, gt g
 		req.Params = mreq.Params
 		return toMCPResponse(dispatchServeRequest(ctx, req, r, gt, p)), nil
 	}
-	resp, _ := mcp.Chain(dispatch, tracedMiddlewares(serveResponseCache, serveFirewall)...)(ctx, toMCPRequest(req))
+	resp, _ := mcp.Chain(dispatch, tracedMiddlewares(serveResponseCache, serveFirewall, servePins)...)(ctx, toMCPRequest(req))
 	return fromMCPResponse(resp)
 }
 
