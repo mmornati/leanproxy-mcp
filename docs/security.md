@@ -8,6 +8,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 |---------|-------------|
 | **Least-Privilege Child Environment** | Stdio MCP servers get a minimal environment by default instead of the proxy's full environment (#311) |
 | **Dashboard & Metrics Hardening** | Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
+| **First-Party Servers Hardening** | Postgres: real read-only transaction, not just a text prefix check. Redis: pool that can't deadlock, bounded RESP allocations, per-command deadlines (#318) |
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
 | **Prompt Injection Protection** | Classifies payloads against injection patterns with risk scoring and configurable actions |
 | **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model for sensitive data beyond regex |
@@ -64,6 +65,50 @@ present in the proxy's environment but not being passed to it.
   `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`.
 
 See [Dashboard](dashboard.md#authentication) for the full flag reference.
+
+## First-party servers hardening: Postgres, Redis (#318)
+
+`servers/postgres` and `servers/redis` are small first-party stdio servers (bundling more is a
+non-goal — official vendor servers exist for most databases). This release fixes the security and
+robustness bugs found in them.
+
+**Postgres — a real read-only mode, not just a text check.** The `postgresql_query` tool used to gate
+queries on a prefix check (`SELECT`/`EXPLAIN`) that a query text can slip past while still writing:
+`EXPLAIN ANALYZE DELETE ...` executes the statement, `SELECT ... INTO ...` creates a table, `SELECT
+pg_terminate_backend(...)`/`set_config(...)`/`lo_import(...)`/`dblink_exec(...)` all have side effects,
+and `WITH x AS (DELETE ... RETURNING *) SELECT * FROM x` hides a DELETE in a CTE. There was also no way
+to disable `postgresql_execute` (arbitrary INSERT/UPDATE/DELETE/DDL) at all. Now:
+
+- `LEANPROXY_POSTGRES_READ_ONLY` (default `true`) makes the server not register `postgresql_execute` at
+  all — it is absent from `tools/list`.
+- `postgresql_query` always runs inside a real `BEGIN ... READ ONLY` transaction (with `SET LOCAL
+  statement_timeout`), rolled back afterwards, regardless of that flag. This is the actual boundary: the
+  prefix check is a UX hint only, and Postgres itself refuses any write attempted inside the read-only
+  transaction, however the query text disguised it.
+- Queries go through pgx's extended protocol, which also rejects a `;`-separated multi-statement string.
+- A read-only Postgres **role** is still the real defense in depth for `LEANPROXY_POSTGRES_CONNECTION`;
+  see [Configuration: First-Party Servers](configuration.md#first-party-servers-postgres-and-redis) for
+  the recommended grants.
+
+**Redis — pool deadlock and unbounded RESP allocations.** `withConn` used to receive from the connection
+pool channel while holding the client's mutex, and on a failed re-dial it returned without ever putting
+the borrowed slot back — under sustained failures the pool drained permanently and every subsequent call,
+including `Close()`, blocked forever. The RESP parser also trusted server-sent `$n`/`*n` lengths outright,
+so a malicious or compromised Redis server (or a man-in-the-middle on a connection without
+`LEANPROXY_REDIS_TLS`) could force an unbounded allocation. Now:
+
+- Every borrowed connection is returned to the pool on every path, including a failed re-dial, so the
+  pool can never drain and `Close()` always returns promptly.
+- `LEANPROXY_REDIS_MAX_BULK_LEN` (default 16 MiB) and `LEANPROXY_REDIS_MAX_ARRAY_LEN` (default 1,000,000)
+  cap what a single reply can make the client allocate; exceeding either is an error and the connection
+  is closed.
+- `LEANPROXY_REDIS_DIAL_TIMEOUT` and `LEANPROXY_REDIS_COMMAND_TIMEOUT` (both default `5s`) bound
+  connecting/re-connecting and every command, so an unresponsive server can no longer hang a caller.
+- The exposed command set is unchanged and intentionally small: `redis_get`, `redis_set`,
+  `redis_delete`, `redis_keys`, `redis_exists` — no escape hatch to arbitrary Redis commands.
+
+See [Configuration: First-Party Servers](configuration.md#first-party-servers-postgres-and-redis) for the
+full environment-variable reference.
 
 ## `serve` listener authentication
 

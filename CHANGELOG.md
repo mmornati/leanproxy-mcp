@@ -50,6 +50,32 @@
     [`docs/dashboard.md`](docs/dashboard.md#authentication) and
     [`docs/security.md`](docs/security.md#dashboard--metrics-hardening-316).
 
+- **First-party servers hardening: real Postgres read-only mode, Redis pool deadlock and RESP allocation fixes** ([#318](https://github.com/mmornati/leanproxy-mcp/issues/318)).
+  - **What.** `servers/postgres`'s `postgresql_query` tool relied on a `SELECT`/`EXPLAIN` text prefix
+    check that a query can slip past while still writing (`EXPLAIN ANALYZE DELETE ...` executes the
+    statement, `SELECT ... INTO ...` creates a table, side-effecting functions like
+    `pg_terminate_backend(...)`, or `WITH x AS (DELETE ... RETURNING *) SELECT * FROM x`), and there was
+    no way to disable `postgresql_execute` (arbitrary INSERT/UPDATE/DELETE/DDL) at all.
+    `servers/redis`'s connection pool (`pkg/redistools`) could deadlock: `withConn` received from the
+    pool channel while holding the client's mutex, and on a failed re-dial it never returned the
+    borrowed slot, so sustained failures permanently drained the pool and every later call — including
+    `Close()` — blocked forever. Its RESP parser also trusted server-sent `$n`/`*n` lengths outright, so
+    a malicious or compromised server (or a MITM on a connection without `LEANPROXY_REDIS_TLS`) could
+    force an unbounded allocation, and connections had no read/write deadlines.
+  - **Now.** Postgres: `LEANPROXY_POSTGRES_READ_ONLY` (default **true**) removes `postgresql_execute`
+    from `tools/list` entirely; `postgresql_query` always runs inside a real `BEGIN ... READ ONLY`
+    transaction (with `SET LOCAL statement_timeout`), rolled back afterwards, regardless of that flag —
+    the prefix check is now a UX hint only, not the security boundary. Queries go through pgx's extended
+    protocol, which also rejects `;`-separated multi-statement injection. Redis: every borrowed
+    connection is returned to the pool on every path (including a failed re-dial), so the pool can never
+    drain and `Close()` always returns promptly; `LEANPROXY_REDIS_MAX_BULK_LEN` (default 16 MiB) and
+    `LEANPROXY_REDIS_MAX_ARRAY_LEN` (default 1,000,000) cap RESP reply allocations; `LEANPROXY_REDIS_DIAL_TIMEOUT`
+    and `LEANPROXY_REDIS_COMMAND_TIMEOUT` (both default `5s`) bound connect/re-connect and every command.
+  - **Migration.** A deployment that calls `postgresql_execute` through `servers/postgres` must now set
+    `LEANPROXY_POSTGRES_READ_ONLY=false` explicitly — it is no longer registered by default. See
+    [`docs/configuration.md`](docs/configuration.md#first-party-servers-postgres-and-redis) and
+    [`docs/security.md`](docs/security.md#first-party-servers-hardening-postgres-redis-318).
+
 ## Added in v0.11
 
 - **`search_tools`: ranked tool search across every server** ([#305](https://github.com/mmornati/leanproxy-mcp/issues/305)).

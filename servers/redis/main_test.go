@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/redistools"
@@ -15,6 +16,10 @@ func TestGetConfig_Defaults(t *testing.T) {
 	os.Unsetenv("LEANPROXY_REDIS_PASSWORD")
 	os.Unsetenv("LEANPROXY_REDIS_POOL_SIZE")
 	os.Unsetenv("LEANPROXY_REDIS_TLS")
+	os.Unsetenv("LEANPROXY_REDIS_DIAL_TIMEOUT")
+	os.Unsetenv("LEANPROXY_REDIS_COMMAND_TIMEOUT")
+	os.Unsetenv("LEANPROXY_REDIS_MAX_BULK_LEN")
+	os.Unsetenv("LEANPROXY_REDIS_MAX_ARRAY_LEN")
 
 	cfg := getConfig()
 	if cfg.Address != "127.0.0.1:6379" {
@@ -29,6 +34,18 @@ func TestGetConfig_Defaults(t *testing.T) {
 	if cfg.UseTLS {
 		t.Error("expected TLS disabled")
 	}
+	if cfg.DialTimeout != redistools.DefaultDialTimeout {
+		t.Errorf("dial timeout = %v, want %v", cfg.DialTimeout, redistools.DefaultDialTimeout)
+	}
+	if cfg.CommandTimeout != redistools.DefaultCommandTimeout {
+		t.Errorf("command timeout = %v, want %v", cfg.CommandTimeout, redistools.DefaultCommandTimeout)
+	}
+	if cfg.MaxBulkLen != redistools.DefaultMaxBulkLen {
+		t.Errorf("max bulk len = %d, want %d", cfg.MaxBulkLen, redistools.DefaultMaxBulkLen)
+	}
+	if cfg.MaxArrayLen != redistools.DefaultMaxArrayLen {
+		t.Errorf("max array len = %d, want %d", cfg.MaxArrayLen, redistools.DefaultMaxArrayLen)
+	}
 }
 
 func TestGetConfig_FromEnv(t *testing.T) {
@@ -36,6 +53,10 @@ func TestGetConfig_FromEnv(t *testing.T) {
 	t.Setenv("LEANPROXY_REDIS_PASSWORD", "secret")
 	t.Setenv("LEANPROXY_REDIS_POOL_SIZE", "20")
 	t.Setenv("LEANPROXY_REDIS_TLS", "true")
+	t.Setenv("LEANPROXY_REDIS_DIAL_TIMEOUT", "2s")
+	t.Setenv("LEANPROXY_REDIS_COMMAND_TIMEOUT", "3s")
+	t.Setenv("LEANPROXY_REDIS_MAX_BULK_LEN", "1024")
+	t.Setenv("LEANPROXY_REDIS_MAX_ARRAY_LEN", "10")
 
 	cfg := getConfig()
 	if cfg.Address != "10.0.0.1:6380" {
@@ -49,6 +70,18 @@ func TestGetConfig_FromEnv(t *testing.T) {
 	}
 	if !cfg.UseTLS {
 		t.Error("expected TLS enabled")
+	}
+	if cfg.DialTimeout != 2*time.Second {
+		t.Errorf("dial timeout = %v, want 2s", cfg.DialTimeout)
+	}
+	if cfg.CommandTimeout != 3*time.Second {
+		t.Errorf("command timeout = %v, want 3s", cfg.CommandTimeout)
+	}
+	if cfg.MaxBulkLen != 1024 {
+		t.Errorf("max bulk len = %d, want 1024", cfg.MaxBulkLen)
+	}
+	if cfg.MaxArrayLen != 10 {
+		t.Errorf("max array len = %d, want 10", cfg.MaxArrayLen)
 	}
 }
 

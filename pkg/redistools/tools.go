@@ -23,6 +23,26 @@ const (
 	toolExists = "redis_exists"
 
 	DefaultPoolSize = 10
+
+	// DefaultDialTimeout bounds the initial TCP connect (and the AUTH/SELECT
+	// handshake that follows it) when opening or re-opening a connection.
+	DefaultDialTimeout = 5 * time.Second
+	// DefaultCommandTimeout is the read/write deadline applied to every
+	// command sent over a pooled connection, so a server that stops
+	// responding cannot hang a caller (or a pool slot) forever.
+	DefaultCommandTimeout = 5 * time.Second
+	// DefaultMaxBulkLen caps how large a single RESP bulk string ($n) the
+	// client will allocate for. A server (or a man-in-the-middle without
+	// TLS) advertising a bigger length gets an error instead of an
+	// unbounded allocation.
+	DefaultMaxBulkLen = 16 * 1024 * 1024
+	// DefaultMaxArrayLen caps how many elements a single RESP array (*n)
+	// the client will allocate for, for the same reason.
+	DefaultMaxArrayLen = 1_000_000
+	// maxLineLen bounds a single-line RESP reply (+, -, :, the length
+	// prefix of $ and *) so a server that never sends "\n" cannot make the
+	// client grow an unbounded buffer one byte at a time.
+	maxLineLen = 64 * 1024
 )
 
 type ToolDefinition struct {
@@ -39,13 +59,30 @@ type Config struct {
 	PoolSize int    `json:"pool_size"`
 	DB       int    `json:"db"`
 	UseTLS   bool   `json:"use_tls"`
+
+	// DialTimeout bounds a (re)connect, including the AUTH/SELECT handshake.
+	DialTimeout time.Duration `json:"dial_timeout"`
+	// CommandTimeout is the read/write deadline applied to every command.
+	CommandTimeout time.Duration `json:"command_timeout"`
+	// MaxBulkLen caps the size the client will allocate for a RESP bulk
+	// string reply. 0 uses DefaultMaxBulkLen; a negative value disables
+	// the cap (not recommended).
+	MaxBulkLen int64 `json:"max_bulk_len"`
+	// MaxArrayLen caps the number of elements the client will allocate for
+	// a RESP array reply. 0 uses DefaultMaxArrayLen; a negative value
+	// disables the cap (not recommended).
+	MaxArrayLen int64 `json:"max_array_len"`
 }
 
 func DefaultConfig() Config {
 	return Config{
-		Address:  "127.0.0.1:6379",
-		PoolSize: DefaultPoolSize,
-		DB:       0,
+		Address:        "127.0.0.1:6379",
+		PoolSize:       DefaultPoolSize,
+		DB:             0,
+		DialTimeout:    DefaultDialTimeout,
+		CommandTimeout: DefaultCommandTimeout,
+		MaxBulkLen:     DefaultMaxBulkLen,
+		MaxArrayLen:    DefaultMaxArrayLen,
 	}
 }
 
@@ -59,7 +96,15 @@ type RedisClient struct {
 	logger *slog.Logger
 	pool   chan *pooledConn
 	tools  map[string]ToolHandler
-	mu     sync.Mutex
+	// mu is held exclusively only while closing the pool channel (Close),
+	// and with a read lock while returning a connection to it (release).
+	// That ordering is what makes it safe to send on c.pool from many
+	// goroutines while Close concurrently closes it: release always
+	// observes `closed` and the channel-closed state consistently. It is
+	// never held while receiving from c.pool (that would let a caller
+	// waiting for a free connection block Close and every other caller
+	// behind it, which is the deadlock this replaces).
+	mu     sync.RWMutex
 	closed atomic.Bool
 }
 
@@ -69,6 +114,18 @@ func NewRedisClient(logger *slog.Logger, cfg Config) (*RedisClient, error) {
 	}
 	if cfg.PoolSize <= 0 {
 		cfg.PoolSize = DefaultPoolSize
+	}
+	if cfg.DialTimeout <= 0 {
+		cfg.DialTimeout = DefaultDialTimeout
+	}
+	if cfg.CommandTimeout <= 0 {
+		cfg.CommandTimeout = DefaultCommandTimeout
+	}
+	if cfg.MaxBulkLen == 0 {
+		cfg.MaxBulkLen = DefaultMaxBulkLen
+	}
+	if cfg.MaxArrayLen == 0 {
+		cfg.MaxArrayLen = DefaultMaxArrayLen
 	}
 
 	client := &RedisClient{
@@ -103,7 +160,7 @@ func NewRedisClient(logger *slog.Logger, cfg Config) (*RedisClient, error) {
 }
 
 func (c *RedisClient) dial() (net.Conn, error) {
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	dialer := &net.Dialer{Timeout: c.config.DialTimeout}
 	var conn net.Conn
 	var err error
 	if c.config.UseTLS {
@@ -116,6 +173,13 @@ func (c *RedisClient) dial() (net.Conn, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	// Bound the AUTH/SELECT handshake too: without a deadline a server that
+	// accepts the TCP connection but never replies would hang here forever.
+	if err := conn.SetDeadline(time.Now().Add(c.config.DialTimeout)); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("set handshake deadline: %w", err)
 	}
 
 	if c.config.Password != "" {
@@ -140,6 +204,12 @@ func (c *RedisClient) dial() (net.Conn, error) {
 		}
 	}
 
+	// Clear the handshake deadline; withConn sets a fresh one per command.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("clear handshake deadline: %w", err)
+	}
+
 	return conn, nil
 }
 
@@ -153,7 +223,11 @@ func (c *RedisClient) Close() {
 	c.mu.Unlock()
 
 	for pc := range c.pool {
-		pc.conn.Close()
+		pc.mu.Lock()
+		if pc.conn != nil {
+			pc.conn.Close()
+		}
+		pc.mu.Unlock()
 	}
 }
 
@@ -235,41 +309,90 @@ func (c *RedisClient) CallTool(ctx context.Context, name string, args json.RawMe
 	return handler(ctx, args)
 }
 
-func (c *RedisClient) withConn(fn func(conn net.Conn) error) error {
-	c.mu.Lock()
+// withConn borrows a pooled connection, runs fn on it and always returns a
+// slot to the pool afterwards — including when fn fails and re-dialing to
+// replace the broken connection also fails. That "always return the slot" is
+// what stops the pool from draining under repeated failures: every borrow is
+// matched by exactly one release, on every path, so Close can always collect
+// every slot back and return promptly instead of blocking forever.
+//
+// It never holds c.mu while receiving from c.pool. Holding it there is what
+// used to deadlock: a caller blocked on <-c.pool while holding c.mu, and
+// Close (which needs c.mu to close the pool channel) could then never run,
+// so nothing already in flight could finish releasing its slot either.
+func (c *RedisClient) withConn(ctx context.Context, fn func(conn net.Conn) error) error {
 	if c.closed.Load() {
-		c.mu.Unlock()
 		return fmt.Errorf("client is closed")
 	}
 
 	pc, ok := <-c.pool
 	if !ok {
-		c.mu.Unlock()
 		return fmt.Errorf("client is closed")
 	}
-	c.mu.Unlock()
 
 	pc.mu.Lock()
-	defer pc.mu.Unlock()
+	err := c.runOnConn(ctx, pc, fn)
+	pc.mu.Unlock()
+
+	c.release(pc)
+	return err
+}
+
+// runOnConn must be called with pc.mu held. It (re)dials a missing
+// connection, applies the command deadline, runs fn, and on any failure
+// closes the connection and tries once to replace it so the next borrower
+// gets a fresh attempt rather than a permanently broken slot.
+func (c *RedisClient) runOnConn(ctx context.Context, pc *pooledConn, fn func(conn net.Conn) error) error {
+	if pc.conn == nil {
+		newConn, dialErr := c.dial()
+		if dialErr != nil {
+			return fmt.Errorf("re-dial failed: %w", dialErr)
+		}
+		pc.conn = newConn
+	}
+
+	deadline := time.Now().Add(c.config.CommandTimeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if err := pc.conn.SetDeadline(deadline); err != nil {
+		pc.conn.Close()
+		pc.conn = nil
+		return fmt.Errorf("set command deadline: %w", err)
+	}
 
 	err := fn(pc.conn)
 	if err != nil {
 		pc.conn.Close()
+		pc.conn = nil
 		newConn, dialErr := c.dial()
 		if dialErr != nil {
 			return fmt.Errorf("operation failed and re-dial failed: %w (dial: %v)", err, dialErr)
 		}
 		pc.conn = newConn
 	}
-
-	c.mu.Lock()
-	if !c.closed.Load() {
-		c.pool <- pc
-	} else {
-		pc.conn.Close()
-	}
-	c.mu.Unlock()
 	return err
+}
+
+// release returns pc to the pool, or closes its connection if the client is
+// already closed. Taking a read lock here — while Close takes a write lock
+// only around closing the channel — is what makes "send on closed channel"
+// impossible: a release in flight when Close runs either finishes its send
+// before the channel closes, or observes `closed` already true and never
+// sends at all.
+func (c *RedisClient) release(pc *pooledConn) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.closed.Load() {
+		pc.mu.Lock()
+		if pc.conn != nil {
+			pc.conn.Close()
+		}
+		pc.mu.Unlock()
+		return
+	}
+	c.pool <- pc
 }
 
 func (c *RedisClient) writeCommand(conn net.Conn, args ...string) error {
@@ -311,12 +434,15 @@ func (c *RedisClient) readResponseInternal(conn net.Conn, depth int) (interface{
 		}
 		return n, nil
 	case '$':
-		n, err := strconv.Atoi(string(line[1:]))
+		n, err := strconv.ParseInt(string(line[1:]), 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("parse bulk string length: %w", err)
 		}
 		if n < 0 {
 			return nil, nil
+		}
+		if c.config.MaxBulkLen >= 0 && n > c.config.MaxBulkLen {
+			return nil, fmt.Errorf("bulk string length %d exceeds limit %d", n, c.config.MaxBulkLen)
 		}
 		buf := make([]byte, n+2)
 		if _, err := readFull(conn, buf); err != nil {
@@ -324,15 +450,18 @@ func (c *RedisClient) readResponseInternal(conn net.Conn, depth int) (interface{
 		}
 		return string(buf[:n]), nil
 	case '*':
-		n, err := strconv.Atoi(string(line[1:]))
+		n, err := strconv.ParseInt(string(line[1:]), 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("parse array length: %w", err)
 		}
 		if n < 0 {
 			return nil, nil
 		}
+		if c.config.MaxArrayLen >= 0 && n > c.config.MaxArrayLen {
+			return nil, fmt.Errorf("array length %d exceeds limit %d", n, c.config.MaxArrayLen)
+		}
 		result := make([]interface{}, n)
-		for i := 0; i < n; i++ {
+		for i := 0; i < int(n); i++ {
 			result[i], err = c.readResponseInternal(conn, depth+1)
 			if err != nil {
 				return nil, err
@@ -357,6 +486,9 @@ func readLine(conn net.Conn) ([]byte, error) {
 				return buf[:len(buf)-1], nil
 			}
 			return buf, nil
+		}
+		if len(buf) >= maxLineLen {
+			return nil, fmt.Errorf("response line exceeds %d bytes without a terminator", maxLineLen)
 		}
 		buf = append(buf, tmp[0])
 	}
@@ -386,7 +518,7 @@ func (c *RedisClient) handleGet(ctx context.Context, args json.RawMessage) (inte
 	var result GetResult
 	result.Key = params.Key
 
-	err := c.withConn(func(conn net.Conn) error {
+	err := c.withConn(ctx, func(conn net.Conn) error {
 		if err := c.writeCommand(conn, "GET", params.Key); err != nil {
 			return err
 		}
@@ -433,7 +565,7 @@ func (c *RedisClient) handleSet(ctx context.Context, args json.RawMessage) (inte
 	var result SetResult
 	result.Key = params.Key
 
-	err := c.withConn(func(conn net.Conn) error {
+	err := c.withConn(ctx, func(conn net.Conn) error {
 		var cmdArgs []string
 		if params.TTLSeconds != nil && *params.TTLSeconds > 0 {
 			cmdArgs = []string{"SET", params.Key, params.Value, "EX", strconv.Itoa(*params.TTLSeconds)}
@@ -475,7 +607,7 @@ func (c *RedisClient) handleDelete(ctx context.Context, args json.RawMessage) (i
 	var result DeleteResult
 	result.Keys = params.Keys
 
-	err := c.withConn(func(conn net.Conn) error {
+	err := c.withConn(ctx, func(conn net.Conn) error {
 		cmdArgs := append([]string{"DEL"}, params.Keys...)
 		if err := c.writeCommand(conn, cmdArgs...); err != nil {
 			return err
@@ -517,7 +649,7 @@ func (c *RedisClient) handleKeys(ctx context.Context, args json.RawMessage) (int
 	var result KeysResult
 	result.Pattern = params.Pattern
 
-	err := c.withConn(func(conn net.Conn) error {
+	err := c.withConn(ctx, func(conn net.Conn) error {
 		if err := c.writeCommand(conn, "KEYS", params.Pattern); err != nil {
 			return err
 		}
@@ -568,7 +700,7 @@ func (c *RedisClient) handleExists(ctx context.Context, args json.RawMessage) (i
 	var result ExistsResult
 	result.Keys = params.Keys
 
-	err := c.withConn(func(conn net.Conn) error {
+	err := c.withConn(ctx, func(conn net.Conn) error {
 		cmdArgs := append([]string{"EXISTS"}, params.Keys...)
 		if err := c.writeCommand(conn, cmdArgs...); err != nil {
 			return err

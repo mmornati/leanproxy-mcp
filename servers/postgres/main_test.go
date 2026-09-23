@@ -14,6 +14,7 @@ func TestGetConfig_Defaults(t *testing.T) {
 	os.Unsetenv("LEANPROXY_POSTGRES_CONNECTION")
 	os.Unsetenv("LEANPROXY_POSTGRES_POOL_SIZE")
 	os.Unsetenv("LEANPROXY_POSTGRES_STATEMENT_TIMEOUT")
+	os.Unsetenv("LEANPROXY_POSTGRES_READ_ONLY")
 
 	cfg := getConfig()
 	if cfg.ConnectionString != "" {
@@ -22,12 +23,16 @@ func TestGetConfig_Defaults(t *testing.T) {
 	if cfg.PoolSize != postgresql.DefaultPoolSize {
 		t.Errorf("expected pool size %d, got %d", postgresql.DefaultPoolSize, cfg.PoolSize)
 	}
+	if !cfg.ReadOnly {
+		t.Error("expected read-only mode to default to true")
+	}
 }
 
 func TestGetConfig_FromEnv(t *testing.T) {
 	t.Setenv("LEANPROXY_POSTGRES_CONNECTION", "postgres://user:pass@localhost:5432/testdb")
 	t.Setenv("LEANPROXY_POSTGRES_POOL_SIZE", "20")
 	t.Setenv("LEANPROXY_POSTGRES_STATEMENT_TIMEOUT", "15s")
+	t.Setenv("LEANPROXY_POSTGRES_READ_ONLY", "false")
 
 	cfg := getConfig()
 	if cfg.ConnectionString != "postgres://user:pass@localhost:5432/testdb" {
@@ -38,6 +43,18 @@ func TestGetConfig_FromEnv(t *testing.T) {
 	}
 	if cfg.StatementTimeout.String() != "15s" {
 		t.Errorf("statement timeout = %v, want 15s", cfg.StatementTimeout)
+	}
+	if cfg.ReadOnly {
+		t.Error("expected read-only mode to be false when LEANPROXY_POSTGRES_READ_ONLY=false")
+	}
+}
+
+func TestGetConfig_ReadOnlyInvalidValueKeepsDefault(t *testing.T) {
+	t.Setenv("LEANPROXY_POSTGRES_READ_ONLY", "not-a-bool")
+
+	cfg := getConfig()
+	if !cfg.ReadOnly {
+		t.Error("expected an unparsable LEANPROXY_POSTGRES_READ_ONLY to keep the safe default (true)")
 	}
 }
 

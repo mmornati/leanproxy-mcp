@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -42,12 +43,19 @@ type Config struct {
 	ConnectionString string        `json:"connection_string"`
 	PoolSize         int           `json:"pool_size"`
 	StatementTimeout time.Duration `json:"statement_timeout"`
+	// ReadOnly disables postgresql_execute entirely and forces every
+	// postgresql_query call to run inside a real "BEGIN ... READ ONLY"
+	// transaction, rolled back afterwards. Defaults to true: the server
+	// only becomes able to mutate data when an operator explicitly opts
+	// out via LEANPROXY_POSTGRES_READ_ONLY=false.
+	ReadOnly bool `json:"read_only"`
 }
 
 func DefaultConfig() Config {
 	return Config{
 		PoolSize:         DefaultPoolSize,
 		StatementTimeout: 30 * time.Second,
+		ReadOnly:         true,
 	}
 }
 
@@ -90,14 +98,17 @@ func NewPostgresClient(logger *slog.Logger, cfg Config) (*PostgresClient, error)
 
 	client.tools = map[string]ToolHandler{
 		toolQuery:      client.handleQuery,
-		toolExecute:    client.handleExecute,
 		toolListTables: client.handleListTables,
 		toolPGDescribe: client.handleDescribe,
+	}
+	if !cfg.ReadOnly {
+		client.tools[toolExecute] = client.handleExecute
 	}
 
 	logger.Info("postgres client initialized",
 		"pool_size", cfg.PoolSize,
 		"statement_timeout", cfg.StatementTimeout,
+		"read_only", cfg.ReadOnly,
 	)
 	return client, nil
 }
@@ -107,19 +118,22 @@ func (c *PostgresClient) Close() {
 }
 
 func (c *PostgresClient) GetTools() []ToolDefinition {
-	return []ToolDefinition{
+	tools := []ToolDefinition{
 		{
 			Name:        toolQuery,
-			Description: "Run a SELECT query against the PostgreSQL database and return results as a JSON array of rows.",
+			Description: "Run a read-only SELECT/EXPLAIN/WITH query against the PostgreSQL database (always executed inside a read-only transaction) and return results as a JSON array of rows.",
 			InputSchema: json.RawMessage(`{
 				"type": "object",
 				"properties": {
-					"query": {"type": "string", "description": "SQL SELECT query to execute"}
+					"query": {"type": "string", "description": "SQL SELECT/EXPLAIN/WITH query to execute"}
 				},
 				"required": ["query"]
 			}`),
 		},
-		{
+	}
+
+	if !c.config.ReadOnly {
+		tools = append(tools, ToolDefinition{
 			Name:        toolExecute,
 			Description: "Execute an INSERT, UPDATE, DELETE, or DDL statement against the PostgreSQL database.",
 			InputSchema: json.RawMessage(`{
@@ -129,7 +143,10 @@ func (c *PostgresClient) GetTools() []ToolDefinition {
 				},
 				"required": ["statement"]
 			}`),
-		},
+		})
+	}
+
+	tools = append(tools, []ToolDefinition{
 		{
 			Name:        toolListTables,
 			Description: "List all tables in the PostgreSQL database with schema name and row count estimates.",
@@ -152,7 +169,9 @@ func (c *PostgresClient) GetTools() []ToolDefinition {
 				"required": ["table"]
 			}`),
 		},
-	}
+	}...)
+
+	return tools
 }
 
 func (c *PostgresClient) CallTool(ctx context.Context, name string, args json.RawMessage) (interface{}, error) {
@@ -222,48 +241,81 @@ func (c *PostgresClient) handleQuery(ctx context.Context, args json.RawMessage) 
 		return nil, fmt.Errorf("'query' is required")
 	}
 
+	// This prefix check is a UX hint only, to reject obvious misuse (INSERT,
+	// UPDATE, DELETE, DDL...) with a clearer error than Postgres would give.
+	// It is NOT the security boundary: a prefix like EXPLAIN or SELECT can
+	// still hide a side effect (EXPLAIN ANALYZE executes the statement,
+	// SELECT ... INTO creates a table, SELECT pg_terminate_backend(...) has
+	// side effects, a WITH ... can wrap a DELETE ... RETURNING). The real
+	// protection is that runReadOnlyQuery below always runs the query inside
+	// a genuine "BEGIN ... READ ONLY" transaction, which Postgres itself
+	// enforces regardless of what the query text says.
 	upper := strings.TrimSpace(strings.ToUpper(params.Query))
-	if strings.HasPrefix(upper, "WITH") {
-		return nil, fmt.Errorf("WITH queries are not allowed; use execute for DML/DDL")
-	}
-	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "EXPLAIN") {
-		return nil, fmt.Errorf("only SELECT and EXPLAIN queries are allowed; use execute for DML/DDL")
+	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "EXPLAIN") && !strings.HasPrefix(upper, "WITH") {
+		return nil, fmt.Errorf("only SELECT, EXPLAIN and WITH queries are allowed here; use execute for DML/DDL")
 	}
 
 	var result QueryResult
 	err := c.withRetry(ctx, func(qctx context.Context) error {
-		rows, err := c.pool.Query(qctx, params.Query)
-		if err != nil {
-			return fmt.Errorf("query: %w", err)
-		}
-		defer rows.Close()
-
-		columns := make([]string, len(rows.FieldDescriptions()))
-		for i, fd := range rows.FieldDescriptions() {
-			columns[i] = string(fd.Name)
-		}
-		result.Columns = columns
-
-		for rows.Next() {
-			values, err := rows.Values()
-			if err != nil {
-				return fmt.Errorf("read row: %w", err)
-			}
-			row := make(map[string]interface{})
-			for i, col := range columns {
-				row[col] = values[i]
-			}
-			result.Rows = append(result.Rows, row)
-		}
-
-		result.RowCount = int64(len(result.Rows))
-		return rows.Err()
+		return c.runReadOnlyQuery(qctx, params.Query, &result)
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	return result, nil
+}
+
+// runReadOnlyQuery executes query inside a real read-only transaction and
+// always rolls it back afterwards (a read-only transaction cannot commit any
+// change, so rollback vs. commit makes no difference to the database, but
+// rollback is what the story asks for and avoids leaving anything open on
+// error paths). pgx's default query-execution mode uses the extended
+// protocol (parse/bind/execute), which also rejects a query string containing
+// more than one SQL statement, closing the classic ";"-separated
+// multi-statement injection vector.
+func (c *PostgresClient) runReadOnlyQuery(ctx context.Context, query string, result *QueryResult) error {
+	tx, err := c.pool.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return fmt.Errorf("begin read-only transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	if timeoutMS := c.config.StatementTimeout.Milliseconds(); timeoutMS > 0 {
+		if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", timeoutMS)); err != nil {
+			return fmt.Errorf("set statement_timeout: %w", err)
+		}
+	}
+
+	rows, err := tx.Query(ctx, query)
+	if err != nil {
+		return fmt.Errorf("query: %w", err)
+	}
+	defer rows.Close()
+
+	columns := make([]string, len(rows.FieldDescriptions()))
+	for i, fd := range rows.FieldDescriptions() {
+		columns[i] = string(fd.Name)
+	}
+	result.Columns = columns
+	result.Rows = nil
+
+	for rows.Next() {
+		values, err := rows.Values()
+		if err != nil {
+			return fmt.Errorf("read row: %w", err)
+		}
+		row := make(map[string]interface{})
+		for i, col := range columns {
+			row[col] = values[i]
+		}
+		result.Rows = append(result.Rows, row)
+	}
+
+	result.RowCount = int64(len(result.Rows))
+	return rows.Err()
 }
 
 type ExecuteResult struct {
