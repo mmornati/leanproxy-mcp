@@ -64,9 +64,25 @@ type inflightRequest struct {
 	canceledByClient atomic.Bool
 }
 
+// queuedRequest is a request read from stdin, waiting for (or holding) a
+// concurrency slot.
+type queuedRequest struct {
+	req    *mcp.Request
+	ctx    context.Context
+	cancel context.CancelFunc
+	entry  *inflightRequest
+	key    string
+	keyed  bool
+}
+
 // stdioFrontend is the concurrent JSON-RPC loop behind `server run --stdio`:
-// one reader, one goroutine per request (bounded by a semaphore), a single
-// mutex-protected writer that flushes after every message.
+// one reader, a FIFO dispatcher that starts one goroutine per request
+// (bounded by a semaphore), and a single mutex-protected writer that
+// flushes after every message.
+//
+// The reader never waits for a concurrency slot: it hands requests to the
+// dispatcher through queue, so it keeps reading — and handling
+// cancel notifications — while every slot is busy.
 type stdioFrontend struct {
 	handler requestHandler
 	logger  *slog.Logger
@@ -75,8 +91,9 @@ type stdioFrontend struct {
 	writeMu sync.Mutex
 	w       *bufio.Writer
 
-	sem chan struct{}
-	wg  sync.WaitGroup
+	sem   chan struct{}
+	queue chan *queuedRequest
+	wg    sync.WaitGroup
 
 	mu       sync.Mutex
 	inflight map[string]*inflightRequest
@@ -106,6 +123,7 @@ func serveStdio(ctx context.Context, r io.Reader, w io.Writer, handler requestHa
 		grace:    grace,
 		w:        bufio.NewWriter(w),
 		sem:      make(chan struct{}, maxConc),
+		queue:    make(chan *queuedRequest, stdioQueueSize(maxConc)),
 		inflight: make(map[string]*inflightRequest),
 	}
 
@@ -114,13 +132,25 @@ func serveStdio(ctx context.Context, r io.Reader, w io.Writer, handler requestHa
 	reqCtx, cancelAll := context.WithCancel(ctx)
 	defer cancelAll()
 
+	dispatcherDone := make(chan struct{})
+	go func() {
+		defer close(dispatcherDone)
+		f.dispatchLoop()
+	}()
+
 	shutdownReq, readErr := f.readLoop(reqCtx, bufio.NewReader(r))
+	close(f.queue)
 
 	f.drain(cancelAll)
+	select {
+	case <-dispatcherDone:
+	case <-time.After(stdioCancelWait):
+	}
 
 	if shutdownReq != nil {
-		// Handled only after the drain: the handler's shutdown closes the
-		// pool, which must not happen under requests still in flight.
+		// Answered only after the drain, so the client knows every earlier
+		// request is done; the caller closes the pools after serveStdio
+		// returns (the handler never does).
 		f.dispatch(context.WithoutCancel(ctx), shutdownReq, nil)
 	}
 	return readErr
@@ -189,45 +219,83 @@ func (f *stdioFrontend) handleLine(ctx context.Context, line []byte) *mcp.Reques
 		return req
 	}
 
-	// Concurrency cap: when every slot is taken the reader waits here
-	// instead of rejecting the request.
-	select {
-	case f.sem <- struct{}{}:
-	case <-ctx.Done():
-		f.write(&mcp.Response{
-			JSONRPC: mcp.JSONRPCVersion,
-			Error:   mcp.NewError(mcp.ErrCodeInternalError, "server is shutting down"),
-			ID:      req.ID,
-		})
-		return nil
-	}
-
 	rctx, cancel := context.WithCancel(ctx)
-	entry := &inflightRequest{cancel: cancel}
-	key, keyed := requestIDKey(req.ID)
-	if keyed {
+	q := &queuedRequest{req: req, ctx: rctx, cancel: cancel, entry: &inflightRequest{cancel: cancel}}
+	// Registered now, not when the request starts, so a cancel
+	// notification also reaches a request still waiting for a slot.
+	q.key, q.keyed = requestIDKey(req.ID)
+	if q.keyed {
 		f.mu.Lock()
-		f.inflight[key] = entry
+		f.inflight[q.key] = q.entry
 		f.mu.Unlock()
 	}
 
 	f.wg.Add(1)
-	go func() {
-		defer f.wg.Done()
-		defer func() { <-f.sem }()
-		defer cancel()
-		defer func() {
-			if keyed {
-				f.mu.Lock()
-				if f.inflight[key] == entry {
-					delete(f.inflight, key)
-				}
-				f.mu.Unlock()
-			}
-		}()
-		f.dispatch(rctx, req, entry)
-	}()
+	select {
+	case f.queue <- q:
+	case <-ctx.Done():
+		f.finish(q)
+		f.writeShuttingDown(req)
+	}
 	return nil
+}
+
+// stdioQueueSize bounds the requests read ahead of the concurrency cap. The
+// reader only blocks when this many requests are already waiting.
+func stdioQueueSize(maxConc int) int {
+	return max(4*maxConc, 256)
+}
+
+// dispatchLoop starts queued requests in order, each as soon as a
+// concurrency slot is free. It returns when the queue is closed and empty.
+func (f *stdioFrontend) dispatchLoop() {
+	for q := range f.queue {
+		if q.ctx.Err() == nil {
+			select {
+			case f.sem <- struct{}{}:
+				go f.run(q)
+				continue
+			case <-q.ctx.Done():
+			}
+		}
+		// Canceled before it started: by the client (no response, per the
+		// spec) or by the shutdown.
+		f.finish(q)
+		if !q.entry.canceledByClient.Load() {
+			f.writeShuttingDown(q.req)
+		} else {
+			f.logger.Debug("dropping request canceled by the client before it started", "id", q.req.ID)
+		}
+	}
+}
+
+// run handles one request holding a concurrency slot.
+func (f *stdioFrontend) run(q *queuedRequest) {
+	defer func() { <-f.sem }()
+	defer f.finish(q)
+	f.dispatch(q.ctx, q.req, q.entry)
+}
+
+// finish releases a request's bookkeeping (in-flight entry, context,
+// wait group). It is called exactly once per queued request.
+func (f *stdioFrontend) finish(q *queuedRequest) {
+	q.cancel()
+	if q.keyed {
+		f.mu.Lock()
+		if f.inflight[q.key] == q.entry {
+			delete(f.inflight, q.key)
+		}
+		f.mu.Unlock()
+	}
+	f.wg.Done()
+}
+
+func (f *stdioFrontend) writeShuttingDown(req *mcp.Request) {
+	f.write(&mcp.Response{
+		JSONRPC: mcp.JSONRPCVersion,
+		Error:   mcp.NewError(mcp.ErrCodeInternalError, "server is shutting down"),
+		ID:      req.ID,
+	})
 }
 
 // handleNotification processes a message without an id. It never writes a

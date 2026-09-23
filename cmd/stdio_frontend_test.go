@@ -242,6 +242,10 @@ func TestStdioFrontend_CancelledNotification(t *testing.T) {
 			fh := startFrontend(t, h, stdioFrontendOptions{})
 
 			fh.send(`{"jsonrpc":"2.0","id":` + tt.id + `,"method":"block"}`)
+			// A request canceled before it starts is dropped without ever
+			// reaching the handler; wait until it runs to exercise the
+			// in-flight cancellation.
+			waitCalled(t, h, "block")
 			fh.send(`{"jsonrpc":"2.0","method":"` + methodCancelled + `","params":{"requestId":` + tt.requestID + `,"reason":"user"}}`)
 
 			select {
@@ -416,6 +420,62 @@ func TestStdioFrontend_ConcurrencyCap(t *testing.T) {
 	defer h.mu.Unlock()
 	if h.maxActive > limit {
 		t.Fatalf("max concurrent requests = %d, want <= %d", h.maxActive, limit)
+	}
+}
+
+// TestStdioFrontend_CancelWhileSaturated (#297 follow-up of #292): with
+// max_concurrent_requests=1, a long call holds the only slot and another
+// request is queued behind it; the reader must still read and apply a
+// cancel for the long call promptly, instead of being stuck waiting for a
+// slot. The queued request then runs, and a cancel for a request still
+// waiting in the queue drops it without an answer.
+func TestStdioFrontend_CancelWhileSaturated(t *testing.T) {
+	h := newFakeFrontendHandler()
+	fh := startFrontend(t, h, stdioFrontendOptions{MaxConcurrent: 1})
+
+	fh.send(`{"jsonrpc":"2.0","id":1,"method":"block"}`)
+	waitCalled(t, h, "block")
+	// Queued behind the long call: the old reader blocked right here.
+	fh.send(`{"jsonrpc":"2.0","id":2,"method":"sleep","params":{"ms":1}}`)
+	fh.send(`{"jsonrpc":"2.0","id":3,"method":"sleep","params":{"ms":1}}`)
+	fh.send(`{"jsonrpc":"2.0","method":"` + methodCancelled + `","params":{"requestId":3}}`)
+	fh.send(`{"jsonrpc":"2.0","method":"` + methodCancelled + `","params":{"requestId":1}}`)
+
+	select {
+	case id := <-h.canceled:
+		if fmt.Sprint(id) != "1" {
+			t.Fatalf("canceled id = %v, want 1", id)
+		}
+	case <-time.After(frontendWait):
+		t.Fatal("cancel for the request holding the only slot was not processed")
+	}
+	if r := fh.next(); string(r.ID) != "2" || r.Error != nil {
+		t.Fatalf("response = %+v, want the queued request 2 answered after the slot freed", r)
+	}
+	if rest := fh.finish(); len(rest) != 0 {
+		t.Fatalf("canceled requests must not be answered, got %+v", rest)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	sleeps := 0
+	for _, c := range h.calls {
+		if c == "sleep" {
+			sleeps++
+		}
+	}
+	if sleeps != 1 {
+		t.Fatalf("handled %d sleep requests, want 1 (request 3 was canceled while queued)", sleeps)
+	}
+}
+
+func waitCalled(t *testing.T, h *fakeFrontendHandler, method string) {
+	t.Helper()
+	deadline := time.Now().Add(frontendWait)
+	for !h.called(method) {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s was never handled", method)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
