@@ -94,6 +94,11 @@ func handle(req request) (interface{}, map[string]interface{}) {
 					},
 				},
 			},
+			{
+				"name":        "missing_owner",
+				"description": "Always fails with a -32602 Invalid params error, for error-fidelity tests (#296).",
+				"inputSchema": map[string]interface{}{"type": "object"},
+			},
 		}}, nil
 	case "tools/call":
 		var p struct {
@@ -106,6 +111,15 @@ func handle(req request) (interface{}, map[string]interface{}) {
 				"code":    -32000,
 				"message": "upstream auth failed for " + awsKey,
 				"data":    map[string]string{"token": ghToken},
+			}
+		}
+		if p.Name == "missing_owner" {
+			// #296 acceptance criterion: this exact code/message must reach
+			// the client unchanged through both `server run --stdio` and
+			// `serve`.
+			return nil, map[string]interface{}{
+				"code":    -32602,
+				"message": "missing owner",
 			}
 		}
 		text := fmt.Sprintf("echo %s | leaked %s %s %s", p.Arguments, awsKey, ghToken, stripeKey)
