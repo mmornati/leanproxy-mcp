@@ -52,6 +52,12 @@ type Handler struct {
 	manifest       *AggregatedManifest
 	cacheRefreshes atomic.Uint64
 	cacheFailures  atomic.Uint64
+
+	// pipelineMu guards middlewares; pipeline holds the composed chain
+	// (middlewares around dispatch) so HandleRequest can load it lock-free.
+	pipelineMu  sync.Mutex
+	middlewares []Middleware
+	pipeline    atomic.Pointer[Next]
 }
 
 type AggregatedManifest struct {
@@ -120,7 +126,18 @@ func (h *Handler) timeoutFor(serverName string) time.Duration {
 	return h.timeout
 }
 
+// HandleRequest runs req through the middleware pipeline registered with Use
+// and, innermost, the handler's own method dispatch.
 func (h *Handler) HandleRequest(ctx context.Context, req *Request) (*Response, error) {
+	if chain := h.pipeline.Load(); chain != nil {
+		return (*chain)(ctx, req)
+	}
+	return h.dispatch(ctx, req)
+}
+
+// dispatch routes a request to its method handler. It is the innermost Next
+// of the pipeline.
+func (h *Handler) dispatch(ctx context.Context, req *Request) (*Response, error) {
 	h.logger.Debug("handling mcp request", "method", req.Method, "id", req.ID)
 
 	if err := errors.ValidateContext(ctx); err != nil {
@@ -334,6 +351,15 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		return &Response{
 			JSONRPC: JSONRPCVersion,
 			Error:   NewError(ErrCodeServerError, fmt.Sprintf("tool call failed: %v", err)),
+			ID:      req.ID,
+		}, nil
+	}
+
+	if resp != nil && resp.Error != nil {
+		// Forward the upstream JSON-RPC error instead of an empty response.
+		return &Response{
+			JSONRPC: JSONRPCVersion,
+			Error:   &Error{Code: resp.Error.Code, Message: resp.Error.Message, Data: resp.Error.Data},
 			ID:      req.ID,
 		}, nil
 	}
@@ -649,28 +675,6 @@ func (h *Handler) refreshToolCacheFromServers(ctx context.Context) {
 	}
 }
 
-func (h *Handler) searchToolCache(query string, maxDescChars int) []string {
-	h.toolCache.mu.RLock()
-	defer h.toolCache.mu.RUnlock()
-
-	var results []string
-	queryLower := strings.ToLower(query)
-	queryWords := strings.Fields(queryLower)
-
-	for serverName, tools := range h.toolCache.tools {
-		for _, tool := range tools {
-			matchedLine := fmt.Sprintf("%s_%s: %s", serverName, tool.Name, strings.ToLower(truncateDescription(tool.Description, maxDescChars)))
-			if query == "" || matchesQuery(matchedLine, queryWords) {
-				required, optional := parseInputSchema(tool.InputSchema)
-				formatted := formatToolSearchResult(serverName, tool.Name, tool.Description, required, optional, maxDescChars)
-				results = append(results, formatted)
-			}
-		}
-	}
-
-	return results
-}
-
 func matchesQuery(text string, queryWords []string) bool {
 	for _, word := range queryWords {
 		if !strings.Contains(text, word) {
@@ -786,6 +790,12 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	paramsBytes, _ := json.Marshal(newParams)
 
 	resp, err := h.pool.SendRequestToServer(ctx, serverName, MethodToolsCall, paramsBytes, h.timeoutFor(serverName))
+	if err == nil && resp != nil && resp.Error != nil {
+		// An upstream JSON-RPC error used to be dropped (the client got a
+		// response with neither result nor error). Surface it with the same
+		// hint + schema enrichment as a transport failure.
+		err = fmt.Errorf("%s", resp.Error.Message)
+	}
 	if err != nil {
 		h.logger.Error("invoke_tool failed", "server", serverName, "tool", toolName, "error", err)
 		schema := h.lookupToolSchema(serverName, toolName)
