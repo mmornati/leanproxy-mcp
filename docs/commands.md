@@ -88,27 +88,59 @@ leanproxy add github --dry-run
 
 ### Output
 
-```
-Registry entry: github (41 tools, trust score: 85/100)
-
-Server 'github' added successfully.
-```
-
-Low-trust servers (score < 40) require `--i-understand-the-risks`:
+Before writing anything, `add` prints exactly what would run: the resolved
+command line (with its version pinned), the *names* only of the env vars it
+declares (values are never printed), the transport/URL, and the individual
+trust signals behind the score (issue #313):
 
 ```
-Warning: Server 'experimental-db' has a low trust score of 25/100.
-This server may be unmaintained or from an untrusted publisher.
-Use --i-understand-the-risks to install anyway.
+About to install "github":
+  Transport: stdio
+  Command:   npx -y @modelcontextprotocol/server-github@1.2.3
+  Env vars:  GITHUB_TOKEN (values are never printed or logged)
+  Version:   1.2.3 (pinned)
+  Source:    official
+  Trust:     55 (medium)
+    - namespace verified:   yes
+    - license:              yes
+    - last release:         yes
+    - open issues:          no
+    - downloads:            no
+Enable this server? [y/N]:
+```
+
+Answering anything but `y`/`Y` (or a non-interactive stdin, e.g. in a
+script) installs the server with `enabled: false` — it is written to
+`leanproxy_servers.yaml` but never started until you enable it (edit the
+config, or re-run with `--yes`). `--yes` answers the prompt automatically
+and writes `enabled: true`. `--dry-run` only shows the preview.
+
+Low-trust servers (score < 40, including "unverified" — no signal at all)
+require `--i-understand-the-risks` before the preview/confirm flow runs at
+all:
+
+```
+[WARN] Server experimental-db has a low trust score (25/100).
+  This could indicate an abandoned or untrusted package.
+  To install anyway, re-run with: --i-understand-the-risks
 ```
 
 ### How It Works
 
 1. **Lookup**: Searches the local registry cache for the server ID
 2. **Preview**: Computes a token-cost snapshot showing savings
-3. **Trust Check**: Verifies the server's trust score; prompts if low
-4. **Install**: Merges the server definition into `leanproxy_servers.yaml`
-5. **Stop Existing**: Gracefully stops any running instance with the same name
+3. **Trust Check**: Computes the trust score from verifiable signals only
+   (never a feed-provided score — see [Trust Model](security.md#marketplace-trust-model-issue-313));
+   prompts if low
+4. **Confirm**: Shows the exact command, env var names, transport/URL and
+   trust signals, then asks before enabling (`--yes` to skip, `--dry-run` to
+   only preview)
+5. **Install**: Merges the version-pinned server definition into
+   `leanproxy_servers.yaml`, with `enabled` set from step 4 and
+   `installed_from` recording where it came from
+6. **Stop Existing**: Gracefully stops any running instance with the same name
+7. **Pinning**: The first time the new server starts, its tools are pinned
+   (trust-on-first-use, #310); review them with `leanproxy tools pins`
 
 ---
 
@@ -1703,12 +1735,25 @@ leanproxy-mcp marketplace [command]
 |---------|-------------|
 | `sync` | Fetch and cache the MCP Registry index |
 | `search` | Search MCP Registry servers by name or description |
+| `outdated` | List installed servers whose pinned version differs from the registry's current one |
+| `update` | Update one installed server to the registry's current version |
 
 ---
 
 ### `marketplace sync` - Sync Registry Index
 
-Download the latest MCP Registry server index and store it locally. The cached index is used by marketplace commands and kept up-to-date via periodic refresh.
+Download the latest server index and store it locally. By default this
+means the **official MCP Registry** (`registry.modelcontextprotocol.io`,
+API `v0`) — the only default source since issue #313; LeanProxy does not
+own the previous default domain (`registry.mcp.io`), so it is no longer
+used unless you configure it yourself as a custom source. The cached index
+is used by marketplace commands and kept up-to-date via periodic refresh.
+
+You can additionally sync your own custom NDJSON feed(s), opt-in, via
+`registry.sources` in `leanproxy_servers.yaml` — see
+[Marketplace Registry Sources](configuration.md#marketplace-registry-sources-issue-313).
+A failure syncing a custom source is logged and skipped; it never blocks the
+official sync.
 
 #### Usage
 
@@ -1729,6 +1774,64 @@ leanproxy-mcp marketplace sync
 Fetching registry index...
 Registry index synced successfully (1,245 entries)
 Cache stored at: ~/.config/leanproxy/registry/feed_index.json
+```
+
+---
+
+### `marketplace outdated` - List Version Drift
+
+Compare every installed server's pinned version (`servers[].installed_from`,
+written by `add`/`update`) against what the registry cache currently has,
+and list the ones that differ. Run `marketplace sync` first to refresh the
+cache.
+
+```bash
+leanproxy-mcp marketplace outdated
+```
+
+```
+name      registry   installed   current
+github    official   1.0.0       1.2.3
+
+Run `leanproxy marketplace update <name>` to update one.
+```
+
+---
+
+### `marketplace update` - Update an Installed Server
+
+Show the diff between an installed server's pinned command/version and what
+the registry currently publishes, then ask for confirmation before
+rewriting it. The server's current `enabled` state is preserved across the
+update — updating never silently enables or disables a server.
+
+#### Usage
+
+```bash
+leanproxy-mcp marketplace update <name> [flags]
+```
+
+#### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `-y, --yes` | bool | false | Skip the confirmation prompt |
+| `--dry-run` | bool | false | Show the diff without writing |
+
+#### Example
+
+```bash
+leanproxy-mcp marketplace update github
+```
+
+```
+Update "github":
+  Installed version: 1.0.0
+  Registry version:  1.2.3
+  New command:       npx -y @modelcontextprotocol/server-github@1.2.3
+Enable this server? [y/N]: y
+
+✓ Updated github to 1.2.3
 ```
 
 ---

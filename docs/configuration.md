@@ -1292,6 +1292,34 @@ Redis server (or a man-in-the-middle on a connection without `LEANPROXY_REDIS_TL
 out-of-memory condition by advertising a huge `$`/`*` length; exceeding either limit is an error and the
 connection is closed and re-dialed on the next use.
 
+## Marketplace Registry Sources (issue #313)
+
+`leanproxy marketplace sync` always syncs the **official MCP Registry**
+(`registry.modelcontextprotocol.io`, API `v0`) — LeanProxy does not own the
+domain the default previously pointed at (`registry.mcp.io`), so that is no
+longer used by default at all.
+
+You can additionally opt in to your own custom NDJSON feed(s) — an internal
+catalog, a fork, a curated allowlist — under `registry.sources` in
+`leanproxy_servers.yaml`:
+
+```yaml
+registry:
+  sources:
+    - name: acme-internal
+      url: https://mcp-index.acme.internal/index.ndjson
+```
+
+- Each source needs a unique `name` (used for provenance display and
+  recorded as `installed_from.registry` for servers installed from it) and
+  an `http://`/`https://` `url`.
+- A custom source's entries are merged into the same local cache as the
+  official registry's; `marketplace search`/`add` see all of them together.
+- A custom source's own `trust_score` field, if present, is **never**
+  trusted (see [Trust Model](security.md#marketplace-trust-model-issue-313)).
+- A sync failure on one custom source is logged and skipped — it never
+  blocks the official-registry sync or the other sources.
+
 ## Validate Configuration
 
 ```bash
