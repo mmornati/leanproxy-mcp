@@ -365,7 +365,13 @@ func TestReadCurrentStatusFromFileInvalidJSON(t *testing.T) {
 }
 
 func TestNewFileStatusStoreWithDirError(t *testing.T) {
-	store, err := newFileStatusStoreWithDir(nil, "/invalid/path/that/cannot/be/created")
+	tmpDir := t.TempDir()
+	blockingFile := filepath.Join(tmpDir, "blocker")
+	require.NoError(t, os.WriteFile(blockingFile, []byte("x"), 0644))
+
+	// blockingFile is a regular file, so using it as a directory component
+	// makes MkdirAll fail regardless of the user's privileges (including root).
+	store, err := newFileStatusStoreWithDir(nil, filepath.Join(blockingFile, "sub"))
 	assert.Nil(t, store)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create status dir")
@@ -381,7 +387,13 @@ func TestNewFileStatusStoreFromConfigDir(t *testing.T) {
 }
 
 func TestNewFileStatusStoreFromConfigDirError(t *testing.T) {
-	store, err := NewFileStatusStoreFromConfigDir("127.0.0.1:8080", nil, "/invalid/path")
+	tmpDir := t.TempDir()
+	blockingFile := filepath.Join(tmpDir, "blocker")
+	require.NoError(t, os.WriteFile(blockingFile, []byte("x"), 0644))
+
+	// blockingFile is a regular file, so using it as a directory component
+	// makes MkdirAll fail regardless of the user's privileges (including root).
+	store, err := NewFileStatusStoreFromConfigDir("127.0.0.1:8080", nil, filepath.Join(blockingFile, "sub"))
 	assert.Nil(t, store)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "create status dir")
