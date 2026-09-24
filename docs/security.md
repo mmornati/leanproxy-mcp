@@ -14,6 +14,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | **Prompt Injection Protection** | Classifies the decoded text of requests and tool outputs (indirect injection) with risk scoring and per-direction actions |
 | **Tool Pinning & Rug-Pull Detection** | Hashes every upstream tool definition, reports or blocks drift, scans descriptions for hidden instructions and strips invisible unicode (#310) |
 | **Per-Tool Policy** | Allow / deny / confirm rules per `server.tool` glob and annotation; calls to tools a server does not advertise are refused by default (#314) |
+| **Passthrough Without Bypass** | Clients with native tool search see every upstream tool directly (#322); pinning, policy, redaction, the injection guard, the response governor and telemetry still apply to every listed tool and every call |
 | **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model for sensitive data beyond regex |
 | **Batch Size Limits** | Prevents DoS via large JSON-RPC batch requests |
 | **ReDoS Protection** | Validates regex patterns to prevent catastrophic backtracking |
@@ -332,6 +333,9 @@ before it is ever returned, since it is content the proxy did not write.
   modes). At startup the proxy logs one line such as
   `redaction enabled, 29 patterns; injection disabled` (or
   `injection enabled (requests and responses)`).
+- The same holds in every [exposure mode](#exposure-modes-and-passthrough-322):
+  a call on a passthrough name (`github__create_issue`) runs through the
+  same pipeline as `invoke_tool`.
 
 ## In-Memory Redaction
 
@@ -740,6 +744,51 @@ the redacted arguments — never the arguments) and counted in the
 - Resources, prompts and server-to-client requests are not covered by the
   policy; `allow_sampling` and `roots` govern the latter
   ([Server-to-client traffic](#server-to-client-traffic-308)).
+
+## Exposure modes and passthrough (#322)
+
+In `passthrough` and `hybrid` [exposure modes](./configuration.md#exposure-modes-exposure)
+(the default for Claude Code, Claude Desktop, Cursor and VS Code), a client
+sees the upstream tools themselves instead of LeanProxy's router. That
+changes where the tools are listed, not what is enforced:
+
+- **Listing.** `tools/list` applies the same views as `list_tools` and
+  `search_tools`: tool pinning (#310) hides a pending tool in `block` mode
+  and marks a changed one `[WARNING tool pinning: changed since approval]`
+  in `warn` mode; the per-tool policy (#314) hides denied tools and marks
+  `confirm` tools `[confirm]`; invisible and bidi characters are stripped
+  from every field (the definitions are sanitized when the tool cache is
+  filled, in every mode). The upstream's own `_meta["anthropic/alwaysLoad"]`
+  is dropped, so a server cannot force its tools (or a poisoned description)
+  into every prompt of a deferring client; only `exposure.always_load`
+  decides.
+- **Calls.** A `tools/call` on a namespaced name is rewritten by the
+  outermost pipeline stage into the canonical `server.tool` form before any
+  other stage runs. The telemetry span, the response governor, tool
+  pinning, the policy (including `unknown_tools: deny` for a name the server
+  does not advertise), the response cache, redaction (both directions) and
+  the injection guard then see exactly the call an `invoke_tool` would
+  make. Spans and audit logs carry the canonical name.
+- **Changes.** Passthrough sessions are sent
+  `notifications/tools/list_changed` when an upstream list, a pin or the
+  policy's view changes, so a tool that becomes pending disappears from the
+  client's list (and a call to it is refused regardless).
+
+Covered end to end, through `server run --stdio`, `server run --http` and
+`serve`, by `tests/e2e/exposure_test.go`
+(`TestExposure_Passthrough_Stdio`, `_StreamableHTTP`, `_Serve`,
+`TestExposure_RouterUnchangedAndForcedHybrid_Stdio`).
+
+### Limitations
+
+- The client is identified by the `clientInfo.name` it sends, which any
+  client can set. That only chooses a *format*: a client that pretends to be
+  Claude Code gets the full list, with every security layer still applied.
+  Use `exposure.clients` or `--exposure router` to pin a mode.
+- A passthrough client sees the names and descriptions of every allowed
+  tool at once. A tool you do not want a model to know about must be denied
+  by the policy (then it is hidden in every mode), not merely left out of
+  search results.
 
 ## Response governor spill store (#319)
 

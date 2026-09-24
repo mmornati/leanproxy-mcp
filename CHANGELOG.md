@@ -2,6 +2,18 @@
 
 ## Breaking in v0.11
 
+- **Claude Code, Claude Desktop, Cursor and VS Code now see the upstream tools directly (passthrough)** ([#322](https://github.com/mmornati/leanproxy-mcp/issues/322)).
+  - **What.** Every client got LeanProxy's 4-tool router (`search_tools`, `list_servers`,
+    `list_tools`, `invoke_tool`), which hid the tools from clients that search and defer large
+    tool lists themselves, and from their per-tool UX (permissions, annotations, MCP Apps).
+  - **Now.** A client whose `clientInfo.name` is `claude-code`, `claude-ai`, `cursor*` or
+    `visual studio code*` gets **passthrough**: `tools/list` returns every upstream tool the
+    security layers let it see, named `<server>__<tool>`, and `tools.listChanged: true`. Every
+    other client keeps the router, unchanged.
+  - **Migration.** To keep a client on the router: `server run --stdio --exposure router`, or
+    `exposure: { builtin_clients: false }` (or an `exposure.clients` rule). See
+    [`docs/configuration.md`](docs/configuration.md#exposure-modes-exposure).
+
 - **`serve`'s line-TCP protocol is deprecated** ([#309](https://github.com/mmornati/leanproxy-mcp/issues/309)).
   - **What.** `serve` speaks newline-delimited JSON-RPC over raw TCP, which is not an MCP
     transport.
@@ -135,6 +147,43 @@
     [`docs/security.md`](docs/security.md#first-party-servers-hardening-postgres-redis-318).
 
 ## Added in v0.11
+
+- **Exposure modes: work with native tool search** ([#322](https://github.com/mmornati/leanproxy-mcp/issues/322), audit §2 / §3).
+  - **What.** Clients such as Claude Code (MCP tool search, on by default), the Anthropic and
+    OpenAI APIs (`defer_loading`) and Cursor now handle large tool catalogs themselves; for them
+    LeanProxy's router only hid the tools behind a second search.
+  - **Now.** Three modes, decided per client session at `initialize` from `clientInfo.name`
+    (MCP has no capability that announces native tool search):
+    - `router` — the default for unknown clients, unchanged;
+    - `passthrough` — every upstream tool as `<server>__<tool>` (always
+      `^[a-zA-Z0-9_-]{1,64}$`; longer or non-conforming names are shortened with a
+      deterministic SHA-256 suffix and still route), with its full metadata (`title`,
+      `outputSchema`, `annotations`, `icons`, `_meta`) filtered to what the negotiated protocol
+      revision defines; `tools/call` on that name routes to the upstream;
+    - `hybrid` — passthrough plus `search_tools`, whose results name the tools as listed.
+    - Config: `exposure: {mode, builtin_clients, clients: [{match, mode}], always_load,
+      max_name_length}`, validated at load; `server run --exposure router|passthrough|hybrid`
+      forces one mode.
+    - Security: a namespaced call is rewritten into the canonical `server.tool` form by the
+      outermost pipeline stage, so telemetry, the response governor, tool pinning, the policy,
+      the response cache, redaction and the injection guard all apply as for `invoke_tool`.
+      Policy-denied and pinning-blocked tools are absent in every mode; `confirm` tools are
+      marked `[confirm]`, warn-mode pin changes are flagged in the description.
+    - `notifications/tools/list_changed` is sent to passthrough and hybrid sessions when an
+      upstream's tools, a pin or the policy view change (debounced; approvals made with
+      `tools pins approve` in another process are picked up within 2 s).
+    - Deferred-loading hints: no MCP revision or vendor defines a "defer" hint for servers, so
+      none is invented. Claude Code's documented `_meta["anthropic/alwaysLoad"]` is emitted only
+      for `exposure.always_load` tools, and an upstream's own value is dropped.
+    - The same behavior in `server run --stdio`, `server run --http` and `serve` (where a router
+      session keeps `serve`'s own gateway).
+  - **Measured.** `make harness` (118-tool catalog): the passthrough `tools/list` is 10,229 tokens
+    (+1.8% vs the native lists, vs 318 for the router). With client-side deferral (names in
+    context, a definition loaded on first use), Full Day costs 3,089 tokens vs 8,793 on the
+    router's `search_tools` flow (−64.9%), Dev Workflow −21.7%, but Morning Sport **+46.9%**
+    (the 754-token name list outweighs a few good searches). A client that does not defer pays
+    native-like costs, hence the router for unknown clients. See
+    [`docs/benchmark-results.md`](docs/benchmark-results.md#10-exposure-modes-322).
 
 - **Response token governor (part 3): in-session dedup of repeated results and optional local-LLM summarization** ([#321](https://github.com/mmornati/leanproxy-mcp/issues/321), audit §2.3).
   - **What.** Agents often re-read the same thing within a session (the same file after a failed
