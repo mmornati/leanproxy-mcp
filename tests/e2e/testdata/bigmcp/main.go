@@ -6,7 +6,15 @@
 //   - big_json: a JSON array of 1000 issue objects, as a text item;
 //   - big_error: a ~200 KB error result (isError: true);
 //   - image: a ~300 KB image content item and a short caption;
-//   - small: a few words.
+//   - small: a few words;
+//   - wide_issues / wide_huge: 30 / 600 GitHub-like issues with the usual
+//     API noise (URLs, node ids, avatars, reactions) as a JSON text item,
+//     for field projection (issue #320); issue 3's body holds the fake
+//     credential;
+//   - wide_structured / wide_strict: 20 of those issues as text and
+//     structuredContent; wide_strict declares an outputSchema;
+//   - echo_args: the tools/call params it received, as JSON text (the
+//     e2e tests check that invoke_tool's fields never reach it).
 //
 // The fake credential is assembled at runtime so no secret-looking literal
 // is committed.
@@ -75,6 +83,38 @@ func bigJSON() string {
 	return string(data)
 }
 
+// wideIssues renders n GitHub-like issues. ids are above 2^53 so a lossy
+// float64 round-trip would show.
+func wideIssues(n int) string {
+	var b strings.Builder
+	b.WriteByte('[')
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		num := 4200 + i
+		body := fmt.Sprintf("Steps to reproduce issue %d: open settings, press save.", num)
+		if i == 3 {
+			body = "token=" + ghToken
+		}
+		login := []string{"mona", "hubot", "octocat"}[i%3]
+		fmt.Fprintf(&b, `{"url":"https://api.github.com/repos/octo/widget/issues/%[1]d","repository_url":"https://api.github.com/repos/octo/widget",`+
+			`"labels_url":"https://api.github.com/repos/octo/widget/issues/%[1]d/labels{/name}","comments_url":"https://api.github.com/repos/octo/widget/issues/%[1]d/comments",`+
+			`"events_url":"https://api.github.com/repos/octo/widget/issues/%[1]d/events","html_url":"https://github.com/octo/widget/issues/%[1]d",`+
+			`"id":90071992547409%02[2]d,"node_id":"I_kwDOHx%08[2]d","number":%[1]d,"title":"Crash <%[1]d> & retry","state":"open",`+
+			`"user":{"login":"%[3]s","id":%[4]d,"node_id":"MDQ6VXNlcj%[4]d","avatar_url":"https://avatars.githubusercontent.com/u/%[4]d?v=4","gravatar_id":"",`+
+			`"url":"https://api.github.com/users/%[3]s","html_url":"https://github.com/%[3]s","followers_url":"https://api.github.com/users/%[3]s/followers",`+
+			`"repos_url":"https://api.github.com/users/%[3]s/repos","type":"User","site_admin":false},`+
+			`"labels":[{"id":51000,"node_id":"LA_kwDOHx01","url":"https://api.github.com/repos/octo/widget/labels/bug","name":"bug","color":"d73a4a","default":true}],`+
+			`"assignee":null,"comments":%[5]d,"created_at":"2026-08-01T10:00:00Z","updated_at":"2026-09-20T12:34:56Z",`+
+			`"reactions":{"url":"https://api.github.com/repos/octo/widget/issues/%[1]d/reactions","total_count":0,"+1":0,"-1":0},`+
+			`"timeline_url":"https://api.github.com/repos/octo/widget/issues/%[1]d/timeline","body":%[6]q}`,
+			num, i, login, 1000+i%3, i%7, body)
+	}
+	b.WriteByte(']')
+	return b.String()
+}
+
 func handle(req request) (interface{}, map[string]interface{}) {
 	switch req.Method {
 	case "initialize":
@@ -85,8 +125,12 @@ func handle(req request) (interface{}, map[string]interface{}) {
 		}, nil
 	case "tools/list":
 		tools := []map[string]interface{}{}
-		for _, name := range []string{"big_text", "big_json", "big_error", "image", "small"} {
-			tools = append(tools, map[string]interface{}{"name": name, "description": "Returns a " + name + " result.", "inputSchema": map[string]interface{}{"type": "object"}})
+		for _, name := range []string{"big_text", "big_json", "big_error", "image", "small", "wide_issues", "wide_huge", "wide_structured", "wide_strict", "echo_args"} {
+			tool := map[string]interface{}{"name": name, "description": "Returns a " + name + " result.", "inputSchema": map[string]interface{}{"type": "object"}}
+			if name == "wide_strict" {
+				tool["outputSchema"] = map[string]interface{}{"type": "object", "required": []string{"issues"}, "properties": map[string]interface{}{"issues": map[string]interface{}{"type": "array"}}}
+			}
+			tools = append(tools, tool)
 		}
 		return map[string]interface{}{"tools": tools}, nil
 	case "tools/call":
@@ -95,6 +139,18 @@ func handle(req request) (interface{}, map[string]interface{}) {
 		}
 		_ = json.Unmarshal(req.Params, &p)
 		switch p.Name {
+		case "wide_issues":
+			return text(wideIssues(30)), nil
+		case "wide_huge":
+			return text(wideIssues(600)), nil
+		case "wide_structured", "wide_strict":
+			doc := `{"issues":` + wideIssues(20) + `}`
+			return map[string]interface{}{
+				"content":           []map[string]string{{"type": "text", "text": doc}},
+				"structuredContent": json.RawMessage(doc),
+			}, nil
+		case "echo_args":
+			return text(string(req.Params)), nil
 		case "big_text":
 			return text(BigText()), nil
 		case "big_json":

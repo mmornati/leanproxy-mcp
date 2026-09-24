@@ -112,7 +112,11 @@ The response governor (#319) counts, per server, the estimated tokens of
 the tool results it sees in `leanproxy.governor.tokens` (attribute
 `direction`: `original` or `returned`) and the results it shortened in
 `leanproxy.governor.truncations`; its stage has its own child span,
-`mcp.middleware.governor`. Only token counts are recorded, never a result.
+`mcp.middleware.governor`. Field projection (#320) adds
+`leanproxy.governor.projections` (results projected, by server) and
+`leanproxy.governor.projection.tokens` (estimated tokens of the projected
+parts, attribute `direction`: `before` or `after`). Only token counts are
+recorded, never a result.
 
 A request an upstream sends to the client (`elicitation/create`,
 `sampling/createMessage`, `roots/list`; #308) gets its own SERVER span,
@@ -137,5 +141,8 @@ before; it now has a `telemetry` section fed by the same counters
 OpenTelemetry records (including `tool_pin_events_total` and `policy_decisions_total`), useful when you want a quick number without standing
 up a collector. With the response governor on, a `response_governor`
 section adds its accounting: results seen and shortened, original and
-returned tokens (in total and per tool), `read_result` calls and the spill
-store's size.
+returned tokens (in total and per tool), results projected and the tokens
+projection removed (`projected`, `projection_saved_tokens`, also per tool),
+`read_result` calls and the spill store's size. The `telemetry` section
+counts them too (`governor_projections_total`,
+`governor_projection_tokens_saved_total`).

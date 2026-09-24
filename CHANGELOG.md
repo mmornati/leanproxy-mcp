@@ -136,6 +136,37 @@
 
 ## Added in v0.11
 
+- **Response token governor (part 2): schema-aware field projection per tool** ([#320](https://github.com/mmornati/leanproxy-mcp/issues/320), audit §2.3).
+  - **What.** API-backed tools return verbose JSON (GitHub issues with full user objects, URLs,
+    reactions and node ids; Jira issues with dozens of fields) while the model needs a handful of
+    fields. Truncation (#319) keeps the first items whole, noise included.
+  - **Now.** With the governor on (`response.enabled: true`), fields are dropped before the
+    budget is applied:
+    - `response.projections`: per server/tool rules (`path.Match` globs, first match wins), each
+      a `keep` allowlist or a `drop` denylist of paths in a small syntax: dot paths, `[]` for
+      array elements, `**` for any depth, `*` for any run of characters in a key
+      (`"[].labels[].name"`, `"**.node_id"`, `"**.*_url"`); a rule with neither exempts the tool;
+    - `response.default_projections: true` (off by default): a conservative built-in drop pack
+      (`*_url`, `node_id`, `avatar_url`, `gravatar_id`, `_links`, `self`, `etag`), never a keep;
+    - `invoke_tool` takes an optional `fields` argument (a list of paths): a one-off `keep`
+      applied by the proxy and never forwarded upstream. While the governor is on, `tools/list`
+      declares it on `invoke_tool`; the default `tools/list` is unchanged (318 tokens).
+    It applies to text items whose text is a JSON object or array and to `structuredContent`
+    (only when the tool declares no `outputSchema`, so a strict schema is never broken). Kept
+    values are byte for byte (numbers keep their precision), the output is compact and not
+    HTML-escaped. It runs after redaction and the injection check and before truncation; the full
+    redacted result stays readable with `read_result` / `resources/read`, and a note (plus a
+    `resource_link` on MCP 2025-06-18+) tells the model what was left out and how to get it.
+    Error results, non-JSON text and bad paths are left untouched. Tokens before and after
+    projection are counted per tool (`/metrics`, OTel `leanproxy.governor.projections` and
+    `leanproxy.governor.projection.tokens`).
+  - **Measured.** A realistic 30-issue GitHub `list_issues` fixture: **29,536 → 8,225 tokens
+    (−72.2%)** with the issue's `github.*` drop pack. `make harness`, large-results listings:
+    −21.5% from projection alone, and within the same 4,000-token budget 26 instead of 19 issues
+    (64 with `fields`). See
+    [`docs/configuration.md`](docs/configuration.md#field-projection-responseprojections) and
+    [`docs/benchmark-results.md`](docs/benchmark-results.md#8-field-projection-large-results).
+
 - **Response token governor (part 1): smart truncation and spill-to-resource with paged retrieval** ([#319](https://github.com/mmornati/leanproxy-mcp/issues/319), audit §2.3).
   - **What.** Once tool schemas are handled, tool results (file contents, listings, search
     results, rows) are the biggest token cost of an agent session, and each one is re-sent on

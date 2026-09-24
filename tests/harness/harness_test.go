@@ -763,9 +763,11 @@ func TestHarness(t *testing.T) {
 	lr.http = measureHTTPLatency(t, bins, cat)
 	sc := measureSafety(t, bins, "")
 	gr := measureGovernor(t, bins, cat)
+	pr := measureProjection(t, bins, cat)
 
 	asserts := append(evaluate(lr, sc), governorAssertions(gr)...)
-	md := renderReport(cat, tr, lr, sc, asserts, time.Since(started)) + renderGovernor(gr)
+	asserts = append(asserts, projectionAssertions(pr, gr)...)
+	md := renderReport(cat, tr, lr, sc, asserts, time.Since(started)) + renderGovernor(gr) + renderProjection(pr, gr)
 	out := filepath.Join(repoRoot(t), "bench-results", "harness.md")
 	if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
 		t.Fatal(err)

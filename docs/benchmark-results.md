@@ -373,7 +373,55 @@ The savings are an upper bound for what the model keeps in context: a
 model that needs the omitted part pays for the `read_result` pages it
 reads (the file above is 13 pages).
 
-## 8. Known limits and follow-ups
+## 8. Field projection (large results)
+
+Field projection (#320, `response.projections` and
+`response.default_projections`, off by default) drops JSON fields the model
+does not need before the budget is applied. The harness measures it on the
+same large-results calls, with the `github.*` drop pack of the issue
+(`**.node_id`, `**.*_url`, `**.url`, `**.reactions`, `**.avatar_url`,
+`**.gravatar_id`) and the built-in default pack for the other servers,
+through three proxies: projection only (`max_tokens: 0`), truncation only
+(the §7 row) and projection then truncation (`max_tokens: 4000`). "Items"
+is the number of list elements the model sees within the budget.
+
+| Call | Off | Projection only | Truncation only (items) | Projection + truncation (items) |
+|---|---:|---:|---:|---:|
+| `github.get_file_contents` | 54,850 | 54,850 (not JSON) | 3,445 | 3,445 |
+| `github.list_issues` | 57,949 | 41,020 (−29.2%) | 3,748 (19) | 3,719 (26) |
+| `github.search_code` | 41,635 | 33,303 (−20.0%) | 3,784 (36) | 3,715 (43) |
+| `jira.jira_search` | 35,069 | 31,350 (−10.6%) | 3,739 (27) | 3,670 (29) |
+| `postgres.pg_query` | 45,197 | 45,197 (nothing to drop) | 3,799 (126) | 3,799 (126) |
+| **Total** | **234,700** | **205,720 (−12.3%)** | **18,515** | **18,348** |
+
+- On the three noisy listings, projection alone saves **21.5%**
+  (134,653 → 105,673 tokens); the file and the SQL rows have nothing to
+  drop and come back unchanged.
+- On top of truncation, the budget is the same, so the token totals barely
+  move (the projection note and its link take part of the budget); what
+  changes is how much of the list fits: 26 issues instead of 19, 43 code
+  hits instead of 36.
+- With the model's `fields` argument (`[].number`, `[].title`, `[].state`,
+  `[].labels[].name`, `[].user.login`, `[].updated_at`), `list_issues`
+  shows **64 issues** in 3,738 tokens, against 19 with truncation only.
+- The catalog fixtures carry little noise. On a realistic GitHub
+  `list_issues` response (`pkg/mcp/governor/testdata/github_list_issues.json`,
+  30 issues with the REST API's full user objects, URL templates and
+  reactions), the same drop pack saves **72.2%** (29,536 → 8,225 tokens),
+  and the default pack alone 59.6%
+  (`TestProjection_GitHubDropPackOnListIssues`).
+- `read_result` on the projection's result id returns the full, redacted
+  result with the dropped fields (harness assertion).
+
+Cost: projection works on the bytes, without decoding values. Projecting
+the 118 KB fixture takes about 1.6 ms (`BenchmarkProjection_DropPack`), and
+the governor stage with projection only about 1 ms on a 30-issue result
+(`BenchmarkGovernor_ProjectionOnly`). Per-call latency in the harness is
+within noise of truncation only (for example `github.list_issues`: 15.9 ms
+truncation only, 19.1 ms projection then truncation, 22.0 ms projection
+only, which returns a 164 KB line).
+
+## 9. Known limits and follow-ups
 
 - **`search_tools`.** The audit prototype estimated about −92% for Full
   Day; the harness measures −65.0%, because 3 of Full Day's 7 queries miss
