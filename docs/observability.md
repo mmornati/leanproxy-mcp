@@ -1,14 +1,54 @@
 # Observability: OpenTelemetry traces and metrics
 
-leanproxy-mcp can export OpenTelemetry traces and metrics over OTLP/HTTP —
-off by default. See [Telemetry (OpenTelemetry)](configuration.md#telemetry-opentelemetry)
-in the configuration reference for every option. This page shows the
-exporter working end to end against Jaeger.
+leanproxy-mcp can export OpenTelemetry traces and metrics over OTLP/HTTP. It
+is off by default and works with every front end: `server run --stdio`,
+`server run --http` and the deprecated `serve`. See
+[Telemetry (OpenTelemetry)](configuration.md#telemetry-opentelemetry) in the
+configuration reference for every option. This page shows the exporter
+working end to end.
+
+## Turning it on
+
+Telemetry is on as soon as an OTLP endpoint is set, either in the config file
+or in the environment. Environment variables win over the config file.
+
+```yaml
+# ~/.config/leanproxy_servers.yaml
+telemetry:
+  enabled: true
+  service_name: leanproxy-mcp        # the service.name resource attribute
+  otlp:
+    endpoint: "http://localhost:4318"
+```
+
+The config file is the simplest option with `server run --stdio`, because
+the IDE starts that process and you would otherwise have to add the variables
+to every IDE's MCP server entry.
+
+| Environment variable | Effect |
+|----------------------|--------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL. `/v1/traces` and `/v1/metrics` are appended. Setting it turns telemetry on. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full traces URL, used as given. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Full metrics URL, used as given. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `http/protobuf` (default) or `http/json`. Any other value, including `grpc`, disables telemetry with a warning. Both values currently send JSON bodies. |
+| `OTEL_EXPORTER_OTLP_INSECURE` | Accepted, but has no effect: the endpoint's scheme (`http://` or `https://`) decides. |
+
+Other standard variables are **not** read. In particular:
+
+- `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`: set the service name
+  with `telemetry.service_name` instead.
+- `OTEL_EXPORTER_OTLP_HEADERS`: there is no way to send authentication
+  headers. To export to a hosted backend that needs an API key, go through
+  an OpenTelemetry Collector (see below).
+- gRPC is not supported, only OTLP/HTTP.
+
+Metrics are exported every 15 seconds. A traces endpoint is required: setting
+only `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` disables telemetry with a warning.
 
 ## Quickstart: Jaeger via docker-compose
 
-Jaeger's all-in-one image accepts OTLP/HTTP directly on port 4318 and shows
-traces in its UI on port 16686.
+Jaeger's all-in-one image accepts OTLP/HTTP on port 4318 and shows traces in
+its UI on port 16686.
 
 ```yaml
 # docker-compose.yml
@@ -25,23 +65,35 @@ services:
 ```bash
 docker compose up -d
 
+# A shared HTTP gateway; point an MCP client at http://127.0.0.1:8765/mcp
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-leanproxy-mcp serve --listen 127.0.0.1:9090
+leanproxy-mcp server run --http 127.0.0.1:8765
 ```
 
-Drive a couple of requests through the proxy (e.g. `invoke_tool` against any
-configured server), then open http://localhost:16686, pick the
-`leanproxy-mcp` service, and find a trace: it shows one `mcp.server` SERVER
-span per request, with child spans for the cache and firewall stages
-(`mcp.middleware.cache`, `mcp.middleware.redact_request`,
-`mcp.middleware.injection`, `mcp.middleware.redact_response`) and, for a
-`tools/call`, a `CLIENT` span (`tools/call <server>`) for the upstream call.
+Or leave the environment alone, add the `telemetry:` block above to the
+config file, and let your IDE start `leanproxy-mcp server run --stdio` as
+usual. See the [Quickstart](quickstart.md#connect-your-client) for client
+setup.
+
+Make a few tool calls from the client, then open http://localhost:16686,
+pick the `leanproxy-mcp` service and open a trace. Each request has:
+
+- one `SERVER` span named after the method, for example `tools/list`, or
+  `tools/call <tool>` for a tool call;
+- one child span per pipeline stage that is active:
+  `mcp.middleware.governor`, `mcp.middleware.tool_pinning`,
+  `mcp.middleware.policy`, `mcp.middleware.cache`,
+  `mcp.middleware.redact_response`, `mcp.middleware.redact_request`,
+  `mcp.middleware.injection` (and `mcp.middleware.code_mode` in a code-mode
+  build);
+- for a request forwarded upstream, a `CLIENT` span named
+  `<method> <server>`, for example `tools/call github`.
 
 ## Quickstart: OpenTelemetry Collector
 
-To route into any other backend (Honeycomb, Datadog, Grafana Tempo, ...),
-front it with an `otel-collector` instead of pointing leanproxy-mcp directly
-at the backend:
+To send data to any other backend (Honeycomb, Datadog, Grafana Tempo, ...),
+put an OpenTelemetry Collector in front of it. The collector also adds the
+authentication headers leanproxy-mcp cannot send.
 
 ```yaml
 # docker-compose.yml
@@ -61,10 +113,11 @@ receivers:
   otlp:
     protocols:
       http:
+        endpoint: 0.0.0.0:4318
 exporters:
   debug:
     verbosity: detailed
-  # add your real backend's exporter here (otlp, honeycomb, datadog, ...)
+  # add your real backend's exporter here (otlp, otlphttp, datadog, ...)
 service:
   pipelines:
     traces:
@@ -78,9 +131,26 @@ service:
 ```bash
 docker compose up -d
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-leanproxy-mcp serve --listen 127.0.0.1:9090
-docker compose logs -f otel-collector   # traces/metrics land here via the debug exporter
+leanproxy-mcp server run --http 127.0.0.1:8765
+docker compose logs -f otel-collector   # traces and metrics appear here via the debug exporter
 ```
+
+## Metrics
+
+| Metric | Type | What it counts |
+|--------|------|----------------|
+| `mcp.server.requests` | counter | Requests handled |
+| `mcp.server.errors` | counter | Requests that ended in an error |
+| `mcp.server.request.duration` | histogram (ms) | Request duration |
+| `mcp.server.response.size` | histogram (bytes) | Size of the result |
+| `mcp.server.requests.in_flight` | up-down counter | Requests in progress |
+| `leanproxy.redactions` | counter | Secrets redacted |
+| `leanproxy.injection.detections` | counter | Injection findings |
+| `leanproxy.cache.hits`, `leanproxy.cache.misses` | counter | Response cache lookups |
+| `leanproxy.ratelimit.waits` | counter | Calls delayed by a per-server rate limit |
+| `leanproxy.tool_pin.events` | counter | Tool pinning events |
+| `leanproxy.policy.decisions` | counter | Policy decisions |
+| `leanproxy.governor.*` | counters | Response governor accounting (see below) |
 
 ## What you will (and will not) see
 
@@ -131,39 +201,15 @@ A request an upstream sends to the client (`elicitation/create`,
 refused or fails. Its params and the client's answer are never recorded
 either.
 
-## Config file instead of environment variables
+## The `/metrics` JSON endpoint
 
-```yaml
-telemetry:
-  enabled: true
-  otlp:
-    endpoint: "http://localhost:4318"
-```
+The same counters are also kept in memory, whether or not an exporter is
+configured. They are served as JSON on `/metrics` by `server run` and
+`serve` with `--metrics-bind` (off by default), together with a `usage`
+section: today's and week-to-date totals from the usage store, across every
+proxy process on the machine. See
+[Dashboard › Metrics Endpoint](dashboard.md#metrics-endpoint) for the schema.
 
-## Existing `/metrics` JSON endpoint
-
-`leanproxy-mcp serve --metrics-bind 127.0.0.1:9091` (or `server run
---metrics-bind 127.0.0.1:9091`) serves it, with a `usage` section of
-today / week-to-date totals from the usage store (see
-[Web Dashboard](dashboard.md#metrics-output)) and a `telemetry` section fed by the same counters
-OpenTelemetry records (including `tool_pin_events_total` and `policy_decisions_total`), useful when you want a quick number without standing
-up a collector. With the response governor on, a `response_governor`
-section adds its accounting: results seen and shortened, original and
-returned tokens (in total and per tool), results projected and the tokens
-projection removed (`projected`, `projection_saved_tokens`, also per tool),
-`read_result` calls and the spill store's size, plus (#321) dedup hits and
-saved tokens (`dedup_hits`, `dedup_saved_tokens`) and summarization results,
-saved tokens and fallbacks (`summarized`, `summarize_saved_tokens`,
-`summarize_fallbacks`), each also broken out per tool. The `telemetry`
-section counts them too (`governor_projections_total`,
-`governor_projection_tokens_saved_total`, `governor_dedup_hits_total`,
-`governor_dedup_tokens_saved_total`, `governor_summarizations_total`,
-`governor_summarization_tokens_saved_total`,
-`governor_summarization_fallbacks_total`). The `telemetry` section also
-carries the schema/discovery counters issue #324's savings report reads:
-`schema_listings_total`, `schema_native_tokens_total`,
-`schema_sent_tokens_total` (router vs. passthrough `tools/list` size) and
-`discovery_calls_total`, `discovery_tokens_total` (`search_tools`/
-`list_tools`/`list_servers` result size). See
-[`docs/savings-report.md`](savings-report.md) for how `leanproxy-mcp
-report` turns these into an auditable savings report.
+With any front end, the counters are also written to the local usage store,
+and [`leanproxy-mcp report`](savings-report.md) turns them into a savings
+report.

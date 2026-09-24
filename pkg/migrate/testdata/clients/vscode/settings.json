@@ -1,0 +1,14 @@
+{
+  // Editor settings
+  "editor.fontSize": 14,
+  "files.exclude": {"**/.git": true, "http://not-a-comment": false},
+  "mcp": {
+    "servers": {
+      "time": {
+        "type": "stdio",
+        "command": "uvx",
+        "args": ["mcp-server-time"],
+      },
+    },
+  },
+}

@@ -24,16 +24,17 @@ notice pointing here. `report` was rewritten to read only real counters.
 
 ## Where the numbers come from
 
-Every front end (`server run --stdio`, `server run --http`, `serve`) already
-maintains the same process-wide counters, exposed unconditionally on the
-`/metrics` JSON endpoint (`pkg/metrics.Snapshot`, token-protected since
-issue #316, available on both `server run` and `serve` via
-`--metrics-bind`): the response governor's `GovernorStats`
-(`pkg/mcp/middleware_governor.go`, issues #319-#321) and the schema/
-discovery telemetry counters (`pkg/mcp/telemetry.go`, this issue). Each
-front end also appends a snapshot of `pkg/metrics.Snapshot()` to an
-append-only, per-UTC-day JSONL store (`pkg/usage`) under
-`~/.leanproxy/usage/`, mode `0600`:
+Every front end (`server run --stdio`, `server run --http`, `serve`)
+maintains the same process-wide counters (`pkg/metrics.Snapshot`): the
+response governor's `GovernorStats` (`pkg/mcp/middleware_governor.go`,
+issues #319-#321) and the schema/discovery telemetry counters
+(`pkg/mcp/telemetry.go`, this issue). The counters are kept whether or not
+OpenTelemetry is enabled. `server run` and `serve` can also expose them
+live, on the JSON `/metrics` endpoint, when started with `--metrics-bind`
+(off by default; see [Dashboard](dashboard.md#metrics-endpoint)). You do
+not need that endpoint: each front end appends a snapshot of
+`pkg/metrics.Snapshot()` to an append-only, per-UTC-day JSONL store
+(`pkg/usage`) under `~/.leanproxy/usage/`, mode `0600`:
 
 - once at startup,
 - every 5 seconds while running (the same tick the status file already
@@ -118,6 +119,9 @@ modeled — and the non-cost rows sum to `total_saved_tokens`.
   payload: the measured saving there is legitimately zero, not "n/a" —
   the router's compaction is what creates the gap, and passthrough
   clients defer differently (see `docs/benchmark-results.md` §10).
+  Claude Code, Claude Desktop, Cursor and VS Code get passthrough by
+  default ([Exposure Modes](configuration.md#exposure-modes-exposure)), so
+  for sessions from those clients this row is zero.
 - **Corresponds to:** `docs/benchmark-results.md` §4's "Tokens: per
   server" and §10's exposure-mode comparison.
 

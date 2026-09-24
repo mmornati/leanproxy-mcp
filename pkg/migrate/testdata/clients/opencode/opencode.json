@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "garmin": {
+      "type": "local",
+      "command": ["uvx", "garmin-mcp"],
+      "environment": {"GARMIN_EMAIL": "me@example.com"}
+    },
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+      "headers": {"CONTEXT7_API_KEY": "key"},
+      "enabled": false
+    }
+  }
+}

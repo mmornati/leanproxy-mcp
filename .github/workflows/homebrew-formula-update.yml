@@ -56,7 +56,10 @@ jobs:
             exit 1
           fi
 
-          get_sha() { grep "leanproxy-mcp_${VERSION}_${1}_${2}.tar.gz" /tmp/checksums.txt | awk '{print $1}'; }
+          # Match the file name exactly: checksums.txt also lists the
+          # "<archive>.sbom.json" SBOMs, which an unanchored grep picks up
+          # too, producing a two-line value that GITHUB_OUTPUT rejects.
+          get_sha() { awk -v f="leanproxy-mcp_${VERSION}_${1}_${2}.tar.gz" '$2 == f {print $1}' /tmp/checksums.txt; }
 
           echo "darwin_amd64=$(get_sha darwin amd64)" >> $GITHUB_OUTPUT
           echo "darwin_arm64=$(get_sha darwin arm64)" >> $GITHUB_OUTPUT
@@ -109,6 +112,7 @@ jobs:
 
             def install
               bin.install "leanproxy-mcp"
+              generate_completions_from_executable(bin/"leanproxy-mcp", "completion")
             end
 
             test do

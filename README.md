@@ -21,6 +21,13 @@
   <img src="https://codecov.io/gh/mmornati/leanproxy-mcp/branch/main/graph/badge.svg" alt="Coverage">
 </p>
 
+<p align="center">
+  <strong>📖 Documentation: <a href="https://mmornati.github.io/leanproxy-mcp/">mmornati.github.io/leanproxy-mcp</a></strong>
+  · <a href="https://mmornati.github.io/leanproxy-mcp/installation/">Installation</a>
+  · <a href="https://mmornati.github.io/leanproxy-mcp/quickstart/">Quick Start</a>
+  · <a href="https://mmornati.github.io/leanproxy-mcp/configuration/">Configuration</a>
+</p>
+
 ---
 
 ## Latest Benchmark
@@ -51,14 +58,14 @@ Measured by `make harness`: the real `leanproxy-mcp server run --stdio` binary, 
 
 MCP servers run arbitrary, third-party code with your credentials and your filesystem access, and their tool descriptions and results are untrusted input the model reads. LeanProxy sits in front of every one of them, locally, and adds the layer most setups are missing:
 
-- **Redacts secrets** in tool arguments and responses, both directions, before they reach an LLM provider (regex + optional high-entropy detector, opt-in local-LLM sidecar for context-aware cases).
-- **Screens for prompt injection** in requests and tool output, with configurable risk-band actions (block / quarantine / redact / log) and a local classifier — no data leaves the machine.
+- **Redacts secrets** in tool arguments and responses, both directions, before they reach an LLM provider. On by default: 29 built-in patterns, plus your own; an optional high-entropy detector.
+- **Screens for prompt injection** (opt-in, `injection.enabled: true`) in requests and tool output, with configurable risk-band actions (block / quarantine / redact / log) and a local classifier.
 - **Pins every upstream tool definition** and flags drift ("rug pulls"), scans descriptions for hidden instructions and invisible unicode.
 - **Per-tool policy**: allow / deny / confirm rules by tool and by annotation (e.g. require confirmation on anything `destructiveHint`), refuses calls to tools a server never advertised.
 - **Sandboxes** third-party stdio servers in a container with no network and no filesystem access by default, and gives each server a minimal environment instead of your full one.
 - **One command tells you where you stand:** `leanproxy-mcp doctor security` — a local-only, read-only report mapped to the [OWASP MCP Top 10](docs/security.md#owasp-mcp-top-10-security-report-doctor-security-323), with a `--json` form for CI. See [docs/security.md](docs/security.md) for the full threat model — what this protects against and what it does not.
 
-None of this calls out to a third-party service: the proxy, the classifier, the redaction patterns and the report all run on your machine, against your own config.
+None of this calls out to a third-party service: the proxy, the classifier, the redaction patterns and the report all run on your machine, against your own config. LeanProxy only contacts other services for features you turn on: OpenAI embeddings for hybrid tool search, OpenTelemetry export, and `marketplace sync` (see the [FAQ](https://mmornati.github.io/leanproxy-mcp/faq/#is-my-data-sent-anywhere)).
 
 ---
 
@@ -198,15 +205,14 @@ LeanProxy's niche is the combination: token-cost reduction (response governor, s
 
 | Feature | Benefit |
 |:--------|:--------|
-| 🛡️ **Token Firewall** | Redacts secrets in tool arguments and responses (on by default) and screens calls for prompt injection — in both `server run --stdio` and `serve` |
+| 🛡️ **Token Firewall** | Redacts secrets in tool arguments and responses (on by default) and, when enabled, screens calls for prompt injection — in `server run --stdio`, `server run --http` and `serve` |
 | ⚡ **JIT Schema Loading** | Tool schemas load only when actually called — not on every request |
 | 🔎 **Works With Native Tool Search** | Passthrough mode for clients that defer tools themselves (Claude Code, Cursor, VS Code, Claude Desktop): every tool listed as `<server>__<tool>` with full metadata and `tools/list_changed`, every security layer still applied; `--exposure` or `exposure:` to choose per client ([docs](docs/configuration.md#exposure-modes-exposure)) |
 | ✂️ **Response Token Governor** | Opt-in: drops unneeded JSON fields per tool (`keep`/`drop` projection rules, a default noise pack, or the model's `fields` argument), caps large tool results (smart head/tail truncation, structural JSON truncation), dedups a result byte-identical to one already seen this session (never across sessions), and can hand a still-oversized result to a local Ollama model for summarization (falls back to truncation on any failure) — keeps the full result per session for paged `read_result` / `grep` / `jsonpath` retrieval — −92% on a large-results session, −72% from projection alone on a GitHub issue listing, −74% on a repeated-reads session ([docs](docs/configuration.md#response-token-governor-response)) |
 | 🔄 **Connection Pooling** | HTTP MCP clients reuse connections; concurrent calls to a stdio server are multiplexed over its single pipe |
-| 📦 **Multi-Transport** | Supports stdio, HTTP, and SSE transport protocols |
-| 👥 **Multi-Team Namespaces** | Hierarchical organization for enterprise teams |
-| 💰 **Cost Attribution** | Track token savings per server with detailed reports |
-| 🧪 **Dry-Run Mode** | Simulate and preview savings without live execution |
+| 📦 **Multi-Transport** | Upstream servers over stdio, Streamable HTTP or SSE; clients over stdio or one shared Streamable HTTP gateway (`server run --http`) |
+| 📊 **Auditable Savings Report** | `leanproxy-mcp report` built from counters the proxy actually recorded, by tool, server or session; export to CSV, JSON or Markdown |
+| 🩺 **Security Report** | `leanproxy-mcp doctor security`: local, read-only checks mapped to the OWASP MCP Top 10, with `--json` for CI |
 
 </div>
 
@@ -214,20 +220,48 @@ LeanProxy's niche is the combination: token-cost reduction (response governor, s
 
 ## Quick Start
 
-### One-Line Install
+Releases are published for macOS and Linux (amd64 and arm64). There is no Windows release. Full guide: [Installation](https://mmornati.github.io/leanproxy-mcp/installation/).
+
+### Install
 
 ```bash
 # macOS/Linux via Homebrew
 brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
 brew install leanproxy-mcp
-
-# ...or download binary for your platform
-curl -fsSL https://github.com/mmornati/leanproxy-mcp/releases/latest/download/leanproxy-mcp.tar.gz | tar xz
 ```
 
-### Configure Your IDE
+Or download the latest release for your platform:
 
-Add LeanProxy as an MCP server in your `opencode.json`:
+```bash
+VERSION=$(curl -fsSL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+OS=$(uname -s | tr '[:upper:]' '[:lower:]'); ARCH=$(uname -m)
+case "$ARCH" in x86_64) ARCH=amd64 ;; aarch64) ARCH=arm64 ;; esac
+curl -fsSL "https://github.com/mmornati/leanproxy-mcp/releases/download/${VERSION}/leanproxy-mcp_${VERSION#v}_${OS}_${ARCH}.tar.gz" | tar xz leanproxy-mcp
+sudo mv leanproxy-mcp /usr/local/bin/
+```
+
+### Add Your MCP Servers
+
+```bash
+# Import the servers your IDE already has (preview first)
+leanproxy-mcp migrate --dry-run
+leanproxy-mcp migrate
+
+# ...or add one by hand: note the "--" before the server's command
+leanproxy-mcp server add filesystem -- npx -y @modelcontextprotocol/server-filesystem "$HOME/projects"
+```
+
+Servers live in `~/.config/leanproxy_servers.yaml`.
+
+### Connect Your IDE
+
+Every client starts the same command, `leanproxy-mcp server run --stdio`. For Claude Code:
+
+```bash
+claude mcp add leanproxy -- leanproxy-mcp server run --stdio
+```
+
+For OpenCode (`~/.config/opencode/opencode.json`):
 
 ```json
 {
@@ -242,17 +276,17 @@ Add LeanProxy as an MCP server in your `opencode.json`:
 }
 ```
 
-### Run It
+Claude Desktop, Cursor, VS Code, and one shared HTTP gateway for several clients (`server run --http`): see [Connect your client](https://mmornati.github.io/leanproxy-mcp/quickstart/#connect-your-client).
+
+### Check It
 
 ```bash
-# Start with your MCP servers
-leanproxy-mcp server run --stdio
+# See which security layers your config turns on
+leanproxy-mcp doctor security
 
-# Preview savings without executing
-leanproxy-mcp server run --dry-run --stdio
-
-# Generate an auditable savings report, built from real counters (docs/savings-report.md)
-leanproxy-mcp report --output report.md
+# Auditable savings report, built from real counters (docs/savings-report.md)
+leanproxy-mcp report
+leanproxy-mcp report --export md --output report.md
 ```
 
 ---
@@ -300,22 +334,26 @@ flowchart TB
 
 ---
 
-## v0.8.0: What's New
+## v0.11: What's New
 
 | Feature | Description |
 |:--------|:------------|
-| 🛒 **MCP Registry Marketplace** | Discover and install community MCP servers via `marketplace` CLI |
-| 🛡️ **Prompt Injection Protection** | Classifier engine with risk scoring, quarantine, and configurable policies |
+| 🔎 **`search_tools`** | Ranked (BM25, optional hybrid embeddings) tool search across every server in one call |
+| 🔀 **Exposure Modes** | Passthrough for clients with their own tool search (Claude Code, Claude Desktop, Cursor, VS Code), router for the rest; `--exposure` / `exposure:` to choose |
+| 🌐 **Streamable HTTP Front End** | `server run --http`: one local, token-protected gateway shared by several MCP clients; replaces the deprecated `serve` |
+| ✂️ **Response Token Governor** | Opt-in truncation with paged `read_result`, per-tool field projection, in-session dedup and optional local-LLM summarization |
 | 📌 **Tool Pinning** | Hashes every upstream tool definition, warns about or blocks rug pulls and poisoned descriptions (`leanproxy-mcp tools pins`) |
 | 🚦 **Per-Tool Policy** | Allow / deny / confirm rules per `server.tool` glob and annotation; no calls to tools a server does not advertise (`leanproxy-mcp policy check`) |
-| 🧠 **Semantic Cache** | Vector-similarity caching with Ollama/OpenAI embeddings and SQLite/Qdrant/Pinecone |
-| ⚡ **Response Cache** | Opt-in, exact-match `tools/call` cache: allowlisted read tools only, keyed before secret redaction, bounded LRU by bytes |
-| 🤖 **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model |
-| 📊 **Web Dashboard** | Real-time HTMX-powered dashboard with server/tool drill-down |
-| 🔌 **IDE Extensions** | VS Code and JetBrains plugins for status bar cost monitoring |
-| 📈 **Cache Hit Rate Report** | `cache stats` command for Anthropic prompt caching analytics |
-| 📤 **CSV/JSON Cost Export** | `report --export csv/json` for external analysis |
-| 📐 **Metrics Endpoint** | Prometheus-style JSON metrics for monitoring integrations |
+| 🛡️ **Prompt-Injection Guard v2** | Scans decoded text and tool outputs, per-direction risk-band actions, optional local judge model |
+| 📦 **Sandbox** | Optional Docker/Podman isolation for stdio servers, with no network and no host filesystem by default |
+| 🔐 **Least-Privilege Environment** | Stdio servers get a minimal environment instead of the proxy's full one (`doctor env`) |
+| 🛒 **Marketplace Integrity** | Official MCP Registry by default, version-pinned installs, a trust score from verifiable signals only, confirm before enable |
+| 🩺 **`doctor security`** | Local security report mapped to the OWASP MCP Top 10 |
+| 📊 **Auditable `report`** | Savings report from real counters, exportable to CSV, JSON or Markdown |
+| 📈 **OpenTelemetry** | Opt-in OTLP traces and metrics for the MCP pipeline |
+| 🔄 **MCP Protocol Upgrade** | Version negotiation, resources and prompts aggregation, sampling/roots/elicitation relay, progress and cancellation |
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list and the breaking changes.
 
 See [CHANGELOG.md](CHANGELOG.md#removed-in-v010) for the features removed in v0.10 (budget management,
 federation, model routing, lazy tool-schema loading, and the MLX sidecar placeholder) because they were

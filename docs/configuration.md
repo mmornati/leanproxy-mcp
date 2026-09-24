@@ -1,163 +1,292 @@
 # Configuration
 
-Customize LeanProxy-MCP behavior through configuration files and environment variables.
+LeanProxy-MCP reads one file: `leanproxy_servers.yaml`. It lists the
+upstream MCP servers and configures every proxy feature. This page is the
+reference for that file, for the environment variables LeanProxy reads, and
+for the files it writes.
+
+- The file is YAML. JSON also works, because YAML parses JSON.
+- Every block is optional. A file with only a `servers:` list is a valid
+  config.
+- **Unknown keys are ignored without a warning.** A typo such as `reponse:`
+  is silently skipped. The only keys that log a warning are the removed
+  `federation` and `optimization.lazy_loading`.
+- Values are checked when the file is loaded. An invalid value stops
+  `server run` with an error that names the key. See
+  [Validate Configuration](#validate-configuration).
 
 ## Config File Locations
 
-LeanProxy-MCP searches for configuration in this order:
+The default path is `~/.config/leanproxy_servers.yaml`. There is no search
+of the current directory and no `~/.config/leanproxy/config.yaml`.
 
-1. **Explicit path**: `--config <path>` flag
-2. **Project**: `./leanproxy.yaml` or `./leanproxy.yml`
-3. **Home**: `~/.config/leanproxy/config.yaml`
-4. **Default**: `leanproxy.yaml` in current directory
+Not every command reads the same overrides:
 
-## Config File Format
+| Commands | Path used, first match wins |
+|----------|-----------------------------|
+| `server run`, `server health`, `status` | Their own `--config` flag, then `$LEANPROXY_CONFIG`, then the default |
+| `policy check`, `tools pins` | The global `--config` flag, then `$LEANPROXY_CONFIG`, then the default |
+| `server add`, `server remove`, `server list`, `server enable`, `server disable`, `add` (`install`), `marketplace sync`, `marketplace outdated`, `marketplace update`, `compactor rebuild` | `$LEANPROXY_CONFIG`, then the default. **`--config` is ignored** |
+| `serve` (deprecated), `doctor security`, `doctor env`, `doctor sandbox` | The global `--config` flag, then the default. **`$LEANPROXY_CONFIG` is ignored** |
+| `migrate` | `--target`, then `$LEANPROXY_CONFIG`, then the default |
+| `bouncer validate-patterns` | Its own `--config` flag, default **`./leanproxy.yaml`** in the current directory. Pass `--config ~/.config/leanproxy_servers.yaml` |
 
-### YAML Configuration
+!!! tip "Use one mechanism"
+    To work with a file other than the default, export
+    `LEANPROXY_CONFIG=/path/to/file.yaml` **and** pass `--config` to
+    `serve` and `doctor`. The commands that edit the file (`server add`,
+    `add`, `marketplace update`) only honour `$LEANPROXY_CONFIG`.
+
+A missing file is not an error for most commands: they run with the
+defaults. `server run` stops with `no servers configured in <path>` when the
+file is missing or lists no servers.
+
+## Front Ends at a Glance
+
+LeanProxy has three front ends. They share one middleware pipeline, so the
+security and token features behave the same in each, but some blocks are
+read by only one of them.
+
+| | `server run --stdio` | `server run --http <addr>` | `serve` (deprecated) |
+|---|---|---|---|
+| Transport | MCP over stdin/stdout; the IDE starts the process | MCP Streamable HTTP at `http://<addr>/mcp` | Line-delimited JSON-RPC over TCP with an `auth` handshake; no MCP client speaks it |
+| Status | Recommended for one IDE | Recommended for a shared gateway | Deprecated, removed in v1.0 |
+| Config path | `--config`, `$LEANPROXY_CONFIG`, default | same | `--config`, default |
+| Invalid config | Exits with an error | Exits with an error | Logs a warning and runs **with no servers** |
+| Authentication | None (a local process) | Bearer token (`--http-token`, `$LEANPROXY_SERVE_TOKEN` or `~/.config/leanproxy/serve.token`); `--no-auth` on loopback only | `auth` handshake with the same token sources |
+| `servers`, `reconnect` | Yes | Yes | Yes |
+| `server.*` limits | `max_concurrent_requests`, `max_line_bytes` | `max_concurrent_requests`, `server.http.*` | `max_concurrent_requests` (per connection), `max_line_bytes`, `max_connections` |
+| Redaction (`bouncer`), `injection`, `security.tool_pinning`, `policy` | Yes | Yes | Yes |
+| `response_cache`, `response` (governor) | Yes | Yes | Yes |
+| Server-to-client relay (`allow_sampling`, `roots`) | Yes | Yes | Yes |
+| `telemetry` | Yes | Yes | Yes |
+| `exposure` block | Yes | Yes | Yes |
+| `--exposure` flag | Yes | Yes | No |
+| `tool_search` block | Yes | Yes | **Ignored** |
+| `code_mode` (needs a `-tags codemode` build) | Yes | Yes | **Ignored** |
+| Semantic cache (`cache.vector_store`, `--embed-provider`) | No | No | Yes |
+| Sidecar LLM redaction (`--sidecar-*` flags, `bouncer.sidecar_always_call`) | No | No | Yes |
+| Provider detection (`--cache-strategy`, `--providers-config`) | No | No | Yes |
+| Web dashboard, `/metrics` endpoint | No | No | Yes |
+| `SIGHUP` reload | No | No | Yes: re-reads `--providers-config` and rebuilds the redactor |
+| Hourly marketplace registry refresh | No | No | Yes |
+| Status file, usage store (`report`) | Yes | Yes | Yes |
+
+What each front end does on `SIGINT`/`SIGTERM` is described in
+[Graceful Shutdown](shutdown.md).
+
+## Complete Example
+
+This file is valid as written. It loads with
+`leanproxy-mcp --config example.yaml policy check github.delete_repo`.
+It shows the common keys; each section below lists every key of its block.
 
 ```yaml
-# Server configuration
-server:
-  host: "127.0.0.1"
-  port: 8080
+# ~/.config/leanproxy_servers.yaml
+version: "1"                      # free-form string, not checked
 
-# Redaction (Bouncer) — enabled by default; the block is optional
-bouncer:
+# ---------------------------------------------------------------- upstreams
+servers:
+  - name: github                  # required, unique; used in "github.<tool>"
+    transport: stdio              # stdio | http | sse
+    stdio:
+      command: npx                # required for stdio; must be on PATH
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env: ["GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}"]  # ${VAR} from the proxy's env
+      env_passthrough: ["GH_HOST"]   # copied as-is from the proxy's env
+    timeout: 60s                  # per-request timeout (default 30s)
+    idle_timeout: 30m             # stop when idle (default 30m, "0" = never)
+    max_in_flight: 32             # concurrent requests on the pipe (default 32)
+    rate_limit:
+      requests_per_second: 20     # default: no limit
+      burst: 40
+
+  - name: files
+    transport: stdio
+    stdio:
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/work"]
+      sandbox:                    # optional container isolation
+        runtime: docker           # docker | podman | none (default)
+        network: none             # none (default) | bridge | host
+        mounts:
+          - {host: /home/me/project, container: /work, read_only: true}
+    roots:                        # answer roots/list from this list
+      - {uri: "file:///work", name: project}
+
+  - name: remote-api
+    enabled: false                # kept in the file, not started
+    transport: http               # Streamable HTTP upstream
+    http:
+      url: https://mcp.example.com/mcp
+      headers: {X-Team: platform}
+      auth: {type: bearer, client_secret: "change-me"}
+
+  - name: legacy-sse
+    transport: sse                # legacy SSE upstream: still uses http.url
+    http:
+      url: http://localhost:9000/sse
+
+reconnect:                        # all optional; these are the defaults
   enabled: true
+  health_check_interval: 30s
+  health_check_failures: 3
+  max_restart_attempts: 5
+  restart_backoff: 1s
+  stable_window: 2m
+
+# ---------------------------------------------------------------- front end
+server:
+  max_concurrent_requests: 64
+  max_line_bytes: 67108864
+  http:                           # only read by `server run --http`
+    allowed_hosts: []
+    allowed_origins: []
+    max_body_bytes: 67108864
+    max_sessions: 64
+    session_idle_timeout: 30m
+
+exposure:
+  mode: router                    # for clients no rule matches
+  builtin_clients: true           # Claude Code, Claude Desktop, Cursor, VS Code -> passthrough
+
+tool_search:                      # `server run` only
+  synonyms:
+    k8s: kubernetes cluster
+
+# ---------------------------------------------------------------- security
+bouncer:                          # redaction is on even without this block
+  enabled: true
+  entropy_detection: false
   patterns:
-    - name: "custom-pattern"
-      pattern: "API_KEY=[A-Za-z0-9]+"
+    - name: acme-key
+      pattern: 'acme_[A-Za-z0-9]{32}'
 
-# Logging
-logging:
-  level: "info"
-  file: ""
+injection:                        # off unless enabled: true
+  enabled: true
+  threshold: 70
 
-# Watch mode default
-watch:
-  interval: "1s"
+security:
+  tool_pinning:
+    mode: warn                    # off | warn (default) | block
+
+policy:
+  default: allow
+  unknown_tools: deny
+  rules:
+    - match: "github.delete_*"
+      action: confirm
+
+# ---------------------------------------------------------------- tokens
+response_cache:
+  enabled: true
+  tools: ["github.get_file_contents"]
+
+response:                         # response token governor, off by default
+  enabled: true
+  max_tokens: 4000
+  default_projections: true
+
+telemetry:
+  enabled: false
+
+registry:
+  sources: []
 ```
 
-### JSON Configuration
+## Top-Level Keys
 
-```json
-{
-  "server": {
-    "host": "127.0.0.1",
-    "port": 8080
-  },
-  "bouncer": {
-    "enabled": true,
-    "patterns": []
-  },
-  "logging": {
-    "level": "info"
-  }
-}
-```
+| Key | Purpose | Default | Read by |
+|-----|---------|---------|---------|
+| `version` | Free-form label. Not checked | none | – |
+| [`servers`](#upstream-servers-servers) | Upstream MCP servers | none | all front ends and the management commands |
+| [`reconnect`](#auto-reconnect) | Crash restart and health checks | on | all front ends |
+| [`server`](#server-options) | Limits of the proxy's own front end | see section | all front ends |
+| [`bouncer`](#redaction-bouncer) | Secret redaction | on, 29 built-in patterns | all front ends |
+| [`injection`](#prompt-injection-protection) | Prompt-injection guard | **off** | all front ends |
+| [`security.tool_pinning`](#tool-pinning-securitytool_pinning) | Tool pinning, rug-pull detection | `warn` | all front ends, `tools pins`, `doctor security` |
+| [`policy`](#per-tool-policy-policy) | Per-tool allow / deny / confirm | allow advertised tools | all front ends, `policy check` |
+| [`response_cache`](#response-cache) | Exact-match cache for `tools/call` | off | all front ends |
+| [`response`](#response-token-governor-response) | Response token governor | off | all front ends |
+| [`exposure`](#exposure-modes-exposure) | Router, passthrough or hybrid per client | router, built-in client table | all front ends |
+| [`tool_search`](#tool-search-search_tools) | `search_tools` ranking | BM25 | `server run` only |
+| [`code_mode`](#code-mode-code_mode-experimental) | Experimental `execute_code` | off | `server run` only, `-tags codemode` builds |
+| [`telemetry`](#telemetry-opentelemetry) | OpenTelemetry export | off | all front ends |
+| [`registry`](#marketplace-registry-sources-issue-313) | Extra marketplace sources | none | `marketplace sync` |
+| [`cache.vector_store`](#semantic-cache-cachevector_store) | Semantic cache store | sqlite-vec | `serve` only |
 
-## Configuration Options
+## Upstream Servers (`servers`)
 
-### Server Options
+Each entry of `servers:` is one upstream MCP server.
 
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `server.host` | string | `"127.0.0.1"` | Listen host |
-| `server.port` | int | `8080` | Listen port |
-| `servers[].timeout` | duration | `30s` | **Per-server** request timeout. Each server entry in `servers:` can set its own `timeout` (e.g. `timeout: 60s` for `garmin`). The proxy honors the per-server value end-to-end: the handler dispatches with it and the worker uses `min(per-server, caller)`. Use a larger value for servers that return slow / large payloads (FIT data, big search results). |
-| `server.max_batch_size` | int | `100` | Maximum batch size for JSON-RPC batch requests (0 = unlimited) |
-| `server.max_concurrent_requests` | int | `64` | Maximum number of client requests `server run --stdio` handles in parallel (for `serve`: per connection). `0` or absent means the default; negative values are rejected. See below. |
-| `server.max_line_bytes` | int | `67108864` (64 MiB) | Largest incoming JSON-RPC message (one line), for both `serve` and `server run --stdio`. A longer line gets a parse-error response and is skipped; `serve` also closes the connection. `0` or absent means the default |
-| `server.max_connections` | int | `32` | `serve` only: client connections open at once; extra ones are closed right away. `0` or absent means the default |
-| `server.http.*` | block | see below | Limits and browser allowlists of the Streamable HTTP front end (`server run --http`, #309). See [Streamable HTTP front end](#streamable-http-front-end-serverhttp) |
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `name` | string | – (required) | Server name. Tools are addressed as `<name>.<tool>` |
+| `enabled` | bool | `true` | `false` keeps the entry but never starts it |
+| `transport` | string | – (required) | `stdio`, `http` (Streamable HTTP) or `sse` (legacy HTTP+SSE) |
+| `stdio.command` | string | – (required for `stdio`) | Executable to start |
+| `stdio.args` | list | `[]` | Arguments |
+| `stdio.env` | list of `"KEY=VALUE"` | `[]` | Extra environment. See [Child Process Environment](#child-process-environment-env-env_passthrough-inherit_env) |
+| `stdio.env_passthrough` | list of names | `[]` | Variables copied from the proxy's environment |
+| `stdio.inherit_env` | bool | `false` | Pass the proxy's whole environment |
+| `stdio.cwd` | path | the proxy's working directory | Working directory of the child |
+| `stdio.sandbox` | block | none | Container isolation. See [Sandbox](#sandbox-stdiosandbox-312) |
+| `http.url` | URL | – (required for `http` and `sse`) | Upstream endpoint |
+| `http.headers` | map | none | Headers sent on every request (`http` and `sse`) |
+| `http.auth` | block | none | `http` transport only. See [HTTP and SSE upstreams](#http-and-sse-upstreams) |
+| `timeout` | duration | `30s` | Per-request timeout for this server |
+| `idle_timeout` | duration | `30m` | `stdio` only. Stop the process after this long without a request; it restarts on the next one. `"0"` disables |
+| `max_in_flight` | int | `32` | `stdio` only. See [`max_in_flight`](#concurrent-requests-per-stdio-server-max_in_flight) |
+| `max_response_bytes` | int | `67108864` (64 MiB) | `stdio` only. See [`max_response_bytes`](#maximum-response-size-per-stdio-server-max_response_bytes) |
+| `rate_limit.requests_per_second`, `rate_limit.burst` | float, int | no limit | See [Per-Server Rate Limiting](#per-server-rate-limiting) |
+| `allow_sampling` | bool | `false` | See [Server-to-Client Requests](#server-to-client-requests-allow_sampling-roots) |
+| `roots` | list of `{uri, name}` | relay to the client | Static `roots/list` answer; each `uri` must start with `file://` |
+| `installed_from` | block | none | Written by `add` and `marketplace update`: `registry`, `name`, `version`, `installed_at`. Do not edit |
+| `connect_timeout` | duration | `10s` | **No effect.** Parsed and checked, never used |
+| `complexity_tier`, `cache_settings`, `summarize_settings` | – | – | **No effect.** Parsed, never used |
 
-### Concurrent Client Requests (`server.max_concurrent_requests`)
+Durations use Go syntax: `500ms`, `30s`, `5m`, `1h30m`. A malformed duration
+fails the load.
 
-`leanproxy-mcp server run --stdio` handles every request from the IDE in its
-own goroutine, so a slow tool call never blocks `ping`, `tools/list` or calls
-to other servers. Responses are written one complete line at a time (a single
-writer, flushed after every message), in whatever order the requests finish.
+### HTTP and SSE upstreams
+
+Both remote transports take their URL from the `http:` block. There is no
+`sse:` block: a server with `transport: sse` and no `http.url` fails the
+load with `url is required for sse transport`.
 
 ```yaml
-server:
-  max_concurrent_requests: 16   # default 64
+servers:
+  - name: remote
+    transport: http
+    http:
+      url: https://mcp.example.com/mcp
+      headers:
+        X-Team: platform
+      auth:
+        type: bearer
+        client_secret: "change-me"   # sent as "Authorization: Bearer change-me"
+  - name: old-server
+    transport: sse
+    http:
+      url: http://localhost:9000/sse
+      headers:
+        Authorization: "Bearer change-me"   # sse has no auth block; use a header
 ```
 
-- **Cap:** when `max_concurrent_requests` requests are already running, the
-  proxy stops reading stdin until one finishes. Requests are delayed, never
-  rejected.
-- **Notifications** (messages without an `id`) never get a response.
-- **Cancellation:** `notifications/cancelled` with the `requestId` of an
-  in-flight request cancels it. The cancellation reaches the upstream server
-  (stdio servers receive their own `notifications/cancelled`) and, as the MCP
-  spec recommends, the canceled request gets no response.
-- **Shutdown:** on EOF or a `shutdown` request the proxy stops reading, waits
-  up to 5 seconds for in-flight requests to finish, cancels whatever is still
-  running, then (for `shutdown`) answers the shutdown request and stops every
-  upstream server.
-- **Invalid JSON** is answered with a parse error whose `id` is `null`. The
-  raw line is never logged, only its length.
-- **Oversized lines:** a message over `server.max_line_bytes` (default 64
-  MiB, shared with `serve`; see below) also gets a parse-error response with
-  `id` `null`. It is discarded up to its next newline and the connection
-  keeps serving.
+| Key | Description |
+|-----|-------------|
+| `http.auth.type` | `bearer` or `oauth2`. Any other value logs a warning and sends no credentials |
+| `http.auth.client_secret` | With `bearer`, the token sent as `Authorization: Bearer <client_secret>`. With `oauth2`, the OAuth client secret |
+| `http.auth.client_id`, `http.auth.scopes` | `oauth2` only. Passed to the MCP client library's OAuth handler |
+| `http.auth.token_url` | **No effect.** Parsed, never used |
 
-### Serve Listener Limits
+`http.auth` is ignored for `transport: sse`. Put credentials in
+`http.headers` instead. The config file holds these secrets in plain text:
+keep it at mode `0600`.
 
-`leanproxy-mcp serve` (the TCP listener) requires an auth handshake on every
-connection (see [`serve`](commands.md#client-protocol-and-authentication))
-and applies these limits:
-
-```yaml
-server:
-  max_line_bytes: 1048576        # default 64 MiB
-  max_concurrent_requests: 16    # per connection, default 64
-  max_connections: 8             # default 32
-```
-
-- **Message size:** input is read with a bounded reader, so a client sending
-  a huge line without a newline cannot grow memory beyond about
-  `max_line_bytes`. It gets an `Invalid Request` error and is disconnected.
-- **Concurrency:** each connection runs at most `max_concurrent_requests`
-  requests at once; at the cap the proxy stops reading that connection until
-  one finishes.
-- **Disconnects** cancel the connection's in-flight requests and their
-  upstream calls.
-
-### Streamable HTTP front end (`server.http`)
-
-`leanproxy-mcp server run --http 127.0.0.1:8765` serves the MCP Streamable
-HTTP transport (#309). The address and the token come from the command line
-(`--http`, `--http-token`, `--no-auth`, see
-[`server run`](commands.md#server-run-run-the-mcp-front-end)). This block
-holds the limits and allowlists:
-
-```yaml
-server:
-  max_concurrent_requests: 64        # shared by every HTTP session
-  http:
-    allowed_hosts: [gateway.lan]     # extra Host header values
-    allowed_origins: ["https://app.example"]  # browser origins allowed to call
-    max_body_bytes: 67108864         # one POST body, default 64 MiB
-    max_sessions: 64                 # open sessions, default 64
-    session_idle_timeout: 30m        # default 30m
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `server.http.allowed_hosts` | list | (none) | `Host` header values accepted beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` (`host` or `host:port`). Any other `Host` gets `403`, which blocks DNS rebinding. `--http-allowed-hosts` adds to it |
-| `server.http.allowed_origins` | list | (none) | Browser origins (`scheme://host[:port]`, no path or wildcard) allowed to call the endpoint. They get CORS headers. A request carrying any other `Origin` gets `403`, except the server's own origin. Requests without `Origin` (every non-browser MCP client) are not affected. `--http-allowed-origins` adds to it |
-| `server.http.max_body_bytes` | int | `67108864` (64 MiB) | Largest POST body. A larger one gets `413` |
-| `server.http.max_sessions` | int | `64` | Sessions open at once. Beyond it, `initialize` first ends idle sessions, then gets `503` with `Retry-After` |
-| `server.http.session_idle_timeout` | duration | `30m` | A session with no request in flight and no GET stream open is ended after this long. Its next request gets `404` and the client initializes again |
-| `server.max_concurrent_requests` | int | `64` | Client requests handled at once across all HTTP sessions. More wait for a slot and are never rejected. A client's answer to an elicitation never waits for a slot |
-
-Values are validated when the config loads: negative sizes, a malformed or
-non-positive duration, and an origin that is not `http(s)://host[:port]` are
-all refused. The HTTP server also bounds request headers to 64 KiB, the
-header read to 10 s, a POST body read to 60 s and each write to 30 s (so a
-client that stops reading cannot hold a stream). Keep-alive connections idle
-for more than 120 s are closed.
+!!! warning "`server add --transport http` does not work"
+    `leanproxy-mcp server add` only writes working `stdio` entries. Add
+    `http` and `sse` servers by editing the file.
 
 ### Child Process Environment (`env`, `env_passthrough`, `inherit_env`)
 
@@ -242,7 +371,7 @@ servers:
         image: node:22-alpine    # required unless inferable from the command
         network: none            # none | bridge | host (default: none)
         mounts:                  # explicit, default none
-          - host: ~/projects/foo
+          - host: /home/me/projects/foo   # absolute; no ~
             container: /work
             read_only: true
         memory: 512m
@@ -352,7 +481,7 @@ client or answered by the proxy, and never leave the server waiting: see
 
 MCP is bidirectional: an upstream server can ask its client for something in
 the middle of a call. LeanProxy relays these requests to the connected client
-(both `server run --stdio` and `serve`) and the client's answer back to the
+(every front end) and the client's answer back to the
 server, with per-server policy:
 
 | Request | Default | Option |
@@ -433,8 +562,8 @@ servers:
 | `servers[].rate_limit.burst` | int | `requests_per_second` (rounded up, min 1) | Number of requests allowed to proceed immediately before the sustained rate applies. |
 
 When a limit is configured, requests **wait** for a token instead of being
-rejected outright: `PutRequest` blocks until either a token frees up or the
-request's own timeout/deadline elapses, at which point it fails with
+rejected outright: the request waits until either a token frees up or the
+request's own timeout elapses, at which point it fails with
 `rate limit wait exceeded deadline for <server>`. This applies to stdio,
 HTTP and SSE servers alike (`transport: http` / `sse` servers can set the
 same `rate_limit` block; it also defaults to off).
@@ -443,265 +572,280 @@ Internal housekeeping traffic — health pings, the internal `initialize`
 handshake, and periodic `tools/list` cache refreshes — always bypasses the
 limiter, so a busy limiter can never make a server look unhealthy.
 
-### Socket Options
+## Auto-Reconnect
+
+LeanProxy-MCP monitors proxied MCP servers and reconnects them automatically when a server crashes, hangs, or loses its transport connection. This applies to all transports (`stdio`, `http`, `sse`).
+
+Auto-reconnect is enabled by default. Configure it with a top-level `reconnect` block in `leanproxy_servers.yaml`:
+
+```yaml
+servers:
+  - name: garmin
+    enabled: true
+    transport: stdio
+    stdio:
+      command: garmin-mcp
+      args: [stdio]
+    timeout: 30s
+    # idle_timeout: 30m   # empty/absent defaults to 30m; "0" disables
+
+# Optional global auto-reconnect settings
+reconnect:
+  enabled: true
+  health_check_interval: 30s
+  health_check_failures: 3
+  max_restart_attempts: 5
+  restart_backoff: 1s
+  stable_window: 2m
+```
+
+### Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `socket.path` | string | `"~/.leanproxy/leanproxy.sock"` | Unix socket path |
-| `socket.perm` | int | `0700` | Socket file permissions |
-| `socket.max_msg_size` | int | `1048576` (1MB) | Maximum message size |
-| `socket.rate_limit` | int | `100` | Rate limit (requests/second) |
-| `socket.auth_token` | string | `""` | Authentication token (empty = no auth) |
+| `enabled` | bool | `true` | Master switch for auto-reconnect |
+| `health_check_interval` | duration | `30s` | How often idle/running servers are pinged. Set to `0` to disable the proactive health check |
+| `health_check_failures` | int | `3` | Consecutive failed pings before a server is restarted automatically |
+| `max_restart_attempts` | int | `5` | Max crash-restarts before a server is left in an error state |
+| `restart_backoff` | duration | `1s` | Initial delay before restarting a crashed server (grows exponentially, capped at 1 minute; clamped to [10ms, 1m]) |
+| `stable_window` | duration | `2m` | If a server survives this long, its restart budget resets |
 
-**Security:** Socket directories and config directories are created with `0700` permissions (owner read/write/execute only) to prevent unauthorized access to sensitive data.
+### How It Works
+
+1. **Crash detection**: when a `stdio` process exits unexpectedly it is respawned automatically with exponential backoff. A process that stays up past `stable_window` resets the restart budget, so long-running servers keep their full budget. Once the budget is exhausted the server stays in the error state until its next request — any deliberate restart (on next use or via the API) grants a fresh budget.
+2. **Liveness probe**: every `health_check_interval`, idle/running servers are sent an MCP `ping` (which does **not** consume AI/LLM tokens). `health_check_failures` consecutive failures trigger a restart. This catches processes that are alive but unresponsive. Deliberately stopped servers (idle timeout) and servers already in an error state are left alone — crash recovery owns the error state, and stopped servers revive lazily on their next request.
+3. **Transport recovery**: `http`/`sse` servers reconnect automatically when the connection drops, and the next tool call transparently re-establishes a dead session. Only genuine transport failures (connection reset/refused, EOF, dial errors) trigger a reconnect — server-side JSON-RPC errors are never retried blindly.
+4. **Stop-then-restart**: when a server is idle and times out, or is explicitly restarted, the process is fully torn down and a fresh one with a working request loop is spawned. New requests issued during recovery wait briefly for the restart to finish; a request already in flight when a restart begins fails fast instead of hanging until its timeout. A child process that ignores SIGTERM is escalated to SIGKILL after a 5s grace period so a wedged server can never block recovery.
+
+> **Note**: `idle_timeout` still defaults to `30m` when left empty. Set it to `0` (or `"0"`) to keep a server running indefinitely. With auto-reconnect enabled, an idle-stop is now fully recoverable — the server simply restarts on its next use.
+>
+> **Note**: `reconnect.enabled: false` disables *automatic* recovery only (crash auto-restart and the health probe). Servers can still be restarted on demand — including an idle-stopped server reviving on its next request.
+
+## Server Options
+
+The `server:` block configures LeanProxy's own front end, the side the MCP
+client talks to. Upstream servers are configured under `servers:`.
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `server.max_concurrent_requests` | int | `64` | Client requests handled in parallel: by `server run --stdio`, across all sessions of `server run --http`, and per connection by `serve`. `0` or absent means the default; negative values are rejected |
+| `server.max_line_bytes` | int | `67108864` (64 MiB) | Largest incoming JSON-RPC message (one line), for `server run --stdio` and `serve`. A longer line gets a parse-error response and is skipped; `serve` also closes the connection. `0` or absent means the default |
+| `server.max_connections` | int | `32` | `serve` only: client connections open at once; extra ones are closed right away. `0` or absent means the default |
+| `server.http.*` | block | see below | Limits and browser allowlists of `server run --http`. See [Streamable HTTP front end](#streamable-http-front-end-serverhttp) |
+
+The listen address is never in the config. It comes from the command line:
+`server run --http <addr>` or `serve --listen <addr>`. The keys
+`server.host`, `server.port` and `server.max_batch_size` do not exist and are
+ignored.
+
+### Concurrent Client Requests (`server.max_concurrent_requests`)
+
+`leanproxy-mcp server run --stdio` handles every request from the IDE in its
+own goroutine, so a slow tool call never blocks `ping`, `tools/list` or calls
+to other servers. Responses are written one complete line at a time (a single
+writer, flushed after every message), in whatever order the requests finish.
+
+```yaml
+server:
+  max_concurrent_requests: 16   # default 64
+```
+
+- **Cap:** when `max_concurrent_requests` requests are already running, the
+  proxy stops reading stdin until one finishes. Requests are delayed, never
+  rejected.
+- **Notifications** (messages without an `id`) never get a response.
+- **Cancellation:** `notifications/cancelled` with the `requestId` of an
+  in-flight request cancels it. The cancellation reaches the upstream server
+  (stdio servers receive their own `notifications/cancelled`) and, as the MCP
+  spec recommends, the canceled request gets no response.
+- **Shutdown:** on EOF or a `shutdown` request the proxy stops reading, waits
+  up to 5 seconds for in-flight requests to finish, cancels whatever is still
+  running, then (for `shutdown`) answers the shutdown request and stops every
+  upstream server. See [Graceful Shutdown](shutdown.md) for signals.
+- **Invalid JSON** is answered with a parse error whose `id` is `null`. The
+  raw line is never logged, only its length.
+- **Oversized lines:** a message over `server.max_line_bytes` (default 64
+  MiB, shared with `serve`; see below) also gets a parse-error response with
+  `id` `null`. It is discarded up to its next newline and the connection
+  keeps serving.
+
+### Serve Listener Limits
+
+`leanproxy-mcp serve` (the TCP listener) requires an auth handshake on every
+connection (see [`serve`](commands.md#client-protocol-and-authentication))
+and applies these limits:
+
+```yaml
+server:
+  max_line_bytes: 1048576        # default 64 MiB
+  max_concurrent_requests: 16    # per connection, default 64
+  max_connections: 8             # default 32
+```
+
+- **Message size:** input is read with a bounded reader, so a client sending
+  a huge line without a newline cannot grow memory beyond about
+  `max_line_bytes`. It gets an `Invalid Request` error and is disconnected.
+- **Concurrency:** each connection runs at most `max_concurrent_requests`
+  requests at once; at the cap the proxy stops reading that connection until
+  one finishes.
+- **Disconnects** cancel the connection's in-flight requests and their
+  upstream calls.
+
+### Streamable HTTP front end (`server.http`)
+
+`leanproxy-mcp server run --http 127.0.0.1:8765` serves the MCP Streamable
+HTTP transport (#309). The address and the token come from the command line
+(`--http`, `--http-token`, `--no-auth`, see
+[`server run`](commands.md#server-run-run-the-mcp-front-end)). This block
+holds the limits and allowlists:
+
+```yaml
+server:
+  max_concurrent_requests: 64        # shared by every HTTP session
+  http:
+    allowed_hosts: [gateway.lan]     # extra Host header values
+    allowed_origins: ["https://app.example"]  # browser origins allowed to call
+    max_body_bytes: 67108864         # one POST body, default 64 MiB
+    max_sessions: 64                 # open sessions, default 64
+    session_idle_timeout: 30m        # default 30m
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `server.http.allowed_hosts` | list | (none) | `Host` header values accepted beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` (`host` or `host:port`). Any other `Host` gets `403`, which blocks DNS rebinding. `--http-allowed-hosts` adds to it |
+| `server.http.allowed_origins` | list | (none) | Browser origins (`scheme://host[:port]`, no path or wildcard) allowed to call the endpoint. They get CORS headers. A request carrying any other `Origin` gets `403`, except the server's own origin. Requests without `Origin` (every non-browser MCP client) are not affected. `--http-allowed-origins` adds to it |
+| `server.http.max_body_bytes` | int | `67108864` (64 MiB) | Largest POST body. A larger one gets `413` |
+| `server.http.max_sessions` | int | `64` | Sessions open at once. Beyond it, `initialize` first ends idle sessions, then gets `503` with `Retry-After` |
+| `server.http.session_idle_timeout` | duration | `30m` | A session with no request in flight and no GET stream open is ended after this long. Its next request gets `404` and the client initializes again |
+| `server.max_concurrent_requests` | int | `64` | Client requests handled at once across all HTTP sessions. More wait for a slot and are never rejected. A client's answer to an elicitation never waits for a slot |
+
+Values are validated when the config loads: negative sizes, a malformed or
+non-positive duration, and an origin that is not `http(s)://host[:port]` are
+all refused. The HTTP server also bounds request headers to 64 KiB, the
+header read to 10 s, a POST body read to 60 s and each write to 30 s (so a
+client that stops reading cannot hold a stream). Keep-alive connections idle
+for more than 120 s are closed.
+
+## Redaction (`bouncer`)
+
+The bouncer replaces secrets with `[SECRET_REDACTED]` in every request the
+client sends and every response it gets back, in every front end. It is **on
+by default**, with the 29 built-in patterns, even when the file has no
+`bouncer:` block.
 
 ### Bouncer (Redaction) Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `bouncer.enabled` | bool | `true` | Enable/disable redaction |
-| `bouncer.patterns` | array | (see below) | Custom patterns |
-| `bouncer.sidecar_always_call` | bool | `false` | When `false`, the sidecar LLM is consulted only when the regex layer matched zero secrets. When `true`, the sidecar runs on every request regardless of regex outcome. |
-| `bouncer.entropy_detection` | bool | `false` | Also redact high-entropy tokens (20+ characters, Shannon entropy >= 4.0) that sit within 20 characters of `key`, `secret`, `token` or `password`, or under a JSON key containing one of those words. See [Security: high-entropy detector](security.md#high-entropy-detector-optional). |
+| `bouncer.enabled` | bool | `true` | `false` turns redaction off. The proxy logs a warning at startup |
+| `bouncer.patterns` | list of `{name, pattern}` | `[]` | Custom patterns, applied with the built-in ones. `custom_patterns` is an accepted alias; both lists are used |
+| `bouncer.entropy_detection` | bool | `false` | Also redact high-entropy tokens (20+ characters, Shannon entropy >= 4.0) that sit within 20 characters of `key`, `secret`, `token` or `password`, or under a JSON key containing one of those words. See [Security: high-entropy detector](security.md#high-entropy-detector-optional) |
+| `bouncer.sidecar_always_call` | bool | `false` | Deprecated `serve` only, and only with `--sidecar-provider`. See [Sidecar LLM Redaction](#sidecar-llm-redaction) |
 
-#### `bouncer.sidecar_always_call`
+### Built-in Redaction Patterns
 
-When `false` (the default), the sidecar LLM is consulted only when the
-regex layer matched **zero** secrets in the request. This is the
-recommended default: the regex-cleaned payload is forwarded without an
-extra LLM round-trip on already-cleaned requests.
+`leanproxy-mcp bouncer list-patterns` prints this list. The severity is
+informational: every match is redacted.
 
-When `true`, the sidecar runs on every request regardless of regex
-outcome. Use this if you need LLM coverage of secrets the regex may have
-missed (e.g. novel token formats, multi-segment bearer tokens), accepting
-the per-request latency / cost of one extra LLM call.
+| Pattern | Severity | Matches |
+|---------|----------|---------|
+| `aws-access-key` | critical | AWS access key ID (`AKIA…`, 20 characters) |
+| `aws-temporary-access-key` | critical | AWS temporary (STS) access key ID (`ASIA…`) |
+| `aws-secret-access-key` | critical | 40-character secret after `aws_secret_access_key`; only the key is replaced |
+| `github-classic-pat` | critical | GitHub classic personal access token (`ghp_…`) |
+| `github-app-token` | critical | GitHub OAuth, user-to-server, server-to-server and refresh tokens (`gho_`, `ghu_`, `ghs_`, `ghr_`) |
+| `github-fine-grained-pat` | critical | GitHub fine-grained PAT (`github_pat_…`) |
+| `gitlab-pat` | critical | GitLab personal access token (`glpat-…`) |
+| `stripe-secret-key` | critical | Stripe secret key, live or test (`sk_live_`, `sk_test_`) |
+| `stripe-restricted-key` | critical | Stripe restricted key, live or test (`rk_live_`, `rk_test_`) |
+| `stripe-publishable-key` | low | Stripe live publishable key (`pk_live_`) |
+| `pem-private-key` | critical | PEM private keys (RSA, EC, DSA, OpenSSH, PKCS8, encrypted) |
+| `pgp-private-key` | critical | ASCII-armored PGP/GPG private key blocks |
+| `pem-certificate` | low | PEM X.509 certificates |
+| `gcp-service-account` | low | `"type": "service_account"` marker in free text (in JSON, `private_key` is redacted by key name) |
+| `gcp-oauth-token` | high | GCP OAuth2 access or refresh token (`ya29.…`) |
+| `google-api-key` | high | Google API key (`AIza…`, 39 characters) |
+| `slack-token` | high | Slack bot, user, app or refresh token (`xoxb-`, `xoxp-`, `xoxa-`, `xoxr-`, `xoxs-`) |
+| `slack-webhook` | high | Slack incoming-webhook URL |
+| `openai-api-key` | critical | OpenAI legacy key (`sk-` + 40+ characters) |
+| `openai-project-key` | critical | OpenAI project, service-account and admin keys (`sk-proj-`, `sk-svcacct-`, `sk-admin-`) |
+| `anthropic-api-key` | critical | Anthropic API key (`sk-ant-…`) |
+| `npm-token` | high | npm access token (`npm_…`) |
+| `generic-api-key` | medium | Generic `api_key=…` style assignments (case-insensitive) |
+| `bearer-token` | high | JWT after `Bearer` |
+| `jwt` | high | JWT without a `Bearer` prefix (header and payload start with `eyJ`) |
+| `basic-auth-header` | high | Credentials after `Authorization: Basic`; only the credentials are replaced |
+| `dsn-credentials` | critical | Password in a connection string or URL (`postgres://`, `mysql://`, `mongodb+srv://`, `redis://`, `amqp://`, `https://user:pass@…`); only the password is replaced |
+| `env-var-value` | medium | Environment variable assignment |
+| `env-file-secret` | high | Value of an `UPPER_CASE` assignment whose name ends in `PASSWORD`, `SECRET`, `TOKEN`, `API_KEY`, `PRIVATE_KEY` or `ACCESS_KEY`; only the value is replaced |
 
-```yaml
-bouncer:
-  enabled: true
-  sidecar_always_call: false   # default — skip sidecar when regex already redacted
-  patterns:
-    - name: github_pat
-      pattern: 'ghp_[A-Za-z0-9]{36}'
-```
+There is no email address or phone number pattern. Sensitive JSON keys are
+also redacted by name; see
+[Security: Sensitive JSON keys](security.md#sensitive-json-keys).
 
-### Logging Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `logging.level` | string | `"info"` | Log level (debug, info, warn, error) |
-| `logging.file` | string | `""` | Log file path (empty = stdout) |
-
-### Watch Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `watch.interval` | string | `"1s"` | Status refresh interval |
-
-### Removed in v0.10
-
-The `optimization.lazy_loading` and `federation` config blocks were never
-wired into any command — they parsed but had no effect — and were removed in
-v0.10 (see the [changelog](https://github.com/mmornati/leanproxy-mcp/blob/main/CHANGELOG.md#removed-in-v010) and issue
-[#303](https://github.com/mmornati/leanproxy-mcp/issues/303)). Tool discovery
-is instead handled by [JIT Discovery](architecture.md#jit-discovery), which
-is wired into every transport. Existing configs that still contain either
-key keep loading; LeanProxy logs one startup warning per key and ignores it.
-
-## Built-in Redaction Patterns
-
-LeanProxy-MCP includes these built-in patterns:
-
-| Pattern Name | Type | Description |
-|--------------|------|-------------|
-| `aws-access-key` | regex | AWS Access Key ID (20 chars, starts with AKIA) |
-| `github-classic-pat` | regex | GitHub Classic PAT (starts with ghp_) |
-| `github-fine-grained-pat` | regex | GitHub Fine-grained PAT (starts with github_pat_) |
-| `stripe-secret-key` | regex | Stripe Live Secret Key (starts with sk_live_) |
-| `stripe-publishable-key` | regex | Stripe Live Publishable Key (starts with pk_live_) |
-| `generic-api-key` | regex | Generic API key pattern |
-| `bearer-token` | regex | JWT Bearer token |
-| `env-var-value` | regex | Environment variable assignment |
-
-### List Active Patterns
-
-```bash
-leanproxy-mcp bouncer list-patterns
-```
-
-Output:
-```
-# Built-in Patterns
-  - aws-access-key: AWS Access Key ID (20 characters, starts with AKIA)
-  - github-classic-pat: GitHub Classic Personal Access Token (starts with ghp_)
-  - github-fine-grained-pat: GitHub Fine-grained PAT (starts with github_pat_)
-  - stripe-secret-key: Stripe Live Secret Key (starts with sk_live_)
-  - stripe-publishable-key: Stripe Live Publishable Key (starts with pk_live_)
-  - generic-api-key: Generic API key pattern (case-insensitive)
-  - bearer-token: JWT Bearer token (three base64url segments)
-  - env-var-value: Environment variable assignment
-```
-
-## Custom Redaction Patterns
-
-### Add Custom Pattern via Config
+### Custom Redaction Patterns
 
 ```yaml
 bouncer:
-  enabled: true
   patterns:
-    - name: "my-api-key"
-      pattern: "MY_API_KEY=[A-Za-z0-9]{32,}"
+    - name: my-api-key
+      pattern: 'MY_API_KEY=[A-Za-z0-9]{32,}'
 ```
 
-Custom patterns are Go (RE2) regular expressions and are applied alongside the built-in set. Matches are replaced with `[SECRET_REDACTED]`. `custom_patterns` is accepted as an alias for `patterns`.
+Custom patterns are Go (RE2) regular expressions. The whole match is
+replaced with `[SECRET_REDACTED]`. Use single quotes in YAML so backslashes
+are kept as written.
 
 ### Pattern Safety (ReDoS Protection)
 
-LeanProxy-MCP validates all user-provided regex patterns to prevent Regular Expression Denial of Service (ReDoS) attacks. Dangerous patterns that can cause catastrophic backtracking are rejected.
+Each custom pattern is checked when the config is loaded. A pattern with one
+of these shapes is rejected, and **the whole config fails to load**:
 
-**Blocked dangerous patterns include:**
-- Nested quantifiers: `(.+)+`, `(.*)*`, `(a+)*`
-- Character class with nested quantifiers: `([a-z]+)+`
-- Overlapping alternation: `(a|b)*`
+| Shape | Example |
+|-------|---------|
+| Nested quantifier | `(.+)+`, `(.*)*`, `(a+)*` |
+| Quantified character class inside a quantified group | `([a-z]+)+` |
+| Quantified alternation | `(a\|b)*` |
+| Double quantifier | `(a+)+` |
 
-**Safe patterns:**
-- Simple character classes: `[A-Za-z0-9]+`
-- Anchored patterns: `^api_key_[a-f0-9]{32}$`
-- Quantified character classes: `[a-z]{8,64}`
+```text
+validate config: bouncer pattern "bad": dangerous regex pattern detected: double quantifier (a+)++
+```
 
-If an invalid pattern is detected, it is logged and skipped with a warning message.
+A pattern that is not valid regex syntax (for example `abc[unclosed`) is
+**not** rejected at load. The proxy logs
+`invalid custom pattern, skipping` at warning level and runs without it.
+Check the log after changing patterns.
 
 ### Validate Patterns
 
-Check if your patterns are safe before deploying:
-
 ```bash
-leanproxy-mcp bouncer validate-patterns
+leanproxy-mcp bouncer validate-patterns --config ~/.config/leanproxy_servers.yaml
 ```
 
-### Enable/Disable Bouncer
+It prints `Valid patterns: N (custom: X, built-in: 29)`. Without `--config`
+it reads `./leanproxy.yaml`. A skipped pattern is missing from the custom
+count.
 
-Redaction is on by default, even with no `bouncer:` block. To turn it off explicitly:
+### Enable/Disable Bouncer
 
 ```yaml
 bouncer:
   enabled: false
 ```
 
-The proxy logs a warning at startup when redaction is disabled.
-
-## Path Traversal Protection
-
-LeanProxy-MCP validates all file paths to prevent path traversal attacks. This protection applies to:
-- Server configuration files
-- Registry persistence files
-- Compactor configuration
-
-### Protected Operations
-
-| Operation | Protection |
-|-----------|------------|
-| Config file loading | Path must be within parent directory |
-| Registry save/load | Path must be within parent directory |
-| Compactor config | Path must be within parent directory |
-
-### Security Checks
-
-1. **Traversal pattern detection**: Blocks `../` and URL-encoded variants (`%2E%2E%2F`)
-2. **Null byte prevention**: Rejects paths containing `\x00`
-3. **Directory boundary enforcement**: Resolved paths must stay within base directory
-
-### Example Attacks Blocked
-
-```
-../../../etc/passwd        -> BLOCKED
-..%2F..%2F..%2Fetc/passwd  -> BLOCKED
-config.yaml\x00           -> BLOCKED
-```
-
-## Hierarchical Namespaces
-
-Namespaces allow organizing MCP servers into hierarchical groups for multi-team organizations.
-
-### Configuration
-
-```yaml
-namespaces:
-  engineering:
-    description: "Engineering team tools"
-    servers:
-      - github
-      - jira
-    children:
-      frontend:
-        servers:
-          - storybook
-  ops:
-    servers:
-      - aws
-      - kubernetes
-    allowed_clients:
-      - "ops-team"
-      - "*"
-```
-
-### Namespace Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `description` | string | Human-readable description |
-| `servers` | []string | Server IDs in this namespace |
-| `children` | map | Nested namespace definitions |
-| `allowed_clients` | []string | Allowed clients (supports `*` wildcard) |
-
-### Access Control
-
-Namespaces support client-level access control:
-
-```yaml
-namespaces:
-  restricted:
-    allowed_clients:
-      - "team-alpha"
-      - "team-beta"
-      - "*"  # Allow any authenticated client
-    servers:
-      - secure-server
-```
-
-### CLI Commands
-
-```bash
-# List all namespaces
-leanproxy-mcp namespace list
-
-# List tools in a namespace
-leanproxy-mcp namespace list engineering --tools
-
-# Add a new namespace (generates config example)
-leanproxy-mcp namespace add frontend --servers=storybook,figma
-
-# Assign server to namespace (generates config example)
-leanproxy-mcp namespace assign engineering github
-```
-
-## Environment Variables
-
-| Variable | Description |
-|----------|-------------|
-| `LEANPROXY_CONFIG` | Config file path |
-| `LEANPROXY_LOG_LEVEL` | Log level |
-| `LEANPROXY_HOST` | Server host |
-| `LEANPROXY_PORT` | Server port |
-| `LEANPROXY_PINS_FILE` | Tool pinning file; wins over `security.tool_pinning.path` (see [Tool Pinning](#tool-pinning-securitytool_pinning)) |
-
 ## Prompt Injection Protection
 
 The prompt-injection guard classifies the **decoded text** of every request
 *and* of what tools, resources and prompts return, and applies a separate
-policy to each direction. It is off until an `injection:` block enables it,
-and behaves identically in `server run --stdio` and `serve`. See
+policy to each direction.
+
+!!! warning "Off by default"
+    The guard does nothing until the config sets `injection.enabled: true`.
+    With no `injection:` block, or with `enabled: false`, no request or
+    response is classified. It behaves the same in every front end.
+
+ See
 [Security](./security.md#prompt-injection-protection) for how classification
 works.
 
@@ -748,7 +892,7 @@ injection:
 | `response_policies` | array | annotate `threshold`-100, log below | Ordered risk bands for responses. Actions: `annotate`, `redact`, `block`, `log` |
 | `scan_responses` | bool | `true` | `false` classifies requests only |
 | `max_scan_bytes` | int | `262144` (256 KiB) | Text classified per message; beyond it the head and the tail are sampled |
-| `custom_patterns` | array | `[]` | Extra patterns (`name`, `pattern`, `weight`, `enabled`, `description`, optional `triggers` / `requires`) |
+| `custom_patterns` | array | `[]` | Extra patterns (`name`, `pattern`, `weight`, `enabled`, `description`, optional `triggers` / `requires`). **`enabled` defaults to `false`**: a pattern without `enabled: true` is loaded but never matches |
 | `judge` | object | absent (off) | Optional local judge for borderline scores, see below |
 
 Configuration is validated at load time: an action that does not belong to
@@ -835,7 +979,7 @@ Tool pinning (#310) records a hash of every upstream tool definition and
 reports — or, in `block` mode, refuses — tools whose definition changed since
 you approved them ("rug pull"), tools added later, and tools whose metadata
 the description scanner flags (tool poisoning). It is **on by default in
-`warn` mode**, and `server run --stdio` and `serve` enforce it identically.
+`warn` mode**, and every front end enforces it the same way.
 See [Security](./security.md#tool-pinning-rug-pull-detection) for what is
 hashed and scanned.
 
@@ -892,8 +1036,8 @@ client.
 ## Per-Tool Policy (`policy`)
 
 The per-tool policy (#314) decides, for every tool call, whether it runs, is
-refused, or needs the user's confirmation first. `server run --stdio` and
-`serve` enforce it identically, for every way of calling a tool (`invoke_tool`,
+refused, or needs the user's confirmation first. Every front end enforces
+it the same way, for every way of calling a tool (`invoke_tool`,
 a namespaced `tools/call`, `serve`'s `invoke_tool` and `server.tool`
 methods). A refused call never reaches the response cache or the upstream.
 
@@ -974,10 +1118,11 @@ default, allowlisted tools only, keyed on the request *before* secret
 redaction runs so two callers who differ only in a credential value never
 share a cached response. It is bounded LRU by bytes, never caches an error
 response, and never does embedding-similarity matching (that is the Semantic
-Cache below, which — as of #299 — no longer answers `tools/call` at all).
+Cache of the deprecated `serve`, which — as of #299 — no longer answers
+`tools/call` at all).
 
-It runs as a middleware shared by both `leanproxy-mcp server run --stdio` and
-`leanproxy-mcp serve`.
+It runs as a middleware in every front end (`server run --stdio`,
+`server run --http` and `serve`).
 
 ### Configuration
 
@@ -1371,102 +1516,6 @@ whole session's tokens over truncation alone, and each repeat read is 98.1%
 smaller than the first. See
 [Benchmark Results](benchmark-results.md#9-in-session-dedup-repeated-reads).
 
-## Telemetry (OpenTelemetry)
-
-leanproxy-mcp can emit OpenTelemetry traces and metrics over OTLP/HTTP: off
-by default, enabled by the standard `OTEL_EXPORTER_OTLP_ENDPOINT` /
-`OTEL_EXPORTER_OTLP_PROTOCOL` environment variables or by a `telemetry:`
-config block. It instruments the same unified middleware pipeline both
-`leanproxy-mcp server run --stdio` and `leanproxy-mcp serve` share: one
-SERVER span per front-end request, a child span for each firewall/cache
-middleware stage, and a CLIENT span for the upstream call, following the
-[OpenTelemetry GenAI/MCP semantic conventions][semconv] (`semconv v1.41.0`,
-the first release carrying `mcp.method.name`, `mcp.session.id` and
-`mcp.protocol.version`; `mcp.tool.name` and `mcp.server.name` are not yet
-standardized there, so leanproxy-mcp defines them locally in the same `mcp.`
-namespace).
-
-See [`docs/observability.md`](observability.md) for a docker-compose example
-that shows a trace end to end in Jaeger.
-
-[semconv]: https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/
-
-### Configuration
-
-```yaml
-telemetry:
-  enabled: false               # default: off; also turned on by OTEL_EXPORTER_OTLP_ENDPOINT
-  service_name: leanproxy-mcp  # service.name resource attribute
-  otlp:
-    endpoint: "http://localhost:4318"   # base URL; /v1/traces and /v1/metrics are appended
-    protocol: http/protobuf             # or http/json — see the note below
-    insecure: true                      # allow a plain-http:// endpoint
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | bool | `false` | Master opt-in switch. An OTLP endpoint (env or config) also turns telemetry on without needing this |
-| `service_name` | string | `leanproxy-mcp` | `service.name` resource attribute reported to the collector |
-| `otlp.endpoint` | string | — | Collector base URL, e.g. `http://localhost:4318`. Read from `OTEL_EXPORTER_OTLP_ENDPOINT` when unset (env wins when both are set) |
-| `otlp.protocol` | string | `http/protobuf` | `http/protobuf` or `http/json`; read from `OTEL_EXPORTER_OTLP_PROTOCOL` when unset |
-| `otlp.insecure` | bool | inferred from `http://` | Allow a plain-HTTP endpoint |
-
-The standard OTLP environment variables always win over the config block:
-`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
-`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
-`OTEL_EXPORTER_OTLP_INSECURE`.
-
-### What is recorded — and what never is
-
-Every span and metric carries only names, sizes, counts and status codes:
-`mcp.method.name`, `mcp.tool.name`, `mcp.server.name`, `mcp.session.id`,
-`jsonrpc.request.id`, `error.type`, response size in bytes, redaction
-counts, cache hit/miss, and the injection guard's action. **Tool
-arguments and results are never attached to a span or a metric** — the
-same discipline the Token Firewall already applies to logs.
-
-### Exporter: OTLP/HTTP JSON, not the grpc-carrying SDK exporters
-
-leanproxy-mcp ships its own small OTLP/HTTP exporter
-(`pkg/telemetry/otlpjson*.go`) instead of
-`go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp` and
-`.../otlpmetric/otlpmetrichttp`: those packages transitively pull in
-`google.golang.org/grpc` and `google.golang.org/protobuf` through an
-internal config package they share with the gRPC exporter variant, which
-alone added roughly 6 MB to the binary — well over the +3 MB budget for
-this feature. The OTLP spec requires every OTLP/HTTP receiver (Jaeger,
-the OpenTelemetry Collector, Honeycomb, Datadog, …) to accept a JSON body
-on the same `/v1/traces` and `/v1/metrics` endpoints, so this has no
-functional downside; see the exporter's doc comment for details.
-
-### Performance
-
-Telemetry is off by default and costs a couple of atomic counter increments
-per request either way (they feed the existing `/metrics` JSON endpoint's
-new `telemetry` section). The expensive part — starting a span, building
-attribute slices, calling into the OTel metrics API — only runs once
-telemetry is actually enabled; see `BenchmarkPipeline_TelemetryDisabled` in
-`pkg/mcp` for the benchmark this claim is checked against.
-
-### Metrics: `/metrics` still works
-
-The existing JSON `/metrics` endpoint keeps working exactly as before, plus
-a new `telemetry` object fed by the same counters OpenTelemetry records:
-requests, errors, redactions, injection detections, cache hits/misses,
-policy decisions, rate-limit waits and in-flight requests — whether or not
-an OTLP exporter is configured.
-
-### Trace propagation
-
-- **HTTP/SSE upstreams**: every outgoing request to an HTTP or SSE MCP
-  server carries a W3C `traceparent` header, so a trace continues into an
-  upstream server that is itself instrumented.
-- **stdio upstreams**: the MCP `_meta` field is reserved for this kind of
-  implementation-specific metadata by the spec, but leanproxy-mcp does not
-  yet inject `traceparent` into `params._meta` for stdio child processes —
-  see the PR that introduced this feature for the reasoning and the
-  follow-up tracking it.
-
 ## Exposure Modes (`exposure`)
 
 `exposure` (#322) decides how the upstream tools reach each MCP client:
@@ -1628,56 +1677,13 @@ the whole catalog. It pays off when the client defers definitions itself. The
 `make harness` comparison is in
 [Benchmark Results](benchmark-results.md#10-exposure-modes-322).
 
-## Code Mode (`code_mode`, experimental)
-
-!!! warning "Experimental spike (#325): not in the release binary"
-    Code mode exists only in a binary built with `go build -tags codemode`. A default build parses
-    and validates this block, but ignores it: when `enabled: true`, it logs a warning at start.
-    The design, the measurements and the go / no-go recommendation (currently **no-go**) are in
-    [Code mode: design spike](design/code-mode.md).
-
-With code mode on, `tools/list` gains one tool, `execute_code {code, language?: "js"}`. The model
-sends a short JavaScript program (the body of an async function). The program calls upstream tools
-as `await tools.<server>.<tool>(args)`, filters their results, and returns only its answer.
-
-- **Where it runs.** The program runs in a separate sandbox process: the same binary running its
-  hidden `codemode-worker` command, with an empty environment and kernel limits on Linux.
-- **What the program can reach.** It has no filesystem, network, `require` or timers.
-- **How its calls are checked.** Each tool call it makes goes through the whole pipeline, like an
-  `invoke_tool` call: policy (deny, confirm and unknown tools), tool pinning, redaction, the
-  injection guard, the response governor and telemetry.
-
-```yaml
-code_mode:
-  enabled: true
-  timeout: 30s
-  cpu_time: 5s
-  max_memory_mb: 256
-  max_calls: 32
-  max_concurrent_calls: 4
-  max_output_bytes: 65536
-```
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `code_mode.enabled` | bool | `false` | List and serve `execute_code`. Needs a `-tags codemode` build. |
-| `code_mode.timeout` | duration | `30s` | Wall clock per `execute_code`, tool calls included. The program is interrupted at the limit and the sandbox is killed 1 s later. The maximum is `10m`. |
-| `code_mode.cpu_time` | duration | `5s` | Sandbox CPU time (`RLIMIT_CPU` on Linux). The minimum is `1s`. |
-| `code_mode.max_memory_mb` | int | `256` | The heap watchdog interrupts above this, and `RLIMIT_AS` (Linux) stops a huge native allocation. The minimum is `64`. |
-| `code_mode.max_calls` | int | `32` | Tool calls per program. |
-| `code_mode.max_concurrent_calls` | int | `4` | Tool calls in flight at once (`Promise.all`). |
-| `code_mode.max_output_bytes` | int | `65536` | The largest answer a program may return. |
-
-- **The hard limits are Linux-only.** On macOS and Windows the prototype only has the heap
-  watchdog and the wall-clock kill.
-- **The response governor also shortens the results a program reads.** The program then computes
-  from truncated data: see the design doc before enabling both.
-- **Front ends.** Only `server run` (stdio and Streamable HTTP) serves `execute_code`.
-
 ## Tool Search (`search_tools`)
 
-`search_tools` is the recommended discovery path of `leanproxy-mcp server run
---stdio`: one call ranks the cached tools of **every** server against a
+!!! note "`server run` only"
+    `server run --stdio` and `server run --http` read this block. The
+    deprecated `serve` ignores it.
+
+`search_tools` is the recommended discovery path of the router exposure mode: one call ranks the cached tools of **every** server against a
 natural-language query and returns the top matches (default 5, at most 20),
 one line each in the `list_tools` format, ready for `invoke_tool`.
 
@@ -1731,179 +1737,299 @@ configured embedder.
 An invalid `tool_search` block (a multi-word synonym key, hybrid enabled
 without a valid embedder) fails config loading.
 
-## Semantic Cache
+## Code Mode (`code_mode`, experimental)
 
-Semantic caching stores and retrieves tool responses based on vector similarity, reducing redundant LLM calls for semantically similar requests.
+!!! warning "Experimental spike (#325): not in the release binary"
+    Code mode exists only in a binary built with `go build -tags codemode`. A default build parses
+    and validates this block, but ignores it: when `enabled: true`, it logs a warning at start.
+    The design, the measurements and the go / no-go recommendation (currently **no-go**) are in
+    [Code mode: design spike](design/code-mode.md).
 
-> As of #299, the semantic cache no longer answers `tools/call` — use the
-> Response Cache above for tool-call caching. The vector store is also no
-> longer opened at startup unless `cache.vector_store` or `--embed-provider`
-> is explicitly configured.
->
-> As of #307, `serve` consults it only for a tool addressed by its namespaced
-> method (`server.tool`) that the `response_cache.tools` allowlist declares
-> cacheable — the same policy as the stdio front end. MCP protocol methods
-> (`resources/read`, `prompts/get`, `resources/list`, ...) are never answered
-> from any cache.
+With code mode on, `tools/list` gains one tool, `execute_code {code, language?: "js"}`. The model
+sends a short JavaScript program (the body of an async function). The program calls upstream tools
+as `await tools.<server>.<tool>(args)`, filters their results, and returns only its answer.
+
+- **Where it runs.** The program runs in a separate sandbox process: the same binary running its
+  hidden `codemode-worker` command, with an empty environment and kernel limits on Linux.
+- **What the program can reach.** It has no filesystem, network, `require` or timers.
+- **How its calls are checked.** Each tool call it makes goes through the whole pipeline, like an
+  `invoke_tool` call: policy (deny, confirm and unknown tools), tool pinning, redaction, the
+  injection guard, the response governor and telemetry.
+
+```yaml
+code_mode:
+  enabled: true
+  timeout: 30s
+  cpu_time: 5s
+  max_memory_mb: 256
+  max_calls: 32
+  max_concurrent_calls: 4
+  max_output_bytes: 65536
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `code_mode.enabled` | bool | `false` | List and serve `execute_code`. Needs a `-tags codemode` build. |
+| `code_mode.timeout` | duration | `30s` | Wall clock per `execute_code`, tool calls included. The program is interrupted at the limit and the sandbox is killed 1 s later. The maximum is `10m`. |
+| `code_mode.cpu_time` | duration | `5s` | Sandbox CPU time (`RLIMIT_CPU` on Linux). The minimum is `1s`. |
+| `code_mode.max_memory_mb` | int | `256` | The heap watchdog interrupts above this, and `RLIMIT_AS` (Linux) stops a huge native allocation. The minimum is `64`. |
+| `code_mode.max_calls` | int | `32` | Tool calls per program. |
+| `code_mode.max_concurrent_calls` | int | `4` | Tool calls in flight at once (`Promise.all`). |
+| `code_mode.max_output_bytes` | int | `65536` | The largest answer a program may return. |
+
+- **The hard limits are Linux-only.** On macOS and Windows the prototype only has the heap
+  watchdog and the wall-clock kill.
+- **The response governor also shortens the results a program reads.** The program then computes
+  from truncated data: see the design doc before enabling both.
+- **Front ends.** Only `server run` (stdio and Streamable HTTP) serves `execute_code`.
+
+## Telemetry (OpenTelemetry)
+
+leanproxy-mcp can emit OpenTelemetry traces and metrics over OTLP/HTTP: off
+by default, enabled by the standard `OTEL_EXPORTER_OTLP_ENDPOINT` /
+`OTEL_EXPORTER_OTLP_PROTOCOL` environment variables or by a `telemetry:`
+config block. It instruments the middleware pipeline every front end
+shares (`server run --stdio`, `server run --http`, `serve`): one
+SERVER span per front-end request, a child span for each firewall/cache
+middleware stage, and a CLIENT span for the upstream call, following the
+[OpenTelemetry GenAI/MCP semantic conventions][semconv] (`semconv v1.41.0`,
+the first release carrying `mcp.method.name`, `mcp.session.id` and
+`mcp.protocol.version`; `mcp.tool.name` and `mcp.server.name` are not yet
+standardized there, so leanproxy-mcp defines them locally in the same `mcp.`
+namespace).
+
+See [`docs/observability.md`](observability.md) for a docker-compose example
+that shows a trace end to end in Jaeger.
+
+[semconv]: https://opentelemetry.io/docs/specs/semconv/gen-ai/mcp/
 
 ### Configuration
+
+```yaml
+telemetry:
+  enabled: false               # default: off; also turned on by OTEL_EXPORTER_OTLP_ENDPOINT
+  service_name: leanproxy-mcp  # service.name resource attribute
+  otlp:
+    endpoint: "http://localhost:4318"   # base URL; /v1/traces and /v1/metrics are appended
+    protocol: http/protobuf             # or http/json — see the note below
+    insecure: true                      # allow a plain-http:// endpoint
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `false` | Master opt-in switch. An OTLP endpoint (env or config) also turns telemetry on without needing this |
+| `service_name` | string | `leanproxy-mcp` | `service.name` resource attribute reported to the collector |
+| `otlp.endpoint` | string | — | Collector base URL, e.g. `http://localhost:4318`. Read from `OTEL_EXPORTER_OTLP_ENDPOINT` when unset (env wins when both are set) |
+| `otlp.protocol` | string | `http/protobuf` | `http/protobuf` or `http/json`; read from `OTEL_EXPORTER_OTLP_PROTOCOL` when unset |
+| `otlp.insecure` | bool | inferred from `http://` | Allow a plain-HTTP endpoint |
+
+The standard OTLP environment variables always win over the config block:
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
+`OTEL_EXPORTER_OTLP_INSECURE` (`true` enables it). `OTEL_SERVICE_NAME` is
+not read: set `telemetry.service_name` instead. Both protocol values send
+JSON bodies (see below).
+
+### What is recorded — and what never is
+
+Every span and metric carries only names, sizes, counts and status codes:
+`mcp.method.name`, `mcp.tool.name`, `mcp.server.name`, `mcp.session.id`,
+`jsonrpc.request.id`, `error.type`, response size in bytes, redaction
+counts, cache hit/miss, and the injection guard's action. **Tool
+arguments and results are never attached to a span or a metric** — the
+same discipline the Token Firewall already applies to logs.
+
+### Exporter: OTLP/HTTP JSON, not the grpc-carrying SDK exporters
+
+leanproxy-mcp ships its own small OTLP/HTTP exporter
+(`pkg/telemetry/otlpjson*.go`) instead of
+`go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp` and
+`.../otlpmetric/otlpmetrichttp`: those packages transitively pull in
+`google.golang.org/grpc` and `google.golang.org/protobuf` through an
+internal config package they share with the gRPC exporter variant, which
+alone added roughly 6 MB to the binary — well over the +3 MB budget for
+this feature. The OTLP spec requires every OTLP/HTTP receiver (Jaeger,
+the OpenTelemetry Collector, Honeycomb, Datadog, …) to accept a JSON body
+on the same `/v1/traces` and `/v1/metrics` endpoints, so this has no
+functional downside; see the exporter's doc comment for details.
+
+### Performance
+
+Telemetry is off by default and costs a couple of atomic counter increments
+per request either way (they feed the `telemetry` section of `serve`'s
+`/metrics` JSON endpoint). The expensive part — starting a span, building
+attribute slices, calling into the OTel metrics API — only runs once
+telemetry is actually enabled; see `BenchmarkPipeline_TelemetryDisabled` in
+`pkg/mcp` for the benchmark this claim is checked against.
+
+### Metrics: `/metrics`
+
+The JSON `/metrics` endpoint is served by `server run` and `serve` with
+`--metrics-bind` (off by default; see
+[Dashboard and Metrics](#dashboard-and-metrics)). Its `telemetry` object is
+fed by the same counters OpenTelemetry records:
+requests, errors, redactions, injection detections, cache hits/misses,
+policy decisions, rate-limit waits and in-flight requests — whether or not
+an OTLP exporter is configured.
+
+### Trace propagation
+
+- **HTTP/SSE upstreams**: every outgoing request to an HTTP or SSE MCP
+  server carries a W3C `traceparent` header, so a trace continues into an
+  upstream server that is itself instrumented.
+- **stdio upstreams**: the MCP `_meta` field is reserved for this kind of
+  implementation-specific metadata by the spec, but leanproxy-mcp does not
+  yet inject `traceparent` into `params._meta` for stdio child processes —
+  see the PR that introduced this feature for the reasoning and the
+  follow-up tracking it.
+
+## Marketplace Registry Sources (issue #313)
+
+`leanproxy marketplace sync` always syncs the **official MCP Registry**
+(`registry.modelcontextprotocol.io`, API `v0`) — LeanProxy does not own the
+domain the default previously pointed at (`registry.mcp.io`), so that is no
+longer used by default at all.
+
+You can additionally opt in to your own custom NDJSON feed(s) — an internal
+catalog, a fork, a curated allowlist — under `registry.sources` in
+`leanproxy_servers.yaml`:
+
+```yaml
+registry:
+  sources:
+    - name: acme-internal
+      url: https://mcp-index.acme.internal/index.ndjson
+```
+
+- Each source needs a unique `name` (used for provenance display and
+  recorded as `installed_from.registry` for servers installed from it) and
+  an `http://`/`https://` `url`.
+- A custom source's entries are merged into the same local cache as the
+  official registry's; `marketplace search`/`add` see all of them together.
+- A custom source's own `trust_score` field, if present, is **never**
+  trusted (see [Trust Model](security.md#marketplace-trust-model-issue-313)).
+- A sync failure on one custom source is logged and skipped — it never
+  blocks the official-registry sync or the other sources.
+
+## Options of the Deprecated `serve`
+
+!!! warning "Only `leanproxy-mcp serve` uses these"
+    `serve` is the deprecated line-TCP front end and is removed in v1.0.
+    `server run --stdio` and `server run --http` ignore everything in this
+    section. Most of it is set with `serve` flags, not in the config file.
+
+### Semantic Cache (`cache.vector_store`)
+
+The semantic cache stores embeddings of requests in a vector store. Since
+issue #299 it no longer answers `tools/call`: use the
+[Response Cache](#response-cache) for tool results. `serve` consults it only
+for a tool addressed by its namespaced method (`server.tool`) that the
+`response_cache.tools` allowlist declares cacheable. MCP protocol methods
+(`resources/read`, `prompts/get`, `resources/list`, ...) are never answered
+from any cache. The vector store is opened only when `cache.vector_store` or
+`--embed-provider` is set.
 
 ```yaml
 cache:
   vector_store:
-    backend: sqlite-vec  # sqlite-vec, qdrant, or pinecone
+    backend: sqlite-vec          # sqlite-vec | qdrant | pinecone
     dimension: 1536
     sqlite:
-      path: "~/.leanproxy/cache/vectors.db"
+      path: ~/.leanproxy/cache/vectors.db
     qdrant:
-      url: "http://localhost:6333"
-      api_key_env: "QDRANT_API_KEY"
-      collection: "leanproxy_cache"
+      url: http://localhost:6333
+      api_key_env: QDRANT_API_KEY  # or api_key: "..."
+      collection: leanproxy_cache
     pinecone:
-      index: "my-index"
-      api_key_env: "PINECONE_API_KEY"
+      index: my-index
+      api_key_env: PINECONE_API_KEY
 ```
-
-### Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `backend` | string | `sqlite-vec` | Vector store backend (`sqlite-vec`, `qdrant`, `pinecone`) |
-| `dimension` | int | `1536` | Embedding vector dimension |
+| `cache.vector_store.backend` | string | `sqlite-vec` | `sqlite-vec`, `qdrant` or `pinecone` |
+| `cache.vector_store.dimension` | int | `1536` | Embedding vector dimension |
+| `cache.vector_store.sqlite.path` | path | `~/.leanproxy/cache/vectors.db` | SQLite file |
+| `cache.vector_store.qdrant.url`, `.api_key`, `.api_key_env`, `.collection` | – | collection `leanproxy_cache` | Qdrant connection. `api_key_env` names the variable holding the key |
+| `cache.vector_store.pinecone.index`, `.api_key_env` | – | `PINECONE_API_KEY` | Pinecone connection |
 
-### Embedder Providers
-
-Supported via `--embed-provider` flag:
-
-| Provider | Default Model | Default URL |
-|----------|---------------|-------------|
-| `ollama` | `nomic-embed-text` | `http://localhost:11434` |
-| `openai` | `text-embedding-3-small` | `https://api.openai.com/v1/embeddings` |
-
-### Similarity
-
-- Threshold: 0.92 (cosine similarity)
-- Candidates retrieved: 5
-- TTL: 24 hours
-- Eviction interval: 1 hour
-
-### CLI
-
-```bash
-# Enable with Ollama
-leanproxy-mcp serve --embed-provider ollama
-
-# Enable with OpenAI
-leanproxy-mcp serve --embed-provider openai
-
-# Show cache stats
-leanproxy-mcp cache --semantic
-leanproxy-mcp cache --semantic --json
-```
-
-## Auto-Reconnect
-
-LeanProxy-MCP monitors proxied MCP servers and reconnects them automatically when a server crashes, hangs, or loses its transport connection. This applies to all transports (`stdio`, `http`, `sse`).
-
-Auto-reconnect is enabled by default. Configure it with a top-level `reconnect` block in `leanproxy_servers.yaml`:
-
-```yaml
-servers:
-  - name: garmin
-    enabled: true
-    transport: stdio
-    stdio:
-      command: garmin-mcp
-      args: [stdio]
-    timeout: 30s
-    connect_timeout: 10s
-    # idle_timeout: 30m   # empty/absent defaults to 30m; "0" disables
-
-# Optional global auto-reconnect settings
-reconnect:
-  enabled: true
-  health_check_interval: 30s
-  health_check_failures: 3
-  max_restart_attempts: 5
-  restart_backoff: 1s
-  stable_window: 2m
-```
-
-### Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | bool | `true` | Master switch for auto-reconnect |
-| `health_check_interval` | duration | `30s` | How often idle/running servers are pinged. Set to `0` to disable the proactive health check |
-| `health_check_failures` | int | `3` | Consecutive failed pings before a server is restarted automatically |
-| `max_restart_attempts` | int | `5` | Max crash-restarts before a server is left in an error state |
-| `restart_backoff` | duration | `1s` | Initial delay before restarting a crashed server (grows exponentially, capped at 1 minute; clamped to [10ms, 1m]) |
-| `stable_window` | duration | `2m` | If a server survives this long, its restart budget resets |
-
-### How It Works
-
-1. **Crash detection**: when a `stdio` process exits unexpectedly it is respawned automatically with exponential backoff. A process that stays up past `stable_window` resets the restart budget, so long-running servers keep their full budget. Once the budget is exhausted the server stays in the error state until its next request — any deliberate restart (on next use or via the API) grants a fresh budget.
-2. **Liveness probe**: every `health_check_interval`, idle/running servers are sent an MCP `ping` (which does **not** consume AI/LLM tokens). `health_check_failures` consecutive failures trigger a restart. This catches processes that are alive but unresponsive. Deliberately stopped servers (idle timeout) and servers already in an error state are left alone — crash recovery owns the error state, and stopped servers revive lazily on their next request.
-3. **Transport recovery**: `http`/`sse` servers reconnect automatically when the connection drops, and the next tool call transparently re-establishes a dead session. Only genuine transport failures (connection reset/refused, EOF, dial errors) trigger a reconnect — server-side JSON-RPC errors are never retried blindly.
-4. **Stop-then-restart**: when a server is idle and times out, or is explicitly restarted, the process is fully torn down and a fresh one with a working request loop is spawned. New requests issued during recovery wait briefly for the restart to finish; a request already in flight when a restart begins fails fast instead of hanging until its timeout. A child process that ignores SIGTERM is escalated to SIGKILL after a 5s grace period so a wedged server can never block recovery.
-
-> **Note**: `idle_timeout` still defaults to `30m` when left empty. Set it to `0` (or `"0"`) to keep a server running indefinitely. With auto-reconnect enabled, an idle-stop is now fully recoverable — the server simply restarts on its next use.
->
-> **Note**: `reconnect.enabled: false` disables *automatic* recovery only (crash auto-restart and the health probe). Servers can still be restarted on demand — including an idle-stopped server reviving on its next request.
-
-## Sidecar LLM Redaction
-
-Offload sensitive content redaction to a local Ollama model for context-aware redaction beyond regex patterns.
-
-### Configuration
-
-```yaml
-sidecar:
-  provider: ollama
-  model: llama3.1:8b
-  url: http://localhost:11434
-```
-
-### CLI Flags
+The embedder comes from `serve` flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--sidecar-provider` | `""` | Sidecar provider (`ollama`); empty = disabled |
+| `--embed-provider` | `""` (off) | `ollama` or `openai` |
+| `--ollama-url` | `http://localhost:11434` | Ollama base URL |
+| `--ollama-model` | `nomic-embed-text` | Ollama model |
+| `--openai-model` | `text-embedding-3-small` | OpenAI model; the key comes from `OPENAI_API_KEY` |
+| `--embed-pool-size` | `4` | Concurrent embedding workers |
+
+Fixed values: similarity threshold 0.92 (cosine), 5 candidates, entry TTL
+24 h, eviction every hour. Statistics are kept in
+`~/.leanproxy/cache/semantic-stats.json` and shown by
+`leanproxy-mcp cache --semantic`.
+
+### Sidecar LLM Redaction
+
+A local Ollama model reviews the regex-redacted request and replaces any
+remaining sensitive value with `[VALUE_REDACTED]`. Its output is only used
+when it keeps the structure of the input (see
+[Security](security.md#sidecar-llm-redaction)).
+
+There is **no `sidecar:` config block**. The sidecar is set with flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--sidecar-provider` | `""` (off) | `ollama` |
 | `--sidecar-model` | `llama3.1:8b` | Model name |
-| `--sidecar-url` | `http://localhost:11434` | Server URL |
-
-### How It Works
-
-1. Regex-based bouncer redaction runs first
-2. Sidecar LLM receives the already-redacted content
-3. LLM replaces any remaining sensitive data (API keys, PII, tokens) with `[VALUE_REDACTED]`
-4. Falls back to aggressive redact if LLM is unavailable
-
-### Example
+| `--sidecar-url` | `http://localhost:11434` | Ollama base URL |
 
 ```bash
 leanproxy-mcp serve --sidecar-provider ollama --sidecar-model llama3.1:8b
 ```
 
-## Dashboard
+The one config key is `bouncer.sidecar_always_call`:
 
-The web dashboard shows the tokens saved today and this week, per server and
-per tool, read from the usage store (see [Web Dashboard](dashboard.md)).
+- `false` (default): the sidecar runs only when the regex layer found
+  **no** secret in the request.
+- `true`: the sidecar runs on every request. This adds one LLM call per
+  request.
 
-### Configuration
+### Provider Detection (`--cache-strategy`, `--providers-config`)
 
-Configured via CLI flags on `server run` (off by default) and `serve`
-(defaults below):
+`--cache-strategy` (`off`, `aggressive`, `balanced`; default `off`) injects
+Anthropic prompt-cache breakpoints. `--providers-config <file>` points to a
+separate YAML file that maps provider names to URL prefixes:
+
+```yaml
+providers:
+  - name: my-gateway
+    patterns:
+      - https://llm.internal.example.com
+```
+
+`https://api.anthropic.com` is always recognised as `anthropic`. On
+`SIGHUP`, `serve` re-reads this file and rebuilds the redactor. It does
+**not** re-read `leanproxy_servers.yaml`: the redactor is rebuilt from the
+config loaded at start.
+
+### Dashboard and Metrics
+
+The web dashboard and the JSON `/metrics` endpoint show the tokens saved
+today and this week, per server and per tool, read from the usage store
+(see [Dashboard](dashboard.md)). Both front ends have them, set with the
+same flags. `serve` starts the dashboard by default; `server run` starts
+neither unless asked, since an MCP client may start several
+`server run --stdio` processes and they cannot share a port. The defaults
+below are `serve`'s:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--dashboard-bind` | `127.0.0.1:9090` | Dashboard bind address. Set to `off` to disable. A non-loopback bind refuses to start without `--dashboard-token` |
-| `--dashboard-token` | `""` | Bearer token for dashboard access. Once set, required from **every** client, loopback included — there is no loopback bypass. A browser exchanges it for an `HttpOnly`, `SameSite=Strict` cookie via `GET /login?token=…` (also `Secure` when served over TLS) |
-| `--dashboard-allowed-hosts` | (none) | Extra `Host` header values accepted, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` |
-
-See [Dashboard hardening](#dashboard-hardening-host-and-origin-validation) below for the Host/Origin and security-header details.
-
-### Metrics Endpoint
+| `--dashboard-bind` | `127.0.0.1:9090` (`server run`: off) | Dashboard address. `off` disables it. A non-loopback bind refuses to start without `--dashboard-token` |
+| `--dashboard-token` | `""` | Bearer token. Once set, it is required from **every** client, loopback included. A browser exchanges it for an `HttpOnly`, `SameSite=Strict` cookie via `GET /login?token=…` (also `Secure` over TLS) |
+| `--dashboard-allowed-hosts` | (none) | Extra `Host` header values accepted beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` |
+| `--metrics-bind` | `""` (off) | `/metrics` address. A non-loopback bind refuses to start without `--metrics-token` |
+| `--metrics-token` | `""` | Bearer token for `/metrics` (`Authorization: Bearer <token>`) |
+| `--metrics-allowed-hosts` | (none) | Extra `Host` header values accepted |
 
 ```bash
 leanproxy-mcp server run --http 127.0.0.1:8765 --metrics-bind 127.0.0.1:9091
@@ -1911,13 +2037,9 @@ leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 ```
 
 `127.0.0.1:9091` is the address the [IDE extensions](extensions.md) use by
-default.
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--metrics-bind` | `""` | Metrics endpoint bind address. Set to `off` or empty to disable. A non-loopback bind refuses to start without `--metrics-token` |
-| `--metrics-token` | `""` | Bearer token for the metrics endpoint (`Authorization: Bearer <token>`); required on a non-loopback bind |
-| `--metrics-allowed-hosts` | (none) | Extra `Host` header values accepted, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` |
+default. For `serve`, `--listen` defaults to `127.0.0.1:8080`. Do not set it to the dashboard's
+port (9090), or `serve` fails to start. See [Dashboard](dashboard.md) for
+what the pages show.
 
 ### Dashboard hardening: Host and Origin validation
 
@@ -1937,25 +2059,12 @@ The dashboard additionally sends these headers on every response:
 - `Referrer-Policy: no-referrer`
 - `X-Content-Type-Options: nosniff`
 
-### Export Cost Data
-
-```bash
-# CSV export
-leanproxy-mcp report --export csv --output costs.csv
-
-# JSON export
-leanproxy-mcp report --export json --output costs.json
-
-# Filtered by date range
-leanproxy-mcp report --export csv --since 2026-06-01
-```
-
 ## First-Party Servers: Postgres and Redis
 
 `servers/postgres` and `servers/redis` are small, first-party stdio MCP servers, configured entirely
 through environment variables passed to the child process (see
 [Child Process Environment](#child-process-environment-env-env_passthrough-inherit_env) for how those
-variables reach a `stdio` server declared in `leanproxy.yaml`). Bundling more first-party servers is a
+variables reach a `stdio` server declared in `leanproxy_servers.yaml`). Bundling more first-party servers is a
 non-goal — official vendor servers exist for most databases — so these two only cover the minimum a
 proxy operator needs, and are kept intentionally small in surface area.
 
@@ -2021,48 +2130,110 @@ Redis server (or a man-in-the-middle on a connection without `LEANPROXY_REDIS_TL
 out-of-memory condition by advertising a huge `$`/`*` length; exceeding either limit is an error and the
 connection is closed and re-dialed on the next use.
 
-## Marketplace Registry Sources (issue #313)
+## Environment Variables
 
-`leanproxy marketplace sync` always syncs the **official MCP Registry**
-(`registry.modelcontextprotocol.io`, API `v0`) — LeanProxy does not own the
-domain the default previously pointed at (`registry.mcp.io`), so that is no
-longer used by default at all.
+LeanProxy reads these variables. Nothing else in the proxy's environment
+changes its behaviour.
 
-You can additionally opt in to your own custom NDJSON feed(s) — an internal
-catalog, a fork, a curated allowlist — under `registry.sources` in
-`leanproxy_servers.yaml`:
+| Variable | Read by | Effect |
+|----------|---------|--------|
+| `LEANPROXY_CONFIG` | most commands | Config file path. Not read by `serve` and `doctor`; see [Config File Locations](#config-file-locations) |
+| `LEANPROXY_SERVE_TOKEN` | `server run --http`, `serve` | Client token, used when `--http-token` / `--auth-token` is not given. Else the token comes from `~/.config/leanproxy/serve.token` |
+| `LEANPROXY_PINS_FILE` | every front end, `tools pins`, `doctor security` | Tool pinning file. Wins over `security.tool_pinning.path` |
+| `LEANPROXY_TOOLCACHE_DIR` | every front end | Persistent tool cache directory. Default `~/.config/leanproxy/toolcache` |
+| `LEANPROXY_USAGE_RETENTION_DAYS` | every front end | Days of usage data kept for `report`. Default `90`; must be a positive integer |
+| `LEANPROXY_MCP_REGISTRY_URL` | `marketplace` commands | Base URL of the official MCP Registry (for a mirror). Default `https://registry.modelcontextprotocol.io` |
+| `OPENAI_API_KEY` | `tool_search.hybrid` with `provider: openai`, `serve --embed-provider openai` | OpenAI key when `api_key` is not set |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_INSECURE` | every front end | OpenTelemetry export. They win over the `telemetry:` block, and an endpoint alone turns telemetry on. See [Telemetry](#telemetry-opentelemetry) |
+| The variable named by `cache.vector_store.qdrant.api_key_env` / `pinecone.api_key_env` | `serve` | Vector store key. Pinecone default: `PINECONE_API_KEY` |
+| Any `${VAR}` in `servers[].stdio.env` | every front end | Expanded when the server starts. An unset variable fails that server's start |
+| `HOME` (`USERPROFILE` on Windows) | all | Base of every default path |
 
-```yaml
-registry:
-  sources:
-    - name: acme-internal
-      url: https://mcp-index.acme.internal/index.ndjson
-```
+These do **not** do what their names suggest:
 
-- Each source needs a unique `name` (used for provenance display and
-  recorded as `installed_from.registry` for servers installed from it) and
-  an `http://`/`https://` `url`.
-- A custom source's entries are merged into the same local cache as the
-  official registry's; `marketplace search`/`add` see all of them together.
-- A custom source's own `trust_score` field, if present, is **never**
-  trusted (see [Trust Model](security.md#marketplace-trust-model-issue-313)).
-- A sync failure on one custom source is logged and skipped — it never
-  blocks the official-registry sync or the other sources.
+| Variable | Status |
+|----------|--------|
+| `LEANPROXY_LOG_LEVEL` | Does not set the log level. Only `doctor security` reads it, to flag debug logging. Use `--log-level` |
+| `LEANPROXY_HOST`, `LEANPROXY_PORT` | Do not exist |
+| `LEANPROXY_LLM_API_KEY` | Read only by the compactor's own config, which no command loads. No effect |
+| `OTEL_SERVICE_NAME` | Not read. Use `telemetry.service_name` |
+
+The first-party servers in `servers/` read their own variables:
+`LEANPROXY_POSTGRES_*` and `LEANPROXY_REDIS_*` (see
+[First-Party Servers](#first-party-servers-postgres-and-redis)),
+`LEANPROXY_FILESYSTEM_ROOTS` (comma-separated allowed roots of
+`servers/filesystem`) and `GITHUB_TOKEN` (`servers/github`; read-only public
+access without it). The proxy does not pass them on by itself: list them in
+the server's `stdio.env` or `stdio.env_passthrough`.
+
+## Files on Disk
+
+| Path | Written by | Content |
+|------|-----------|---------|
+| `~/.config/leanproxy_servers.yaml` | you, `server add`, `add`, `migrate`, `marketplace update` | This config (mode `0600`) |
+| `~/.config/leanproxy/toolcache/` | every front end | Cached `tools/list` of each server (`$LEANPROXY_TOOLCACHE_DIR`) |
+| `~/.config/leanproxy/status/current.json` | every front end | Live status for `status --running`, `server health` and `doctor security`. Removed on shutdown |
+| `~/.config/leanproxy/pins.json` | every front end, `tools pins` | Tool pins (`security.tool_pinning.path`, `$LEANPROXY_PINS_FILE`) |
+| `~/.config/leanproxy/serve.token` | `server run --http`, `serve` | Client token, created with mode `0600` on first start |
+| `~/.leanproxy/usage/` | every front end | Per-tool usage for `report`, pruned after 90 days |
+| `~/.leanproxy/quarantine/` | every front end, when `injection` quarantines | Quarantined (redacted) payloads |
+| `~/.leanproxy/results/<pid>-<id>/` | every front end, with `response.spill.disk: true` | Spilled tool results (`response.spill.dir`). Removed on shutdown; leftovers older than `spill.ttl` are removed at the next start |
+| `~/.leanproxy/registry/index.json` | `marketplace sync`, `serve` | Marketplace cache |
+| `~/.leanproxy/cache/` | `serve` | `vectors.db` (semantic cache) and `semantic-stats.json` |
+
+Directories are created with mode `0700`.
+
+## Removed and Unsupported Keys
+
+Older pages and examples showed keys that LeanProxy does not read. They are
+ignored without a warning:
+
+| Key | What to do instead |
+|-----|--------------------|
+| `server.host`, `server.port` | Pass the address: `server run --http <addr>` or `serve --listen <addr>` |
+| `server.max_batch_size` | None. `serve` caps a JSON-RPC batch at 100 requests (fixed). `server run --stdio` does not accept batches |
+| `logging.level`, `logging.file` | `--log-level` and `--log-file` flags. Logs go to stderr by default |
+| `watch.interval` | `status --watch --interval <duration>` |
+| `socket.*` | None. There is no Unix socket |
+| `sidecar:` | `serve --sidecar-provider/--sidecar-model/--sidecar-url` |
+| `namespaces:` | None. Only `namespace list --config <file>` reads it; it has no runtime effect |
+| `compactor:` | None. No command loads it |
+
+### Removed in v0.10
+
+The `optimization.lazy_loading` and `federation` config blocks were never
+wired into any command and were removed in v0.10 (see the
+[changelog](https://github.com/mmornati/leanproxy-mcp/blob/main/CHANGELOG.md#removed-in-v010)
+and issue [#303](https://github.com/mmornati/leanproxy-mcp/issues/303)).
+A config that still contains either key loads; LeanProxy logs one warning
+per key and ignores it.
 
 ## Validate Configuration
 
-```bash
-leanproxy-mcp bouncer validate-patterns
-```
-
-## Show Current Config
+There is no `config show` or `config validate` command. The config is
+checked every time a command loads it. Two quick ways to check a file:
 
 ```bash
-leanproxy-mcp config show
+# Loads and validates the whole file; prints the policy decision for one tool.
+leanproxy-mcp --config ~/.config/leanproxy_servers.yaml policy check <server>.<tool>
+
+# Checks the bouncer patterns only.
+leanproxy-mcp bouncer validate-patterns --config ~/.config/leanproxy_servers.yaml
 ```
+
+An invalid file prints `validate config: <reason>` and exits with status 1.
+`server run` refuses to start with the same message. The deprecated `serve`
+logs the error as a warning and starts with no servers.
+
+!!! note "`doctor security` is not a validator"
+    `doctor security` still prints a report when the file is invalid. Its
+    main checks then show the defaults, and the error only appears in the
+    detail sections.
 
 ## Next Steps
 
 - [Commands Reference](./commands.md) - Full command documentation
-- [Architecture](./architecture.md) - Understand how LeanProxy-MCP works
+- [Security](./security.md) - What each protection does and does not cover
+- [Graceful Shutdown](./shutdown.md) - What happens on exit
 - [Troubleshooting](./troubleshooting.md) - Common configuration issues
+

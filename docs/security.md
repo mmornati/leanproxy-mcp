@@ -8,18 +8,18 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 |---------|-------------|
 | **Least-Privilege Child Environment** | Stdio MCP servers get a minimal environment by default instead of the proxy's full environment (#311) |
 | **Streamable HTTP Front End** | `server run --http`: loopback by default, bearer token (no unauthenticated non-loopback bind), Host/Origin validation, unguessable per-credential session ids, body/session/concurrency limits (#309) |
-| **Dashboard & Metrics Hardening** | Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
+| **Dashboard & Metrics Hardening** | `server run` and `serve`: Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
 | **First-Party Servers Hardening** | Postgres: real read-only transaction, not just a text prefix check. Redis: pool that can't deadlock, bounded RESP allocations, per-command deadlines (#318) |
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
 | **Prompt Injection Protection** | Classifies the decoded text of requests and tool outputs (indirect injection) with risk scoring and per-direction actions |
 | **Tool Pinning & Rug-Pull Detection** | Hashes every upstream tool definition, reports or blocks drift, scans descriptions for hidden instructions and strips invisible unicode (#310) |
 | **Per-Tool Policy** | Allow / deny / confirm rules per `server.tool` glob and annotation; calls to tools a server does not advertise are refused by default (#314) |
 | **Passthrough Without Bypass** | Clients with native tool search see every upstream tool directly (#322); pinning, policy, redaction, the injection guard, the response governor and telemetry still apply to every listed tool and every call |
-| **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model for sensitive data beyond regex |
-| **Batch Size Limits** | Prevents DoS via large JSON-RPC batch requests |
-| **ReDoS Protection** | Validates regex patterns to prevent catastrophic backtracking |
-| **Path Validation** | Prevents path traversal attacks on configuration files |
-| **Graceful Shutdown** | Ensures all goroutines are properly terminated |
+| **Sidecar LLM Redaction** | Deprecated `serve` only: context-aware redaction via a local Ollama model for sensitive data beyond regex |
+| **Message Size and Concurrency Limits** | Bounded message size, request concurrency and sessions on every front end; per-server rate limits |
+| **ReDoS Protection** | Rejects custom regex patterns prone to catastrophic backtracking when the config loads |
+| **Path Validation** | Rejects traversal sequences and null bytes in the paths LeanProxy reads and writes |
+| **Clean Shutdown** | Stops every child process (SIGTERM, then SIGKILL after 5 s) and removes spilled results and the status file |
 
 ## OWASP MCP Top 10 Security Report (`doctor security`, #323)
 
@@ -48,8 +48,8 @@ for usage, flags (`--json`, `--markdown`) and full sample output.
 | MCP10 Excessive Context | The [response governor](#response-governor-spill-store-319) on/off; the [exposure mode](#exposure-modes-and-passthrough-322) |
 
 A check that genuinely cannot be evaluated without a running proxy (e.g.
-the `--log-level` flag of a future invocation, or a `serve
---dashboard-bind` not yet started) is reported `ℹ️` (info), not `❌`: the
+the `--log-level` flag of a future invocation, or a `--dashboard-bind`
+not yet started) is reported `ℹ️` (info), not `❌`: the
 exit code and the fail count only ever reflect a check that could actually
 be evaluated.
 
@@ -176,7 +176,7 @@ servers:
         image: node:22-alpine    # inferred for npx/npm/node and uvx/uv/python(3) if omitted
         network: none            # none | bridge | host (default: none)
         mounts:                  # explicit, default none
-          - host: ~/projects/foo
+          - host: /home/me/projects/foo   # absolute; no ~
             container: /work
             read_only: true
         memory: 512m
@@ -1088,42 +1088,43 @@ For context-aware redaction beyond regex patterns, deploy a sidecar LLM (Ollama)
 
 ### Configuration
 
-```yaml
-sidecar:
-  provider: ollama
-  model: llama3.1:8b
-  url: http://localhost:11434
-```
-
-### CLI
+The sidecar exists only in the deprecated `serve`, and only with flags.
+There is no `sidecar:` config block.
 
 ```bash
 leanproxy-mcp serve --sidecar-provider ollama --sidecar-model llama3.1:8b
 ```
+
+| Flag | Default |
+|------|---------|
+| `--sidecar-provider` | `""` (off); `ollama` is the only provider |
+| `--sidecar-model` | `llama3.1:8b` |
+| `--sidecar-url` | `http://localhost:11434` |
+
+`bouncer.sidecar_always_call: true` runs the sidecar on every request. By
+default it runs only when the regex layer found no secret. See
+[Configuration: Sidecar LLM Redaction](configuration.md#sidecar-llm-redaction).
 
 ### Providers
 
 | Provider | Status | Notes |
 |----------|--------|-------|
 | Ollama | Full support | Sends redaction prompt to `/api/generate`, 30s timeout |
-- Without a token configured, all requests are allowed
 
-## Batch Size Limits
+## Message Size and Batch Limits
 
-The `max_batch_size` setting prevents denial-of-service attacks via large batch requests.
+There is no `max_batch_size` setting. What bounds a client's input:
 
-### Configuration
+| Front end | Limits |
+|-----------|--------|
+| `server run --stdio` | One message per line, at most `server.max_line_bytes` (64 MiB). At most `server.max_concurrent_requests` (64) requests run at once; more wait. A JSON-RPC batch (a JSON array) is answered with a parse error |
+| `server run --http` | A POST body of at most `server.http.max_body_bytes` (64 MiB), at most `server.http.max_sessions` (64) sessions and `server.max_concurrent_requests` (64) requests at once. A batch is accepted only for sessions on an MCP revision before 2025-06-18; newer sessions get `400` |
+| `serve` (deprecated) | `server.max_line_bytes`, `server.max_connections` (32), `server.max_concurrent_requests` per connection. A batch of more than 100 requests (fixed) gets a parse error |
 
-```yaml
-server:
-  max_batch_size: 100  # Default: 100, 0 = unlimited
-```
-
-### Behavior
-
-- Batch requests exceeding the limit are split into smaller chunks
-- Each chunk is processed sequentially
-- The limit applies to both request and response batches
+Towards upstream servers, `max_in_flight`, `max_response_bytes` and the
+optional `rate_limit` apply per server. See
+[Configuration: Server Options](configuration.md#server-options) and
+[Upstream Servers](configuration.md#upstream-servers-servers).
 
 ## ReDoS Protection
 
@@ -1147,13 +1148,22 @@ LeanProxy-MCP validates all user-provided regex patterns before compilation to p
 
 ### Validation
 
+Custom `bouncer.patterns` are checked when the config loads. A pattern with
+one of the shapes above **stops the config from loading**: `server run`
+refuses to start, and the error names the pattern.
+
+A pattern that is not valid regex syntax is not caught at load. It is
+logged (`invalid custom pattern, skipping`) and the proxy runs without it.
+
 Check patterns before deployment:
 
 ```bash
-leanproxy-mcp bouncer validate-patterns
+leanproxy-mcp bouncer validate-patterns --config ~/.config/leanproxy_servers.yaml
 ```
 
-Invalid patterns are logged and skipped with a warning.
+The check is a heuristic on the pattern text. RE2, the Go regex engine,
+runs in linear time, so the check guards against slow patterns, not against
+unbounded backtracking.
 
 ## Path Traversal Protection
 
@@ -1162,8 +1172,8 @@ LeanProxy-MCP validates all file paths to prevent directory traversal attacks.
 ### Protected Operations
 
 - Server configuration file loading
-- Registry persistence files
-- Compactor configuration
+- Marketplace registry cache files
+- Semantic cache statistics file (`serve`)
 
 ### Security Checks
 
@@ -1190,45 +1200,27 @@ LeanProxy-MCP creates files with secure permissions:
 
 This prevents unauthorized users from reading sensitive configuration.
 
-## Graceful Shutdown
+## Clean Shutdown
 
-LeanProxy-MCP ensures all background goroutines are properly terminated on shutdown to prevent goroutine leaks.
+On `SIGINT` or `SIGTERM`, and when the client closes stdin, LeanProxy:
 
-### WaitGroup Tracking
+- stops every stdio server's whole process group with `SIGTERM`, then
+  `SIGKILL` after 5 seconds, so no child or grandchild is left running;
+- removes sandbox containers (`docker rm -f`, bounded to 5 seconds);
+- deletes spilled tool results (`response.spill`), in memory and on disk;
+- removes the status file `~/.config/leanproxy/status/current.json`.
 
-All async operations are tracked using `sync.WaitGroup`:
-
-- Connection handlers
-- Background workers
-- Health monitors
-- Proxy routers
-
-### Shutdown Procedure
-
-1. Accept new connections: **STOPPED**
-2. Wait for active requests: **TIMEOUT** (30s default)
-3. Cancel pending operations
-4. Drain connection pools
-5. Close socket and exit
-
-### Graceful Shutdown Example
-
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-defer cancel()
-
-if err := server.Shutdown(ctx); err != nil {
-    // Handle timeout or error
-}
-```
+A client-initiated shutdown (stdin EOF or the `shutdown` request) gives
+in-flight requests up to 5 seconds to finish. See
+[Graceful Shutdown](shutdown.md) for each front end.
 
 ## Best Practices
 
 ### General Security
 
-1. **Keep Go updated**: Use the latest Go version for security fixes
-2. **Limit batch sizes**: Set `max_batch_size` to reasonable values
-3. **Avoid logging secrets**: Ensure no sensitive data in logs
+1. **Keep LeanProxy updated**: releases carry Go and dependency security fixes
+2. **Enable the injection guard**: it is off until `injection.enabled: true`
+3. **Avoid logging secrets**: do not run with `--log-level debug` and `--log-file` in production
 
 ### Configuration
 
@@ -1245,7 +1237,8 @@ if err := server.Shutdown(ctx); err != nil {
 ### What LeanProxy-MCP Does NOT Do
 
 - **TLS/SSL**: Use a reverse proxy (nginx, traefik) for TLS termination
-- **Rate limiting per-client**: Global rate limiting only
+- **Per-client rate limiting**: not available. `rate_limit` limits the
+  requests sent to one upstream server, whichever client sends them
 - **Audit logging**: Implement externally if needed
 
 ### Known Limitations
@@ -1255,9 +1248,19 @@ if err := server.Shutdown(ctx); err != nil {
 
 ## Security Configuration Reference
 
-| Option | Type | Default | Security Impact |
-|--------|------|---------|-----------------|
-| `server.max_batch_size` | int | `100` | Prevents DoS attacks |
+| Option | Default | Security impact |
+|--------|---------|-----------------|
+| `bouncer.enabled` | `true` | Secret redaction in both directions |
+| `bouncer.entropy_detection` | `false` | Also redacts unknown high-entropy secrets near key-like words |
+| `injection.enabled` | `false` | Prompt-injection guard; nothing is classified while off |
+| `security.tool_pinning.mode` | `warn` | `block` hides and refuses new or changed tools until approved |
+| `policy.default`, `policy.unknown_tools` | `allow`, `deny` | Per-tool allow / deny / confirm |
+| `servers[].stdio.inherit_env` | `false` | `true` passes the proxy's whole environment to a server |
+| `servers[].stdio.sandbox.runtime` | `none` | Runs a server in a container |
+| `servers[].allow_sampling` | `false` | Lets a server spend the client's LLM tokens |
+| `server.http.allowed_origins`, `server.http.allowed_hosts` | none | Browser origins and Host names the HTTP front end accepts |
+
+See [Configuration](configuration.md) for every key.
 
 ## Next Steps
 

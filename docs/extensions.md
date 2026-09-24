@@ -1,13 +1,15 @@
 # IDE Extensions
 
-LeanProxy-MCP provides first-party IDE extensions that show the proxy's
-token savings (today and week to date) directly in your development
-environment. They read the `usage` section of the
+The repository contains two small IDE extensions, both named
+**LeanProxy Cost Monitor**: one for VS Code (`extensions/vscode`) and one for
+JetBrains IDEs (`extensions/jetbrains`). They show the proxy's token savings
+(today and week to date) in the status bar, plus a panel with a per-server
+and per-tool breakdown. They read the `usage` section of the
 [`/metrics` endpoint](dashboard.md#metrics-endpoint): the same measured
 numbers as the dashboard and `leanproxy-mcp report`, across every proxy
 process on the machine.
 
-## Prerequisites
+## Setup
 
 Both extensions need the metrics endpoint. It is off by default, so enable
 it on one proxy process at the address the extensions expect by default,
@@ -37,34 +39,36 @@ below). A non-loopback `--metrics-bind` requires one.
 
 ## VS Code Extension
 
-The VS Code extension adds a status bar item and a usage panel.
-
 ### Features
 
-- **Status bar**: tokens saved today (`12.3K saved`), or an estimated cost
-  saved when you set a price. The tooltip adds the percentage and the
-  week-to-date figure.
-- **Usage panel**: today and week-to-date totals, discovery cost, sessions,
-  and today's per-server and top per-tool breakdown.
+- **Status bar item**: tokens saved today (`12.3K saved`), or an estimated
+  cost saved when you set a price. The tooltip adds the percentage and the
+  week-to-date figure. Click it to open the panel.
+- **Usage panel** (webview): today and week-to-date totals, discovery cost,
+  sessions, and today's per-server and top per-tool breakdown.
 - **Token support**: the metrics token is kept in VS Code's SecretStorage,
   never in `settings.json`.
 
 ### Installation
 
-Install from the VS Code Marketplace, or from the `.vsix` file in the repository:
+No packaged `.vsix` is committed to the repository. Build one from source
+(Node.js 20 or later):
 
 ```bash
-code --install-extension extensions/vscode/leanproxy-*.vsix
+cd extensions/vscode
+npm ci
+npx @vscode/vsce package --skip-license   # runs `npm run compile`, writes leanproxy-cost-0.1.0.vsix
+code --install-extension leanproxy-cost-0.1.0.vsix
 ```
 
-### Configuration
+### Settings
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `leanproxy.metricsEndpoint` | `http://127.0.0.1:9091/metrics` | The `--metrics-bind` address plus `/metrics` |
 | `leanproxy.pollInterval` | `5000` | Polling interval in ms (minimum `1000`), used by both the status bar and the panel. The proxy records a new snapshot every 5 seconds, so polling faster only repeats it |
 | `leanproxy.currencySymbol` | `$` | Currency symbol for the estimated cost saved |
-| `leanproxy.tokenCostPer1000` | `0` | Your price per 1000 tokens. `0` shows tokens only, because LeanProxy has no built-in price table |
+| `leanproxy.tokenCostPer1000` | `0` | Your price per 1,000 tokens. `0` shows tokens only, because LeanProxy has no built-in price table |
 
 Changes apply immediately, with no reload needed.
 
@@ -73,40 +77,44 @@ Changes apply immediately, with no reload needed.
 | Command | Description |
 |---------|-------------|
 | `LeanProxy: Open Cost Panel` | Open the usage panel |
-| `LeanProxy: Refresh Status Bar` | Force refresh the status bar |
+| `LeanProxy: Refresh Status Bar` | Poll the endpoint now |
 | `LeanProxy: Set Metrics Token` | Store the `--metrics-token` value in SecretStorage (leave empty to clear it) |
 
 ## JetBrains Plugin
 
-The JetBrains plugin (IntelliJ IDEA, PyCharm, GoLand, WebStorm) provides equivalent functionality.
+For IntelliJ-based IDEs, build 241 to 251.* (2024.1 to 2025.1).
 
 ### Features
 
 - **Status bar widget**: tokens saved today, or an estimated cost saved at
   your price.
-- **Tool window**: right-side panel with today and week-to-date totals and
+- **LeanProxy tool window** (right side): today and week-to-date totals and
   today's per-server and top per-tool breakdown.
-- **IDE settings UI**: endpoint, token, polling interval, currency and price.
+- **Actions**: `LeanProxy: Open Cost Panel` and
+  `LeanProxy: Refresh Status Bar`.
 
 ### Installation
 
-Build from source or install from the JetBrains Marketplace:
+The plugin is not shipped prebuilt. The directory has no Gradle wrapper, so
+build it with a local Gradle 8 installation and JDK 17:
 
 ```bash
 cd extensions/jetbrains
-./gradlew build
-# Install the plugin from build/distributions/
+gradle buildPlugin
+# The plugin ZIP is written to build/distributions/
 ```
 
-### Configuration
+Install the ZIP with **Settings › Plugins › ⚙ › Install Plugin from Disk…**.
 
-Access via `Settings > Tools > LeanProxy Cost Monitor`:
+### Settings
+
+Open **Settings › Tools › LeanProxy Cost Monitor**:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Metrics endpoint | `http://127.0.0.1:9091/metrics` | The `--metrics-bind` address plus `/metrics` |
 | Metrics token | (none) | The `--metrics-token` value, stored in the IDE's password safe (not in `leanproxy-settings.xml`) |
-| Poll interval | `5000` | Polling interval in ms (minimum `1000`); a change applies at the next poll |
+| Poll interval (ms) | `5000` | Polling interval (minimum `1000`); a change applies at the next poll |
 | Currency symbol | `$` | Currency symbol for the estimated cost saved |
 | Price per 1000 tokens | `0` | Your price; `0` shows tokens only |
 
@@ -122,6 +130,5 @@ Access via `Settings > Tools > LeanProxy Cost Monitor`:
 
 ## Next Steps
 
-- [Web Dashboard](./dashboard.md): browser-based monitoring
-- [Savings Report](./savings-report.md): how every number is measured
-- [Commands Reference](./commands.md): full CLI documentation
+- [Web Dashboard](./dashboard.md) — the dashboard and the `/metrics` schema
+- [Savings Report](./savings-report.md) — how every number is measured

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="LeanProxy-MCP">
+  <path d="M4 29V13a12 12 0 0 1 24 0v16" fill="none" stroke="#f3f5f1" stroke-width="2.6" stroke-linecap="round"/>
+  <rect x="9" y="13" width="9" height="12" rx="2" fill="#f08a24" fill-opacity=".85"/>
+  <rect x="14" y="16" width="9" height="9" rx="2" fill="#33c79a" fill-opacity=".75"/>
+  <path d="M8.5 11.5h3M8.5 11.5v3M23.5 26.5h-3M23.5 26.5v-3" stroke="#ff4550" stroke-width="2" stroke-linecap="square" fill="none"/>
+</svg>

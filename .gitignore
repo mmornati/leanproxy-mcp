@@ -67,3 +67,6 @@ bench-results/
 
 # MkDocs build output
 site/
+
+# impeccable review captures
+.impeccable/review/

@@ -1,0 +1,5 @@
+{
+  "mcp_servers": {
+    "echo": {"command": "/usr/bin/echo-mcp", "args": ["--verbose"]}
+  }
+}
