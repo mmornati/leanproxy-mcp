@@ -480,6 +480,9 @@ type latencyResults struct {
 	bigBytes          int
 	bigErr            string
 	binaryBytes       int64
+	// http is the same paced calls, and a concurrent burst, through the
+	// Streamable HTTP front end (#309).
+	http httpLatency
 }
 
 // paced sends n unique calls one at a time, sleeping between them so each
@@ -757,6 +760,7 @@ func TestHarness(t *testing.T) {
 
 	tr := measureTokens(t, bins, cat)
 	lr := measureLatency(t, bins, cat)
+	lr.http = measureHTTPLatency(t, bins, cat)
 	sc := measureSafety(t, bins, "")
 
 	asserts := evaluate(lr, sc)
@@ -838,6 +842,19 @@ func evaluate(lr latencyResults, sc []check) []assertion {
 		measured: fmt.Sprintf("%.2f ms", ov),
 		pass:     ov < p95OverheadLimitMS,
 		detail:   fmt.Sprintf("p95 proxied %.2f ms − direct %.2f ms", percentile(lr.proxyMS, 0.95), percentile(lr.directMS, 0.95)),
+	})
+	hov := percentile(lr.http.ms, 0.95) - percentile(lr.directMS, 0.95)
+	out = append(out, assertion{
+		name:     fmt.Sprintf("p95 Streamable HTTP front end overhead < %.0f ms", p95OverheadLimitMS),
+		measured: fmt.Sprintf("%.2f ms", hov),
+		pass:     len(lr.http.ms) > 0 && hov < p95OverheadLimitMS,
+		detail:   fmt.Sprintf("p95 over HTTP %.2f ms − direct %.2f ms", percentile(lr.http.ms, 0.95), percentile(lr.directMS, 0.95)),
+	})
+	out = append(out, assertion{
+		name:     fmt.Sprintf("0 errors in a %d-call Streamable HTTP burst (%d concurrent clients)", httpBurstCalls, httpBurstWorkers),
+		measured: fmt.Sprintf("%d errors", lr.http.burstErrors),
+		pass:     lr.http.burstWall > 0 && lr.http.burstErrors == 0,
+		detail:   fmt.Sprintf("%d errors", lr.http.burstErrors),
 	})
 	return out
 }

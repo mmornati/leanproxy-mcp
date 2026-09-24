@@ -80,6 +80,13 @@ func renderReport(cat *Catalog, tr tokenResults, lr latencyResults, sc []check, 
 	w("| %d-call pipelined burst over 5 servers: wall / throughput / errors | %d ms / %.0f req/s / %d |\n", burstCalls, lr.burstWall.Milliseconds(), rps, lr.burstErrors)
 	w("| %d parallel calls to a %d ms tool on one server (default `max_in_flight` 32 per server, so two waves): wall | %d ms |\n", parallelCalls, parallelDelayMS, lr.parallelWall.Milliseconds())
 	w("| 5 MB tool response: via proxy / direct | %d ms / %d ms |\n", lr.bigProxy.Milliseconds(), lr.bigDirect.Milliseconds())
+	w("| Streamable HTTP front end (`server run --http`), same paced calls: p50 / p95 / p99 | %.2f / %.2f / %.2f ms |\n", percentile(lr.http.ms, 0.5), percentile(lr.http.ms, 0.95), percentile(lr.http.ms, 0.99))
+	w("| Streamable HTTP overhead (HTTP − direct): p50 / p95 | %.2f / %.2f ms |\n", percentile(lr.http.ms, 0.5)-percentile(lr.directMS, 0.5), percentile(lr.http.ms, 0.95)-percentile(lr.directMS, 0.95))
+	hrps := 0.0
+	if lr.http.burstWall > 0 {
+		hrps = float64(httpBurstCalls) / lr.http.burstWall.Seconds()
+	}
+	w("| %d-call Streamable HTTP burst, %d concurrent clients, over 5 servers: wall / throughput / errors | %d ms / %.0f req/s / %d |\n", httpBurstCalls, httpBurstWorkers, lr.http.burstWall.Milliseconds(), hrps, lr.http.burstErrors)
 	w("| Proxy RSS: idle (5 servers warm) / after the burst | %s / %s |\n", rss(lr.rssIdleKB), rss(lr.rssBurstKB))
 	w("| Binary size (%s/%s, `-trimpath -ldflags=\"-s -w\"`) | %.1f MiB |\n", runtime.GOOS, runtime.GOARCH, float64(lr.binaryBytes)/(1<<20))
 
