@@ -1971,32 +1971,93 @@ leanproxy-mcp doctor [command] [flags]
 
 | Command | Description |
 |---------|-------------|
-| `security` | Show injection security policy, quarantine, tool pinning and per-tool policy status |
+| `security` | OWASP-MCP-Top-10-mapped local security report (redaction, injection guard, policy, tool pinning, sandbox, exposure, supply chain, shadow servers, ...); `--json`/`--markdown` (#323) |
 | `env` | Show, per configured stdio server, which environment variable names are passed to its child process and which are dropped (#311) |
+| `sandbox` | Show, per configured stdio server, its sandbox (container isolation) status (#312) |
 
 ---
 
-### `doctor security` - Security Diagnostic
+### `doctor security` - OWASP-MCP-Mapped Security Report (#323)
 
-Display the current injection security policy rules, the quarantine status for prompt-injection protection, and the tool pinning status (#310): mode, pin file, tools awaiting approval, server identity changes, removed tools, cross-server name collisions and approved tools with scanner findings, and the per-tool policy (#314): default, `unknown_tools`, confirmation timeout and every rule in evaluation order.
+Local-only, read-only security report, one section per **OWASP MCP Top 10**
+category (MCP01-MCP10): secret exposure, excessive privilege/scope, tool
+poisoning, supply chain, command injection, intent-flow subversion (prompt
+injection), broken authN/authZ, insufficient audit/telemetry, shadow
+servers and excessive context. Every check shows a status (`✅`/`⚠️`/`❌`),
+its evidence (names, counts and states only — never a secret value) and,
+when it is not `✅`, a one-line fix.
+
+It works without a running proxy, from the config and on-disk state alone
+(pin file, quarantine directory, token file permissions); when a proxy is
+running it also reads its live status file (e.g. the actual HTTP front-end
+bind). It never makes a network call.
+
+Below the OWASP report, the same detailed per-feature sections `doctor
+security` has always shown are still printed: the injection risk-band
+policy, quarantine status, [tool pinning](./configuration.md#tool-pinning-securitytool_pinning)
+(#310), [per-tool policy](./configuration.md#per-tool-policy-policy) (#314),
+the [HTTP front end](./security.md#streamable-http-front-end-309)'s
+exposure (#309) and [sandbox status](./security.md#sandboxing-servers-312)
+(#312).
 
 #### Usage
 
 ```bash
-leanproxy-mcp doctor security
+leanproxy-mcp doctor security [--json] [--markdown]
 ```
+
+`--json` prints the versioned, stable schema `leanproxy.doctor.security/v1`
+(documented in [Security](./security.md#owasp-mcp-top-10-security-report-doctor-security-323))
+for CI. `--markdown` prints the same report as a Markdown table per
+category. The exit code is non-zero when any check is `❌`, so either form
+can gate a pre-commit hook or a CI job.
 
 #### Examples
 
 ```bash
-# Show security diagnostics
+# Human-readable report
 leanproxy-mcp doctor security
+
+# CI: fail the job on any ❌
+leanproxy-mcp doctor security --json > security-report.json || exit 1
+
+# Markdown, e.g. for a PR comment
+leanproxy-mcp doctor security --markdown > security-report.md
 ```
 
 #### Output
 
 ```
-# Injection Security Diagnostic
+# LeanProxy Security Report (OWASP MCP Top 10)
+
+Generated: 2026-09-24T07:27:20Z (local-only, read-only — no network calls)
+Config: /home/me/.config/leanproxy_servers.yaml
+
+## MCP01 Secret Exposure
+
+  ✅ Response redaction (bouncer)
+     bouncer.enabled: true (or unset, the default) — secrets in tool output are redacted before reaching the client.
+  ✅ Custom redaction patterns
+     0 custom pattern(s) configured, 0 compiled.
+  ⚠️ High-entropy secret detector
+     bouncer.entropy_detection is off (the default): only the built-in and custom regex patterns are redacted.
+     Fix: Set bouncer.entropy_detection: true to also catch secrets no pattern recognizes.
+  ℹ️ Debug logging to a file
+     Log level is a per-invocation flag (--log-level / --log-file), not persisted in the config; not available without a running proxy.
+
+## MCP06 Intent-Flow Subversion (Prompt Injection)
+
+  ❌ Prompt-injection guard
+     injection.enabled is false or the injection: block is absent.
+     Fix: Add `injection: { enabled: true }` to leanproxy_servers.yaml.
+
+...
+
+Summary: 12 ok, 5 warn, 1 fail, 5 info
+
+---
+
+# Detail
 
 ## Policy Configuration
 
