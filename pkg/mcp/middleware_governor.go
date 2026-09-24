@@ -632,7 +632,7 @@ func (g *Governor) shortenResult(ctx context.Context, server, tool string, resul
 }
 
 // projectionNoteReserve is the budget kept for the projection note.
-const projectionNoteReserve = 400
+const projectionNoteReserve = 600
 
 // projectUnits applies proj to the JSON units, in place. A unit whose full
 // copy cannot be stored is left as is. structuredContent is only projected
