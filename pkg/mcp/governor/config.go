@@ -11,10 +11,13 @@ package governor
 
 import (
 	"fmt"
+	"net/url"
 	"path"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/httpsec"
 )
 
 // Defaults of the `response:` block.
@@ -36,6 +39,32 @@ const (
 	// DefaultDir is where spill.disk writes results ("~" is the home
 	// directory).
 	DefaultDir = "~/.leanproxy/results"
+
+	// DefaultDedupMinTokens is the smallest result (estimated tokens) that
+	// in-session dedup (#321) tracks. Smaller results are not worth the
+	// per-session hash bookkeeping.
+	DefaultDedupMinTokens = 500
+
+	// DefaultSummarizeProvider is the only local-LLM provider summarization
+	// supports (#321): the existing Ollama sidecar plumbing.
+	DefaultSummarizeProvider = "ollama"
+	// DefaultSummarizeThresholdTokens is response.summarize.threshold_tokens
+	// when unset: a result must be at least this large (estimated tokens)
+	// for summarization to run on it.
+	DefaultSummarizeThresholdTokens = 8000
+	// DefaultSummarizeMaxTokens is response.summarize.max_summary_tokens
+	// when unset: the summary is capped to about this many estimated
+	// tokens.
+	DefaultSummarizeMaxTokens = 800
+	// DefaultSummarizeTimeout is response.summarize.timeout when unset.
+	DefaultSummarizeTimeout = 10 * time.Second
+	// DefaultSummarizeURL is response.summarize.url when unset: the local
+	// Ollama sidecar's default.
+	DefaultSummarizeURL = "http://localhost:11434"
+	// maxSummarizeInputBytes caps what is ever sent to the summarizer,
+	// independent of threshold_tokens, so one call cannot balloon the
+	// local model's request.
+	maxSummarizeInputBytes = 120 * 1024
 )
 
 // Config is the `response:` block.
@@ -61,6 +90,47 @@ type Config struct {
 	// DefaultProjections applies the built-in drop pack (DefaultDropPaths)
 	// to the tools no projection rule matches. Off by default.
 	DefaultProjections bool `yaml:"default_projections,omitempty"`
+	// Dedup is "off" (default) or "on": in-session dedup of byte-identical
+	// results (#321). Keyed per client session only — never across
+	// sessions, so one session can never learn what another session saw.
+	Dedup string `yaml:"dedup,omitempty"`
+	// Summarize is response.summarize (#321): optional local-LLM
+	// summarization of results still over budget after projection and
+	// dedup. nil or Enabled: false (the default) turns it off.
+	Summarize *SummarizeConfig `yaml:"summarize,omitempty"`
+}
+
+// SummarizeConfig is the response.summarize block (#321). Off by default;
+// summarization only ever runs for the tools listed in Tools.
+type SummarizeConfig struct {
+	// Enabled switches summarization on. Off by default.
+	Enabled bool `yaml:"enabled,omitempty"`
+	// Provider is the local-LLM provider. Only "ollama" is supported
+	// (empty means "ollama").
+	Provider string `yaml:"provider,omitempty"`
+	// Model is the Ollama model. Empty means the sidecar's default model.
+	Model string `yaml:"model,omitempty"`
+	// URL is the Ollama server's base URL. Must be a loopback address
+	// unless AllowRemote is set (only local providers are allowed).
+	URL string `yaml:"url,omitempty"`
+	// ThresholdTokens: a result must be at least this large (estimated
+	// tokens) before summarization is attempted. Unset means
+	// DefaultSummarizeThresholdTokens.
+	ThresholdTokens *int `yaml:"threshold_tokens,omitempty"`
+	// MaxSummaryTokens caps the summary's estimated size. Unset means
+	// DefaultSummarizeMaxTokens.
+	MaxSummaryTokens *int `yaml:"max_summary_tokens,omitempty"`
+	// Tools is a glob allowlist ("server.tool" identities, path.Match
+	// syntax). Required: nothing is summarized unless listed here.
+	Tools []string `yaml:"tools,omitempty"`
+	// Timeout bounds one summarization call (a Go duration). Unset means
+	// DefaultSummarizeTimeout. On timeout or any error, the result falls
+	// back to truncation (#319).
+	Timeout string `yaml:"timeout,omitempty"`
+	// AllowRemote allows a non-loopback URL. Off by default: only local
+	// providers are allowed, so a redacted result is never sent off-box
+	// without an explicit opt-in.
+	AllowRemote bool `yaml:"allow_remote,omitempty"`
 }
 
 // ProjectionRule is one entry of response.projections.
@@ -155,8 +225,136 @@ func (c *Config) Validate() error {
 	if d := c.Spill.Dir; d != "" && !strings.HasPrefix(d, "/") && d != "~" && !strings.HasPrefix(d, "~/") {
 		return fmt.Errorf("response.spill.dir must be an absolute path or start with ~/, got %q", d)
 	}
+	switch strings.ToLower(strings.TrimSpace(c.Dedup)) {
+	case "", "off", "on":
+	default:
+		return fmt.Errorf("response.dedup must be %q or %q, got %q", "off", "on", c.Dedup)
+	}
+	if err := c.Summarize.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
+
+// Validate checks the response.summarize block. A nil receiver, or one
+// with Enabled: false, is always valid.
+func (c *SummarizeConfig) Validate() error {
+	if c == nil || !c.Enabled {
+		return nil
+	}
+	if p := strings.ToLower(strings.TrimSpace(c.Provider)); p != "" && p != DefaultSummarizeProvider {
+		return fmt.Errorf("response.summarize.provider: only %q is supported, got %q (local providers only)", DefaultSummarizeProvider, c.Provider)
+	}
+	if len(c.Tools) == 0 {
+		return fmt.Errorf("response.summarize.tools is required: nothing is summarized unless listed")
+	}
+	for i, t := range c.Tools {
+		if strings.TrimSpace(t) == "" {
+			return fmt.Errorf("response.summarize.tools[%d] is empty", i)
+		}
+		if _, err := path.Match(t, ""); err != nil {
+			return fmt.Errorf("response.summarize.tools[%d]: invalid glob %q: %w", i, t, err)
+		}
+	}
+	if c.ThresholdTokens != nil && *c.ThresholdTokens <= 0 {
+		return fmt.Errorf("response.summarize.threshold_tokens must be > 0, got %d", *c.ThresholdTokens)
+	}
+	if c.MaxSummaryTokens != nil && *c.MaxSummaryTokens <= 0 {
+		return fmt.Errorf("response.summarize.max_summary_tokens must be > 0, got %d", *c.MaxSummaryTokens)
+	}
+	if c.Timeout != "" {
+		d, err := time.ParseDuration(c.Timeout)
+		if err != nil {
+			return fmt.Errorf("response.summarize.timeout: %w", err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("response.summarize.timeout must be > 0, got %s", c.Timeout)
+		}
+	}
+	u := c.URLValue()
+	parsed, err := url.Parse(u)
+	if err != nil || parsed.Hostname() == "" {
+		return fmt.Errorf("response.summarize.url: invalid URL %q", u)
+	}
+	if !c.AllowRemote && !httpsec.IsLoopbackHost(parsed.Hostname()) {
+		return fmt.Errorf("response.summarize.url must be a loopback address (got %q); set allow_remote: true to use a remote provider (only local providers are allowed by default)", u)
+	}
+	return nil
+}
+
+// DedupEnabled reports whether response.dedup is "on".
+func (c *Config) DedupEnabled() bool {
+	return c != nil && strings.EqualFold(strings.TrimSpace(c.Dedup), "on")
+}
+
+// SummarizeEnabled reports whether response.summarize is on.
+func (c *Config) SummarizeEnabled() bool {
+	return c != nil && c.Summarize != nil && c.Summarize.Enabled
+}
+
+// ProviderValue is response.summarize.provider with its default.
+func (c *SummarizeConfig) ProviderValue() string {
+	if c == nil || strings.TrimSpace(c.Provider) == "" {
+		return DefaultSummarizeProvider
+	}
+	return c.Provider
+}
+
+// URLValue is response.summarize.url with its default.
+func (c *SummarizeConfig) URLValue() string {
+	if c == nil || strings.TrimSpace(c.URL) == "" {
+		return DefaultSummarizeURL
+	}
+	return c.URL
+}
+
+// ThresholdTokensValue is response.summarize.threshold_tokens with its
+// default.
+func (c *Config) ThresholdTokensValue() int {
+	if c == nil || c.Summarize == nil || c.Summarize.ThresholdTokens == nil {
+		return DefaultSummarizeThresholdTokens
+	}
+	return *c.Summarize.ThresholdTokens
+}
+
+// MaxSummaryTokensValue is response.summarize.max_summary_tokens with its
+// default.
+func (c *Config) MaxSummaryTokensValue() int {
+	if c == nil || c.Summarize == nil || c.Summarize.MaxSummaryTokens == nil {
+		return DefaultSummarizeMaxTokens
+	}
+	return *c.Summarize.MaxSummaryTokens
+}
+
+// SummarizeTimeoutValue is response.summarize.timeout with its default.
+func (c *Config) SummarizeTimeoutValue() time.Duration {
+	if c == nil || c.Summarize == nil || c.Summarize.Timeout == "" {
+		return DefaultSummarizeTimeout
+	}
+	d, err := time.ParseDuration(c.Summarize.Timeout)
+	if err != nil || d <= 0 {
+		return DefaultSummarizeTimeout
+	}
+	return d
+}
+
+// MatchesSummarizeTool reports whether identity ("server.tool") is listed
+// in response.summarize.tools. False (never summarized) when summarize is
+// off or the allowlist is empty: nothing is summarized unless listed.
+func (c *Config) MatchesSummarizeTool(identity string) bool {
+	if !c.SummarizeEnabled() {
+		return false
+	}
+	for _, glob := range c.Summarize.Tools {
+		if matchIdentity(glob, identity) {
+			return true
+		}
+	}
+	return false
+}
+
+// MaxSummarizeInputBytes caps what is ever sent to the summarizer.
+func MaxSummarizeInputBytes() int { return maxSummarizeInputBytes }
 
 func validateBudget(field string, v *int) error {
 	if v == nil {

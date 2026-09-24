@@ -80,6 +80,11 @@ type instrumentSet struct {
 	governorTrunc    metric.Int64Counter
 	governorProj     metric.Int64Counter
 	governorProjTok  metric.Int64Counter
+	governorDedup    metric.Int64Counter
+	governorDedupTok metric.Int64Counter
+	governorSumm     metric.Int64Counter
+	governorSummTok  metric.Int64Counter
+	governorSummFB   metric.Int64Counter
 }
 
 func instruments() *instrumentSet {
@@ -118,6 +123,16 @@ func instruments() *instrumentSet {
 			metric.WithDescription("Tool results the response governor projected (#320), by server."))
 		inst.governorProjTok, _ = m.Int64Counter("leanproxy.governor.projection.tokens",
 			metric.WithDescription("Estimated tokens of the projected parts of tool results (#320), by direction (before, after) and server."))
+		inst.governorDedup, _ = m.Int64Counter("leanproxy.governor.dedup",
+			metric.WithDescription("Tool results the response governor replaced with an in-session dedup marker (#321), by server."))
+		inst.governorDedupTok, _ = m.Int64Counter("leanproxy.governor.dedup.tokens",
+			metric.WithDescription("Estimated tokens saved by in-session dedup (#321), by server."))
+		inst.governorSumm, _ = m.Int64Counter("leanproxy.governor.summarizations",
+			metric.WithDescription("Tool results the response governor replaced with a local-LLM summary (#321), by server."))
+		inst.governorSummTok, _ = m.Int64Counter("leanproxy.governor.summarization.tokens",
+			metric.WithDescription("Estimated tokens saved by summarization (#321), by server."))
+		inst.governorSummFB, _ = m.Int64Counter("leanproxy.governor.summarization.fallbacks",
+			metric.WithDescription("Summarization attempts (#321) that fell back to truncation (timeout, error, empty output, or blocked by the injection guard), by server."))
 		inst.inFlightRequests, _ = m.Int64UpDownCounter("mcp.server.requests.in_flight",
 			metric.WithDescription("Requests currently in flight, by server."))
 	})
@@ -153,21 +168,26 @@ func SetTelemetryActive(active bool) { telemetryActive.Store(active) }
 var counters telemetryCounters
 
 type telemetryCounters struct {
-	requestsTotal   atomic.Int64
-	errorsTotal     atomic.Int64
-	redactions      atomic.Int64
-	injections      atomic.Int64
-	cacheHits       atomic.Int64
-	cacheMisses     atomic.Int64
-	policyDecisions atomic.Int64
-	rateLimitWaits  atomic.Int64
-	toolPinEvents   atomic.Int64
-	inFlight        atomic.Int64
-	governed        atomic.Int64
-	governorTrunc   atomic.Int64
-	governorSaved   atomic.Int64
-	governorProj    atomic.Int64
-	governorProjSav atomic.Int64
+	requestsTotal    atomic.Int64
+	errorsTotal      atomic.Int64
+	redactions       atomic.Int64
+	injections       atomic.Int64
+	cacheHits        atomic.Int64
+	cacheMisses      atomic.Int64
+	policyDecisions  atomic.Int64
+	rateLimitWaits   atomic.Int64
+	toolPinEvents    atomic.Int64
+	inFlight         atomic.Int64
+	governed         atomic.Int64
+	governorTrunc    atomic.Int64
+	governorSaved    atomic.Int64
+	governorProj     atomic.Int64
+	governorProjSav  atomic.Int64
+	governorDedup    atomic.Int64
+	governorDedupSav atomic.Int64
+	governorSumm     atomic.Int64
+	governorSummSav  atomic.Int64
+	governorSummFB   atomic.Int64
 }
 
 // TelemetryCounters is the plain-value snapshot pkg/metrics exposes on the
@@ -192,6 +212,16 @@ type TelemetryCounters struct {
 	// the projection removed (part of GovernorTokensSaved).
 	GovernorProjections           int64 `json:"governor_projections_total"`
 	GovernorProjectionTokensSaved int64 `json:"governor_projection_tokens_saved_total"`
+	// In-session dedup (#321): results replaced by a dedup marker, and
+	// estimated tokens saved (part of GovernorTokensSaved).
+	GovernorDedupHits        int64 `json:"governor_dedup_hits_total"`
+	GovernorDedupTokensSaved int64 `json:"governor_dedup_tokens_saved_total"`
+	// Summarization (#321): results replaced by a local-LLM summary,
+	// estimated tokens saved (part of GovernorTokensSaved), and
+	// summarization attempts that fell back to truncation.
+	GovernorSummarizations           int64 `json:"governor_summarizations_total"`
+	GovernorSummarizationTokensSaved int64 `json:"governor_summarization_tokens_saved_total"`
+	GovernorSummarizationFallbacks   int64 `json:"governor_summarization_fallbacks_total"`
 }
 
 // TelemetrySnapshot returns the current counters. Safe for concurrent use.
@@ -214,6 +244,13 @@ func TelemetrySnapshot() TelemetryCounters {
 
 		GovernorProjections:           counters.governorProj.Load(),
 		GovernorProjectionTokensSaved: counters.governorProjSav.Load(),
+
+		GovernorDedupHits:        counters.governorDedup.Load(),
+		GovernorDedupTokensSaved: counters.governorDedupSav.Load(),
+
+		GovernorSummarizations:           counters.governorSumm.Load(),
+		GovernorSummarizationTokensSaved: counters.governorSummSav.Load(),
+		GovernorSummarizationFallbacks:   counters.governorSummFB.Load(),
 	}
 }
 
@@ -293,6 +330,54 @@ func RecordProjection(ctx context.Context, server string, before, after int64) {
 	i.governorProj.Add(ctx, 1, metric.WithAttributes(srv))
 	i.governorProjTok.Add(ctx, before, metric.WithAttributes(attribute.String("direction", "before"), srv))
 	i.governorProjTok.Add(ctx, after, metric.WithAttributes(attribute.String("direction", "after"), srv))
+}
+
+// RecordDedup records n results the response governor replaced with an
+// in-session dedup marker (#321), and the estimated tokens it saved. Only
+// counts and the server name are recorded, never a result or its hash.
+func RecordDedup(ctx context.Context, server string, n, savedTokens int64) {
+	if n <= 0 {
+		return
+	}
+	counters.governorDedup.Add(n)
+	if savedTokens > 0 {
+		counters.governorDedupSav.Add(savedTokens)
+	}
+	if !telemetryActive.Load() {
+		return
+	}
+	i := instruments()
+	srv := attrMCPServerName.String(server)
+	i.governorDedup.Add(ctx, n, metric.WithAttributes(srv))
+	if savedTokens > 0 {
+		i.governorDedupTok.Add(ctx, savedTokens, metric.WithAttributes(srv))
+	}
+}
+
+// RecordSummarization records n results the response governor replaced with
+// a local-LLM summary (#321), the estimated tokens it saved, and fallbacks
+// results that fell back to truncation instead. Only counts and the server
+// name are recorded, never a result or a summary.
+func RecordSummarization(ctx context.Context, server string, n, savedTokens, fallbacks int64) {
+	counters.governorSumm.Add(n)
+	if savedTokens > 0 {
+		counters.governorSummSav.Add(savedTokens)
+	}
+	counters.governorSummFB.Add(fallbacks)
+	if !telemetryActive.Load() {
+		return
+	}
+	i := instruments()
+	srv := attrMCPServerName.String(server)
+	if n > 0 {
+		i.governorSumm.Add(ctx, n, metric.WithAttributes(srv))
+	}
+	if savedTokens > 0 {
+		i.governorSummTok.Add(ctx, savedTokens, metric.WithAttributes(srv))
+	}
+	if fallbacks > 0 {
+		i.governorSummFB.Add(ctx, fallbacks, metric.WithAttributes(srv))
+	}
 }
 
 // RecordRateLimitWait increments the rate-limit-wait counter.

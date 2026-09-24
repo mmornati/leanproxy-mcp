@@ -440,6 +440,7 @@ func runServe(cmd *cobra.Command, args []string) {
 		serveGovernor = mcp.NewGovernor(loadedCfg.Response)
 	}
 	serveGovernor.SetServerNames(knownServerNames)
+	serveGovernor.SetInjectionGuard(serveFirewall.Injection)
 	handler.SetGovernor(serveGovernor)
 	slog.Info(serveGovernor.Summary())
 	metrics.SetResponseGovernorProvider(serveGovernor.Stats)
