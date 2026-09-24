@@ -187,8 +187,8 @@ func TestBuildSavingsReportEmpty(t *testing.T) {
 func TestSavingsReportOutputsLabelMeasuredVsEstimated(t *testing.T) {
 	rep := BuildSavingsReport([]Record{sampleRecord("s1", time.Now())}, time.Time{}, nil)
 
-	text := rep.Text()
-	md := rep.Markdown()
+	text := rep.Text("tool")
+	md := rep.Markdown("tool")
 	jsonBytes, err := rep.JSON()
 	if err != nil {
 		t.Fatalf("JSON: %v", err)

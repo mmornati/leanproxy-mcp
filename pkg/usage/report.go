@@ -66,6 +66,14 @@ type ToolSize struct {
 	Calls          int64  `json:"calls"`
 }
 
+// SessionSummary is one contributing session's totals (--by session).
+type SessionSummary struct {
+	SessionID           string    `json:"session_id"`
+	Timestamp           time.Time `json:"timestamp"`
+	TotalOriginalTokens int64     `json:"total_original_tokens"`
+	TotalSavedTokens    int64     `json:"total_saved_tokens"`
+}
+
 // SavingsReport is the full auditable savings report (issue #324).
 type SavingsReport struct {
 	GeneratedAt time.Time `json:"generated_at"`
@@ -95,6 +103,10 @@ type SavingsReport struct {
 	ExtraTurnsEstimate int64 `json:"extra_turns_estimate"`
 
 	TopToolsByResponseSize []ToolSize `json:"top_tools_by_response_size,omitempty"`
+	// TopServersByResponseSize is the same breakdown grouped by upstream
+	// server (the part of the tool identity before the first '.'), for
+	// --by server.
+	TopServersByResponseSize []ToolSize `json:"top_servers_by_response_size,omitempty"`
 
 	// PricePerMTok and EstimatedCostSaved are only present when --price-per-mtok
 	// was given: there is no built-in price table (see the issue), so this
@@ -108,6 +120,11 @@ type SavingsReport struct {
 	// read outside its original context is still self-explanatory. See
 	// docs/savings-report.md for the full methodology.
 	Methodology string `json:"methodology"`
+
+	// PerSession is one row per contributing session (--by session), each
+	// a total across every mechanism, from that session's own latest
+	// snapshot only.
+	PerSession []SessionSummary `json:"per_session,omitempty"`
 }
 
 const savingsMethodology = "Every *_tokens number is measured from a real payload the proxy handled " +
@@ -131,6 +148,7 @@ func BuildSavingsReport(records []Record, since time.Time, pricePerMTok *float64
 	var agg metrics.MetricsSnapshot
 	var govOriginal, govReturned int64
 	toolTotals := map[string]*ToolSize{}
+	perSession := make([]SessionSummary, 0, len(latest))
 	for _, rec := range latest {
 		s := rec.Snapshot
 		agg.Telemetry.SchemaListings += s.Telemetry.SchemaListings
@@ -138,6 +156,14 @@ func BuildSavingsReport(records []Record, since time.Time, pricePerMTok *float64
 		agg.Telemetry.SchemaSentTokens += s.Telemetry.SchemaSentTokens
 		agg.Telemetry.DiscoveryCalls += s.Telemetry.DiscoveryCalls
 		agg.Telemetry.DiscoveryTokens += s.Telemetry.DiscoveryTokens
+
+		sessionSchemaSaved := s.Telemetry.SchemaNativeTokens - s.Telemetry.SchemaSentTokens
+		sessionSummary := SessionSummary{
+			SessionID:           rec.SessionID,
+			Timestamp:           rec.Timestamp,
+			TotalOriginalTokens: s.Telemetry.SchemaNativeTokens,
+			TotalSavedTokens:    sessionSchemaSaved,
+		}
 
 		if gov := s.ResponseGovernor; gov != nil {
 			for _, t := range gov.ByTool {
@@ -161,13 +187,18 @@ func BuildSavingsReport(records []Record, since time.Time, pricePerMTok *float64
 			agg.Telemetry.GovernorSummarizationFallbacks += gov.SummarizeFallbacks
 			govOriginal += gov.OriginalTokens
 			govReturned += gov.ReturnedTokens
+			sessionSummary.TotalOriginalTokens += gov.OriginalTokens
+			sessionSummary.TotalSavedTokens += gov.SavedTokens
 		}
+		perSession = append(perSession, sessionSummary)
 	}
+	sort.Slice(perSession, func(i, j int) bool { return perSession[i].SessionID < perSession[j].SessionID })
 
 	rep := SavingsReport{
 		GeneratedAt:  time.Now().UTC(),
 		Since:        since,
 		SessionCount: len(latest),
+		PerSession:   perSession,
 		Estimator:    fmt.Sprintf("chars/%d", int(reporter.DefaultCharsPerToken)),
 		Methodology:  savingsMethodology,
 	}
@@ -249,14 +280,39 @@ func BuildSavingsReport(records []Record, since time.Time, pricePerMTok *float64
 	rep.ExtraTurnsEstimate = t.DiscoveryCalls
 
 	tools := make([]ToolSize, 0, len(toolTotals))
+	serverTotals := map[string]*ToolSize{}
 	for _, v := range toolTotals {
 		tools = append(tools, *v)
+		// GovernorToolStats.Tool is cacheIdentity's "server.tool" (or just
+		// "tool" when server is empty); server names never contain a dot,
+		// so splitting on the first one recovers the server.
+		server := v.Tool
+		if i := strings.Index(v.Tool, "."); i > 0 {
+			server = v.Tool[:i]
+		}
+		se, ok := serverTotals[server]
+		if !ok {
+			se = &ToolSize{Tool: server}
+			serverTotals[server] = se
+		}
+		se.OriginalTokens += v.OriginalTokens
+		se.Calls += v.Calls
 	}
 	sort.Slice(tools, func(i, j int) bool { return tools[i].OriginalTokens > tools[j].OriginalTokens })
 	if len(tools) > topToolsLimit {
 		tools = tools[:topToolsLimit]
 	}
 	rep.TopToolsByResponseSize = tools
+
+	servers := make([]ToolSize, 0, len(serverTotals))
+	for _, v := range serverTotals {
+		servers = append(servers, *v)
+	}
+	sort.Slice(servers, func(i, j int) bool { return servers[i].OriginalTokens > servers[j].OriginalTokens })
+	if len(servers) > topToolsLimit {
+		servers = servers[:topToolsLimit]
+	}
+	rep.TopServersByResponseSize = servers
 
 	if pricePerMTok != nil {
 		rep.PricePerMTok = pricePerMTok
@@ -287,8 +343,10 @@ func latestPerSession(records []Record) []Record {
 	return out
 }
 
-// Text renders the report as a human-readable, fixed-width summary.
-func (r SavingsReport) Text() string {
+// Text renders the report as a human-readable, fixed-width summary. by
+// selects the extra breakdown table ("tool" (default), "server" or
+// "session"); an unknown value falls back to "tool".
+func (r SavingsReport) Text(by string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "LeanProxy Savings Report (generated %s)\n", r.GeneratedAt.Format(time.RFC3339))
 	if !r.Since.IsZero() {
@@ -311,10 +369,27 @@ func (r SavingsReport) Text() string {
 	fmt.Fprintf(&b, "\nTotal saved (excludes discovery cost): %d tokens of %d (%.1f%%)\n", r.TotalSavedTokens, r.TotalOriginalTokens, r.TotalSavedPercent)
 	fmt.Fprintf(&b, "Extra turns (estimated from %d discovery call(s), NOT a token figure): %d\n", r.ExtraTurnsEstimate, r.ExtraTurnsEstimate)
 
-	if len(r.TopToolsByResponseSize) > 0 {
-		fmt.Fprintf(&b, "\nTop tools by response size (hint for projection rules):\n")
-		for _, t := range r.TopToolsByResponseSize {
-			fmt.Fprintf(&b, "  %-40s %10d tokens over %d call(s)\n", t.Tool, t.OriginalTokens, t.Calls)
+	switch by {
+	case "server":
+		if len(r.TopServersByResponseSize) > 0 {
+			fmt.Fprintf(&b, "\nTop servers by response size:\n")
+			for _, t := range r.TopServersByResponseSize {
+				fmt.Fprintf(&b, "  %-40s %10d tokens over %d call(s)\n", t.Tool, t.OriginalTokens, t.Calls)
+			}
+		}
+	case "session":
+		if len(r.PerSession) > 0 {
+			fmt.Fprintf(&b, "\nBy session:\n")
+			for _, s := range r.PerSession {
+				fmt.Fprintf(&b, "  %-40s %s  saved %d of %d tokens\n", s.SessionID, s.Timestamp.Format(time.RFC3339), s.TotalSavedTokens, s.TotalOriginalTokens)
+			}
+		}
+	default:
+		if len(r.TopToolsByResponseSize) > 0 {
+			fmt.Fprintf(&b, "\nTop tools by response size (hint for projection rules):\n")
+			for _, t := range r.TopToolsByResponseSize {
+				fmt.Fprintf(&b, "  %-40s %10d tokens over %d call(s)\n", t.Tool, t.OriginalTokens, t.Calls)
+			}
 		}
 	}
 
@@ -326,8 +401,9 @@ func (r SavingsReport) Text() string {
 	return b.String()
 }
 
-// Markdown renders the report as a Markdown document.
-func (r SavingsReport) Markdown() string {
+// Markdown renders the report as a Markdown document. by selects the extra
+// breakdown table, as Text does.
+func (r SavingsReport) Markdown(by string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# LeanProxy Savings Report\n\n")
 	fmt.Fprintf(&b, "- Generated: %s\n", r.GeneratedAt.Format(time.RFC3339))
@@ -352,12 +428,31 @@ func (r SavingsReport) Markdown() string {
 	fmt.Fprintf(&b, "\n**Total saved (excludes discovery cost): %d / %d tokens (%.1f%%)**\n\n", r.TotalSavedTokens, r.TotalOriginalTokens, r.TotalSavedPercent)
 	fmt.Fprintf(&b, "Extra turns (estimated, not a token figure): %d\n\n", r.ExtraTurnsEstimate)
 
-	if len(r.TopToolsByResponseSize) > 0 {
-		fmt.Fprintf(&b, "## Top tools by response size\n\n| Tool | Original tokens | Calls |\n|---|---:|---:|\n")
-		for _, t := range r.TopToolsByResponseSize {
-			fmt.Fprintf(&b, "| %s | %d | %d |\n", t.Tool, t.OriginalTokens, t.Calls)
+	switch by {
+	case "server":
+		if len(r.TopServersByResponseSize) > 0 {
+			fmt.Fprintf(&b, "## Top servers by response size\n\n| Server | Original tokens | Calls |\n|---|---:|---:|\n")
+			for _, t := range r.TopServersByResponseSize {
+				fmt.Fprintf(&b, "| %s | %d | %d |\n", t.Tool, t.OriginalTokens, t.Calls)
+			}
+			fmt.Fprintf(&b, "\n")
 		}
-		fmt.Fprintf(&b, "\n")
+	case "session":
+		if len(r.PerSession) > 0 {
+			fmt.Fprintf(&b, "## By session\n\n| Session | Timestamp | Saved | Original |\n|---|---|---:|---:|\n")
+			for _, s := range r.PerSession {
+				fmt.Fprintf(&b, "| %s | %s | %d | %d |\n", s.SessionID, s.Timestamp.Format(time.RFC3339), s.TotalSavedTokens, s.TotalOriginalTokens)
+			}
+			fmt.Fprintf(&b, "\n")
+		}
+	default:
+		if len(r.TopToolsByResponseSize) > 0 {
+			fmt.Fprintf(&b, "## Top tools by response size\n\n| Tool | Original tokens | Calls |\n|---|---:|---:|\n")
+			for _, t := range r.TopToolsByResponseSize {
+				fmt.Fprintf(&b, "| %s | %d | %d |\n", t.Tool, t.OriginalTokens, t.Calls)
+			}
+			fmt.Fprintf(&b, "\n")
+		}
 	}
 
 	if r.PricePerMTok != nil {
