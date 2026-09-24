@@ -115,8 +115,14 @@ the tool results it sees in `leanproxy.governor.tokens` (attribute
 `mcp.middleware.governor`. Field projection (#320) adds
 `leanproxy.governor.projections` (results projected, by server) and
 `leanproxy.governor.projection.tokens` (estimated tokens of the projected
-parts, attribute `direction`: `before` or `after`). Only token counts are
-recorded, never a result.
+parts, attribute `direction`: `before` or `after`). In-session dedup and
+summarization (#321) add `leanproxy.governor.dedup` (results replaced by a
+dedup marker, by server) and `leanproxy.governor.dedup.tokens` (estimated
+tokens saved), plus `leanproxy.governor.summarizations` (results replaced
+by a summary), `leanproxy.governor.summarization.tokens` (estimated tokens
+saved) and `leanproxy.governor.summarization.fallbacks` (summarization
+attempts that fell back to truncation). Only token counts are recorded,
+never a result, a content hash or a summary.
 
 A request an upstream sends to the client (`elicitation/create`,
 `sampling/createMessage`, `roots/list`; #308) gets its own SERVER span,
@@ -143,6 +149,12 @@ up a collector. With the response governor on, a `response_governor`
 section adds its accounting: results seen and shortened, original and
 returned tokens (in total and per tool), results projected and the tokens
 projection removed (`projected`, `projection_saved_tokens`, also per tool),
-`read_result` calls and the spill store's size. The `telemetry` section
-counts them too (`governor_projections_total`,
-`governor_projection_tokens_saved_total`).
+`read_result` calls and the spill store's size, plus (#321) dedup hits and
+saved tokens (`dedup_hits`, `dedup_saved_tokens`) and summarization results,
+saved tokens and fallbacks (`summarized`, `summarize_saved_tokens`,
+`summarize_fallbacks`), each also broken out per tool. The `telemetry`
+section counts them too (`governor_projections_total`,
+`governor_projection_tokens_saved_total`, `governor_dedup_hits_total`,
+`governor_dedup_tokens_saved_total`, `governor_summarizations_total`,
+`governor_summarization_tokens_saved_total`,
+`governor_summarization_fallbacks_total`).

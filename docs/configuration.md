@@ -1217,6 +1217,124 @@ truncation. The full copy is the redacted result, kept per session like a
 spilled one (same TTL and byte cap); if it cannot be stored, the result is
 not projected.
 
+### In-session dedup (`response.dedup`)
+
+Agents often re-read the same thing within a session: the same file after a
+failed edit, the same issue twice, the same listing. Dedup (#321) remembers
+every result over 500 estimated tokens **for the current session only**,
+and when a later result (after projection, byte-identical) is seen again in
+that same session, replaces it with a short stub instead of resending it:
+
+```text
+[LeanProxy: identical to the result of github.get_file_contents returned earlier (result_id=r_k3j…). Call read_result to get it again if it is no longer in context.]
+```
+
+`read_result` still serves the full content by that id.
+
+```yaml
+response:
+  enabled: true
+  dedup: on    # off (default) | on
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `dedup` | string | `off` | `on` turns in-session dedup on. Needs the governor on |
+
+**Session isolation.** The hash → result map is keyed on the spill store's
+session owner (the same key `read_result` uses), so it is never shared or
+compared across sessions: two sessions that happen to call the same tool
+with the same content never learn anything about each other, and a
+session's dedup memory is dropped when the session ends, the same as its
+spilled results.
+
+**Trade-off.** Dedup assumes the client still has the first copy in its own
+context. A client that prunes or summarizes its own history before calling
+the tool again would get a stub pointing at content it no longer has —
+`read_result` still recovers it, but it costs an extra round trip. This is
+why dedup defaults to **off**: turn it on for agents that keep their full
+transcript in context.
+
+**Never deduped:** error results, and anything under the 500-token
+threshold (not worth the per-session bookkeeping).
+
+### Summarization (`response.summarize`)
+
+Some results stay large even after projection and truncation — long logs,
+long documents. Summarization (#321) can hand a result still over
+`threshold_tokens` to a **local** model (the same Ollama sidecar plumbing as
+`pkg/sidecar` and the injection judge, #315) instead of truncating it, with a
+fixed prompt that asks it to keep identifiers, numbers, paths and errors
+verbatim and to say what was left out. The full redacted result stays
+retrievable with `read_result`.
+
+**Off by default**, and **nothing is summarized unless its tool is listed**
+in `tools` — there is deliberately no default allowlist.
+
+```yaml
+response:
+  enabled: true
+  summarize:
+    enabled: true
+    provider: ollama              # only local providers are supported
+    model: llama3.1:8b            # default: the sidecar's default model
+    url: http://localhost:11434   # must be loopback unless allow_remote: true
+    threshold_tokens: 8000        # a result must be at least this large
+    max_summary_tokens: 800       # cap on the summary's estimated size
+    tools: ["logs.tail", "docs.read_*"]   # required: glob allowlist, no default
+    timeout: 10s                  # fall back to truncation on timeout
+    allow_remote: false           # refuse a non-loopback url unless true
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `summarize.enabled` | bool | `false` | Master switch |
+| `summarize.provider` | string | `ollama` | Only `ollama` is supported: local providers only |
+| `summarize.model` | string | sidecar default | Ollama model |
+| `summarize.url` | string | `http://localhost:11434` | Ollama base URL. Must resolve to a loopback host unless `allow_remote: true` |
+| `summarize.threshold_tokens` | int | `8000` | A unit must be at least this large (estimated tokens) before summarization is attempted |
+| `summarize.max_summary_tokens` | int | `800` | The summary is capped to about this many estimated tokens |
+| `summarize.tools` | list of string | — (required) | `"server.tool"` glob allowlist. Nothing is summarized unless listed |
+| `summarize.timeout` | duration | `10s` | Bounds one summarization call |
+| `summarize.allow_remote` | bool | `false` | Allow a non-loopback `url` |
+
+**Where it runs.** Summarization only replaces a unit that projection and
+dedup left still over the response budget, in place of the usual
+truncation (#319): parse → project (#320) → dedup (#321) → **summarize or
+truncate**. On any failure — timeout, a non-2xx response, empty output, or
+the summarizer's own output being blocked by the injection guard (below) —
+it falls back to ordinary truncation, so a result is never lost or hung
+waiting on a local model.
+
+**What the model sees:**
+
+```text
+[LeanProxy: summary of logs.tail (18,204 → 340 estimated tokens); full result kept as result_id=r_9fz…, call read_result to read it in full.]
+
+The service restarted twice due to a database connection timeout (10.0.4.12:5432);
+after the second restart it ran without errors. Omitted: 3,400 identical
+health-check lines.
+```
+
+**Security.**
+
+- **Local only.** `url` must be a loopback address (`localhost`,
+  `127.0.0.0/8`, `::1`) unless `allow_remote: true`: a redacted result is
+  never sent off-box for summarization without an explicit opt-in.
+- **The summary is untrusted output.** It is generated by a local model from
+  the redacted tool result, so it is run back through the injection guard's
+  response scan (#315) exactly like any other tool output before it is ever
+  returned — if the guard's policy is `block`, that summarization attempt
+  falls back to truncation instead; `annotate` or `redact` apply to the
+  summary text the same way they would to a tool result.
+- **Size caps.** Input sent to the local model is capped independent of
+  `threshold_tokens` (120 KiB), and the summary is capped to
+  `max_summary_tokens`.
+- **Never across sessions.** A summary is generated fresh for the request
+  that needs it; it is never cached or reused across sessions (unlike a
+  spilled result, which two calls in the same session can share).
+- **Never summarized:** error results.
+
 ### Pipeline placement
 
 ```
@@ -1246,6 +1364,12 @@ truncation, and within the same 4,000-token budget `list_issues` shows 26
 issues instead of 19 (64 with a six-path `fields` argument). A realistic
 30-issue GitHub fixture shrinks by 72.2%. See
 [Benchmark Results](benchmark-results.md#8-field-projection-large-results).
+
+With `dedup: on`, a session that reads the same file once and then re-reads
+it three more times (as happens after a failed edit) saves 73.6% of the
+whole session's tokens over truncation alone, and each repeat read is 98.1%
+smaller than the first. See
+[Benchmark Results](benchmark-results.md#9-in-session-dedup-repeated-reads).
 
 ## Telemetry (OpenTelemetry)
 

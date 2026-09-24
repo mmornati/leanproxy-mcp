@@ -136,6 +136,46 @@
 
 ## Added in v0.11
 
+- **Response token governor (part 3): in-session dedup of repeated results and optional local-LLM summarization** ([#321](https://github.com/mmornati/leanproxy-mcp/issues/321), audit §2.3).
+  - **What.** Agents often re-read the same thing within a session (the same file after a failed
+    edit, the same issue, the same listing), each time added to the context again. Some results
+    (long logs, long documents) stay large even after projection (#320) and truncation (#319).
+  - **Now**, both opt-in and both off by default:
+    - **`response.dedup: on`**: for every result over ~500 estimated tokens, the governor
+      remembers a hash of its (already redacted and projected) content, keyed to the current
+      **client session only**. A later result identical to one already returned this session is
+      replaced with a short stub (`identical to the result of <server>.<tool> returned earlier
+      (result_id=r_…)`); `read_result` still serves the full content by that id. Two sessions
+      that happen to see the same content never learn anything about each other, and a session's
+      dedup memory is dropped when the session ends, along with its spilled results. Error
+      results are never deduped.
+    - **`response.summarize`**: for a result from an allowlisted tool (`summarize.tools`, a glob
+      allowlist, **required** — nothing is summarized unless listed) still over
+      `threshold_tokens` (default 8,000) after projection and dedup, the redacted text is sent to
+      a **local** model (the existing `pkg/sidecar` Ollama plumbing, #315) with a fixed prompt
+      ("keep identifiers, numbers, paths, errors verbatim; list what was omitted"), capped to
+      `max_summary_tokens` (default 800) and a strict `timeout` (default 10s). The summary
+      replaces the result, with a `read_result` pointer to the full copy. Any failure — timeout,
+      error, empty output — falls back to ordinary structural truncation, never a hang or a lost
+      result. `summarize.url` must be a loopback address unless `allow_remote: true` (only local
+      providers are allowed by default). The summary is treated as untrusted content and run back
+      through the injection guard's response scan (#315) before it is ever returned; a summary is
+      never cached or reused across sessions. Error results are never summarized.
+    - Pipeline order: redaction and the injection check, then projection (#320), then dedup, then
+      summarize-or-truncate.
+    - Accounting (dedup hits and estimated tokens saved; summaries made, estimated tokens saved
+      and fallbacks) on `/metrics` (`response_governor.dedup_*` / `summariz*`, also per tool) and
+      as OTel counters (`leanproxy.governor.dedup`, `leanproxy.governor.dedup.tokens`,
+      `leanproxy.governor.summarizations`, `leanproxy.governor.summarization.tokens`,
+      `leanproxy.governor.summarization.fallbacks`).
+  - **Measured.** `make harness`, a repeated-reads session (the same file read once, then
+    re-read three more times): **13,780 → 3,640 tokens (−73.6%)** over truncation alone, a
+    repeat read **98.1%** smaller than the first. Summarization is covered by unit and e2e tests
+    with a fake Ollama server (`httptest`), not the harness's fixed-catalog measurements, since it
+    needs a real local model to measure honestly. See
+    [`docs/configuration.md`](docs/configuration.md#in-session-dedup-responsededup) and
+    [`docs/benchmark-results.md`](docs/benchmark-results.md#9-in-session-dedup-repeated-reads).
+
 - **Response token governor (part 2): schema-aware field projection per tool** ([#320](https://github.com/mmornati/leanproxy-mcp/issues/320), audit §2.3).
   - **What.** API-backed tools return verbose JSON (GitHub issues with full user objects, URLs,
     reactions and node ids; Jira issues with dozens of fields) while the model needs a handful of

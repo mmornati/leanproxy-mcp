@@ -212,9 +212,14 @@ telemetry → response governor → tool pinning → policy → response cache �
 The response governor (#319, `pkg/mcp/middleware_governor.go` and
 `pkg/mcp/governor`) is opt-in. After redaction and the injection check, it
 projects JSON results to the configured fields (#320, `response.projections`
-or `invoke_tool`'s `fields`), then shortens those still over their token
-budget; it keeps the full result in a per-session spill store and answers
-`read_result` and `resources/read leanproxy://results/<id>` from it. See
+or `invoke_tool`'s `fields`), then, per session, replaces a result
+byte-identical to one already returned this session with a short stub
+(#321, `response.dedup`), then shortens those still over their token
+budget — either structurally (#319) or, for an allowlisted tool over its
+own threshold, with a local-LLM summary (#321, `response.summarize`,
+falling back to structural truncation on any failure). It keeps the full
+result in a per-session spill store and answers `read_result` and
+`resources/read leanproxy://results/<id>` from it. See
 [Configuration](./configuration.md#response-token-governor-response).
 
 Pre-configured redaction for:

@@ -310,10 +310,12 @@ Pipeline order for every request:
 client → redact request params → injection check → dispatch/upstream → injection check (response) → redact response → client
 ```
 
-The opt-in response governor (#319) wraps this pipeline: it projects (#320)
-and shortens a tool result only after response redaction and the injection
-check ran (see
-[Response governor spill store](#response-governor-spill-store-319)).
+The opt-in response governor (#319) wraps this pipeline: it projects (#320),
+dedups and optionally summarizes (#321) and shortens a tool result only
+after response redaction and the injection check ran (see
+[Response governor spill store](#response-governor-spill-store-319)). A
+local-LLM summary is itself run back through this same response check
+before it is ever returned, since it is content the proxy did not write.
 
 - **Request redaction** covers every nested value of `params`, including the
   `arguments` of `tools/call` and the nested `arguments` of an `invoke_tool`
@@ -781,6 +783,28 @@ through it with `read_result`. That copy is guarded like the result itself:
   by the governor, before pinning, policy and the firewall, and is never
   sent upstream; the tool's own `arguments` are untouched. Projection
   changes what the model sees, never what reaches the upstream.
+- **In-session dedup (#321) never leaks across sessions.** The content
+  hash → result map is keyed on the same per-session owner as the spill
+  store itself, so it is a strict subset of the same isolation guarantees:
+  a hash lookup for one session is never checked against, or populated
+  from, another session's hits, and the map is dropped when the session
+  ends. Dedup is applied only to already-redacted, already-projected data,
+  and never to error results.
+- **Summarization (#321) is local by default, and its output is
+  untrusted.** `response.summarize.url` must resolve to a loopback address
+  unless `allow_remote: true` is set explicitly — a redacted result is
+  never sent to a third-party endpoint for summarization without that
+  opt-in. The summary text a local model returns is run back through the
+  injection guard's response scan (below) exactly like any other tool
+  output, because it is untrusted content the proxy did not write: a
+  `block` verdict on the summary falls back to ordinary truncation instead
+  of ever reaching the model, and `annotate`/`redact` apply to it the same
+  way they would to a tool result. Input to the summarizer is capped
+  independent of `threshold_tokens`, and the summary is capped to
+  `max_summary_tokens`. A summary is never cached or reused across
+  sessions. Error results are never summarized, and any failure (timeout,
+  a non-2xx response, empty output, a blocked summary) falls back to the
+  same structural truncation as #319.
 
 ## Marketplace trust model (issue #313)
 
