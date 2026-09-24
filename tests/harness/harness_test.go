@@ -765,11 +765,13 @@ func TestHarness(t *testing.T) {
 	gr := measureGovernor(t, bins, cat)
 	pr := measureProjection(t, bins, cat)
 	dr := measureDedup(t, bins, cat)
+	xr := measureExposure(t, bins, cat, tr)
 
 	asserts := append(evaluate(lr, sc), governorAssertions(gr)...)
 	asserts = append(asserts, projectionAssertions(pr, gr)...)
 	asserts = append(asserts, dedupAssertions(dr)...)
-	md := renderReport(cat, tr, lr, sc, asserts, time.Since(started)) + renderGovernor(gr) + renderProjection(pr, gr) + renderDedup(dr)
+	asserts = append(asserts, exposureAssertions(xr, cat)...)
+	md := renderReport(cat, tr, lr, sc, asserts, time.Since(started)) + renderGovernor(gr) + renderProjection(pr, gr) + renderDedup(dr) + renderExposure(xr)
 	out := filepath.Join(repoRoot(t), "bench-results", "harness.md")
 	if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
 		t.Fatal(err)
