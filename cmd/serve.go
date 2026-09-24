@@ -494,6 +494,8 @@ func runServe(cmd *cobra.Command, args []string) {
 		slog.Info("status file enabled", "path", statusStore.GetFilePath())
 		go updateServerStatusPeriodically()
 	}
+	initUsageStore("serve")
+	flushUsageSnapshot()
 
 	// Issue #316: a non-loopback bind without a token is a hard startup
 	// failure for both endpoints, not a warning — otherwise the server
@@ -561,6 +563,7 @@ func runServe(cmd *cobra.Command, args []string) {
 					continue
 				}
 				slog.Info("shutting down server")
+				flushUsageSnapshot()
 				signal.Stop(sigChan)
 				stopRefresh()
 				// Stop the health checker before closing the pools so no
@@ -1548,6 +1551,7 @@ func updateServerStatusPeriodically() {
 		}
 
 		statusStore.UpdateServers(statuses)
+		flushUsageSnapshot()
 	}
 }
 

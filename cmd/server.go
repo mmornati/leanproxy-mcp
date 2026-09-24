@@ -529,6 +529,12 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		slog.Info("status file enabled", "path", statusStore.GetFilePath())
 		updateStdioServerStatusOnce(statusStore, stdioPool)
 	}
+	frontendLabel := "stdio"
+	if httpOpts != nil {
+		frontendLabel = "http"
+	}
+	initUsageStore(frontendLabel)
+	flushUsageSnapshot()
 
 	// Response token governor (#319), off by default. Built before
 	// closePools so shutdown removes its spilled results.
@@ -567,6 +573,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		go func() {
 			<-sigChan
 			slog.Info("shutting down server")
+			flushUsageSnapshot()
 			if statusStore != nil {
 				statusStore.RemoveFile()
 			}
@@ -789,6 +796,7 @@ func updateServerStatus(statusStore *statusfile.FileStatusStore, unifiedPool poo
 		}
 
 		statusStore.UpdateServers(statuses)
+		flushUsageSnapshot()
 	}
 }
 
@@ -857,6 +865,7 @@ func handleStdio(ctx context.Context, handler *mcp.Handler, opts stdioFrontendOp
 	slog.Info("leanproxy-mcp stdio mode started", "max_concurrent_requests", opts.MaxConcurrent)
 
 	defer func() {
+		flushUsageSnapshot()
 		if statusStore != nil {
 			statusStore.RemoveFile()
 		}
