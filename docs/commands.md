@@ -1896,14 +1896,14 @@ leanproxy-mcp doctor [command] [flags]
 
 | Command | Description |
 |---------|-------------|
-| `security` | Show injection security policy, quarantine and tool pinning status |
+| `security` | Show injection security policy, quarantine, tool pinning and per-tool policy status |
 | `env` | Show, per configured stdio server, which environment variable names are passed to its child process and which are dropped (#311) |
 
 ---
 
 ### `doctor security` - Security Diagnostic
 
-Display the current injection security policy rules, the quarantine status for prompt-injection protection, and the tool pinning status (#310): mode, pin file, tools awaiting approval, server identity changes, removed tools, cross-server name collisions and approved tools with scanner findings.
+Display the current injection security policy rules, the quarantine status for prompt-injection protection, and the tool pinning status (#310): mode, pin file, tools awaiting approval, server identity changes, removed tools, cross-server name collisions and approved tools with scanner findings, and the per-tool policy (#314): default, `unknown_tools`, confirmation timeout and every rule in evaluation order.
 
 #### Usage
 
@@ -1956,7 +1956,60 @@ Total quarantined payloads: 2
     Discovery is namespaced (server_tool), so both stay reachable; check that each server is the one you expect.
 
   Approved tools with medium/high scanner findings: 0
+
+## Per-Tool Policy
+
+  Default: allow
+  Unknown tools (not in the server's tools/list): deny
+  Confirmation timeout: 5m0s
+  Rules (first match wins): 3
+    - rules[0] (match "postgres.pg_execute") -> confirm
+    - rules[1] (match "github.delete_*") -> deny
+    - rules[2] (match "*") annotations {destructiveHint: true} -> confirm
+  Explain a decision: leanproxy-mcp policy check <server.tool>
 ```
+
+---
+
+## `policy check` - Explain a Policy Decision
+
+Evaluate the [per-tool policy](./configuration.md#per-tool-policy-policy)
+(#314) for one tool exactly as the proxy does for a call, and show how every
+rule compared with it. Whether the server advertises the tool, and its
+annotations, come from the persistent tool cache a running proxy writes;
+`--annotation` adds or overrides a hint.
+
+### Usage
+
+```bash
+leanproxy-mcp policy check <server.tool> [--annotation name=true|false]... [--json]
+```
+
+### Examples
+
+```bash
+leanproxy-mcp policy check github.delete_file
+leanproxy-mcp policy check fs.remove --annotation destructiveHint=true
+```
+
+### Output
+
+```
+Tool:        github.delete_file
+Listed:      yes (in the cached tools/list of github)
+Annotations: destructiveHint=true
+Policy:      default allow, unknown_tools deny, 3 rule(s) (1 deny, 2 confirm)
+
+  RULE                                 GLOB  ANNOTATIONS  ACTION
+  rules[0] (match "postgres.pg_execute")  no    yes          confirm
+  rules[1] (match "github.delete_*")      yes   yes          deny     <- first match
+
+Decision:    deny (rules[1] (match "github.delete_*"))
+```
+
+A tool missing from the cached list is decided by `unknown_tools`
+(`Listed: no`); with no cached list yet it is evaluated as listed (the proxy
+fetches the list before deciding).
 
 ---
 

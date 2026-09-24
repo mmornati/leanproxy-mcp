@@ -6,7 +6,9 @@
 // receives is appended to the file named by its second argument, so a test
 // can assert that a blocked tool never reached the upstream.
 //
-// State file: {"server": "name", "tools": [{"name": "...", "description": "..."}]}
+// State file: {"server": "name", "tools": [{"name": "...", "description": "...",
+// "annotations": {...}}]} (annotations optional; the policy tests of #314
+// use them).
 package main
 
 import (
@@ -19,8 +21,9 @@ import (
 type state struct {
 	Server string `json:"server"`
 	Tools  []struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string                 `json:"name"`
+		Description string                 `json:"description"`
+		Annotations map[string]interface{} `json:"annotations,omitempty"`
 	} `json:"tools"`
 }
 
@@ -68,11 +71,15 @@ func main() {
 			st := load(statePath)
 			tools := make([]map[string]interface{}, 0, len(st.Tools))
 			for _, t := range st.Tools {
-				tools = append(tools, map[string]interface{}{
+				tool := map[string]interface{}{
 					"name":        t.Name,
 					"description": t.Description,
 					"inputSchema": map[string]interface{}{"type": "object", "properties": map[string]interface{}{"text": map[string]string{"type": "string"}}},
-				})
+				}
+				if t.Annotations != nil {
+					tool["annotations"] = t.Annotations
+				}
+				tools = append(tools, tool)
 			}
 			result = map[string]interface{}{"tools": tools}
 		case "tools/call":

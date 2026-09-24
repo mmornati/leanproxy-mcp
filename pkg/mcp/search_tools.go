@@ -104,8 +104,16 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 	unknown := h.awaitColdServers(ctx, servers)
 	h.awaitPinned(ctx, servers)
 
-	// Tool pinning (#310): blocked tools are never ranked (block mode).
-	exclude := h.pinExclude()
+	// Tool pinning (#310): blocked tools are never ranked (block mode);
+	// neither are the tools the per-tool policy (#314) denies.
+	pinExclude, policyExclude := h.pinExclude(), h.policyExclude()
+	exclude := pinExclude
+	switch {
+	case pinExclude != nil && policyExclude != nil:
+		exclude = func(server, name string) bool { return pinExclude(server, name) || policyExclude(server, name) }
+	case policyExclude != nil:
+		exclude = policyExclude
+	}
 	hits := h.searchIndex().Search(ctx, toolsearch.Query{Text: args.Query, K: k, Server: args.Server, Exclude: exclude})
 	lines := make([]string, 0, len(hits)+2)
 	if w := h.pinSearchWarning(hits); w != "" {
@@ -122,24 +130,31 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 		if !ok {
 			tool = Tool{Name: hit.Tool.Name, Description: hit.Tool.Description, InputSchema: hit.Tool.InputSchema}
 		}
-		lines = append(lines, formatTool(tool, hit.Tool.Server, searchDescChars))
+		confirm := h.policyConfirm(hit.Tool.Server, tool)
+		lines = append(lines, formatToolMarked(tool, hit.Tool.Server, searchDescChars, confirm))
 		if structured != nil {
-			structured = append(structured, StructuredTool{Server: hit.Tool.Server, Tool: tool})
+			structured = append(structured, StructuredTool{Server: hit.Tool.Server, Tool: tool, Policy: policyMark(confirm)})
 		}
 	}
 	if len(hits) == 0 {
 		lines = append(lines, fmt.Sprintf("No tools match %q. Try other words, or browse with list_servers and list_tools.", args.Query))
 	}
 	if exclude != nil {
-		// How many of the unfiltered top k were hidden.
-		n := 0
+		// How many of the unfiltered top k were hidden, and by what.
+		pinned, denied := 0, 0
 		for _, hit := range h.searchIndex().Search(ctx, toolsearch.Query{Text: args.Query, K: k, Server: args.Server}) {
-			if exclude(hit.Tool.Server, hit.Tool.Name) {
-				n++
+			switch {
+			case pinExclude != nil && pinExclude(hit.Tool.Server, hit.Tool.Name):
+				pinned++
+			case policyExclude != nil && policyExclude(hit.Tool.Server, hit.Tool.Name):
+				denied++
 			}
 		}
-		if n > 0 {
-			lines = append(lines, fmt.Sprintf("(%d matching tool(s) hidden by tool pinning until approved; see `leanproxy-mcp tools pins list`)", n))
+		if pinned > 0 {
+			lines = append(lines, fmt.Sprintf("(%d matching tool(s) hidden by tool pinning until approved; see `leanproxy-mcp tools pins list`)", pinned))
+		}
+		if denied > 0 {
+			lines = append(lines, fmt.Sprintf("(%d matching tool(s) hidden by the leanproxy-mcp policy; see `leanproxy-mcp doctor security`)", denied))
 		}
 	}
 	if len(unknown) > 0 {

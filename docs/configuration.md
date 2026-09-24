@@ -804,6 +804,84 @@ U+FEFF and the tag characters U+E0000–U+E007F) are stripped from tool titles,
 descriptions, schema strings and annotation titles before they reach the
 client.
 
+## Per-Tool Policy (`policy`)
+
+The per-tool policy (#314) decides, for every tool call, whether it runs, is
+refused, or needs the user's confirmation first. `server run --stdio` and
+`serve` enforce it identically, for every way of calling a tool (`invoke_tool`,
+a namespaced `tools/call`, `serve`'s `invoke_tool` and `server.tool`
+methods). A refused call never reaches the response cache or the upstream.
+
+### Configuration
+
+```yaml
+policy:
+  default: allow                 # allow (default) | deny
+  unknown_tools: deny            # deny (default) | allow
+  confirm_timeout: 5m            # how long a confirmation waits for the user
+  rules:                         # first match wins; globs on "server.tool"
+    - match: "postgres.pg_execute"
+      action: confirm            # allow | deny | confirm
+    - match: "github.delete_*"
+      action: deny
+    - match: "*"
+      annotations: { destructiveHint: true }
+      action: confirm
+    - match: "fetch.*"
+      action: allow
+      injection:                 # per-tool prompt-injection policy
+        response_policies:
+          - { min_risk: 40, max_risk: 100, action: block }
+```
+
+With no `policy:` block every advertised tool is allowed and calls to tools a
+server does not advertise are refused.
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `default` | string | `allow` | Action when no rule matches: `allow` or `deny` (an allow-list policy) |
+| `unknown_tools` | string | `deny` | A call to a tool that is not in the server's current `tools/list`: `deny` refuses it (the error suggests `search_tools`); `allow` evaluates it with the rules like any tool, without annotations |
+| `confirm_timeout` | duration | `5m` | How long a `confirm` waits for the user's answer; no answer refuses the call |
+| `rules[].match` | string | — (required) | Glob on `server.tool`: `*` matches any run of characters, dots included (`*` is every tool, `*.delete_*` every server's `delete_` tools), `?` exactly one character. Case-sensitive. `[classes]` and `\` escapes are rejected |
+| `rules[].annotations` | map | — | Also require the tool to declare each of these hints (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) with exactly this value. A hint the tool does not declare never matches (the spec's implicit defaults are not assumed, or every unannotated tool would count as destructive) |
+| `rules[].action` | string | — (required) | `allow`, `deny` or `confirm` |
+| `rules[].injection` | object | — | `request_policies` and/or `response_policies` (same format and actions as the [`injection:`](#prompt-injection-protection) block) replacing the guard's global risk bands for the calls this rule lets through. Takes effect when the injection guard is enabled; a `response_policies` override also scans the rule's tool results when `scan_responses` is `false` |
+
+### How a call is decided
+
+The steps run in this order, and the first one that decides wins:
+
+1. **`unknown_tools`.** The tool is looked up in the server's cached
+   `tools/list`. A list never fetched is fetched first; a name missing from a
+   known list triggers one more refresh (at most every 10 s per server), in
+   case the server added the tool without sending
+   `notifications/tools/list_changed`. With `unknown_tools: deny` a tool still
+   missing is refused — even if a rule would allow it.
+2. **`rules`, top to bottom.** The first rule whose `match` glob **and** every
+   `annotations` entry match decides. There is no "most specific rule wins":
+   put narrow rules above broad ones (`github.get_me: allow` above
+   `github.*: deny`).
+3. **`default`.**
+
+| Action | What the client gets |
+|--------|----------------------|
+| `allow` | The call runs (with the rule's `injection` override, if any) |
+| `deny` | JSON-RPC error `-32600` naming the rule (`denied by policy rules[1] (match "github.delete_*")`); `error.data` has `reason: "policy"`, `server`, `tool`, `rule`, `outcome` and the `policy check` command. Denied tools are hidden from `list_tools` / `search_tools` |
+| `confirm` | The client is sent an `elicitation/create` form: *Allow `<server>.<tool>` with arguments `<redacted summary, at most 500 characters>`?* — **Approve**, **Approve for this session** (remembered for that client session and tool) or **Deny**. Approve runs the call; Deny, decline, cancel or no answer within `confirm_timeout` refuse it with `-32600`. A client that did not declare form elicitation is **refused**, never silently allowed: the error tells you to set that rule to `allow`. `list_tools` / `search_tools` mark such tools `[confirm]` |
+
+Each `deny` and `confirm` decision is logged with the server, tool, rule,
+outcome and a SHA-256 of the redacted arguments (never the arguments), and
+counted in `leanproxy.policy.decisions` (see
+[Observability](./observability.md)). `leanproxy-mcp policy check <server.tool>`
+explains which rule decides a call (see [Commands](./commands.md#policy-check-explain-a-policy-decision)),
+and `leanproxy-mcp doctor security` prints the active policy.
+
+Evaluation is precompiled at startup: exact names are looked up in a map and
+globs are matched without allocating, so a 50-rule policy costs well under a
+microsecond per call (`go test -bench . ./pkg/policy/`).
+
 ## Response Cache
 
 The response cache is an opt-in, exact-match cache for `tools/call`: off by
@@ -827,7 +905,7 @@ response_cache:
   tools:                      # explicit allowlist: "server.tool" or a glob
     - github.get_file_contents
     - github.get_*
-  honor_annotations: true     # accepted for forward compatibility; see below
+  honor_annotations: true     # also cache tools annotated read-only + idempotent
 ```
 
 ### Options
@@ -839,12 +917,12 @@ response_cache:
 | `max_bytes` | int | `67108864` (64 MiB) | Total cache budget; entries are evicted LRU when exceeded |
 | `max_entry_bytes` | int | `1048576` (1 MiB) | A single response larger than this is never stored |
 | `tools` | list of string | `[]` | Explicit allowlist: `"server.tool"` exact match, or a `path.Match` glob such as `"server.get_*"` |
-| `honor_annotations` | bool | `false` | Accepted for forward compatibility. Tool annotations (`readOnlyHint`/`idempotentHint`) are not yet plumbed through the protocol (Epic 20); until then this flag has **no effect** — only the `tools` allowlist above is consulted |
+| `honor_annotations` | bool | `false` | Also cache a tool whose upstream definition (as the proxy's tool cache holds it) declares `readOnlyHint: true` **and** `idempotentHint: true`, and not `destructiveHint: true`, without listing it in `tools`. Annotations are hints from the server: turn this on only for servers you trust (tool pinning reports a changed annotation) |
 
 ### Why only the allowlist, keyed before redaction
 
 - Only `tools/call` is ever cached, and only tools named in `tools` (or,
-  once Epic 20 lands, tools annotated read-only *and* idempotent). A
+  with `honor_annotations`, tools annotated read-only *and* idempotent). A
   side-effecting tool like `create_issue` is never cached unless an operator
   explicitly opts it in.
 - The cache key is `SHA-256(server + tool + canonical JSON of the

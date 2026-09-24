@@ -105,6 +105,33 @@ type ClientSession struct {
 	queue     chan queuedNotification
 	queueDone chan struct{}
 	closeOnce sync.Once
+
+	// approvals are the "server.tool" calls the user approved for the
+	// rest of this session at a policy confirmation (#314).
+	approvalsMu sync.Mutex
+	approvals   map[string]struct{}
+}
+
+// policyApproved reports whether the user approved key ("server.tool")
+// for this session.
+func (s *ClientSession) policyApproved(key string) bool {
+	if s == nil {
+		return false
+	}
+	s.approvalsMu.Lock()
+	defer s.approvalsMu.Unlock()
+	_, ok := s.approvals[key]
+	return ok
+}
+
+// approvePolicy remembers that the user approved key for this session.
+func (s *ClientSession) approvePolicy(key string) {
+	s.approvalsMu.Lock()
+	defer s.approvalsMu.Unlock()
+	if s.approvals == nil {
+		s.approvals = make(map[string]struct{})
+	}
+	s.approvals[key] = struct{}{}
 }
 
 // ProtocolVersion returns the negotiated revision, or "" before initialize.

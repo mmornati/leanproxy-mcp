@@ -84,6 +84,14 @@ const injectionBlock = `injection:
     - {min_risk: 1, max_risk: 49, action: log}
 `
 
+// policyBlock lets calls to catalogmcp's hidden test-hook tools
+// (ask_client, ask_elicitation, progress), which it does not list in
+// tools/list, through the per-tool policy (#314): the policy middleware
+// still runs on every call, so its cost stays in the measured overhead.
+const policyBlock = `policy:
+  unknown_tools: allow
+`
+
 type serverSpec struct {
 	name string
 	args []string
@@ -102,6 +110,7 @@ func writeConfig(t testing.TB, dir, catalogBin string, servers []serverSpec, ext
 			s.name, catalogBin, strings.Join(quoted, ", "))
 	}
 	sb.WriteString(injectionBlock)
+	sb.WriteString(policyBlock)
 	sb.WriteString(extra)
 	path := filepath.Join(dir, "leanproxy.yaml")
 	if err := os.WriteFile(path, []byte(sb.String()), 0o600); err != nil {

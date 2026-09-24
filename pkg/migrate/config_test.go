@@ -1246,3 +1246,60 @@ func TestLoadConfigToolPinning(t *testing.T) {
 		t.Fatal("an unknown mode must be rejected")
 	}
 }
+
+func TestLoadConfigPolicy(t *testing.T) {
+	dir := t.TempDir()
+	write := func(body string) string {
+		p := filepath.Join(dir, "leanproxy_servers.yaml")
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	base := "servers:\n  - name: gh\n    transport: stdio\n    stdio:\n      command: /bin/true\n"
+	cfg, err := LoadConfig(context.Background(), write(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Policy != nil || cfg.Policy.EffectiveDefault() != "allow" || cfg.Policy.EffectiveUnknownTools() != "deny" {
+		t.Fatal("no policy block must mean the defaults (allow, unknown_tools deny)")
+	}
+	cfg, err = LoadConfig(context.Background(), write(base+`policy:
+  default: allow
+  unknown_tools: deny
+  confirm_timeout: 1m
+  rules:
+    - match: "postgres.pg_execute"
+      action: confirm
+    - match: "github.delete_*"
+      action: deny
+    - match: "*"
+      annotations: { destructiveHint: true }
+      action: confirm
+    - match: "web.*"
+      action: allow
+      injection:
+        response_policies:
+          - { min_risk: 40, max_risk: 100, action: block }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Policy
+	if len(p.Rules) != 4 || p.Rules[1].Match != "github.delete_*" || p.Rules[1].Action != "deny" ||
+		!p.Rules[2].Annotations["destructiveHint"] || p.Rules[3].Injection == nil ||
+		len(p.Rules[3].Injection.ResponsePolicies) != 1 || p.Rules[3].Injection.ResponsePolicies[0].MinRisk != 40 {
+		t.Fatalf("parsed %+v", p)
+	}
+	for name, body := range map[string]string{
+		"bad action":     "policy:\n  rules:\n    - match: a.b\n      action: block\n",
+		"bad default":    "policy:\n  default: maybe\n",
+		"bad glob":       "policy:\n  rules:\n    - match: \"a.[b]\"\n      action: deny\n",
+		"bad annotation": "policy:\n  rules:\n    - match: \"*\"\n      annotations: { scaryHint: true }\n      action: deny\n",
+		"bad injection":  "policy:\n  rules:\n    - match: \"*\"\n      action: allow\n      injection:\n        request_policies:\n          - { min_risk: 1, max_risk: 100, action: annotate }\n",
+	} {
+		if _, err := LoadConfig(context.Background(), write(base+body)); err == nil || !strings.Contains(err.Error(), "policy") {
+			t.Errorf("%s: err = %v, want a policy validation error", name, err)
+		}
+	}
+}

@@ -535,7 +535,14 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	// outermost, ahead of the firewall middlewares: see the ordering
 	// explanation on mcp.ResponseCache.
 	respCache := mcp.NewResponseCache(cfg.ResponseCache)
-	handler.Use(tracedMiddlewares(respCache, firewall, pins)...)
+	respCache.SetToolSource(handler)
+
+	// Per-tool policy (#314): allow / deny / confirm per tool, and no
+	// calls to tools a server does not advertise.
+	pol := newPolicy(cfg, firewall)
+	handler.SetPolicy(pol)
+	slog.Info(pol.Summary())
+	handler.Use(tracedMiddlewares(respCache, firewall, pins, pol)...)
 
 	// Server-to-client requests, progress and resource updates from the
 	// upstreams (#308): per-server policy (allow_sampling, roots), the same

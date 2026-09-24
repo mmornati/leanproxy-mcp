@@ -34,6 +34,9 @@ func TestServeAuth_RealBinary(t *testing.T) {
 	writeFile(t, cfg, fmt.Sprintf(`version: "1.0"
 reconnect:
   enabled: false
+# concurrentmcp's "stats" test hook is not in its tools/list (#314).
+policy:
+  unknown_tools: allow
 servers:
   - name: %s
     transport: stdio

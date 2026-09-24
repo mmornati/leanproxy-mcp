@@ -49,11 +49,16 @@ func initTelemetry(ctx context.Context, cfg *migrate.Config) *telemetry.Provider
 //
 // Tool pinning (#310) comes right after the telemetry span and before the
 // response cache, so a call to a tool blocked since its answer was cached
-// is still refused.
-func tracedMiddlewares(respCache *mcp.ResponseCache, firewall *mcp.Firewall, pins *mcp.ToolPins) []mcp.Middleware {
+// is still refused. The per-tool policy (#314) follows it, also before the
+// cache: a denied call is never answered, even from the cache, and an
+// allowed one carries its rule's injection override to the firewall.
+func tracedMiddlewares(respCache *mcp.ResponseCache, firewall *mcp.Firewall, pins *mcp.ToolPins, pol *mcp.Policy) []mcp.Middleware {
 	mws := []mcp.Middleware{mcp.TelemetryMiddleware()}
 	if pins != nil {
 		mws = append(mws, mcp.Traced("tool_pinning", pins.Middleware()))
+	}
+	if pol != nil {
+		mws = append(mws, mcp.Traced("policy", pol.Middleware()))
 	}
 	if respCache != nil {
 		mws = append(mws, mcp.Traced("cache", respCache.Middleware()))

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
+	"github.com/mmornati/leanproxy-mcp/pkg/policy"
 )
 
 // InjectionRedacted replaces each span of text the redact action removes.
@@ -195,6 +196,9 @@ func (g *InjectionGuard) Middleware() Middleware {
 			if st == nil {
 				return next(ctx, req)
 			}
+			// A policy rule (#314) may select other risk bands for this
+			// tool's arguments and result.
+			st = st.withOverride(policyInjectionFrom(ctx))
 			if resp := st.checkRequest(ctx, req); resp != nil {
 				if req.IsNotification() {
 					return nil, nil
@@ -205,6 +209,24 @@ func (g *InjectionGuard) Middleware() Middleware {
 			return st.checkResponse(ctx, req, resp), err
 		}
 	}
+}
+
+// withOverride returns st with the dispatchers of a policy rule's
+// injection override (nil: st unchanged). A response override also turns
+// response classification on for the rule's tools when scan_responses is
+// false globally: it is an explicit per-tool choice.
+func (st *injectionState) withOverride(o *policy.Injection) *injectionState {
+	if o == nil || (o.Requests == nil && o.Responses == nil) {
+		return st
+	}
+	c := *st
+	if o.Requests != nil {
+		c.requests = o.Requests
+	}
+	if o.Responses != nil {
+		c.responses = o.Responses
+	}
+	return &c
 }
 
 // classify scores the in-scope text of data. ok is false when data is not

@@ -65,13 +65,17 @@ func buildLifecycleBinaries(t *testing.T, dir string) (proxyBin, fakeBin string)
 
 // writeLifecycleConfig writes a config with three concurrentmcp servers:
 // "<p>hung" never answers initialize, "<p>slow" answers it after
-// lifecycleSlowInit, "<p>ok" is healthy.
+// lifecycleSlowInit, "<p>ok" is healthy. concurrentmcp answers test-hook
+// tools (stats, pid, sleep, ...) it does not advertise in tools/list, so
+// the per-tool policy (#314) must let unadvertised tools through.
 func writeLifecycleConfig(t *testing.T, dir, prefix, fakeBin string) string {
 	t.Helper()
 	path := filepath.Join(dir, "leanproxy.yaml")
 	cfg := fmt.Sprintf(`version: "1.0"
 reconnect:
   restart_backoff: 100ms
+policy:
+  unknown_tools: allow
 servers:
   - name: %[1]shung
     transport: stdio
