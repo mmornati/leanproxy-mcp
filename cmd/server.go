@@ -629,6 +629,10 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	handler.SetGovernor(gov)
 	slog.Info(gov.Summary())
 	handler.Use(tracedMiddlewares(handler, respCache, firewall, pins, pol, gov)...)
+	// Code mode (#325, experimental, -tags codemode only): innermost, so
+	// execute_code itself and every tool call its program makes pass
+	// every stage above.
+	installCodeMode(handler, cfg)
 
 	// Server-to-client requests, progress and resource updates from the
 	// upstreams (#308): per-server policy (allow_sampling, roots), the same
