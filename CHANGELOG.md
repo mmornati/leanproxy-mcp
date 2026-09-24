@@ -163,7 +163,7 @@
   - **Measured.** A realistic 30-issue GitHub `list_issues` fixture: **29,536 → 8,225 tokens
     (−72.2%)** with the issue's `github.*` drop pack. `make harness`, large-results listings:
     −21.5% from projection alone, and within the same 4,000-token budget 26 instead of 19 issues
-    (65 with `fields`). See
+    (64 with `fields`). See
     [`docs/configuration.md`](docs/configuration.md#field-projection-responseprojections) and
     [`docs/benchmark-results.md`](docs/benchmark-results.md#8-field-projection-large-results).
 

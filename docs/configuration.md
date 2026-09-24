@@ -1243,7 +1243,7 @@ byte-identical. See [Benchmark Results](benchmark-results.md#7-response-governor
 With field projection (the `github.*` drop pack above plus
 `default_projections`), the three noisy listings shrink by 21.5% before any
 truncation, and within the same 4,000-token budget `list_issues` shows 26
-issues instead of 19 (65 with a six-path `fields` argument). A realistic
+issues instead of 19 (64 with a six-path `fields` argument). A realistic
 30-issue GitHub fixture shrinks by 72.2%. See
 [Benchmark Results](benchmark-results.md#8-field-projection-large-results).
 
