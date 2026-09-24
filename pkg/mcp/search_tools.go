@@ -161,7 +161,7 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 		lines = append(lines, fmt.Sprintf("(tools of %s not known yet: unreachable or still starting)", strings.Join(unknown, ", ")))
 	}
 	h.logger.Info("search_tools completed", "results", len(hits), "k", k, "server", args.Server)
-	return toolListingResult(req.ID, strings.Join(lines, "\n"), structured), nil
+	return toolListingResult(ctx, req.ID, strings.Join(lines, "\n"), structured), nil
 }
 
 // pinSearchWarning is warn mode's one-line warning about hits that are

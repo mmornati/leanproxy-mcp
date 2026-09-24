@@ -188,6 +188,13 @@ type telemetryCounters struct {
 	governorSumm     atomic.Int64
 	governorSummSav  atomic.Int64
 	governorSummFB   atomic.Int64
+	// Schema/discovery accounting (#324): see RecordSchemaListing and
+	// RecordDiscovery.
+	schemaListings  atomic.Int64
+	schemaNativeTok atomic.Int64
+	schemaSentTok   atomic.Int64
+	discoveryCalls  atomic.Int64
+	discoveryTokens atomic.Int64
 }
 
 // TelemetryCounters is the plain-value snapshot pkg/metrics exposes on the
@@ -222,6 +229,22 @@ type TelemetryCounters struct {
 	GovernorSummarizations           int64 `json:"governor_summarizations_total"`
 	GovernorSummarizationTokensSaved int64 `json:"governor_summarization_tokens_saved_total"`
 	GovernorSummarizationFallbacks   int64 `json:"governor_summarization_fallbacks_total"`
+
+	// Schema savings (#324): tools/list responses sent, and their estimated
+	// tokens with (native) and without (sent) the router's compaction. Both
+	// are measured from the real marshaled tools/list payload; in
+	// passthrough/hybrid exposure mode native and sent are the same payload
+	// (no router compaction happens), so the saving there is legitimately
+	// zero rather than modelled.
+	SchemaListings     int64 `json:"schema_listings_total"`
+	SchemaNativeTokens int64 `json:"schema_native_tokens_total"`
+	SchemaSentTokens   int64 `json:"schema_sent_tokens_total"`
+	// Discovery (#324): calls to the discovery tools (search_tools,
+	// list_tools, list_servers) and the estimated tokens their results
+	// cost. This is a real, measured cost, not a saving: discovery trades
+	// schema tokens for response tokens plus (unmeasured) extra LLM turns.
+	DiscoveryCalls  int64 `json:"discovery_calls_total"`
+	DiscoveryTokens int64 `json:"discovery_tokens_total"`
 }
 
 // TelemetrySnapshot returns the current counters. Safe for concurrent use.
@@ -251,7 +274,34 @@ func TelemetrySnapshot() TelemetryCounters {
 		GovernorSummarizations:           counters.governorSumm.Load(),
 		GovernorSummarizationTokensSaved: counters.governorSummSav.Load(),
 		GovernorSummarizationFallbacks:   counters.governorSummFB.Load(),
+
+		SchemaListings:     counters.schemaListings.Load(),
+		SchemaNativeTokens: counters.schemaNativeTok.Load(),
+		SchemaSentTokens:   counters.schemaSentTok.Load(),
+
+		DiscoveryCalls:  counters.discoveryCalls.Load(),
+		DiscoveryTokens: counters.discoveryTokens.Load(),
 	}
+}
+
+// RecordSchemaListing records one tools/list response sent to a client
+// (issue #324): its estimated tokens with (native) and without (sent) the
+// router's compaction. Only counts, never a tool name or schema. The ctx
+// parameter is unused today (no dedicated OTel instrument yet) but kept for
+// symmetry with the other Record* helpers and so one can be added without
+// changing every call site.
+func RecordSchemaListing(_ context.Context, nativeTokens, sentTokens int64) {
+	counters.schemaListings.Add(1)
+	counters.schemaNativeTok.Add(nativeTokens)
+	counters.schemaSentTok.Add(sentTokens)
+}
+
+// RecordDiscovery records one discovery-tool result (search_tools,
+// list_tools, list_servers) and its estimated tokens. Only a count and a
+// token size, never the result text.
+func RecordDiscovery(_ context.Context, tokens int64) {
+	counters.discoveryCalls.Add(1)
+	counters.discoveryTokens.Add(tokens)
 }
 
 // RecordRedaction increments the redaction counter (OTel + the plain
