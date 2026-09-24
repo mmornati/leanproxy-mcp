@@ -60,9 +60,10 @@ nav:
       - Configuration: configuration.md
       - Security: security.md
       - Savings Report: savings-report.md
-      - Web Dashboard: dashboard.md
+      - Web Dashboard (serve): dashboard.md
       - Observability (OpenTelemetry): observability.md
       - IDE Extensions: extensions.md
+      - First-party Servers: servers.md
       - Graceful Shutdown: shutdown.md
   - Reference:
       - Commands: commands.md

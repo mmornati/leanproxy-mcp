@@ -1,6 +1,25 @@
 # Why LeanProxy: the economics of MCP
 
-The AI provider market has shifted from monthly forfaits to **pay-per-use** pricing (May 2026). Every token sent to an LLM now costs real money. This makes token efficiency critical.
+With pay-per-use API pricing, every token sent to an LLM costs money. This
+page shows where MCP spends tokens and how much LeanProxy-MCP can save.
+
+!!! note "Which clients get which savings"
+    The schema savings on this page come from **router** mode, where
+    LeanProxy replaces every tool definition with four small discovery tools.
+    Clients with their own native tool search or deferred tool loading
+    (Claude Code, Claude Desktop, Cursor and VS Code) get **passthrough**
+    mode by default instead: they see every upstream tool and handle
+    discovery themselves, so LeanProxy saves them no schema tokens. The
+    router savings apply to other clients (OpenCode, Zed, custom agents, and
+    so on), or to any client you switch to router mode.
+
+    The response-side savings of the
+    [response governor](configuration.md#response-token-governor-response)
+    (truncation, field projection, dedup, summaries) apply to every client in
+    every mode, once you enable it.
+
+    See [Which exposure mode each IDE gets](quickstart.md#which-exposure-mode-each-ide-gets)
+    and [Exposure Modes](configuration.md#exposure-modes-exposure).
 
 ## The MCP Schema Tax
 
@@ -48,20 +67,15 @@ context (1,638 tokens for GitHub). A `search_tools` lookup costs 152 tokens
 on average, but a miss (3 of Full Day's 7 queries) pays the `list_tools`
 fallback on top.
 
-## The Cache Read Cost Fallacy
+## Prompt caching does not make schemas free
 
-**Providers advertise prompt caching as "free" or "90% savings", but cache
-reads aren't free.**
+Prompt caching lowers the price of repeated input, but a cache read is still
+billed. The exact rate depends on the provider and the model; check your
+provider's current price list. The benchmark harness models cache reads at
+**0.25×** the input price.
 
-On a prompt cache hit you still pay to read from the cache:
-
-- **OpenAI**: cache reads at **0.25x** the input token price.
-- **Anthropic**: cache reads at **0.25x** the input token price.
-- **DeepSeek**: cache reads at **0.25x** the input token price.
-- **Google Gemini**: cache reads at about **0.25x** the input token price.
-
-So a **100% cache hit is not free**. The harness catalog's 10,049-token
-schema load still costs this much on every cached turn:
+At that rate, the harness catalog's 10,049-token schema load still costs this
+much on every cached turn:
 
 ```
 10,049 tokens × 0.25 = ~2,512 "effective" tokens per turn
@@ -76,32 +90,42 @@ schema load still costs this much on every cached turn:
 | 1 (Postgres) | 10 | 640 tokens | 318 | **−50.3%** |
 | 5 (all) | 118 | 10,049 tokens | 318 | **−96.8%** |
 
-*This table counts only the static schema load. LeanProxy fetches tools on
-demand with `search_tools` or `list_tools`, and that cost is included in
-the session table above.*
+*This table counts only the static schema load in router mode. LeanProxy
+fetches tools on demand with `search_tools` or `list_tools`, and that cost is
+included in the session table above. In passthrough mode the client receives
+the full native list, so there is no schema saving.*
 
 ## Should You Use Caching with MCP?
 
 | Scenario | Cache Hit | Recommendation |
 |----------|----------|----------------|
-| MCP tool schemas (100% same) | 100% | ❌ Still costs 0.25x — use LeanProxy |
+| MCP tool schemas (100% same) | 100% | ❌ Still billed at the cache-read rate — use router mode |
 | Conversation history (growing) | 90%+ | ✅ Caching saves money |
 | Codebase/RAG context | 80%+ | ✅ Caching saves money |
 | MCP schemas in short session | 100% | ❌ Cache read cost > savings |
 
-**Key insight**: For MCP tool schemas that are **identical every request**, caching only reduces cost by 75% — you're still paying for the read. LeanProxy eliminates the overhead entirely.
+**Key insight**: for MCP tool schemas that are **identical on every request**,
+caching lowers the cost but does not remove it. In router mode, LeanProxy
+replaces the schemas with a 318-token router, and pays for discovery calls
+instead.
 
 ## How LeanProxy Achieves This
 
 LeanProxy uses a **gateway pattern** with JIT (Just-In-Time) schema loading:
 
-1. **Single router schema**: Only 4 tools (`search_tools`, `list_servers`, `list_tools`, `invoke_tool`) = **318 tokens**, against 10,049 for the harness catalog's five native `tools/list` payloads
+1. **Single router schema** (router mode): only 4 tools (`search_tools`, `list_servers`, `list_tools`, `invoke_tool`) = **318 tokens**, against 10,049 for the harness catalog's five native `tools/list` payloads. With the response governor on, a fifth tool, `read_result`, is added.
 2. **On-demand tool discovery**: `search_tools` returns the best 5 tools across every server for a plain-words query (152 tokens per lookup on average in the harness); `list_tools` returns a whole server's list when the model wants to browse (282–1,638 tokens per server in the harness catalog)
-3. **Session-aware caching**: Tool schemas persist across the session without per-request overhead
+3. **Smaller tool results** (every mode, opt-in): the response governor projects, deduplicates, truncates or summarizes large tool results, and keeps the full result available through `read_result`
+4. **Persistent tool cache**: tool definitions are stored on disk, so the proxy answers `tools/list` immediately at start and refreshes servers in the background
+
+To see what LeanProxy actually saved in your own sessions, run
+[`leanproxy-mcp report`](./savings-report.md).
 
 For full benchmark methodology and raw numbers, see [Benchmark Results](./benchmark-results.md).
 
 ## Decision Framework
+
+G/N is the share of your prompts that use a given MCP server.
 
 | Service Usage (G/N ratio) | Recommendation |
 |--------------------------|----------------|
@@ -109,4 +133,6 @@ For full benchmark methodology and raw numbers, see [Benchmark Results](./benchm
 | 5-40% (regular use) | **LeanProxy Gateway** |
 | < 5% (rare use) | CLI or on-demand skill |
 
-For most developers, GitHub has G/N ≈ 5-10% (fetch issue + create PR), making LeanProxy the cost-efficient choice.
+For example, if only 5–10% of your prompts touch GitHub (fetch an issue,
+create a PR), loading its 42 tool definitions on every turn costs more than
+discovering them when needed.
