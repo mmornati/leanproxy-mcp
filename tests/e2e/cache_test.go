@@ -104,9 +104,16 @@ func TestStory_12_3_SemanticCache_DefaultEmpty(t *testing.T) {
 		t.Skip("Binary not in tests/e2e/")
 	}
 
-	testDir := t.TempDir()
-	statsPath := testDir + "/semantic-stats.json"
-	t.Setenv("LEANPROXY_SEMANTIC_STATS_PATH", statsPath)
+	// The CLI resolves the stats file via os.UserHomeDir()
+	// (~/.leanproxy/cache/semantic-stats.json); it does not honor a
+	// per-process override, so isolation must go through $HOME rather
+	// than a stats-path env var. A HOME with no prior server run has no
+	// stats file at all, which is the actual "default" state and is
+	// documented (see cmd/cache.go's showSemanticCacheStats) as
+	// "unavailable", distinct from a zero-activity snapshot the server
+	// itself wrote.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
 	stdout, stderr, exitCode := runBinary("cache", "--semantic")
 	t.Logf("cache --semantic (no stats): exit=%d stdout=%q stderr=%q", exitCode, stdout, stderr)
@@ -116,15 +123,8 @@ func TestStory_12_3_SemanticCache_DefaultEmpty(t *testing.T) {
 	}
 
 	output := strings.ToLower(stdout + stderr)
-	// Either the empty-state message or the populated table is valid.
-	if strings.Contains(output, "no semantic cache activity") {
-		t.Logf("semantic cache empty-state path exercised")
-		return
-	}
-	for _, expected := range []string{"total", "exact", "semantic", "misses", "hit rate"} {
-		if !strings.Contains(output, expected) {
-			t.Errorf("semantic dashboard missing label %q, got:\nstdout=%s\nstderr=%s", expected, stdout, stderr)
-		}
+	if !strings.Contains(output, "unavailable") {
+		t.Errorf("expected the documented unavailable-stats message for a fresh HOME, got:\nstdout=%s\nstderr=%s", stdout, stderr)
 	}
 }
 
@@ -133,9 +133,10 @@ func TestStory_12_3_SemanticCache_JSON(t *testing.T) {
 		t.Skip("Binary not in tests/e2e/")
 	}
 
-	testDir := t.TempDir()
-	statsPath := testDir + "/semantic-stats.json"
-	t.Setenv("LEANPROXY_SEMANTIC_STATS_PATH", statsPath)
+	// Same isolation rationale as TestStory_12_3_SemanticCache_DefaultEmpty:
+	// only $HOME steers where the CLI looks for the stats file.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 
 	stdout, stderr, exitCode := runBinary("cache", "--semantic", "--json")
 	t.Logf("cache --semantic --json: exit=%d stdout=%q stderr=%q", exitCode, stdout, stderr)
