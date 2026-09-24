@@ -1,40 +1,37 @@
 # Installation
 
-LeanProxy-MCP can be installed on macOS, Linux, and Windows.
+LeanProxy-MCP ships pre-built binaries for macOS and Linux on amd64 and arm64.
+On other platforms, [build from source](#build-from-source).
 
 ## Prerequisites
 
-- **macOS, Linux, or Windows**
+- **macOS or Linux** (amd64 or arm64)
 - **IDE with MCP support** (Claude Desktop, Cursor, OpenCode, Windsurf)
 - Optionally: **Go 1.25+** (for building from source)
 
-## Download Binary
+## Install Script (macOS/Linux)
 
-Download the pre-built binary for your platform from the GitHub Releases page:
-
-### Automatic (All Platforms)
-
-This single command works on macOS and Linux, automatically detecting your architecture:
+The install script downloads the release archive for your OS and architecture,
+verifies it against the release's `checksums.txt`, and installs the
+`leanproxy-mcp` binary. It installs nothing else: no config files and no shell
+completions (see [Shell Completions](#shell-completions)).
 
 ```bash
-# Download latest version (auto-detects OS/arch)
-VERSION=${VERSION:-$(curl -sL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')}
-OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-ARCH=$(uname -m)
-[ "$ARCH" = "x86_64" ] && ARCH="amd64"
-[ "$ARCH" = "arm64" ] && ARCH="arm64"
-curl -fsSL "https://github.com/mmornati/leanproxy-mcp/releases/download/${VERSION}/leanproxy-mcp_${VERSION#v}_${OS}_${ARCH}.tar.gz" -o leanproxy-mcp.tar.gz
-tar -xzf leanproxy-mcp.tar.gz
-chmod +x leanproxy-mcp
-sudo mv leanproxy-mcp /usr/local/bin/
-rm leanproxy-mcp.tar.gz
-
-# Override version: VERSION=v0.2.0 ... (run the full command above with VERSION set)
+curl -fsSL https://raw.githubusercontent.com/mmornati/leanproxy-mcp/main/install/install.sh | sh
 ```
 
-### Manual Download
+It honours two environment variables:
 
-If you prefer, download manually from: https://github.com/mmornati/leanproxy-mcp/releases
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VERSION` | `latest` | Release to install, e.g. `v0.11` or `0.11` |
+| `INSTALL_DIR` | `/usr/local/bin` | Destination directory; `sudo` is used if it is not writable |
+
+For example, to install a specific version into your home directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mmornati/leanproxy-mcp/main/install/install.sh | VERSION=v0.11 INSTALL_DIR="$HOME/.local/bin" sh
+```
 
 ## Install via Homebrew (macOS/Linux)
 
@@ -44,6 +41,24 @@ brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
 
 # Install
 brew install leanproxy-mcp
+```
+
+## Manual Download
+
+Download `leanproxy-mcp_<version>_<os>_<arch>.tar.gz` and `checksums.txt` from
+the [Releases page](https://github.com/mmornati/leanproxy-mcp/releases), where
+`<os>` is `darwin` or `linux` and `<arch>` is `amd64` or `arm64`. The version
+in the file name has no `v` prefix. For example, for v0.11 on Apple Silicon:
+
+```bash
+curl -fsSLO https://github.com/mmornati/leanproxy-mcp/releases/download/v0.11/leanproxy-mcp_0.11_darwin_arm64.tar.gz
+curl -fsSLO https://github.com/mmornati/leanproxy-mcp/releases/download/v0.11/checksums.txt
+
+# Verify (on Linux use: sha256sum --check --ignore-missing checksums.txt)
+shasum -a 256 --check --ignore-missing checksums.txt
+
+tar -xzf leanproxy-mcp_0.11_darwin_arm64.tar.gz leanproxy-mcp
+sudo install -m 0755 leanproxy-mcp /usr/local/bin/leanproxy-mcp
 ```
 
 ## Build from Source
@@ -75,10 +90,10 @@ leanproxy-mcp version
 
 Expected output:
 ```
- leanproxy-mcp version 0.5.2
- build date: 2026-05-04
- platform: darwin/arm64
- go: go1.25.5
+leanproxy-mcp version 0.11
+build date: 2026-09-24T04:56:34Z
+platform: darwin/arm64
+go: go1.25.14
 ```
 
 ## IDE Configuration
@@ -167,18 +182,22 @@ Add to your `~/.vscode/mcp.json` (create if it doesn't exist):
 
 ## Shell Completions
 
-Generate shell completions for your shell:
+The Homebrew formula installs bash, zsh, and fish completions automatically
+(starting with the first release after v0.11). Otherwise, generate them with
+`leanproxy-mcp completion`:
 
 ```bash
-# Bash
-leanproxy-mcp completion bash > /etc/bash_completion.d/leanproxy-mcp
+# Bash (requires the bash-completion package)
+leanproxy-mcp completion bash | sudo tee /etc/bash_completion.d/leanproxy-mcp > /dev/null
 
-# Zsh
+# Zsh (~/.zsh/completions must be on your $fpath)
 leanproxy-mcp completion zsh > ~/.zsh/completions/_leanproxy-mcp
 
 # Fish
 leanproxy-mcp completion fish > ~/.config/fish/completions/leanproxy-mcp.fish
 ```
+
+Add `--no-desc` to omit command descriptions from the completion candidates.
 
 ## Next Steps
 

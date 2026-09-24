@@ -1844,11 +1844,17 @@ leanproxy-mcp completion [shell]
 | `fish` | Fish completion |
 | `powershell` | PowerShell completion |
 
+### Options
+
+| Flag | Type | Description |
+|------|------|-------------|
+| `--no-desc` | bool | Omit command descriptions from completion candidates |
+
 #### Examples
 
 ```bash
 # Bash
-leanproxy-mcp completion bash > /etc/bash_completion.d/leanproxy-mcp
+leanproxy-mcp completion bash | sudo tee /etc/bash_completion.d/leanproxy-mcp > /dev/null
 
 # Zsh
 leanproxy-mcp completion zsh > ~/.zsh/completions/_leanproxy-mcp
