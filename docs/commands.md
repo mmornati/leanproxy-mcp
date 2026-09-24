@@ -152,6 +152,14 @@ all:
 
 Start the LeanProxy-MCP proxy server that listens for connections and forwards JSON-RPC requests.
 
+!!! warning "Deprecated (#309)"
+    The line-TCP protocol of `serve` is not an MCP transport, so no MCP
+    client speaks it. `serve` logs a deprecation warning at start and the
+    protocol will be removed in v1.0. Use the MCP Streamable HTTP front end,
+    [`server run --http`](#server-run-run-the-mcp-front-end), instead. It
+    uses the same token file; see
+    [Migrating from `serve`](quickstart.md#migrating-from-serve).
+
 ### Usage
 
 ```bash
@@ -296,21 +304,38 @@ leanproxy-mcp server [command]
 
 ---
 
-### `server run` - Run Stdio Server
+### `server run` - Run the MCP Front End
 
-Run leanproxy-mcp as an MCP server in stdio mode. This command reads JSON-RPC requests from stdin and writes responses to stdout, proxying requests to configured MCP servers.
+Run leanproxy-mcp as an MCP server that proxies requests to the configured
+MCP servers, through one of two front ends:
+
+- `--stdio` reads JSON-RPC from stdin and writes responses to stdout. It
+  serves one client: the IDE that spawned it.
+- `--http <host:port>` serves the MCP **Streamable HTTP** transport at
+  `http://<host:port>/mcp` (#309). It is one shared local gateway: any
+  number of MCP clients reach it by URL and share one set of child servers.
+
+Exactly one of the two is required. Both run the same pipeline: redaction,
+injection guard, response cache, tool pinning, per-tool policy and
+telemetry.
 
 #### Usage
 
 ```bash
 leanproxy-mcp server run --stdio [flags]
+leanproxy-mcp server run --http 127.0.0.1:8765 [flags]
 ```
 
 #### Flags
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--stdio` | bool | false | Run in stdio mode (required) |
+| `--stdio` | bool | false | Run the stdio front end |
+| `--http` | string | `""` | Serve the Streamable HTTP transport on this address, e.g. `127.0.0.1:8765`. The endpoint is `/mcp` |
+| `--http-token` | string | `""` | Bearer token HTTP clients must send (`Authorization: Bearer …`). Default: `$LEANPROXY_SERVE_TOKEN`, else `~/.config/leanproxy/serve.token`, which is the same file as `serve` and is generated on first start. At least 16 characters, no whitespace |
+| `--no-auth` | bool | false | Serve `--http` without a token. Only allowed on a loopback address (`127.0.0.0/8`, `::1`, `localhost`); `server run` refuses to start otherwise. Logs a warning |
+| `--http-allowed-hosts` | strings | (none) | Extra `Host` header values accepted, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]`. Added to `server.http.allowed_hosts` |
+| `--http-allowed-origins` | strings | (none) | Browser origins (`https://app.example`) allowed to call the endpoint. Added to `server.http.allowed_origins` |
 | `--config` | string | `~/.config/leanproxy_servers.yaml` | Path to config file |
 | `--log-file` | string | "" | Path to log file |
 | `--log-level` | string | `info` | Log level (debug, info, warn, error) |
@@ -320,6 +345,39 @@ A message from stdin over `server.max_line_bytes` (default 64 MiB, see
 [configuration](configuration.md#server-options)) gets a parse-error
 response with `id` `null`, is discarded up to its next newline, and the
 connection keeps serving.
+
+#### Streamable HTTP front end (`--http`)
+
+It implements the Streamable HTTP transport of MCP 2025-03-26, 2025-06-18
+and 2025-11-25 on the single endpoint `/mcp`:
+
+| Request | Behavior |
+|---|---|
+| `POST` `initialize` | Opens a session. The answer carries `Mcp-Session-Id`: 256 random bits, bound to the credential that created it. Every later request must send it |
+| `POST` request | Answered with `application/json`. The answer is a `text/event-stream` instead when the request causes server-to-client messages first: its progress notifications, or an elicitation, sampling or roots request relayed from an upstream (#308). The final JSON-RPC response is then the last event of the stream |
+| `POST` notification or response | `202 Accepted`. `notifications/cancelled` cancels an in-flight request, which then gets no answer. The client's answer to a server-to-client request is delivered to the upstream that asked |
+| `GET` (`Accept: text/event-stream`) | Opens the session's stream for messages not tied to a request: list changes, `notifications/resources/updated`, and server-to-client requests that belong to no request in flight. One per session (`409` for a second one). It sends a keep-alive comment every 25 s |
+| `DELETE` | Ends the session: its requests are canceled, its GET stream closes, and its subscriptions are dropped. Returns `204` |
+
+- **`Mcp-Session-Id`.** A missing header gets `400`. An unknown, expired or
+  ended session gets `404`, and the client must send `initialize` again.
+- **`MCP-Protocol-Version`.** The header is optional. An unsupported value,
+  or one that differs from the version negotiated for the session, gets
+  `400`.
+- **Batches.** JSON-RPC batches are accepted from 2025-03-26 sessions only.
+  Batching was removed from MCP in 2025-06-18.
+- **Resumability.** `Last-Event-ID` is not supported: events carry no id,
+  and a GET stream opened again starts from scratch.
+- **Disconnects.** A client that closes a POST request cancels it, and the
+  cancellation is forwarded upstream. Without resumability its answer could
+  never be delivered anyway.
+- **Unrelated notifications.** They go to the GET stream only. A session
+  with no open GET stream does not get them.
+
+Security: Host and Origin validation, the bearer token, and limits on body
+size, sessions and concurrency. See
+[Security](security.md#streamable-http-front-end-309) and
+[configuration](configuration.md#streamable-http-front-end-serverhttp).
 
 #### Examples
 
@@ -335,6 +393,12 @@ leanproxy-mcp server run --stdio --config /path/to/config.yaml
 
 # Dry-run mode
 leanproxy-mcp server run --dry-run --stdio
+
+# Shared Streamable HTTP gateway on loopback (token from ~/.config/leanproxy/serve.token)
+leanproxy-mcp server run --http 127.0.0.1:8765
+
+# Let a browser app call it
+leanproxy-mcp server run --http 127.0.0.1:8765 --http-allowed-origins https://app.example
 ```
 
 #### OpenCode Configuration
@@ -932,8 +996,9 @@ Cached tools for garmin (100 total):
 
 ## MCP protocol support
 
-Both front ends (`server run --stdio` and `serve`) speak MCP revisions
-`2024-11-05`, `2025-03-26`, `2025-06-18` and `2025-11-25`.
+Every front end (`server run --stdio`, `server run --http` and `serve`)
+speaks MCP revisions `2024-11-05`, `2025-03-26`, `2025-06-18` and
+`2025-11-25`.
 
 ### Version negotiation
 
@@ -941,7 +1006,8 @@ Both front ends (`server run --stdio` and `serve`) speak MCP revisions
   revision; any other request (unknown, empty) gets the latest, `2025-11-25`,
   and the client decides whether to continue.
 - The negotiated revision is kept **per client session**: one session for the
-  lifetime of `server run --stdio`, one per TCP connection for `serve`.
+  lifetime of `server run --stdio`, one per `Mcp-Session-Id` for
+  `server run --http`, one per TCP connection for `serve`.
 - Fields LeanProxy adds are gated on it, so an older client only sees fields
   its revision defines:
 
@@ -1028,8 +1094,12 @@ connection, before any routing.
 
 ### Server-to-client requests, progress and cancellation
 
-Upstream servers can call back into the client during a call (#308). Both
-front ends relay this traffic; `serve` does it per TCP connection.
+Upstream servers can call back into the client during a call (#308). Every
+front end relays this traffic: `serve` per TCP connection, and
+`server run --http` per session. Over HTTP, a request or progress
+notification caused by a client request goes on that request's response
+stream, which then becomes a `text/event-stream`. Other messages go on the
+session's GET stream (#309).
 
 - **Requests** — `elicitation/create`, `roots/list` and (opt-in)
   `sampling/createMessage` are forwarded to the client under a proxy id

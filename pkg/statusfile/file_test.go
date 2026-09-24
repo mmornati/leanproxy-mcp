@@ -567,3 +567,19 @@ func TestWriteLocked_FileAsDirectory(t *testing.T) {
 
 	store.writeLocked()
 }
+
+func TestSetHTTPFrontend(t *testing.T) {
+	store, err := newFileStatusStoreWithDir(nil, t.TempDir())
+	require.NoError(t, err)
+
+	store.SetHTTPFrontend(&HTTPFrontendStatus{URL: "http://127.0.0.1:8765/mcp", Loopback: true, Auth: true, MaxSessions: 64})
+
+	data, err := os.ReadFile(store.GetFilePath())
+	require.NoError(t, err)
+	var info StatusInfo
+	require.NoError(t, json.Unmarshal(data, &info))
+	require.NotNil(t, info.HTTP)
+	assert.Equal(t, "http://127.0.0.1:8765/mcp", info.HTTP.URL)
+	assert.True(t, info.HTTP.Loopback)
+	assert.True(t, info.HTTP.Auth)
+}

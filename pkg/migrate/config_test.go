@@ -1303,3 +1303,72 @@ func TestLoadConfigPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadConfigHTTPFrontend(t *testing.T) {
+	ctx := context.Background()
+	servers := `
+servers:
+  - name: github
+    transport: stdio
+    stdio:
+      command: /usr/bin/mcp-server
+`
+	write := func(t *testing.T, content string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "leanproxy_servers.yaml")
+		if err := os.WriteFile(p, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Run("defaults", func(t *testing.T) {
+		cfg, err := LoadConfig(ctx, write(t, servers))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := cfg.EffectiveHTTPFrontend()
+		if got.MaxBodyBytes != DefaultHTTPMaxBodyBytes || got.MaxSessions != DefaultHTTPMaxSessions ||
+			got.SessionIdleTimeout != DefaultHTTPSessionIdleTimeout || len(got.AllowedOrigins) != 0 {
+			t.Fatalf("defaults = %+v", got)
+		}
+	})
+
+	t.Run("values", func(t *testing.T) {
+		cfg, err := LoadConfig(ctx, write(t, servers+`
+server:
+  http:
+    allowed_hosts: [gateway.lan, "gateway.lan:9000"]
+    allowed_origins: ["https://app.example", "http://localhost:3000/"]
+    max_body_bytes: 1048576
+    max_sessions: 8
+    session_idle_timeout: 5m
+`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := cfg.EffectiveHTTPFrontend()
+		if got.MaxBodyBytes != 1<<20 || got.MaxSessions != 8 || got.SessionIdleTimeout != 5*time.Minute ||
+			len(got.AllowedHosts) != 2 || len(got.AllowedOrigins) != 2 {
+			t.Fatalf("resolved = %+v", got)
+		}
+	})
+
+	for name, block := range map[string]string{
+		"max_body_bytes must be >= 0":             "max_body_bytes: -1",
+		"max_sessions must be >= 0":               "max_sessions: -2",
+		"session_idle_timeout":                    "session_idle_timeout: soon",
+		"session_idle_timeout must be > 0":        "session_idle_timeout: 0s",
+		"must start with http:// or https://":     `allowed_origins: ["app.example"]`,
+		"without path or wildcard":                `allowed_origins: ["https://*.example"]`,
+		"is not a host or host:port":              `allowed_hosts: ["http://x/"]`,
+		"allowed_origins[0]: \"ftp://a.example\"": `allowed_origins: ["ftp://a.example"]`,
+	} {
+		t.Run("invalid "+name, func(t *testing.T) {
+			_, err := LoadConfig(ctx, write(t, servers+"\nserver:\n  http:\n    "+block+"\n"))
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Fatalf("error = %v, want %q", err, name)
+			}
+		})
+	}
+}

@@ -21,6 +21,12 @@ import (
 // id through the front end's serialized writer.
 type RequestFunc func(id, method string, params json.RawMessage) error
 
+// ContextRequestFunc is a RequestFunc that also gets the context of the
+// relayed request. A front end with several response streams per session
+// (Streamable HTTP, #309) reads from it, with ResponseRouteFrom, the
+// stream of the client request the message belongs to.
+type ContextRequestFunc func(ctx context.Context, id, method string, params json.RawMessage) error
+
 const (
 	// clientRequestIDPrefix starts every id the proxy gives a
 	// server-to-client request.
@@ -145,6 +151,18 @@ type clientReply struct {
 // client through fn. A front end that cannot carry them never calls it, and
 // the session then never gets any (the upstream is answered -32601).
 func (s *ClientSession) EnableRequests(fn RequestFunc) {
+	if fn == nil {
+		s.EnableContextRequests(nil)
+		return
+	}
+	s.EnableContextRequests(func(_ context.Context, id, method string, params json.RawMessage) error {
+		return fn(id, method, params)
+	})
+}
+
+// EnableContextRequests is EnableRequests for a front end that routes each
+// request by its context (see ContextRequestFunc).
+func (s *ClientSession) EnableContextRequests(fn ContextRequestFunc) {
 	s.reqMu.Lock()
 	defer s.reqMu.Unlock()
 	s.sendRequest = fn
@@ -227,7 +245,7 @@ func (s *ClientSession) Request(ctx context.Context, method string, params json.
 	s.pending[id] = ch
 	s.reqMu.Unlock()
 
-	if err := send(id, method, params); err != nil {
+	if err := send(ctx, id, method, params); err != nil {
 		s.forget(id)
 		return nil, NewError(ErrCodeInternalError, "failed to send "+method+" to the client: "+err.Error())
 	}

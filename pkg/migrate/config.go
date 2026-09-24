@@ -503,6 +503,126 @@ type FrontendConfig struct {
 	// listener accepts at once; extra connections are closed right away.
 	// 0 or absent means DefaultMaxConnections.
 	MaxConnections int `yaml:"max_connections,omitempty"`
+	// HTTP configures the Streamable HTTP front end (`server run --http`,
+	// issue #309). Absent means the defaults.
+	HTTP *HTTPFrontendConfig `yaml:"http,omitempty"`
+}
+
+// Defaults of the `server.http:` block.
+const (
+	// DefaultHTTPMaxBodyBytes caps one POST body: 64 MiB.
+	DefaultHTTPMaxBodyBytes = 64 << 20
+	// DefaultHTTPMaxSessions caps the Streamable HTTP sessions open at once.
+	DefaultHTTPMaxSessions = 64
+	// DefaultHTTPSessionIdleTimeout ends a session idle for this long.
+	DefaultHTTPSessionIdleTimeout = 30 * time.Minute
+)
+
+// HTTPFrontendConfig is the `server.http:` block: limits and browser
+// allowlists of the Streamable HTTP front end. The listen address and the
+// token come from the command line (`--http`, `--http-token`), like
+// `serve`'s.
+type HTTPFrontendConfig struct {
+	// AllowedHosts are Host header values accepted beyond the bind host
+	// and the loopback names ("gateway.lan" or "gateway.lan:8765").
+	AllowedHosts []string `yaml:"allowed_hosts,omitempty"`
+	// AllowedOrigins are the browser origins ("https://app.example")
+	// allowed to call the endpoint. Requests without an Origin header (every
+	// non-browser MCP client) are not affected; any other origin gets 403.
+	AllowedOrigins []string `yaml:"allowed_origins,omitempty"`
+	// MaxBodyBytes caps one POST body. 0 or absent means
+	// DefaultHTTPMaxBodyBytes.
+	MaxBodyBytes int64 `yaml:"max_body_bytes,omitempty"`
+	// MaxSessions caps the sessions open at once. 0 or absent means
+	// DefaultHTTPMaxSessions.
+	MaxSessions int `yaml:"max_sessions,omitempty"`
+	// SessionIdleTimeout ends a session with no request in flight and no
+	// open GET stream for this long (a Go duration, e.g. "30m"). Absent
+	// means DefaultHTTPSessionIdleTimeout.
+	SessionIdleTimeout string `yaml:"session_idle_timeout,omitempty"`
+}
+
+// Validate checks the block. A nil receiver is valid (defaults).
+func (c *HTTPFrontendConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.MaxBodyBytes < 0 {
+		return fmt.Errorf("server.http.max_body_bytes must be >= 0, got %d", c.MaxBodyBytes)
+	}
+	if c.MaxSessions < 0 {
+		return fmt.Errorf("server.http.max_sessions must be >= 0, got %d", c.MaxSessions)
+	}
+	if c.SessionIdleTimeout != "" {
+		d, err := time.ParseDuration(c.SessionIdleTimeout)
+		if err != nil {
+			return fmt.Errorf("server.http.session_idle_timeout: %w", err)
+		}
+		if d <= 0 {
+			return fmt.Errorf("server.http.session_idle_timeout must be > 0, got %s", c.SessionIdleTimeout)
+		}
+	}
+	for i, o := range c.AllowedOrigins {
+		if err := ValidateHTTPOrigin(o); err != nil {
+			return fmt.Errorf("server.http.allowed_origins[%d]: %w", i, err)
+		}
+	}
+	for i, h := range c.AllowedHosts {
+		if strings.TrimSpace(h) == "" || strings.ContainsAny(h, "/ *") {
+			return fmt.Errorf("server.http.allowed_hosts[%d]: %q is not a host or host:port", i, h)
+		}
+	}
+	return nil
+}
+
+// ValidateHTTPOrigin checks one allowlisted browser origin: an http or
+// https scheme and a host, with an optional port and nothing else (no
+// path, no wildcard).
+func ValidateHTTPOrigin(origin string) error {
+	o := strings.TrimSuffix(strings.TrimSpace(origin), "/")
+	scheme, rest, ok := strings.Cut(o, "://")
+	if !ok || (scheme != "http" && scheme != "https") {
+		return fmt.Errorf("%q must start with http:// or https://", origin)
+	}
+	if rest == "" || strings.ContainsAny(rest, "/*?# ") {
+		return fmt.Errorf("%q must be scheme://host[:port], without path or wildcard", origin)
+	}
+	return nil
+}
+
+// EffectiveHTTPFrontend returns the server.http block with its defaults
+// resolved; its SessionIdleTimeout is then a valid duration.
+func (c *Config) EffectiveHTTPFrontend() ResolvedHTTPFrontend {
+	out := ResolvedHTTPFrontend{
+		MaxBodyBytes:       DefaultHTTPMaxBodyBytes,
+		MaxSessions:        DefaultHTTPMaxSessions,
+		SessionIdleTimeout: DefaultHTTPSessionIdleTimeout,
+	}
+	if c == nil || c.Server == nil || c.Server.HTTP == nil {
+		return out
+	}
+	h := c.Server.HTTP
+	out.AllowedHosts = append([]string(nil), h.AllowedHosts...)
+	out.AllowedOrigins = append([]string(nil), h.AllowedOrigins...)
+	if h.MaxBodyBytes > 0 {
+		out.MaxBodyBytes = h.MaxBodyBytes
+	}
+	if h.MaxSessions > 0 {
+		out.MaxSessions = h.MaxSessions
+	}
+	if d, err := time.ParseDuration(h.SessionIdleTimeout); err == nil && d > 0 {
+		out.SessionIdleTimeout = d
+	}
+	return out
+}
+
+// ResolvedHTTPFrontend is the server.http block with defaults applied.
+type ResolvedHTTPFrontend struct {
+	AllowedHosts       []string
+	AllowedOrigins     []string
+	MaxBodyBytes       int64
+	MaxSessions        int
+	SessionIdleTimeout time.Duration
 }
 
 // DefaultMaxLineBytes is the largest JSON-RPC message (one line) the `serve`
@@ -527,7 +647,7 @@ func (c *FrontendConfig) Validate() error {
 	if c.MaxConnections < 0 {
 		return fmt.Errorf("server.max_connections must be >= 0, got %d", c.MaxConnections)
 	}
-	return nil
+	return c.HTTP.Validate()
 }
 
 // EffectiveMaxLineBytes returns server.max_line_bytes, or

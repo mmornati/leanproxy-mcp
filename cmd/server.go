@@ -22,6 +22,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/statusfile"
+	"github.com/mmornati/leanproxy-mcp/pkg/streamhttp"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/spf13/cobra"
@@ -308,27 +309,44 @@ func init() {
 
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Run leanproxy-mcp as an MCP server in stdio mode",
+	Short: "Run leanproxy-mcp as an MCP server (stdio, or Streamable HTTP)",
 	Long: `Run leanproxy-mcp as a Model Context Protocol server that proxies
-requests to configured MCP servers. Reads JSON-RPC requests from stdin
-and writes responses to stdout.
+requests to configured MCP servers.
 
-Use --stdio flag to enable stdio mode. Without --stdio, the command
-will show help for the run command.
+With --stdio it reads JSON-RPC requests from stdin and writes responses to
+stdout: one client, the IDE that spawned it.
+
+With --http <host:port> it serves the MCP Streamable HTTP transport at
+http://<host:port>/mcp: one shared local gateway that any number of MCP
+clients reach by URL, all sharing one set of child servers. It binds
+loopback addresses by default, requires a bearer token (the serve token:
+--http-token, else $LEANPROXY_SERVE_TOKEN, else
+~/.config/leanproxy/serve.token, generated on first start), and rejects
+requests whose Host or Origin header is not allowed. --no-auth drops the
+token, on a loopback address only.
+
+Exactly one of --stdio and --http is required.
 
 Example:
   leanproxy-mcp server run --stdio
   leanproxy-mcp server run --stdio --config /path/to/config.yaml
-  leanproxy-mcp server run --stdio --log-file /tmp/leanproxy.log`,
+  leanproxy-mcp server run --stdio --log-file /tmp/leanproxy.log
+  leanproxy-mcp server run --http 127.0.0.1:8765
+  leanproxy-mcp server run --http 127.0.0.1:8765 --http-allowed-origins https://app.example`,
 	RunE: runServerRun,
 }
 
 var runFlags struct {
-	stdio    bool
-	config   string
-	logFile  string
-	logLevel string
-	verbose  bool
+	stdio              bool
+	config             string
+	logFile            string
+	logLevel           string
+	verbose            bool
+	http               string
+	httpToken          string
+	httpAllowedHosts   []string
+	httpAllowedOrigins []string
+	noAuth             bool
 }
 
 func init() {
@@ -337,6 +355,11 @@ func init() {
 	runCmd.Flags().StringVar(&runFlags.logFile, "log-file", "", "Path to log file")
 	runCmd.Flags().StringVar(&runFlags.logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	runCmd.Flags().BoolVarP(&runFlags.verbose, "verbose", "v", false, "Enable verbose logging")
+	runCmd.Flags().StringVar(&runFlags.http, "http", "", "Serve the MCP Streamable HTTP transport on this address (e.g. 127.0.0.1:8765) instead of stdio")
+	runCmd.Flags().StringVar(&runFlags.httpToken, "http-token", "", "Bearer token HTTP clients must send (default: $"+serveTokenEnv+", else ~/.config/leanproxy/serve.token, generated on first start)")
+	runCmd.Flags().StringSliceVar(&runFlags.httpAllowedHosts, "http-allowed-hosts", nil, "Extra Host header values accepted by the HTTP front end, beyond the bind host and loopback names (adds to server.http.allowed_hosts)")
+	runCmd.Flags().StringSliceVar(&runFlags.httpAllowedOrigins, "http-allowed-origins", nil, "Browser origins (https://app.example) allowed to call the HTTP front end (adds to server.http.allowed_origins)")
+	runCmd.Flags().BoolVar(&runFlags.noAuth, "no-auth", false, "Serve --http without a bearer token (only allowed on a loopback address)")
 	serverCmd.AddCommand(runCmd)
 
 	var healthCmd = &cobra.Command{
@@ -353,8 +376,9 @@ func init() {
 func runServerRun(cmd *cobra.Command, args []string) error {
 	initLogger(cmd)
 
-	if !runFlags.stdio {
-		return fmt.Errorf("--stdio flag is required to run in stdio mode")
+	if err := checkRunModeFlags(runFlags.stdio, runFlags.http, runFlags.httpToken, runFlags.noAuth,
+		len(runFlags.httpAllowedHosts)+len(runFlags.httpAllowedOrigins) > 0); err != nil {
+		return err
 	}
 
 	configPath := runFlags.config
@@ -373,6 +397,31 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {
 		return fmt.Errorf("no servers configured in %s", configPath)
+	}
+
+	// The HTTP front end's security settings are resolved before anything
+	// starts: a non-loopback address without a token is refused, and the
+	// token file is created on first start.
+	var httpOpts *streamhttp.Options
+	if runFlags.http != "" {
+		if err := checkHTTPOrigins(runFlags.httpAllowedOrigins); err != nil {
+			return err
+		}
+		home, _ := os.UserHomeDir()
+		token, source, err := httpAuthSettings(runFlags.http, runFlags.httpToken, runFlags.noAuth, os.Getenv(serveTokenEnv), home)
+		if err != nil {
+			return err
+		}
+		opts := httpFrontendOptions(cfg, runFlags.http, token, runFlags.httpAllowedHosts, runFlags.httpAllowedOrigins)
+		if err := streamhttp.CheckOptions(opts); err != nil {
+			return err
+		}
+		if token == "" {
+			slog.Warn("HTTP front end authentication disabled (--no-auth): any local process can drive the upstream servers", "listen", runFlags.http)
+		} else {
+			slog.Info("HTTP front end authentication enabled", "token_source", source)
+		}
+		httpOpts = &opts
 	}
 
 	telemetryProvider := initTelemetry(ctx, cfg)
@@ -453,7 +502,11 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		cache = fileCache
 	}
 
-	statusStore, err := statusfile.NewFileStatusStore("stdio", slog.Default())
+	statusListen := "stdio"
+	if httpOpts != nil {
+		statusListen = "http://" + httpOpts.Addr + streamhttp.DefaultEndpoint
+	}
+	statusStore, err := statusfile.NewFileStatusStore(statusListen, slog.Default())
 	if err != nil {
 		slog.Warn("failed to create status store", "error", err)
 	} else {
@@ -489,16 +542,17 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
-	go func() {
-		<-sigChan
-		slog.Info("shutting down server")
-		if statusStore != nil {
-			statusStore.RemoveFile()
-		}
-		closePools()
-		os.Exit(0)
-	}()
+	if httpOpts == nil {
+		go func() {
+			<-sigChan
+			slog.Info("shutting down server")
+			if statusStore != nil {
+				statusStore.RemoveFile()
+			}
+			closePools()
+			os.Exit(0)
+		}()
+	}
 
 	if statusStore != nil {
 		go updateServerStatus(statusStore, unifiedPool, stdioPool)
@@ -555,6 +609,10 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	metrics.SetResponseCacheProvider(func() metrics.ResponseCacheMetric {
 		return toMetricsResponseCache(respCache)
 	})
+
+	if httpOpts != nil {
+		return handleHTTP(handler, *httpOpts, sigChan, closePools, statusStore)
+	}
 
 	frontendOpts := stdioFrontendOptions{
 		MaxConcurrent: cfg.EffectiveMaxConcurrentRequests(),
