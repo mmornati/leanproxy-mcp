@@ -13,6 +13,10 @@ type MetricsSnapshot struct {
 	TotalSpend         int64                `json:"total_spend"`
 	Top5ExpensiveTools []ToolMetric         `json:"top_5_expensive_tools"`
 	ResponseCache      *ResponseCacheMetric `json:"response_cache,omitempty"`
+	// ResponseGovernor is the response token governor's accounting (issue
+	// #319): tokens before/after per tool, truncations, spill store size.
+	// Omitted while the governor is off.
+	ResponseGovernor *mcp.GovernorStats `json:"response_governor,omitempty"`
 	// Telemetry mirrors the counters OpenTelemetry records (issue #317):
 	// requests, errors, redactions, injection detections, cache hits/misses,
 	// policy decisions, rate-limit waits and in-flight requests. Populated
@@ -61,6 +65,7 @@ func Snapshot() MetricsSnapshot {
 		TotalSpend:         breakdown.Total,
 		Top5ExpensiveTools: top5,
 		ResponseCache:      responseCacheSnapshot(),
+		ResponseGovernor:   responseGovernorSnapshot(),
 		Telemetry:          mcp.TelemetrySnapshot(),
 	}
 }

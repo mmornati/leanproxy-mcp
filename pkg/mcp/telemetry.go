@@ -76,6 +76,8 @@ type instrumentSet struct {
 	rateLimitWaits   metric.Int64Counter
 	toolPinEvents    metric.Int64Counter
 	inFlightRequests metric.Int64UpDownCounter
+	governorTokens   metric.Int64Counter
+	governorTrunc    metric.Int64Counter
 }
 
 func instruments() *instrumentSet {
@@ -106,6 +108,10 @@ func instruments() *instrumentSet {
 			metric.WithDescription("Requests that waited on a rate limiter."))
 		inst.toolPinEvents, _ = m.Int64Counter("leanproxy.tool_pin.events",
 			metric.WithDescription("Tool pinning events (tool_added, tool_changed, tool_removed, server_identity_changed, tool_flagged, tool_shadowed, call_blocked, ...), by event and server."))
+		inst.governorTokens, _ = m.Int64Counter("leanproxy.governor.tokens",
+			metric.WithDescription("Estimated tokens of tool results seen by the response governor (#319), by direction (original, returned) and server."))
+		inst.governorTrunc, _ = m.Int64Counter("leanproxy.governor.truncations",
+			metric.WithDescription("Tool results the response governor shortened and spilled (#319), by server."))
 		inst.inFlightRequests, _ = m.Int64UpDownCounter("mcp.server.requests.in_flight",
 			metric.WithDescription("Requests currently in flight, by server."))
 	})
@@ -151,6 +157,9 @@ type telemetryCounters struct {
 	rateLimitWaits  atomic.Int64
 	toolPinEvents   atomic.Int64
 	inFlight        atomic.Int64
+	governed        atomic.Int64
+	governorTrunc   atomic.Int64
+	governorSaved   atomic.Int64
 }
 
 // TelemetryCounters is the plain-value snapshot pkg/metrics exposes on the
@@ -166,6 +175,11 @@ type TelemetryCounters struct {
 	RateLimitWaits  int64 `json:"rate_limit_waits_total"`
 	ToolPinEvents   int64 `json:"tool_pin_events_total"`
 	InFlight        int64 `json:"requests_in_flight"`
+	// Response governor (#319): tool results seen, results shortened, and
+	// estimated tokens saved.
+	GovernedResults     int64 `json:"governor_results_total"`
+	GovernorTruncations int64 `json:"governor_truncations_total"`
+	GovernorTokensSaved int64 `json:"governor_tokens_saved_total"`
 }
 
 // TelemetrySnapshot returns the current counters. Safe for concurrent use.
@@ -181,6 +195,10 @@ func TelemetrySnapshot() TelemetryCounters {
 		RateLimitWaits:  counters.rateLimitWaits.Load(),
 		ToolPinEvents:   counters.toolPinEvents.Load(),
 		InFlight:        counters.inFlight.Load(),
+
+		GovernedResults:     counters.governed.Load(),
+		GovernorTruncations: counters.governorTrunc.Load(),
+		GovernorTokensSaved: counters.governorSaved.Load(),
 	}
 }
 
@@ -219,6 +237,29 @@ func RecordCacheMiss(ctx context.Context) {
 func RecordPolicyDecision(ctx context.Context, outcome, server string) {
 	counters.policyDecisions.Add(1)
 	instruments().policyDecisions.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome), attrMCPServerName.String(server)))
+}
+
+// RecordGovernedResult records one tool result the response governor (#319)
+// saw: its estimated tokens before and after, and whether it was shortened.
+// Only token counts and the server name are recorded, never the result.
+func RecordGovernedResult(ctx context.Context, server string, original, returned int64, truncated bool) {
+	counters.governed.Add(1)
+	if saved := original - returned; saved > 0 {
+		counters.governorSaved.Add(saved)
+	}
+	if truncated {
+		counters.governorTrunc.Add(1)
+	}
+	if !telemetryActive.Load() {
+		return
+	}
+	i := instruments()
+	srv := attrMCPServerName.String(server)
+	i.governorTokens.Add(ctx, original, metric.WithAttributes(attribute.String("direction", "original"), srv))
+	i.governorTokens.Add(ctx, returned, metric.WithAttributes(attribute.String("direction", "returned"), srv))
+	if truncated {
+		i.governorTrunc.Add(ctx, 1, metric.WithAttributes(srv))
+	}
 }
 
 // RecordRateLimitWait increments the rate-limit-wait counter.

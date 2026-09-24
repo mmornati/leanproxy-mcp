@@ -80,9 +80,10 @@ type Handler struct {
 
 	// Client sessions (see protocol.go). defaultSession serves requests
 	// whose context carries none.
-	sessionsMu     sync.Mutex
-	sessions       map[*ClientSession]struct{}
-	defaultSession *ClientSession
+	sessionsMu        sync.Mutex
+	sessions          map[*ClientSession]struct{}
+	defaultSession    *ClientSession
+	sessionCloseHooks []func(*ClientSession)
 
 	// resourceOwners maps an upstream resource URI (as the upstream lists
 	// it) to its server, from the last resources/list fan-out, so a raw URI
