@@ -61,37 +61,33 @@
   margin: 0;
   color: var(--xr-ink);
 }
-.lp-display span {
+.lp-display > span {
   display: block;
 }
+/* Threat bracket: the scanner's box around what it caught. Drawn as
+   sliced backgrounds so the corners hug the text even when it wraps. */
+.lp-display__threat,
+.lp-bracket {
+  --bk: var(--xr-threat);
+  --bl: 0.42em;
+  --bw: 0.07em;
+  padding: 0.02em 0.14em 0.06em;
+  background:
+    linear-gradient(var(--bk), var(--bk)) left top / var(--bl) var(--bw),
+    linear-gradient(var(--bk), var(--bk)) left top / var(--bw) var(--bl),
+    linear-gradient(var(--bk), var(--bk)) right bottom / var(--bl) var(--bw),
+    linear-gradient(var(--bk), var(--bk)) right bottom / var(--bw) var(--bl);
+  background-repeat: no-repeat;
+  -webkit-box-decoration-break: slice;
+  box-decoration-break: slice;
+}
 .lp-display__threat {
-  position: relative;
-  display: inline-block !important;
-  margin-top: 0.12em;
-  padding: 0.04em 0.16em 0.1em;
-  margin-left: -0.16em;
+  margin-left: -0.14em;
 }
-/* threat bracket: the scanner box around what it caught */
-.lp-display__threat::before,
-.lp-display__threat::after {
-  content: "";
-  position: absolute;
-  width: 0.42em;
-  height: 0.42em;
-  border: 0.07em solid var(--xr-threat);
-  pointer-events: none;
-}
-.lp-display__threat::before {
-  top: 0;
-  left: 0;
-  border-right: 0;
-  border-bottom: 0;
-}
-.lp-display__threat::after {
-  right: 0;
-  bottom: 0;
-  border-left: 0;
-  border-top: 0;
+.lp-bracket {
+  --bl: 0.55em;
+  --bw: 2px;
+  padding: 0.2em 0.4em;
 }
 .lp-h2 {
   font-family: var(--xr-display);
@@ -207,7 +203,7 @@
 /* ---------- Hero ---------- */
 .lp-hero {
   background: var(--xr-ground);
-  padding: clamp(2.25rem, 4.5vw, 3.75rem) 0 0;
+  padding: clamp(1.75rem, 3.2vw, 2.75rem) 0 0;
   position: relative;
 }
 .lp-hero__grid {
@@ -218,6 +214,34 @@
 }
 .lp-hero__copy .lp-lede {
   margin-bottom: 1.5rem;
+  font-size: clamp(1.02rem, 1.2vw, 1.12rem);
+}
+.lp-code.lp-code--hero {
+  margin-top: 1.4rem;
+  max-width: 44rem;
+}
+.lp-code--hero pre {
+  margin: 0;
+  padding: 0.75rem 6rem 0.75rem 1rem;
+  border-radius: 8px;
+  background: #0f1a3a;
+  overflow-x: auto;
+  font: 0.78rem/1.7 var(--md-code-font-family);
+}
+[data-md-color-scheme="xray-dark"] .lp-code--hero pre {
+  color-scheme: dark;
+  background: #141d3a;
+  box-shadow: 0 0 0 1px #253052;
+}
+.lp-code--hero pre code {
+  background: none;
+  padding: 0;
+  color: #e9edf6;
+  font-size: inherit;
+  white-space: pre;
+}
+.lp-code.lp-code--hero .lp-copy {
+  opacity: 1;
 }
 @media (max-width: 60em) {
   .lp-hero__grid {
@@ -302,7 +326,7 @@
 .lp-scanner {
   --scan: 62%;
   max-width: var(--lp-max);
-  margin: clamp(1.75rem, 3.5vw, 2.75rem) auto 0;
+  margin: clamp(1.25rem, 2.5vw, 2rem) auto 0;
   padding: 0 var(--lp-gutter);
 }
 .lp-scanner__stage {
@@ -313,8 +337,20 @@
   overflow: hidden;
   touch-action: pan-y;
 }
+/* At night the stage stays a lit scanner screen, so the pseudocolor
+   keeps its daylight values instead of muddying on a dark ground. */
 [data-md-color-scheme="xray-dark"] .lp-scanner__stage {
-  background: #070b18;
+  --xr-paper: #f3f5f1;
+  --xr-ink: #0f1a3a;
+  --xr-ink-2: #3a4566;
+  --xr-amber: #f08a24;
+  --xr-teal: #1f9e78;
+  --xr-cobalt: #2743c9;
+  --xr-threat: #e11d2a;
+  --xr-threat-ink: #b3121d;
+  --xr-blend: multiply;
+  --xr-fill-a: 0.58;
+  box-shadow: 0 0 0 1px #253052, 0 20px 50px -30px rgba(0, 0, 0, 0.8);
 }
 .lp-scanner__stage:has(.lp-scanner__range:focus-visible) {
   outline: 2px solid var(--xr-cobalt);
@@ -359,9 +395,6 @@
 .xr-hole {
   fill: var(--xr-paper);
 }
-[data-md-color-scheme="xray-dark"] .xr-hole {
-  fill: #070b18;
-}
 .xr-lbl {
   font: 600 13px var(--md-code-font-family);
   fill: var(--xr-ink-2);
@@ -383,8 +416,19 @@
   stroke-width: 4;
   stroke-linecap: square;
 }
-.xr-threat text {
-  font: 800 14px var(--md-code-font-family);
+.xr-labels {
+  pointer-events: none;
+}
+.xr-labels .xr-lbl {
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+.xr-labels .xr-lbl.is-on {
+  opacity: 1;
+}
+.xr-lbl-threat {
+  font-weight: 800;
+  font-size: 15px;
   letter-spacing: 0.08em;
   fill: var(--xr-threat-ink);
 }
@@ -535,16 +579,16 @@
   }
   .lp-scanner__stage {
     border-radius: 0;
-    aspect-ratio: 1200 / 470;
+    aspect-ratio: 700 / 330;
   }
   .lp-readout {
     padding-inline: var(--lp-gutter);
   }
   .xr-lbl {
-    display: none;
+    font-size: 21px;
   }
-  .xr-threat text {
-    font-size: 30px;
+  .xr-lbl-threat {
+    font-size: 23px;
   }
 }
 
@@ -552,8 +596,14 @@
 .lp-sec {
   padding: var(--lp-sec) 0;
 }
+/* sections meet on a conveyor rail, not a hairline */
 .lp-sec + .lp-sec:not(.lp-honest) {
-  border-top: 1px solid var(--xr-rule);
+  background-image:
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--xr-ink) 34%, transparent) 0 3px, transparent 3px 18px),
+    linear-gradient(color-mix(in srgb, var(--xr-ink) 9%, transparent), color-mix(in srgb, var(--xr-ink) 9%, transparent));
+  background-size: 100% 7px;
+  background-repeat: no-repeat;
+  background-position: 0 0;
 }
 
 /* Legend / material key */
@@ -1084,4 +1134,21 @@
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* hero install block: copy button sits above the code, never over it */
+.lp-code.lp-code--hero {
+  display: flex;
+  flex-direction: column;
+}
+.lp-code.lp-code--hero .lp-copy {
+  position: static;
+  align-self: flex-end;
+  margin-bottom: 0.4rem;
+  color: var(--xr-ink);
+  background: transparent;
+  border-color: var(--xr-rule);
+}
+.lp-code--hero pre {
+  padding-right: 1rem;
 }

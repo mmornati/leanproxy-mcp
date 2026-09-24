@@ -11,8 +11,26 @@
     var range = fig && fig.querySelector(".lp-scanner__range");
     var weightOut = fig && fig.querySelector("[data-weight]");
     var threatOut = fig && fig.querySelector("[data-threats]");
-    var VIEW_W = 1200;
     var ROUTER = 318;
+    var svgs = fig ? fig.querySelectorAll(".xr-layer") : [];
+    var labels = fig ? fig.querySelectorAll(".xr-labels text") : [];
+    /* Phones get a cropped view of the bag (key, GitHub, router, Jira) so
+       the objects stay legible; the scan maps onto the visible range. */
+    var narrow = window.matchMedia("(max-width: 36em)");
+    var view = [0, 1200];
+    function setView() {
+      view = narrow.matches ? [330, 700] : [0, 1200];
+      svgs.forEach(function (svg) {
+        svg.setAttribute("viewBox", view[0] + " 0 " + view[1] + " 330");
+      });
+    }
+    setView();
+    if (narrow.addEventListener) {
+      narrow.addEventListener("change", function () {
+        setView();
+        setScan(range ? +range.value : 62);
+      });
+    }
 
     var items = [];
     if (fig) {
@@ -20,7 +38,7 @@
         items.push({ x: +g.dataset.x, tok: +g.dataset.tok });
       });
     }
-    var KEY_X = 520;
+    var KEY_X = 515;
 
     function fmt(n) {
       return n.toLocaleString("en-US");
@@ -30,11 +48,12 @@
       if (!fig) return;
       fig.style.setProperty("--scan", pct + "%");
       fig.style.setProperty("--belt", pct * 4 + "px");
-      var x = (pct / 100) * VIEW_W;
+      var x = view[0] + (pct / 100) * view[1];
       var remaining = 0;
       var scanned = 0;
       items.forEach(function (it) {
-        if (it.x > x) remaining += it.tok;
+        /* objects outside a cropped view count as unscanned at the start */
+        if (it.x > x || (it.x < view[0] && pct === 0)) remaining += it.tok;
         else scanned++;
       });
       var weight = remaining + (scanned > 0 ? ROUTER : 0);
@@ -47,6 +66,14 @@
         threatOut.textContent = boxed ? "1 boxed" : "0 boxed";
         threatOut.dataset.state = boxed ? "boxed" : "";
       }
+      /* Labels sit on an unclipped layer: an object's label shows only
+         while the scan line is clear of it, so no label is cut mid-word. */
+      labels.forEach(function (t) {
+        var x0 = +t.dataset.x0;
+        var x1 = +t.dataset.x1;
+        var after = t.classList.contains("xr-lbl-a");
+        t.classList.toggle("is-on", after ? x > x1 : x < x0);
+      });
       if (range && +range.value !== pct) range.value = pct;
     }
 

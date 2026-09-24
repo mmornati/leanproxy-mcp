@@ -17,7 +17,7 @@ OWN-WORLD: baggage X-ray pseudocolor on a pale scanner ground. Translucent amber
 
 STORY: the visitor sees that their client hauls 10,049 tokens of schemas on every turn, watches LeanProxy scan it down to 318 and box a leaked key, believes it because every number shows its test conditions, then installs.
 
-FIRST VIEWPORT: the headline and the offer sit at top left, with install and measurements CTAs and a copyable brew command. Below it, a full-width scanner band shows the request bag: left of the scan line full schema baggage, right of it the lean router plus a redacted key. A readout strip sits under the band. The scan line is draggable.
+FIRST VIEWPORT: the headline and the offer sit at top left, with install and measurements CTAs and a copyable brew command. Below it, a full-width scanner band shows the request bag. The scan line sweeps left to right, so the scanned side trails it: left of the line are the lean router and the boxed, redacted key; right of it is the full schema baggage still to be scanned. This reverses the first draft because a sweeping flatbed reads naturally left to right (review round 1). On phones the band crops to the key, GitHub, the router and Jira. A readout strip sits under the band. The scan line is draggable.
 
 FORM: X-ray checkpoint, own grounded list position 3 of 7, seed key 7ac61095 (degraded roll, no challengers). Raise kept from the datasheet pick: every figure carries its test condition.
 
