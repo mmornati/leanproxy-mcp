@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/exposure"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/telemetry"
 )
@@ -52,13 +54,22 @@ func initTelemetry(ctx context.Context, cfg *migrate.Config) *telemetry.Provider
 // cache: a denied call is never answered, even from the cache, and an
 // allowed one carries its rule's injection override to the firewall.
 //
+// The exposure stage (#322) is outermost, even before the telemetry span:
+// it only rewrites a tools/call on a passthrough name ("<server>__<tool>")
+// into the canonical "<server>.<tool>", so the span, every later stage and
+// serve's router all see which upstream tool is called.
+//
 // The response governor (#319) comes right after the telemetry span,
 // outside every other stage: it shortens responses that were already
 // redacted and injection-scanned, the cache keeps the full (redacted)
 // response, and read_result is answered from the governor's spill store
 // (see mcp.Governor for the full rationale).
-func tracedMiddlewares(respCache *mcp.ResponseCache, firewall *mcp.Firewall, pins *mcp.ToolPins, pol *mcp.Policy, gov *mcp.Governor) []mcp.Middleware {
-	mws := []mcp.Middleware{mcp.TelemetryMiddleware()}
+func tracedMiddlewares(h *mcp.Handler, respCache *mcp.ResponseCache, firewall *mcp.Firewall, pins *mcp.ToolPins, pol *mcp.Policy, gov *mcp.Governor) []mcp.Middleware {
+	var mws []mcp.Middleware
+	if h != nil {
+		mws = append(mws, h.ExposureMiddleware())
+	}
+	mws = append(mws, mcp.TelemetryMiddleware())
 	if gov.Enabled() {
 		mws = append(mws, mcp.Traced("governor", gov.Middleware()))
 	}
@@ -93,4 +104,33 @@ func firewallStageName(i int) string {
 	default:
 		return "firewall"
 	}
+}
+
+// newExposureResolver builds the exposure resolver (#322) from the
+// `exposure:` config block and the --exposure flag ("" when unset), and
+// logs the effective settings.
+func newExposureResolver(cfg *migrate.Config, flag string) (*exposure.Resolver, error) {
+	var forced exposure.Mode
+	if flag != "" {
+		m, err := exposure.ParseMode(flag)
+		if err != nil {
+			return nil, fmt.Errorf("--exposure: %w", err)
+		}
+		forced = m
+	}
+	var ecfg *exposure.Config
+	if cfg != nil {
+		ecfg = cfg.Exposure
+	}
+	r, err := exposure.NewResolver(ecfg, forced)
+	if err != nil {
+		return nil, err
+	}
+	if forced != "" {
+		slog.Info("exposure: mode forced for every client", "mode", string(forced))
+	} else {
+		fallback, _ := r.ModeFor("")
+		slog.Info("exposure: per-client modes", "unknown_clients", string(fallback), "lists_upstream_tools_for_some_clients", r.MayListUpstreamTools())
+	}
+	return r, nil
 }

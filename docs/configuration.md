@@ -1467,6 +1467,167 @@ an OTLP exporter is configured.
   see the PR that introduced this feature for the reasoning and the
   follow-up tracking it.
 
+## Exposure Modes (`exposure`)
+
+`exposure` (#322) decides how the upstream tools reach each MCP client:
+
+| Mode | `tools/list` returns | Calls | For |
+|------|----------------------|-------|-----|
+| `router` | The discovery tools: `search_tools`, `list_servers`, `list_tools`, `invoke_tool` (and `read_result` while the [response governor](#response-token-governor-response) is on). Unchanged from before #322 | `invoke_tool`, or `tools/call` on `server_tool` / `server.tool` | Clients that load every tool definition into the model context: LeanProxy's router is then much cheaper than the full catalog |
+| `passthrough` | **Every** upstream tool the security layers let the client see, named `<server>__<tool>`, with its full metadata (`title`, `description`, `inputSchema`, `outputSchema`, `annotations`, `icons`, `_meta`) | `tools/call` on the listed name, routed to the upstream | Clients with **native tool search** or deferred loading (Claude Code's MCP tool search, Cursor, ...): they keep only the names in context and load a definition when needed, with their own (often better) search and per-tool UX (permissions, annotations, MCP Apps) |
+| `hybrid` | `passthrough` plus `search_tools` (and `read_result` while the governor is on) | Same as passthrough; `search_tools` results name the tools as listed | Clients that list tools natively but benefit from a ranked search |
+
+The mode is decided once per client session, at `initialize`. The default:
+
+| Client | `clientInfo.name` it sends | Mode | Why |
+|--------|---------------------------|------|-----|
+| Claude Code | `claude-code` | `passthrough` | MCP tool search is on by default: tool definitions are deferred and discovered on demand |
+| Claude Desktop, claude.ai connectors | `claude-ai` | `passthrough` | Per-tool permissions and UI need the real tools |
+| Cursor | `cursor-vscode` (matched as `cursor*`) | `passthrough` | Dynamic context discovery of MCP tools |
+| VS Code (GitHub Copilot) | `Visual Studio Code`, `Visual Studio Code - Insiders` (matched as `visual studio code*`) | `passthrough` | Per-tool picker; groups large tool sets itself |
+| Anything else (OpenCode, Zed, custom agents, ...) | — | `router` (`exposure.mode`) | Unknown clients are assumed to load every tool: the router keeps today's behavior |
+
+**Client detection heuristic.** MCP has no client capability that announces
+native tool search or deferred loading, so the capabilities a client declares
+in `initialize` cannot tell. The only signal is `clientInfo.name`, matched
+case-insensitively against the rules below, first match wins:
+
+1. `--exposure <mode>` on `server run` forces one mode for every client.
+2. `exposure.clients`, top to bottom.
+3. The built-in table above (unless `exposure.builtin_clients: false`).
+4. `exposure.mode` (default `router`).
+
+A client that sends no name, or a name nothing matches, gets `exposure.mode`.
+The decision is logged at `initialize` (`exposure=passthrough
+exposure_decided_by="client rule \"claude-code\""`).
+
+### Configuration
+
+```yaml
+exposure:
+  mode: router                  # clients no rule matches: router (default) | passthrough | hybrid
+  builtin_clients: true         # apply the built-in client table (default true)
+  clients:                      # first match wins, before the built-in table
+    - match: "claude-code"      # glob on clientInfo.name, case-insensitive
+      mode: hybrid
+    - match: "my-agent*"
+      mode: passthrough
+  always_load:                  # "server.tool" globs Claude Code loads up front
+    - "github.search_*"
+  max_name_length: 64           # cap of the namespaced names (24-64)
+```
+
+```bash
+# Force a mode for every client of this front end (e.g. one IDE's entry):
+leanproxy-mcp server run --stdio --exposure passthrough
+leanproxy-mcp server run --stdio --exposure router     # opt a capable client out
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `mode` | string | `router` | Mode of the clients no rule matches: `router`, `passthrough` or `hybrid` |
+| `builtin_clients` | bool | `true` | Apply the built-in client table after `clients`. `false` drops it: only `clients` and `mode` decide |
+| `clients[].match` | string | — (required) | Glob (`*`, `?`, `[classes]`) on `clientInfo.name`, compared case-insensitively |
+| `clients[].mode` | string | — (required) | `router`, `passthrough` or `hybrid` |
+| `always_load` | list of string | `[]` | `server.tool` globs whose passthrough entries carry `_meta: {"anthropic/alwaysLoad": true}` (see below) |
+| `max_name_length` | int | `64` | Cap of a namespaced name, 24 to 64. Lower it when a client adds its own prefix and enforces 64 characters on the result |
+
+An invalid block (unknown mode, empty or malformed glob, `max_name_length`
+out of range) fails config loading; an invalid `--exposure` value fails
+`server run`.
+
+### Namespaced names
+
+A passthrough tool is named `<server>__<tool>` (two underscores). Every name
+matches `^[a-zA-Z0-9_-]{1,64}$`, the constraint of the Anthropic and OpenAI
+APIs and of most MCP clients. When `<server>__<tool>` would be longer than
+`max_name_length`, contains another character (a `.`, a space, a non-ASCII
+letter) or contains `__` inside the server or tool name (which would make the
+split ambiguous), the name is shortened deterministically: the invalid
+characters become `_`, the result is cut to fit, and a suffix `_` + 10 hex
+digits of SHA-256(`server` NUL `tool`) is appended — for example
+`rich__fetch_the_complete_quarterly_revenue_report_for_f6738de2a9`. The same
+tool always gets the same name, and the proxy maps it back to the upstream
+tool when it is called. The router's forms (`server_tool`, `server.tool`,
+`invoke_tool`) keep working in every mode, and a namespaced name sent by a
+router client is routed too.
+
+### Deferred-loading hints
+
+Researched for this release (September 2026):
+
+- **MCP** (up to revision 2025-11-25) defines no field that asks a client to
+  defer or eagerly load a tool.
+- **Anthropic API**: `defer_loading: true` is set by the *API caller* on a
+  tool definition (the client), not by an MCP server.
+- **OpenAI Responses API**: `defer_loading` is also set by the caller, on a
+  function, a namespace or a hosted MCP server tool.
+- **Claude Code** reads two vendor `_meta` keys on MCP tools:
+  `anthropic/alwaysLoad` (load this tool up front instead of deferring it)
+  and `anthropic/maxResultSizeChars`. Deferral is already its default.
+
+So LeanProxy invents no "defer" hint: capable clients defer on their own. It
+only emits the one documented convention, and only where it applies:
+
+- `_meta["anthropic/alwaysLoad"]` is **LeanProxy's decision**: it is set to
+  `true` on the tools matching `exposure.always_load` (use it for the few
+  tools needed on every turn), and an upstream's own `anthropic/alwaysLoad`
+  is dropped, so an upstream cannot force its whole catalog (or a poisoned
+  description) into every prompt. Every other `_meta` key, including
+  `anthropic/maxResultSizeChars`, is passed through.
+- Tool fields are only sent to a client whose negotiated protocol revision
+  defines them: `annotations` from 2025-03-26, `title`, `outputSchema` and
+  `_meta` from 2025-06-18, `icons` from 2025-11-25. `_meta` keys are
+  namespaced, and clients ignore the ones they do not know.
+
+### `tools/list_changed`
+
+A passthrough or hybrid session is told `capabilities.tools.listChanged:
+true` at `initialize` (a router session is not: its tools never change) and
+receives `notifications/tools/list_changed` when what it would list changes:
+an upstream's tool list changed (a `notifications/tools/list_changed` from
+the upstream, a restart, the background refresh), a tool was approved with
+`leanproxy-mcp tools pins approve` or became pending (the list is compared
+every 2 seconds while a passthrough session is open), or the policy's view
+changed. Changes within 200 ms are coalesced into one notification.
+
+### Security
+
+Passthrough changes how tools are *listed*, not what is enforced:
+
+- **Tool pinning** (#310): in `block` mode a pending tool is absent from
+  `tools/list` and its calls are refused, as in `list_tools` /
+  `search_tools`; in `warn` mode a changed tool is listed with its description
+  prefixed `[WARNING tool pinning: changed since approval]`. Invisible and
+  bidi characters are stripped from every listed field.
+- **Per-tool policy** (#314): a denied tool is absent in every mode, a
+  `confirm` tool's description starts with `[confirm]`, and a call to a name
+  the server does not advertise is refused (`unknown_tools: deny`).
+- **Every call** on a namespaced name is rewritten, before anything else,
+  into the canonical `server.tool` form, so the telemetry span, the response
+  governor, tool pinning, the policy, the response cache, redaction and the
+  injection guard see and decide it exactly as an `invoke_tool` call.
+
+### Front ends
+
+`server run --stdio` and `server run --http` behave identically (the
+`--exposure` flag applies to both; over HTTP each `Mcp-Session-Id` is one
+client session with its own mode, and `notifications/tools/list_changed` is
+sent on the session's GET stream). The deprecated `serve` reads the same
+`exposure:` block (it has no `--exposure` flag): a passthrough or hybrid
+session gets `tools/list` and namespaced calls exactly like `server run`,
+while a router session keeps `serve`'s own gateway, where `tools/list` is not
+answered (method not found), as before #322.
+
+### Cost
+
+Passthrough never makes the payload on the wire smaller: its `tools/list` is
+the whole catalog. It pays off when the client defers definitions itself. The
+`make harness` comparison is in
+[Benchmark Results](benchmark-results.md#10-exposure-modes-322).
+
 ## Tool Search (`search_tools`)
 
 `search_tools` is the recommended discovery path of `leanproxy-mcp server run

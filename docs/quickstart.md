@@ -229,6 +229,46 @@ claude mcp add --transport http leanproxy http://127.0.0.1:8765/mcp \
 Configure only one of the two entries per client. With both, the client
 would see every tool twice.
 
+#### Which exposure mode each IDE gets
+
+LeanProxy recognizes the client by the `clientInfo.name` it sends when it
+connects and picks how to show it the upstream tools
+([`exposure`](configuration.md#exposure-modes-exposure), #322):
+
+| IDE / client | Mode | What the model sees | Why |
+|---|---|---|---|
+| Claude Code | `passthrough` | Every upstream tool, as `<server>__<tool>` (e.g. `github__create_issue`) | Claude Code's MCP tool search (on by default) keeps only the tool names in context and loads a definition when it needs it, so LeanProxy lets it do the discovery and keeps the security layer |
+| Claude Desktop | `passthrough` | Same | Per-tool permissions and UI work on the real tools |
+| Cursor | `passthrough` | Same | Cursor discovers MCP tools dynamically |
+| VS Code (GitHub Copilot) | `passthrough` | Same | Its tool picker groups and selects tools per request |
+| Anything else (OpenCode, Zed, custom agents, ...) | `router` | 4 discovery tools: `search_tools`, `list_servers`, `list_tools`, `invoke_tool` | A client that puts every tool definition in context would pay for the whole catalog on every turn; the router loads schemas only when needed |
+
+In every mode the same security layers apply: redaction, the injection
+guard, tool pinning (a pending tool is hidden), the per-tool policy (a denied
+tool is hidden, a `confirm` tool is marked `[confirm]`) and the response
+governor.
+
+To force a mode for one IDE, add `--exposure` to that IDE's command, for
+example to keep Claude Code on the router:
+
+```bash
+claude mcp add leanproxy -- leanproxy-mcp server run --stdio --exposure router
+```
+
+Or set it per client name in the config (`exposure.clients`), which also
+covers the HTTP gateway, where every client shares one process:
+
+```yaml
+exposure:
+  clients:
+    - match: "claude-code"
+      mode: hybrid          # passthrough + search_tools
+```
+
+Note that Claude Code keeps its tool search on for LeanProxy: the "custom
+`ANTHROPIC_BASE_URL` disables tool search" rule is about the model API, not
+MCP servers.
+
 #### Migrating from `serve`
 
 `leanproxy-mcp serve` speaks newline-delimited JSON-RPC over raw TCP, which
@@ -284,13 +324,15 @@ The token firewall automatically redacts:
 
 ### Tool Naming
 
-When LeanProxy-MCP aggregates tools from multiple servers, each tool name is prefixed with the server name:
+When LeanProxy-MCP aggregates tools from multiple servers, each tool is named
+after its server:
 
-```
-serverName_toolName
-```
-
-For example, if you have a `github` server with a tool called `list_repos`, the full tool name would be `github_list_repos`.
+- in `router` mode (discovery tools), `search_tools` and `list_tools` show
+  `serverName_toolName` (e.g. `github_list_repos`), called with `invoke_tool`
+  or directly as `github_list_repos` / `github.list_repos`;
+- in `passthrough` and `hybrid` modes, `tools/list` names it
+  `serverName__toolName` (two underscores, e.g. `github__list_repos`), cut
+  to 64 characters with a hash suffix when needed.
 
 ### Tool Cache
 

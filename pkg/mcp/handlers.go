@@ -17,6 +17,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/internal/logx"
 	"github.com/mmornati/leanproxy-mcp/internal/version"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/exposure"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
@@ -100,6 +101,11 @@ type Handler struct {
 
 	// policy is the per-tool policy (see middleware_policy.go); nil: none.
 	policy atomic.Pointer[Policy]
+
+	// exposure decides each client's exposure mode (see exposure.go); nil:
+	// router for every client.
+	exposure      atomic.Pointer[exposure.Resolver]
+	exposureState exposureState
 }
 
 type AggregatedManifest struct {
@@ -276,11 +282,15 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 
 	negotiated := NegotiateProtocolVersion(params.ProtocolVersion)
 	upstream := h.upstreamFeatures(ctx)
+	// Exposure mode (#322): passthrough and hybrid list the upstream tools,
+	// whose list changes with the upstreams (and the pins), hence
+	// listChanged; router's discovery tools never change.
+	mode, decidedBy := h.exposureModeFor(params.ClientInfo)
 
 	result := InitializeResult{
 		ProtocolVersion: negotiated,
 		Capabilities: ServerCapabilities{
-			Tools: &ToolsCapability{ListChanged: false},
+			Tools: &ToolsCapability{ListChanged: mode.ListsUpstreamTools()},
 		},
 		ServerInfo: ServerInfo{
 			Name:    "leanproxy-mcp",
@@ -312,10 +322,11 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 	}
 
 	if s := h.sessionFor(ctx); s != nil {
-		s.setInitialized(negotiated, params, caps.Capabilities)
+		s.setInitialized(negotiated, params, caps.Capabilities, mode)
 	}
 	h.logger.Info("initialized leanproxy-mcp", "client", params.ClientInfo.Name, "version", params.ClientInfo.Version,
 		"requested_protocol", params.ProtocolVersion, "protocol", negotiated,
+		"exposure", string(mode), "exposure_decided_by", decidedBy,
 		"resources", upstream.resources, "prompts", upstream.prompts)
 
 	return &Response{
@@ -326,29 +337,36 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 }
 
 func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response, error) {
-	h.logger.Debug("tools/list request received, returning gateway tools only")
+	sess := h.sessionFor(ctx)
+	mode := h.ExposureMode(ctx)
 
-	// Annotations exist since 2025-03-26: an older client gets exactly the
-	// fields it knows.
-	annotate := h.sessionFor(ctx).AtLeast(ProtocolVersion20250326)
-	gatewayTools := make([]Tool, 0)
-	for _, def := range GetAllToolDefinitions() {
-		tool := Tool{
-			Name:        def.Name,
-			Description: def.Description,
-			InputSchema: def.InputSchema,
+	var tools []Tool
+	switch mode {
+	case exposure.ModePassthrough, exposure.ModeHybrid:
+		// Every upstream tool the security layers let the client see
+		// (#322); hybrid adds search_tools (read_result is added by the
+		// response governor while it is on, in every mode).
+		if mode == exposure.ModeHybrid {
+			if def := GetToolDefinition("search_tools"); def != nil {
+				search := *def
+				search.Description = hybridSearchDescription
+				tools = append(tools, gatewayTool(search, sess))
+			}
 		}
-		if annotate && def.ReadOnly {
-			readOnly := true
-			tool.Annotations = &ToolAnnotations{ReadOnlyHint: &readOnly}
+		tools = append(tools, h.passthroughTools(ctx)...)
+	default:
+		// Router: the gateway tools only. Annotations exist since
+		// 2025-03-26: an older client gets exactly the fields it knows.
+		for _, def := range GetAllToolDefinitions() {
+			tools = append(tools, gatewayTool(def, sess))
 		}
-		gatewayTools = append(gatewayTools, tool)
+	}
+	if tools == nil {
+		tools = []Tool{}
 	}
 
-	result := ToolsListResult{Tools: gatewayTools}
-	resultBytes, _ := json.Marshal(result)
-
-	h.logger.Info("gateway tools sent to client", "count", len(gatewayTools))
+	resultBytes, _ := json.Marshal(ToolsListResult{Tools: tools})
+	h.logger.Info("tools/list sent to client", "exposure", string(mode), "count", len(tools))
 
 	return &Response{
 		JSONRPC: JSONRPCVersion,
@@ -580,7 +598,7 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 
 	formattedTools := make([]string, 0, len(tools))
 	for _, tool := range tools {
-		formatted := formatToolMarked(tool, serverName, maxDescChars, confirm[tool.Name])
+		formatted := formatToolMarkedAs(tool, h.exposedToolName(ctx, serverName, tool.Name), maxDescChars, confirm[tool.Name])
 		formattedTools = append(formattedTools, formatted)
 	}
 
@@ -1003,17 +1021,16 @@ func parseInputSchema(schema json.RawMessage) (required, optional []ParamInfo) {
 }
 
 func formatToolSearchResult(serverName, toolName, description string, required, optional []ParamInfo, maxDescChars int) string {
-	return formatToolLine(serverName, toolName, "", description, required, optional, maxDescChars)
+	return formatToolLine(serverName+"_"+toolName, "", description, required, optional, maxDescChars)
 }
 
-// formatToolLine renders one tool as `server_tool [tags]: description
-// [required] {optional}`. tags is the compact annotation marker
-// (annotationTags), or "".
-func formatToolLine(serverName, toolName, tags, description string, required, optional []ParamInfo, maxDescChars int) string {
+// formatToolLine renders one tool as `name [tags]: description [required]
+// {optional}`, name being how the client calls it (server_tool, or the
+// namespaced name in passthrough and hybrid). tags is the compact
+// annotation marker (annotationTags), or "".
+func formatToolLine(name, tags, description string, required, optional []ParamInfo, maxDescChars int) string {
 	var sb strings.Builder
-	sb.WriteString(serverName)
-	sb.WriteString("_")
-	sb.WriteString(toolName)
+	sb.WriteString(name)
 	if tags != "" {
 		sb.WriteString(" ")
 		sb.WriteString(tags)
@@ -1057,12 +1074,18 @@ func formatTool(tool Tool, serverName string, maxDescChars int) string {
 // formatToolMarked is formatTool with the "[confirm]" marker of a tool the
 // per-tool policy (#314) asks the user about before each call.
 func formatToolMarked(tool Tool, serverName string, maxDescChars int, confirm bool) string {
+	return formatToolMarkedAs(tool, serverName+"_"+tool.Name, maxDescChars, confirm)
+}
+
+// formatToolMarkedAs is formatToolMarked with the name the client calls
+// the tool by.
+func formatToolMarkedAs(tool Tool, name string, maxDescChars int, confirm bool) string {
 	required, optional := parseInputSchema(tool.InputSchema)
 	tags := annotationTags(tool)
 	if confirm {
 		tags = strings.TrimSpace(tags + " [confirm]")
 	}
-	return formatToolLine(serverName, tool.Name, tags, tool.Description, required, optional, maxDescChars)
+	return formatToolLine(name, tags, tool.Description, required, optional, maxDescChars)
 }
 
 // annotationTags is the compact text form of a tool's behavior hints shown

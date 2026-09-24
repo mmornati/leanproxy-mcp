@@ -86,6 +86,8 @@ flowchart LR
 
 LeanProxy sits between your IDE and MCP servers as a smart gateway. It loads tool schemas **only when needed** — reducing the schema tax to a single 318-token router payload (4 tools: `search_tools`, `list_servers`, `list_tools`, `invoke_tool`). The model finds a tool across every server with one `search_tools` call, then runs it with `invoke_tool`.
 
+**Clients with native tool search get the tools directly.** Claude Code, Claude Desktop, Cursor and VS Code already defer and search large tool lists themselves, so LeanProxy lists every upstream tool for them as `<server>__<tool>` (passthrough mode) and stays the aggregation and security layer: pinning, per-tool policy, redaction, the injection guard and the response governor still apply to every listed tool and every call. Any other client gets the router. Which IDE gets which mode, and why: [Quick Start](docs/quickstart.md#which-exposure-mode-each-ide-gets); the measured trade-off: [benchmark §10](docs/benchmark-results.md#10-exposure-modes-322).
+
 ```mermaid
 flowchart LR
     IDE["Your IDE"] --> Gateway["LeanProxy Gateway"]
@@ -162,6 +164,7 @@ This table counts only the static schema load. LeanProxy fetches tools on demand
 |:--------|:--------|
 | 🛡️ **Token Firewall** | Redacts secrets in tool arguments and responses (on by default) and screens calls for prompt injection — in both `server run --stdio` and `serve` |
 | ⚡ **JIT Schema Loading** | Tool schemas load only when actually called — not on every request |
+| 🔎 **Works With Native Tool Search** | Passthrough mode for clients that defer tools themselves (Claude Code, Cursor, VS Code, Claude Desktop): every tool listed as `<server>__<tool>` with full metadata and `tools/list_changed`, every security layer still applied; `--exposure` or `exposure:` to choose per client ([docs](docs/configuration.md#exposure-modes-exposure)) |
 | ✂️ **Response Token Governor** | Opt-in: drops unneeded JSON fields per tool (`keep`/`drop` projection rules, a default noise pack, or the model's `fields` argument), caps large tool results (smart head/tail truncation, structural JSON truncation), dedups a result byte-identical to one already seen this session (never across sessions), and can hand a still-oversized result to a local Ollama model for summarization (falls back to truncation on any failure) — keeps the full result per session for paged `read_result` / `grep` / `jsonpath` retrieval — −92% on a large-results session, −72% from projection alone on a GitHub issue listing, −74% on a repeated-reads session ([docs](docs/configuration.md#response-token-governor-response)) |
 | 🔄 **Connection Pooling** | HTTP MCP clients reuse connections; concurrent calls to a stdio server are multiplexed over its single pipe |
 | 📦 **Multi-Transport** | Supports stdio, HTTP, and SSE transport protocols |

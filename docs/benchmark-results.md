@@ -455,7 +455,64 @@ summary and a `read_result` pointer, falling back to truncation on a
 timeout or an error, and the summary being run back through the injection
 guard's response scan before being returned.
 
-## 10. Known limits and follow-ups
+## 10. Exposure modes (#322)
+
+Clients with native tool search (Claude Code, `clientInfo.name`
+`claude-code`) get **passthrough** by default: every upstream tool listed as
+`<server>__<tool>` with its full metadata, instead of LeanProxy's 4-tool
+router (see [Configuration](configuration.md#exposure-modes-exposure)). The
+harness initializes `server run --stdio` as `claude-code` over the same
+118-tool catalog, checks that every tool is listed under a valid name and that
+every replayed session call routes by its namespaced name, and compares the
+token cost with the router's `search_tools` flow (§4.5).
+
+| Payload | Tokens |
+|---|---:|
+| Native: every server's own `tools/list`, summed | 10,049 |
+| Router `tools/list` (4 gateway tools) | 318 |
+| Passthrough `tools/list` (every tool, namespaced, full metadata) | 10,229 (+1.8% vs native) |
+| Hybrid `tools/list` (passthrough + `search_tools`) | 10,333 |
+| Passthrough names only (what a deferring client keeps in context) | 754 |
+| One tool's full definition, loaded on first use: average | 87 |
+| Call request line: `invoke_tool` envelope / namespaced name | 50 / 38 |
+
+Session model: the same three sessions and 0.25× cache-read rate as §4.5,
+tool results excluded. **Router** is the `search_tools` column of §4.5.
+**Passthrough, deferred** models what Claude Code does with a large tool
+list: the 118 names are in context from turn 1, and a tool's full definition
+is loaded (at 1×, then carried at 0.25×) the first time it is used, with one
+client-side search turn. The client's own search tool definition and search
+requests are **not** counted (they exist with or without LeanProxy).
+**Passthrough, eager** is a client that loads the whole list every turn.
+
+| Session | Native | Router (`search_tools`) | Passthrough, deferred | Deferred vs router | Deferred loads (extra turns) | Passthrough, eager |
+|---|---:|---:|---:|---:|---:|---:|
+| Morning Sport (4 prompts) | 17,586 | 1,148 | 1,686 | **+46.9% (more tokens)** | +4 | 17,901 (+1.8% vs native) |
+| Dev Workflow (5 prompts) | 20,098 | 3,143 | 2,460 | −21.7% | +5 | 20,458 (+1.8% vs native) |
+| Full Day (7 prompts) | 25,123 | 8,793 | 3,089 | −64.9% | +7 | 25,573 (+1.8% vs native) |
+
+What this says, honestly:
+
+- **Passthrough never shrinks the wire payload.** Its `tools/list` is the
+  whole catalog, 1.8% more than the native lists (the `<server>__` prefixes),
+  sent once per session and again after each `tools/list_changed`. What a
+  capable client pays is decided by the client, not by LeanProxy.
+- **With deferral, it wins on longer sessions and loses on short ones.** A
+  deferring client carries 754 tokens of names from turn 1, more than the
+  318-token router; a tool definition then costs 87 tokens on average,
+  versus a ranked `search_tools` answer of about 150 tokens (§4.2) and, on a
+  miss, a `list_tools` fallback. Morning Sport (4 prompts, all found by the
+  first search) is 47% cheaper on the router; Full Day, where 3 of 7
+  searches miss, is 65% cheaper in passthrough. These numbers depend on the
+  client's own search quality, which the harness does not measure.
+- **Without deferral, passthrough costs what native MCP costs.** That is why
+  unknown clients stay on the router, and why the built-in table only maps
+  clients known to defer or select tools themselves. `--exposure router`
+  (or `exposure.clients`) keeps any client on the router.
+- Calls are cheaper to write in passthrough (38 vs 50 tokens for the same
+  `create_issue` call): no `invoke_tool` envelope.
+
+## 11. Known limits and follow-ups
 
 - **`search_tools`.** The audit prototype estimated about −92% for Full
   Day; the harness measures −65.0%, because 3 of Full Day's 7 queries miss

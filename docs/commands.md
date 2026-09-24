@@ -336,6 +336,7 @@ leanproxy-mcp server run --http 127.0.0.1:8765 [flags]
 | `--no-auth` | bool | false | Serve `--http` without a token. Only allowed on a loopback address (`127.0.0.0/8`, `::1`, `localhost`); `server run` refuses to start otherwise. Logs a warning |
 | `--http-allowed-hosts` | strings | (none) | Extra `Host` header values accepted, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]`. Added to `server.http.allowed_hosts` |
 | `--http-allowed-origins` | strings | (none) | Browser origins (`https://app.example`) allowed to call the endpoint. Added to `server.http.allowed_origins` |
+| `--exposure` | string | `""` | Force how the upstream tools are exposed to every client: `router`, `passthrough` or `hybrid`. Default: per client, from its `clientInfo.name` (see [`exposure`](configuration.md#exposure-modes-exposure)) |
 | `--config` | string | `~/.config/leanproxy_servers.yaml` | Path to config file |
 | `--log-file` | string | "" | Path to log file |
 | `--log-level` | string | `info` | Log level (debug, info, warn, error) |
