@@ -78,6 +78,8 @@ type instrumentSet struct {
 	inFlightRequests metric.Int64UpDownCounter
 	governorTokens   metric.Int64Counter
 	governorTrunc    metric.Int64Counter
+	governorProj     metric.Int64Counter
+	governorProjTok  metric.Int64Counter
 }
 
 func instruments() *instrumentSet {
@@ -112,6 +114,10 @@ func instruments() *instrumentSet {
 			metric.WithDescription("Estimated tokens of tool results seen by the response governor (#319), by direction (original, returned) and server."))
 		inst.governorTrunc, _ = m.Int64Counter("leanproxy.governor.truncations",
 			metric.WithDescription("Tool results the response governor shortened and spilled (#319), by server."))
+		inst.governorProj, _ = m.Int64Counter("leanproxy.governor.projections",
+			metric.WithDescription("Tool results the response governor projected (#320), by server."))
+		inst.governorProjTok, _ = m.Int64Counter("leanproxy.governor.projection.tokens",
+			metric.WithDescription("Estimated tokens of the projected parts of tool results (#320), by direction (before, after) and server."))
 		inst.inFlightRequests, _ = m.Int64UpDownCounter("mcp.server.requests.in_flight",
 			metric.WithDescription("Requests currently in flight, by server."))
 	})
@@ -160,6 +166,8 @@ type telemetryCounters struct {
 	governed        atomic.Int64
 	governorTrunc   atomic.Int64
 	governorSaved   atomic.Int64
+	governorProj    atomic.Int64
+	governorProjSav atomic.Int64
 }
 
 // TelemetryCounters is the plain-value snapshot pkg/metrics exposes on the
@@ -180,6 +188,10 @@ type TelemetryCounters struct {
 	GovernedResults     int64 `json:"governor_results_total"`
 	GovernorTruncations int64 `json:"governor_truncations_total"`
 	GovernorTokensSaved int64 `json:"governor_tokens_saved_total"`
+	// Field projection (#320): results projected, and estimated tokens
+	// the projection removed (part of GovernorTokensSaved).
+	GovernorProjections           int64 `json:"governor_projections_total"`
+	GovernorProjectionTokensSaved int64 `json:"governor_projection_tokens_saved_total"`
 }
 
 // TelemetrySnapshot returns the current counters. Safe for concurrent use.
@@ -199,6 +211,9 @@ func TelemetrySnapshot() TelemetryCounters {
 		GovernedResults:     counters.governed.Load(),
 		GovernorTruncations: counters.governorTrunc.Load(),
 		GovernorTokensSaved: counters.governorSaved.Load(),
+
+		GovernorProjections:           counters.governorProj.Load(),
+		GovernorProjectionTokensSaved: counters.governorProjSav.Load(),
 	}
 }
 
@@ -260,6 +275,24 @@ func RecordGovernedResult(ctx context.Context, server string, original, returned
 	if truncated {
 		i.governorTrunc.Add(ctx, 1, metric.WithAttributes(srv))
 	}
+}
+
+// RecordProjection records one tool result the response governor projected
+// (#320): the estimated tokens of its projected parts before and after.
+// Only token counts and the server name are recorded, never the result.
+func RecordProjection(ctx context.Context, server string, before, after int64) {
+	counters.governorProj.Add(1)
+	if saved := before - after; saved > 0 {
+		counters.governorProjSav.Add(saved)
+	}
+	if !telemetryActive.Load() {
+		return
+	}
+	i := instruments()
+	srv := attrMCPServerName.String(server)
+	i.governorProj.Add(ctx, 1, metric.WithAttributes(srv))
+	i.governorProjTok.Add(ctx, before, metric.WithAttributes(attribute.String("direction", "before"), srv))
+	i.governorProjTok.Add(ctx, after, metric.WithAttributes(attribute.String("direction", "after"), srv))
 }
 
 // RecordRateLimitWait increments the rate-limit-wait counter.

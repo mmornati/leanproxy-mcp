@@ -51,6 +51,34 @@ response:
 	}
 }
 
+func TestLoadConfigResponseProjections(t *testing.T) {
+	cfg, err := loadYAML(t, `
+servers: []
+response:
+  enabled: true
+  default_projections: true
+  projections:
+    - match: "github.list_issues"
+      keep: ["[].number", "[].title", "[].labels[].name"]
+    - match: "github.*"
+      drop: ["**.node_id", "**.*_url"]
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := cfg.Response
+	if r == nil || !r.DefaultProjections || len(r.Projections) != 2 || len(r.Projections[0].Keep) != 3 {
+		t.Fatalf("response block = %+v", r)
+	}
+	ps := r.CompileProjections()
+	if p, ok := ps.For("github.search_code"); !ok || p.Rule != "github.*" {
+		t.Errorf("github.search_code projection = %+v, %v", p, ok)
+	}
+	if p, ok := ps.For("jira.search"); !ok || p.Rule != "default_projections" {
+		t.Errorf("jira.search projection = %+v, %v", p, ok)
+	}
+}
+
 func TestLoadConfigResponseGovernorAbsentIsOff(t *testing.T) {
 	cfg, err := loadYAML(t, "servers: []\n")
 	if err != nil {
@@ -68,6 +96,9 @@ func TestLoadConfigResponseGovernorRejected(t *testing.T) {
 		"bad glob":        "response:\n  tools:\n    - match: \"a[\"\n",
 		"bad ttl":         "response:\n  spill:\n    ttl: forever\n",
 		"relative dir":    "response:\n  spill:\n    dir: results\n",
+		"keep and drop":   "response:\n  projections:\n    - match: \"gh.*\"\n      keep: [\"a\"]\n      drop: [\"b\"]\n",
+		"bad path":        "response:\n  projections:\n    - match: \"gh.*\"\n      drop: [\"**\"]\n",
+		"no match":        "response:\n  projections:\n    - drop: [\"a\"]\n",
 	} {
 		_, err := loadYAML(t, "servers: []\n"+block)
 		if err == nil || !strings.Contains(err.Error(), "response.") {

@@ -1,16 +1,19 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/governor"
 )
@@ -39,12 +42,15 @@ import (
 //     answered from the spill store before any other stage: they only
 //     return data that already went through all of them.
 //
-// Later stories hook in here: field projection (#320) runs on the same
-// parsed result before the budget is applied (see shortenResult), and
-// in-session dedup (#321) reuses the spill store and read_result.
+// Field projection (#320) runs on the same parsed result, before the budget
+// is applied (see shortenResult): it too only sees redacted, scanned
+// content, and whatever it leaves out stays retrievable in full through
+// read_result. In-session dedup (#321) can reuse the spill store and
+// read_result the same way.
 type Governor struct {
-	cfg   *governor.Config
-	store *governor.Store
+	cfg         *governor.Config
+	store       *governor.Store
+	projections *governor.Projections
 
 	handler atomic.Pointer[Handler]
 	servers atomic.Pointer[func() []string]
@@ -103,6 +109,7 @@ func NewGovernor(cfg *governor.Config) *Governor {
 	if g.store == nil {
 		g.store = governor.NewMemoryStore(cfg.TTLValue(), cfg.MaxBytesValue())
 	}
+	g.projections = cfg.CompileProjections()
 	g.stopJanitor = make(chan struct{})
 	go g.janitor()
 	return g
@@ -122,8 +129,8 @@ func (g *Governor) Summary() string {
 	if d := g.store.Dir(); d != "" {
 		where = "disk (" + d + ")"
 	}
-	return fmt.Sprintf("response governor enabled: max_tokens %d, %d tool rules, spill to %s, ttl %s",
-		g.cfg.GlobalMaxTokens(), len(g.cfg.Tools), where, g.store.TTL())
+	return fmt.Sprintf("response governor enabled: max_tokens %d, %d tool rules, %d projection rules (default pack %s), spill to %s, ttl %s",
+		g.cfg.GlobalMaxTokens(), len(g.cfg.Tools), g.projections.Len(), onOff(g.projections.Default()), where, g.store.TTL())
 }
 
 // SetServerNames tells the governor which servers exist, to split
@@ -228,6 +235,10 @@ func (g *Governor) Middleware() Middleware {
 				}
 			}
 
+			// invoke_tool's fields argument is the proxy's: it is taken
+			// out here and never reaches any later stage or the upstream.
+			req, fields := takeFields(req)
+
 			resp, err := next(ctx, req)
 			if resp == nil || resp.Error != nil || len(resp.Result) == 0 {
 				return resp, err
@@ -239,7 +250,7 @@ func (g *Governor) Middleware() Middleware {
 				resp.Result = g.withReadResultTool(ctx, resp.Result)
 			default:
 				if server, tool, _, _, ok := callTarget(req, g.serverNames); ok {
-					g.govern(ctx, server, tool, resp)
+					g.govern(ctx, server, tool, resp, fields)
 				}
 			}
 			return resp, err
@@ -247,27 +258,148 @@ func (g *Governor) Middleware() Middleware {
 	}
 }
 
-// govern applies the tool's budget to a tools/call response in place.
-func (g *Governor) govern(ctx context.Context, server, tool string, resp *Response) {
+// govern applies the tool's projection and budget to a tools/call response
+// in place. fields is invoke_tool's fields argument (nil when absent).
+func (g *Governor) govern(ctx context.Context, server, tool string, resp *Response, fields json.RawMessage) {
 	identity := cacheIdentity(server, tool)
 	budget := g.cfg.BudgetFor(identity)
+	proj := g.projectionFor(identity, budget, fields)
 	before := len(resp.Result)
-	if !budget.Limited() || before <= budget.MaxTokens*governor.BytesPerToken {
-		// Fast path: the whole result fits (or the tool is not governed);
-		// nothing is parsed.
-		g.account(ctx, server, identity, before, before, 0, 0)
+	limit := 0
+	if budget.Limited() {
+		limit = budget.MaxTokens * governor.BytesPerToken
+	}
+	if proj == nil && (limit == 0 || before <= limit) {
+		// Fast path: nothing to project and the whole result fits (or
+		// the tool is not governed); nothing is parsed.
+		g.account(ctx, server, identity, governedResult{before: before, after: before})
 		return
 	}
-	out, spilled, err := g.shortenResult(ctx, server, tool, resp.Result, budget.MaxTokens*governor.BytesPerToken)
+	res, err := g.shortenResult(ctx, server, tool, resp.Result, limit, proj)
 	if err != nil {
 		slog.Warn("response governor: result passed through unchanged", "tool", identity, "error", err)
 	}
-	if out == nil {
-		g.account(ctx, server, identity, before, before, 0, 0)
+	if res.out == nil {
+		g.account(ctx, server, identity, governedResult{before: before, after: before})
 		return
 	}
-	resp.Result = out
-	g.account(ctx, server, identity, before, len(out), 1, spilled)
+	resp.Result = res.out
+	res.before, res.after = before, len(res.out)
+	g.account(ctx, server, identity, res)
+}
+
+// projectionFor is the projection of one call: the model's fields (a
+// one-off keep), else the first matching response.projections rule or the
+// default pack, unless the tool is passthrough. nil means none.
+func (g *Governor) projectionFor(identity string, budget governor.Budget, fields json.RawMessage) *governor.RuleProjection {
+	if fields != nil {
+		paths, err := parseFields(fields)
+		if err == nil {
+			var p *governor.Projection
+			if p, err = governor.CompileProjection(paths, nil); err == nil {
+				return &governor.RuleProjection{Projection: p, Rule: "fields"}
+			}
+		}
+		// Safety (#320): a bad fields argument leaves the result as is.
+		slog.Debug("response governor: fields argument ignored", "tool", identity, "error", err)
+		return nil
+	}
+	if budget.Passthrough {
+		return nil
+	}
+	if rp, ok := g.projections.For(identity); ok {
+		return &rp
+	}
+	return nil
+}
+
+// parseFields reads invoke_tool's fields argument: a list of paths, or
+// one string of comma-separated paths.
+func parseFields(raw json.RawMessage) ([]string, error) {
+	var paths []string
+	if err := json.Unmarshal(raw, &paths); err != nil {
+		var one string
+		if json.Unmarshal(raw, &one) != nil {
+			return nil, fmt.Errorf("fields must be a list of paths")
+		}
+		paths = strings.Split(one, ",")
+	}
+	out := paths[:0]
+	for _, p := range paths {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("fields is empty")
+	}
+	return out, nil
+}
+
+// fieldsArg is invoke_tool's proxy-side argument.
+const fieldsArg = `"fields"`
+
+// takeFields returns req without invoke_tool's fields argument, and that
+// argument (nil when absent). It looks at the two invoke_tool forms: the
+// tools/call envelope ({"name":"invoke_tool","arguments":{...,"fields":…}})
+// and serve's method form (method invoke_tool, fields in params). req is
+// not modified: a copy carries the new params, and every other byte of
+// the params is kept (the tool's own arguments travel byte for byte).
+func takeFields(req *Request) (*Request, json.RawMessage) {
+	if len(req.Params) == 0 || !bytes.Contains(req.Params, []byte(fieldsArg)) {
+		return req, nil
+	}
+	params, err := governor.SplitObject(req.Params)
+	if err != nil {
+		return req, nil
+	}
+	var fields json.RawMessage
+	switch req.Method {
+	case MethodToolsCall:
+		nameAt, argsAt := -1, -1
+		for i, m := range params {
+			switch string(m.Key) {
+			case `"name"`:
+				nameAt = i
+			case `"arguments"`:
+				argsAt = i
+			}
+		}
+		if nameAt < 0 || argsAt < 0 || string(params[nameAt].Value) != `"`+invokeToolGatewayName+`"` {
+			return req, nil
+		}
+		args, err := governor.SplitObject(params[argsAt].Value)
+		if err != nil {
+			return req, nil
+		}
+		if args, fields = withoutMember(args, fieldsArg); fields == nil {
+			return req, nil
+		}
+		params[argsAt].Value = joinObject(args)
+	case invokeToolGatewayName:
+		if params, fields = withoutMember(params, fieldsArg); fields == nil {
+			return req, nil
+		}
+	default:
+		return req, nil
+	}
+	out := *req
+	out.Params = joinObject(params)
+	if string(fields) == "null" {
+		return &out, nil // "fields": null is no fields
+	}
+	return &out, fields
+}
+
+// withoutMember removes the member named key (a raw JSON string) and
+// returns its value (nil when absent).
+func withoutMember(members []governor.Member, key string) ([]governor.Member, json.RawMessage) {
+	for i, m := range members {
+		if string(m.Key) == key {
+			return append(members[:i:i], members[i+1:]...), json.RawMessage(m.Value)
+		}
+	}
+	return members, nil
 }
 
 // resultUnit is one piece of a tool result the budget applies to: a text
@@ -279,24 +411,44 @@ type resultUnit struct {
 	kind    governor.Kind
 	out     []byte // shortened data (nil: kept whole)
 	id      string
+
+	// Field projection (#320): the result id of the full, unprojected
+	// data (empty: not projected) and its size.
+	projectedID   string
+	projectedFrom int
 }
 
 // resourceLinkReserve is the budget kept, per shortened unit, for its
 // resource_link content item.
 const resourceLinkReserve = 256
 
-// shortenResult shortens a tools/call result that is over budget bytes.
-// It returns nil (keep the result as is) for an error result, a result
-// with nothing to shorten, or when a spilled copy cannot be stored: a
-// result is never cut without its full copy being retrievable.
+// governedResult is what the governor did to one result: shortenResult
+// fills it, govern adds the sizes, account records it.
+type governedResult struct {
+	before, after int // bytes of the result JSON before and after
+
+	out       json.RawMessage // nil: keep the result as is
+	truncated int             // units shortened and spilled
+	projected int             // units projected
+	removed   int             // members left out by the projection
+	// Wire bytes of the projected units before and after projection.
+	projBefore, projAfter int
+}
+
+// shortenResult projects (proj, may be nil) and then shortens (budget
+// bytes, 0 for no budget) a tools/call result. out is nil (keep the result
+// as is) for an error result, a result with nothing to project or shorten,
+// or when a full copy cannot be stored: a result is never cut, nor
+// projected, without its full copy being retrievable.
 //
 // The result is valid JSON (the front end decoded it); it is split with
 // the governor's scanner, never fully decoded, and every member the
-// governor does not shorten is written back byte for byte, in order.
-func (g *Governor) shortenResult(ctx context.Context, server, tool string, result json.RawMessage, budget int) (json.RawMessage, int, error) {
+// governor does not change is written back byte for byte, in order.
+func (g *Governor) shortenResult(ctx context.Context, server, tool string, result json.RawMessage, budget int, proj *governor.RuleProjection) (governedResult, error) {
+	var none governedResult
 	body, err := governor.SplitObject(result)
 	if err != nil {
-		return nil, 0, nil
+		return none, nil
 	}
 	member := func(key string) int {
 		for i, m := range body {
@@ -307,13 +459,13 @@ func (g *Governor) shortenResult(ctx context.Context, server, tool string, resul
 		return -1
 	}
 	if i := member("isError"); i >= 0 && string(body[i].Value) == "true" {
-		return nil, 0, nil // never shorten an error result
+		return none, nil // never project or shorten an error result
 	}
 	contentAt := member("content")
 	var content [][]byte
 	if contentAt >= 0 && string(body[contentAt].Value) != "null" {
 		if content, err = governor.SplitArray(body[contentAt].Value); err != nil {
-			return nil, 0, nil
+			return none, nil
 		}
 	}
 
@@ -355,81 +507,285 @@ func (g *Governor) shortenResult(ctx context.Context, server, tool string, resul
 		v := body[structAt].Value
 		units = append(units, &resultUnit{content: -1, data: v, wire: len(v), kind: governor.KindJSON})
 	}
+
+	sess := g.session(ctx)
+	var res governedResult
+	// Field projection (#320), before the budget.
+	if proj != nil {
+		if err := g.projectUnits(ctx, sess, server, tool, units, proj, &res); err != nil {
+			return none, err
+		}
+	}
+
 	sizes := make([]int, len(units))
 	total := 0
 	for i, u := range units {
 		sizes[i] = u.wire
 		total += u.wire
 	}
-	if total <= budget {
-		return nil, 0, nil
-	}
-
-	sess := g.session(ctx)
+	var spilled []*resultUnit
 	links := sess.AtLeast(ProtocolVersion20250618)
-	// 5% of the budget covers the envelope; resource links get their own
-	// reserve.
-	avail := budget * 95 / 100
-	if links {
-		over := 0
-		for _, s := range sizes {
-			if s > avail/len(units) {
-				over++
+	if budget > 0 && total > budget {
+		// 5% of the budget covers the envelope (and the projection
+		// note); resource links get their own reserve.
+		avail := budget * 95 / 100
+		if res.projected > 0 {
+			avail -= projectionNoteReserve
+		}
+		if links {
+			over := 0
+			for _, s := range sizes {
+				if s > avail/len(units) {
+					over++
+				}
 			}
+			avail -= (over + res.projected) * resourceLinkReserve
 		}
-		avail -= over * resourceLinkReserve
-	}
-	alloc := governor.WaterFill(sizes, avail)
-
-	// Field projection (#320) will run here, on units, before the budget.
-
-	spilled := make([]*resultUnit, 0, len(units))
-	for i, u := range units {
-		if sizes[i] <= alloc[i] {
-			continue
+		alloc := governor.WaterFill(sizes, max(avail, 0))
+		spilled = make([]*resultUnit, 0, len(units))
+		for i, u := range units {
+			if sizes[i] <= alloc[i] {
+				continue
+			}
+			meta, err := g.store.Put(owner(sess), governor.Meta{Server: server, Tool: tool, Kind: u.kind}, u.data)
+			if err != nil {
+				// Units spilled before this one just expire with the TTL.
+				if res.projected > 0 {
+					// The projection stands on its own: keep it,
+					// unshortened.
+					slog.Debug("response governor: projected result not shortened", "tool", cacheIdentity(server, tool), "error", err)
+					for _, v := range spilled {
+						v.out, v.id = nil, ""
+					}
+					spilled = nil
+					break
+				}
+				return none, fmt.Errorf("spill: %w", err)
+			}
+			u.id = meta.ID
+			// From wire bytes back to the unit's own bytes (escaping).
+			u.out = shortenUnit(u, int(int64(alloc[i])*int64(len(u.data))/int64(max(u.wire, 1))))
+			spilled = append(spilled, u)
 		}
-		meta, err := g.store.Put(owner(sess), governor.Meta{Server: server, Tool: tool, Kind: u.kind}, u.data)
-		if err != nil {
-			// Units spilled before this one just expire with the TTL.
-			return nil, 0, fmt.Errorf("spill: %w", err)
-		}
-		u.id = meta.ID
-		// From wire bytes back to the unit's own bytes (escaping).
-		u.out = shortenUnit(u, int(int64(alloc[i])*int64(len(u.data))/int64(max(u.wire, 1))))
-		spilled = append(spilled, u)
 	}
-	if len(spilled) == 0 {
-		return nil, 0, nil
+	if len(spilled) == 0 && res.projected == 0 {
+		return none, nil
 	}
-
 	for _, u := range spilled {
-		if u.content < 0 {
-			body[structAt].Value = u.out
+		u.data = u.out
+	}
+
+	for _, u := range units {
+		if u.out == nil && u.projectedID == "" {
 			continue
 		}
-		item, err := replaceText(content[u.content], textAt[u.content], string(u.out))
+		if u.content < 0 {
+			body[structAt].Value = u.data
+			continue
+		}
+		item, err := replaceText(content[u.content], textAt[u.content], string(u.data))
 		if err != nil {
-			return nil, 0, err
+			return none, err
 		}
 		content[u.content] = item
 	}
+	if res.projected > 0 {
+		note, err := governor.MarshalNoEscape(map[string]string{"type": "text", "text": projectionNote(units, server, tool, proj, res)})
+		if err != nil {
+			return none, err
+		}
+		content = append(content, note)
+	}
 	if links {
+		linked := make(map[string]bool)
+		for _, u := range units {
+			if u.projectedID == "" || linked[u.projectedID] {
+				continue
+			}
+			linked[u.projectedID] = true
+			link, err := projectionLink(u, server, tool)
+			if err != nil {
+				return none, err
+			}
+			content = append(content, link)
+		}
 		for _, u := range spilled {
 			link, err := resultLink(u, server, tool)
 			if err != nil {
-				return nil, 0, err
+				return none, err
 			}
 			content = append(content, link)
 		}
 	}
 	if contentAt >= 0 {
 		body[contentAt].Value = joinArray(content)
+	} else if len(content) > 0 {
+		body = append(body, governor.Member{Key: []byte(`"content"`), Value: joinArray(content)})
 	}
 	out := joinObject(body)
 	if !json.Valid(out) {
-		return nil, 0, fmt.Errorf("shortened result is not valid JSON")
+		return none, fmt.Errorf("governed result is not valid JSON")
 	}
-	return out, len(spilled), nil
+	res.out = out
+	res.truncated = len(spilled)
+	return res, nil
+}
+
+// projectionNoteReserve is the budget kept for the projection note.
+const projectionNoteReserve = 400
+
+// projectUnits applies proj to the JSON units, in place. A unit whose full
+// copy cannot be stored is left as is. structuredContent is only projected
+// when the tool declares no outputSchema: a projected structuredContent
+// could fail a strict schema's validation (required members dropped), so
+// with a schema only the text rendering is projected.
+func (g *Governor) projectUnits(ctx context.Context, sess *ClientSession, server, tool string, units []*resultUnit, proj *governor.RuleProjection, res *governedResult) error {
+	schemaChecked, schema := false, false
+	byData := make(map[string]string) // full data → its result id (text and structuredContent are often the same JSON)
+	for _, u := range units {
+		if u.kind != governor.KindJSON {
+			continue // non-JSON text is left to truncation
+		}
+		if u.content < 0 {
+			if !schemaChecked {
+				schemaChecked, schema = true, g.declaresOutputSchema(ctx, server, tool)
+			}
+			if schema {
+				continue
+			}
+		}
+		out, stats, changed, err := proj.ApplyValid(u.data)
+		if err != nil {
+			slog.Debug("response governor: projection skipped", "tool", cacheIdentity(server, tool), "rule", proj.Rule, "error", err)
+			continue
+		}
+		if !changed {
+			continue
+		}
+		key := string(bytes.TrimSpace(u.data))
+		id, ok := byData[key]
+		if !ok {
+			meta, err := g.store.Put(owner(sess), governor.Meta{Server: server, Tool: tool, Kind: governor.KindJSON}, u.data)
+			if err != nil {
+				// Never project without a retrievable full copy.
+				slog.Debug("response governor: projection skipped, full result not stored", "tool", cacheIdentity(server, tool), "error", err)
+				continue
+			}
+			id = meta.ID
+			byData[key] = id
+		}
+		wire := len(out)
+		if u.content >= 0 {
+			encoded, err := governor.MarshalNoEscape(string(out))
+			if err != nil {
+				return err
+			}
+			wire = len(encoded) - 2
+		}
+		res.projected++
+		res.removed += stats.Removed
+		res.projBefore += u.wire
+		res.projAfter += wire
+		u.projectedID, u.projectedFrom = id, len(u.data)
+		u.data, u.wire = out, wire
+	}
+	return nil
+}
+
+// declaresOutputSchema reports whether the tool declares an outputSchema
+// (#307). A tool the handler does not know (its list cannot be fetched)
+// counts as declaring one: structuredContent is then left unprojected.
+func (g *Governor) declaresOutputSchema(ctx context.Context, server, tool string) bool {
+	h := g.handler.Load()
+	if h == nil {
+		return true
+	}
+	find := func() (Tool, bool) {
+		if t, ok := h.cachedTool(server, tool); ok {
+			return t, true
+		}
+		if rest, cut := strings.CutPrefix(tool, server+"_"); cut && rest != "" {
+			return h.cachedTool(server, rest)
+		}
+		return Tool{}, false
+	}
+	t, ok := find()
+	if !ok && !h.toolsKnown(server) {
+		_ = h.RefreshServerTools(ctx, server)
+		t, ok = find()
+	}
+	if !ok {
+		return true
+	}
+	return len(t.OutputSchema) > 0 && string(t.OutputSchema) != "null"
+}
+
+// maxNotePaths caps the paths quoted in the projection note (bytes).
+const maxNotePaths = 160
+
+// projectionNote is the text item that tells the model a result was
+// projected and how to get what was left out.
+func projectionNote(units []*resultUnit, server, tool string, proj *governor.RuleProjection, res governedResult) string {
+	var ids []string
+	seen := make(map[string]bool)
+	for _, u := range units {
+		if u.projectedID != "" && !seen[u.projectedID] {
+			seen[u.projectedID] = true
+			ids = append(ids, u.projectedID)
+		}
+	}
+	source := fmt.Sprintf("response.projections rule %q", proj.Rule)
+	switch proj.Rule {
+	case "fields":
+		source = "your fields argument"
+	case "default_projections":
+		source = "the default projections"
+	}
+	paths := strings.Join(proj.Paths, ", ")
+	if len(paths) > maxNotePaths {
+		cut := maxNotePaths
+		for cut > 0 && !utf8.RuneStart(paths[cut]) {
+			cut--
+		}
+		paths = paths[:cut] + "…"
+	}
+	return fmt.Sprintf("[LeanProxy: %s JSON fields projected by %s (%s %s): %d values left out, %s → %s tokens. Full result: result_id=%s; call read_result with it (jsonpath, e.g. $[0], or grep) to get omitted fields.]",
+		cacheIdentity(server, tool), source, proj.Mode, paths, res.removed,
+		groupDigits(governor.Tokens(res.projBefore)), groupDigits(governor.Tokens(res.projAfter)), strings.Join(ids, ", result_id="))
+}
+
+// groupDigits writes n with thousands separators.
+func groupDigits(n int) string {
+	s := strconv.Itoa(n)
+	if n < 1000 {
+		return s
+	}
+	var b strings.Builder
+	pre := len(s) % 3
+	b.WriteString(s[:pre])
+	for i := pre; i < len(s); i += 3 {
+		if b.Len() > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
+}
+
+// projectionLink is the resource_link content item (MCP 2025-06-18) to the
+// full, unprojected copy of a projected unit.
+func projectionLink(u *resultUnit, server, tool string) (json.RawMessage, error) {
+	what := "text content"
+	if u.content < 0 {
+		what = "structuredContent"
+	}
+	return governor.MarshalNoEscape(map[string]string{
+		"type":        "resource_link",
+		"uri":         ResultURI(u.projectedID),
+		"name":        u.projectedID,
+		"description": fmt.Sprintf("Full, unprojected %s of %s (%d tokens), kept by LeanProxy for this session", what, cacheIdentity(server, tool), governor.Tokens(u.projectedFrom)),
+		"mimeType":    "application/json",
+	})
 }
 
 // joinArray writes raw elements as a JSON array.
@@ -567,7 +923,18 @@ var readResultTool = ToolDefinition{
 	}`),
 }
 
-// withReadResultTool appends read_result to a tools/list result.
+// invokeToolFieldsDescription is invoke_tool's description while the
+// governor is on: it documents the fields argument (#320) in one sentence.
+// The default tools/list (governor off) is unchanged, so its token budget
+// is too.
+const invokeToolFieldsDescription = "Invoke a tool found by search_tools. Optional fields: JSON paths of the result to keep (e.g. [\"[].title\"]); the rest stays readable with read_result."
+
+// invokeToolFieldsProperty is the fields property added to invoke_tool's
+// inputSchema while the governor is on.
+var invokeToolFieldsProperty = json.RawMessage(`{"type":"array","items":{"type":"string"}}`)
+
+// withReadResultTool appends read_result to a tools/list result, and adds
+// the fields argument to invoke_tool when it is listed.
 func (g *Governor) withReadResultTool(ctx context.Context, result json.RawMessage) json.RawMessage {
 	var body map[string]json.RawMessage
 	if json.Unmarshal(result, &body) != nil {
@@ -577,24 +944,34 @@ func (g *Governor) withReadResultTool(ctx context.Context, result json.RawMessag
 	if json.Unmarshal(body["tools"], &tools) != nil {
 		return result
 	}
-	for _, t := range tools {
+	listed := false
+	for i, t := range tools {
 		var probe struct {
 			Name string `json:"name"`
 		}
-		if json.Unmarshal(t, &probe) == nil && probe.Name == ReadResultToolName {
-			return result
+		if json.Unmarshal(t, &probe) != nil {
+			continue
+		}
+		switch probe.Name {
+		case ReadResultToolName:
+			listed = true
+		case invokeToolGatewayName:
+			tools[i] = withFieldsArgument(t)
 		}
 	}
-	tool := Tool{Name: readResultTool.Name, Description: readResultTool.Description, InputSchema: readResultTool.InputSchema}
-	if g.session(ctx).AtLeast(ProtocolVersion20250326) {
-		readOnly := true
-		tool.Annotations = &ToolAnnotations{ReadOnlyHint: &readOnly}
+	if !listed {
+		tool := Tool{Name: readResultTool.Name, Description: readResultTool.Description, InputSchema: readResultTool.InputSchema}
+		if g.session(ctx).AtLeast(ProtocolVersion20250326) {
+			readOnly := true
+			tool.Annotations = &ToolAnnotations{ReadOnlyHint: &readOnly}
+		}
+		encoded, err := json.Marshal(tool)
+		if err != nil {
+			return result
+		}
+		tools = append(tools, encoded)
 	}
-	encoded, err := json.Marshal(tool)
-	if err != nil {
-		return result
-	}
-	tools = append(tools, encoded)
+	var err error
 	if body["tools"], err = json.Marshal(tools); err != nil {
 		return result
 	}
@@ -603,6 +980,47 @@ func (g *Governor) withReadResultTool(ctx context.Context, result json.RawMessag
 		return result
 	}
 	return out
+}
+
+// withFieldsArgument documents and declares invoke_tool's fields argument
+// in its tools/list entry. Every other member is kept byte for byte; an
+// entry it cannot parse is returned as is.
+func withFieldsArgument(entry json.RawMessage) json.RawMessage {
+	members, err := governor.SplitObject(entry)
+	if err != nil {
+		return entry
+	}
+	for i, m := range members {
+		switch string(m.Key) {
+		case `"description"`:
+			desc, err := governor.MarshalNoEscape(invokeToolFieldsDescription)
+			if err != nil {
+				return entry
+			}
+			members[i].Value = desc
+		case `"inputSchema"`:
+			schema, err := governor.SplitObject(m.Value)
+			if err != nil {
+				return entry
+			}
+			for j, sm := range schema {
+				if string(sm.Key) != `"properties"` {
+					continue
+				}
+				props, err := governor.SplitObject(sm.Value)
+				if err != nil {
+					return entry
+				}
+				if _, present := withoutMember(props, fieldsArg); present != nil {
+					return entry
+				}
+				props = append(props, governor.Member{Key: []byte(fieldsArg), Value: invokeToolFieldsProperty})
+				schema[j].Value = joinObject(props)
+			}
+			members[i].Value = joinObject(schema)
+		}
+	}
+	return joinObject(members)
 }
 
 // readResultParams are read_result's arguments.
@@ -775,6 +1193,7 @@ func toolTexts(id any, isError bool, texts ...string) *Response {
 type governorCounters struct {
 	results, truncated, spilled, reads int64
 	originalTokens, returnedTokens     int64
+	projected, projectionSaved         int64
 }
 
 // GovernorToolStats is the per-tool accounting (for the savings report,
@@ -785,22 +1204,32 @@ type GovernorToolStats struct {
 	Truncated      int64  `json:"truncated"`
 	OriginalTokens int64  `json:"original_tokens"`
 	ReturnedTokens int64  `json:"returned_tokens"`
+	// Field projection (#320): results projected, and the estimated
+	// tokens the projection removed (before truncation).
+	Projected             int64 `json:"projected,omitempty"`
+	ProjectionSavedTokens int64 `json:"projection_saved_tokens,omitempty"`
 }
 
 // GovernorStats is the governor's accounting, as exposed on /metrics.
 // Only numbers: never a payload.
 type GovernorStats struct {
-	Enabled        bool                `json:"enabled"`
-	MaxTokens      int                 `json:"max_tokens"`
-	Results        int64               `json:"results"`
-	Truncated      int64               `json:"truncated"`
-	Spilled        int64               `json:"spilled"`
-	ReadResult     int64               `json:"read_result_calls"`
-	OriginalTokens int64               `json:"original_tokens"`
-	ReturnedTokens int64               `json:"returned_tokens"`
-	SavedTokens    int64               `json:"saved_tokens"`
-	Store          governor.StoreStats `json:"store"`
-	ByTool         []GovernorToolStats `json:"by_tool,omitempty"`
+	Enabled        bool  `json:"enabled"`
+	MaxTokens      int   `json:"max_tokens"`
+	Results        int64 `json:"results"`
+	Truncated      int64 `json:"truncated"`
+	Spilled        int64 `json:"spilled"`
+	ReadResult     int64 `json:"read_result_calls"`
+	OriginalTokens int64 `json:"original_tokens"`
+	ReturnedTokens int64 `json:"returned_tokens"`
+	SavedTokens    int64 `json:"saved_tokens"`
+	// Field projection (#320): results projected and the estimated
+	// tokens it removed (part of SavedTokens).
+	Projected             int64               `json:"projected"`
+	ProjectionSavedTokens int64               `json:"projection_saved_tokens"`
+	ProjectionRules       int                 `json:"projection_rules"`
+	DefaultProjections    bool                `json:"default_projections"`
+	Store                 governor.StoreStats `json:"store"`
+	ByTool                []GovernorToolStats `json:"by_tool,omitempty"`
 }
 
 // Stats returns a snapshot of the accounting.
@@ -826,21 +1255,32 @@ func (g *Governor) Stats() GovernorStats {
 		OriginalTokens: c.originalTokens,
 		ReturnedTokens: c.returnedTokens,
 		SavedTokens:    c.originalTokens - c.returnedTokens,
-		Store:          g.store.Stats(),
-		ByTool:         byTool,
+
+		Projected:             c.projected,
+		ProjectionSavedTokens: c.projectionSaved,
+		ProjectionRules:       g.projections.Len(),
+		DefaultProjections:    g.projections.Default(),
+		Store:                 g.store.Stats(),
+		ByTool:                byTool,
 	}
 }
 
 // account records one governed tool result (sizes in bytes of the result
-// JSON before and after) in the stats and the telemetry counters.
-func (g *Governor) account(ctx context.Context, server, identity string, before, after, truncated, spilled int) {
-	orig, ret := int64(governor.Tokens(before)), int64(governor.Tokens(after))
+// JSON before and after, and what was done) in the stats and the telemetry
+// counters.
+func (g *Governor) account(ctx context.Context, server, identity string, r governedResult) {
+	orig, ret := int64(governor.Tokens(r.before)), int64(governor.Tokens(r.after))
+	projSaved := int64(governor.Tokens(r.projBefore) - governor.Tokens(r.projAfter))
 	g.statsMu.Lock()
 	g.stats.results++
-	g.stats.truncated += int64(truncated)
-	g.stats.spilled += int64(spilled)
+	g.stats.truncated += int64(min(r.truncated, 1))
+	g.stats.spilled += int64(r.truncated)
 	g.stats.originalTokens += orig
 	g.stats.returnedTokens += ret
+	if r.projected > 0 {
+		g.stats.projected++
+		g.stats.projectionSaved += projSaved
+	}
 	t, ok := g.byTool[identity]
 	if !ok {
 		key := identity
@@ -853,15 +1293,29 @@ func (g *Governor) account(ctx context.Context, server, identity string, before,
 		}
 	}
 	t.Results++
-	t.Truncated += int64(truncated)
+	t.Truncated += int64(min(r.truncated, 1))
 	t.OriginalTokens += orig
 	t.ReturnedTokens += ret
+	if r.projected > 0 {
+		t.Projected++
+		t.ProjectionSavedTokens += projSaved
+	}
 	g.statsMu.Unlock()
-	RecordGovernedResult(ctx, server, orig, ret, truncated > 0)
+	RecordGovernedResult(ctx, server, orig, ret, r.truncated > 0)
+	if r.projected > 0 {
+		RecordProjection(ctx, server, int64(governor.Tokens(r.projBefore)), int64(governor.Tokens(r.projAfter)))
+	}
 }
 
 func (g *Governor) bumpReads() {
 	g.statsMu.Lock()
 	g.stats.reads++
 	g.statsMu.Unlock()
+}
+
+func onOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
 }

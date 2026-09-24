@@ -30,6 +30,13 @@ func TestConfig_Validate(t *testing.T) {
 		"negative bytes":     {Config{Spill: SpillConfig{MaxBytes: -1}}, "max_bytes"},
 		"relative dir":       {Config{Spill: SpillConfig{Dir: "results"}}, "absolute path"},
 		"home dir":           {Config{Spill: SpillConfig{Dir: "~/r"}}, ""},
+		"projection ok":      {Config{Projections: []ProjectionRule{{Match: "gh.*", Drop: []string{"**.url"}}}}, ""},
+		"projection exempt":  {Config{Projections: []ProjectionRule{{Match: "gh.get_me"}}}, ""},
+		"projection match":   {Config{Projections: []ProjectionRule{{Drop: []string{"a"}}}}, "projections[0]: match is required"},
+		"projection glob":    {Config{Projections: []ProjectionRule{{Match: "a[", Drop: []string{"a"}}}}, "invalid match glob"},
+		"keep and drop":      {Config{Projections: []ProjectionRule{{Match: "a.*", Keep: []string{"a"}, Drop: []string{"b"}}}}, "mutually exclusive"},
+		"bad path":           {Config{Projections: []ProjectionRule{{Match: "a.*", Keep: []string{"items[0]"}}}}, "projections[0]: path"},
+		"drop ends in []":    {Config{Projections: []ProjectionRule{{Match: "a.*", Drop: []string{"items[]"}}}}, "must end with a key name"},
 	} {
 		err := tc.cfg.Validate()
 		switch {
