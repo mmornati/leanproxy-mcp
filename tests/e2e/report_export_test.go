@@ -8,18 +8,20 @@ import (
 	"testing"
 )
 
-// Story 18-3: CSV/JSON export for cost data (Epic 18)
-// US: As a finance lead, I want `leanproxy report --export {csv,json} --since
-// YYYY-MM-DD [--output <file>]` so I can pipe the cost data into our BI tool
-// without re-parsing the markdown report.
+// Issue #324: `leanproxy-mcp report --export {csv,json,md}` is the
+// auditable savings report built from real counters (pkg/usage), not the
+// old finance cost-entry export. These tests replace the pre-#324
+// Story 18-3 assertions (raw CallLogEntry rows), which no longer match
+// report's output shape.
 //
-// Acceptance:
-//  * --export csv -> header row: timestamp,team,project,server,tool,tokens,estimated_cost
-//  * --export json -> valid JSON array (possibly empty)
-//  * --output writes to the specified file (or stdout by default)
-//  * No PII / prompts in the exported data (NFR4)
+// Acceptance (issue #324):
+//  * --export csv -> header row starts with mechanism,measured,is_cost,...
+//  * --export json -> a valid JSON object with the documented schema
+//    (mechanisms, total_saved_tokens, methodology, ...)
+//  * --output writes to the specified file (mode 0600)
+//  * No payload / argument / secret ever appears in the export
 
-func TestStory_18_3_ExportCSV_HeaderAndNoPII(t *testing.T) {
+func TestReport_ExportCSV_HeaderAndNoPII(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
@@ -37,7 +39,7 @@ func TestStory_18_3_ExportCSV_HeaderAndNoPII(t *testing.T) {
 	}
 
 	header := lines[0]
-	expectedCols := []string{"timestamp", "team", "project", "server", "tool", "tokens", "estimated_cost"}
+	expectedCols := []string{"mechanism", "measured", "is_cost", "original_tokens", "resulting_tokens", "saved_tokens", "calls", "notes"}
 	for _, col := range expectedCols {
 		if !strings.Contains(header, col) {
 			t.Errorf("csv header missing column %q, got: %q", col, header)
@@ -51,7 +53,7 @@ func TestStory_18_3_ExportCSV_HeaderAndNoPII(t *testing.T) {
 	}
 }
 
-func TestStory_18_3_ExportJSON_ValidArray(t *testing.T) {
+func TestReport_ExportJSON_ValidObject(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
@@ -64,19 +66,24 @@ func TestStory_18_3_ExportJSON_ValidArray(t *testing.T) {
 	}
 
 	trimmed := strings.TrimSpace(stdout)
-	var arr []map[string]interface{}
-	if err := json.Unmarshal([]byte(trimmed), &arr); err != nil {
-		t.Fatalf("report --export json did not return a JSON array: %v\nraw=%s", err, trimmed)
+	var rep map[string]interface{}
+	if err := json.Unmarshal([]byte(trimmed), &rep); err != nil {
+		t.Fatalf("report --export json did not return a JSON object: %v\nraw=%s", err, trimmed)
+	}
+	for _, field := range []string{"generated_at", "estimator", "mechanisms", "total_saved_tokens", "total_saved_percent", "extra_turns_estimate", "methodology"} {
+		if _, ok := rep[field]; !ok {
+			t.Errorf("report json missing documented field %q", field)
+		}
 	}
 }
 
-func TestStory_18_3_ExportToFile(t *testing.T) {
+func TestReport_ExportToFile(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
 
 	testDir := t.TempDir()
-	out := filepath.Join(testDir, "costs.csv")
+	out := filepath.Join(testDir, "report.csv")
 
 	stdout, _, exitCode := runBinary("report", "--export", "csv", "--output", out)
 	t.Logf("report --export csv --output: exit=%d stdout=%q", exitCode, stdout)
@@ -85,29 +92,47 @@ func TestStory_18_3_ExportToFile(t *testing.T) {
 		t.Fatalf("report --export csv --output should exit 0, got %d", exitCode)
 	}
 
-	contents, err := os.ReadFile(out)
+	info, err := os.Stat(out)
 	if err != nil {
 		t.Fatalf("output file not written: %v", err)
 	}
-
-	if len(contents) == 0 {
-		t.Errorf("output file is empty")
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("report output file mode = %o, want 0600", perm)
 	}
 
-	if !strings.Contains(string(contents), "timestamp") {
-		t.Errorf("output file should contain csv header, got: %s", string(contents))
+	contents, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("reading output file: %v", err)
+	}
+	if !strings.Contains(string(contents), "mechanism") {
+		t.Errorf("output file should contain the csv header, got: %s", string(contents))
 	}
 }
 
-func TestStory_18_3_ExportSinceFilter(t *testing.T) {
+func TestReport_ExportSinceFilter(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
 
-	stdout, stderr, exitCode := runBinary("report", "--export", "json", "--since", "2020-01-01")
+	stdout, stderr, exitCode := runBinary("report", "--export", "json", "--since", "7d")
 	t.Logf("report --export json --since: exit=%d stdout=%q stderr=%q", exitCode, stdout, stderr)
 
 	if exitCode != 0 {
 		t.Fatalf("report --export json --since should exit 0, got %d", exitCode)
+	}
+}
+
+func TestReport_ExportMarkdown(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	stdout, stderr, exitCode := runBinary("report", "--export", "md")
+	t.Logf("report --export md: exit=%d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	if exitCode != 0 {
+		t.Fatalf("report --export md should exit 0, got %d", exitCode)
+	}
+	if !strings.Contains(stdout, "# LeanProxy Savings Report") {
+		t.Errorf("markdown export missing the report heading, got: %q", stdout)
 	}
 }

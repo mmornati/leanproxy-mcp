@@ -121,6 +121,7 @@ func handleHTTP(handler *mcp.Handler, opts streamhttp.Options, sig <-chan os.Sig
 
 	<-sig
 	slog.Info("shutting down the HTTP front end", "sessions", srv.SessionCount())
+	flushUsageSnapshot()
 
 	ctx, cancel := context.WithTimeout(context.Background(), httpShutdownGrace)
 	defer cancel()
