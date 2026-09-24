@@ -108,6 +108,12 @@ and `mcp.server.name`; the request's span carries
 (e.g. `rules[1] (match "github.delete_*")`). The policy stage has its own
 child span, `mcp.middleware.policy`. The call's arguments are never recorded.
 
+The response governor (#319) counts, per server, the estimated tokens of
+the tool results it sees in `leanproxy.governor.tokens` (attribute
+`direction`: `original` or `returned`) and the results it shortened in
+`leanproxy.governor.truncations`; its stage has its own child span,
+`mcp.middleware.governor`. Only token counts are recorded, never a result.
+
 A request an upstream sends to the client (`elicitation/create`,
 `sampling/createMessage`, `roots/list`; #308) gets its own SERVER span,
 `<method> <server>` (for example `elicitation/create github`), with
@@ -129,4 +135,7 @@ telemetry:
 `leanproxy-mcp serve --metrics-bind 127.0.0.1:9091` keeps working exactly as
 before; it now has a `telemetry` section fed by the same counters
 OpenTelemetry records (including `tool_pin_events_total` and `policy_decisions_total`), useful when you want a quick number without standing
-up a collector.
+up a collector. With the response governor on, a `response_governor`
+section adds its accounting: results seen and shortened, original and
+returned tokens (in total and per tool), `read_result` calls and the spill
+store's size.

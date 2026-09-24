@@ -310,6 +310,10 @@ Pipeline order for every request:
 client → redact request params → injection check → dispatch/upstream → injection check (response) → redact response → client
 ```
 
+The opt-in response governor (#319) wraps this pipeline: it shortens a tool
+result only after response redaction and the injection check ran (see
+[Response governor spill store](#response-governor-spill-store-319)).
+
 - **Request redaction** covers every nested value of `params`, including the
   `arguments` of `tools/call` and the nested `arguments` of an `invoke_tool`
   call. If params cannot be redacted the request is rejected with
@@ -733,6 +737,41 @@ the redacted arguments — never the arguments) and counted in the
 - Resources, prompts and server-to-client requests are not covered by the
   policy; `allow_sampling` and `roots` govern the latter
   ([Server-to-client traffic](#server-to-client-traffic-308)).
+
+## Response governor spill store (#319)
+
+The opt-in response token governor (`response:`, see
+[Configuration](configuration.md#response-token-governor-response)) keeps
+the full result of every tool call it shortens, so the model can page
+through it with `read_result`. That copy is guarded like the result itself:
+
+- **Only redacted, scanned data is kept.** The governor runs outside the
+  Token Firewall: it only ever sees a response after response redaction
+  and the injection guard's response check. `read_result` and
+  `resources/read leanproxy://results/<id>` return that same data, never
+  anything the client would not have received in full.
+- **Per-session isolation.** A result belongs to the client session whose
+  call produced it (the stdio process, one Streamable HTTP
+  `Mcp-Session-Id`, one `serve` connection). Another session asking for
+  the id gets the same "not found" answer as for an unknown or expired id,
+  so ids cannot be probed. A session's results are dropped when it ends.
+- **Unguessable ids.** `r_` + 128 random bits from `crypto/rand`
+  (base32). Only well-formed ids are looked up.
+- **Bounded.** Results expire after `spill.ttl` (30 min) and the store is
+  capped at `spill.max_bytes` (128 MiB, least recently used evicted first).
+  A result larger than the cap is passed through unshortened rather than
+  cut without a retrievable copy.
+- **On disk, only if asked.** `spill.disk: true` writes each result to its
+  own `0600` file in a per-process `0700` directory under `spill.dir`
+  (`~/.leanproxy/results`); files are removed on expiry, when their session
+  ends and on shutdown (the directory too). A directory left by a crashed
+  process is removed by the next start once it is older than the TTL. The
+  default keeps everything in memory.
+- **Never hides an error.** Error results (`isError: true`) and JSON-RPC
+  errors are never shortened, and neither are images or audio.
+- **Numbers only in telemetry.** The accounting (tokens before and after
+  per tool, truncations, store size) is exposed on `/metrics` and as OTel
+  counters; results are never logged or recorded.
 
 ## Marketplace trust model (issue #313)
 

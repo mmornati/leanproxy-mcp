@@ -136,6 +136,32 @@
 
 ## Added in v0.11
 
+- **Response token governor (part 1): smart truncation and spill-to-resource with paged retrieval** ([#319](https://github.com/mmornati/leanproxy-mcp/issues/319), audit §2.3).
+  - **What.** Once tool schemas are handled, tool results (file contents, listings, search
+    results, rows) are the biggest token cost of an agent session, and each one is re-sent on
+    every later turn. No front end touched them.
+  - **Now.** An opt-in `response:` block (off by default) caps each tool result at a token budget
+    (`max_tokens`, default 4,000, per-server/per-tool overrides by glob, `passthrough`):
+    - text keeps its head (~70%) and tail (~20%), cut on line boundaries, with a marker naming
+      the result id and the offset to page from;
+    - JSON (a text item holding JSON, and `structuredContent`) is shortened structurally and
+      stays valid: arrays keep their first elements plus an `__leanproxy_omitted` object;
+    - the full redacted result is kept per client session (memory by default, or `0600` files
+      with `spill.disk`), with a TTL (30 min) and an LRU byte cap (128 MiB);
+    - a new `read_result` gateway tool pages through it (`offset`, `limit_tokens`), searches it
+      (`grep` with line numbers) or queries it (`jsonpath`: `$.items[10:20]`, `$..name`);
+      clients on MCP 2025-06-18+ also get a `resource_link` to `leanproxy://results/<id>`,
+      served by `resources/read`;
+    - error results, images and audio are never shortened;
+    - accounting (tokens before/after per tool) on `/metrics` and as OTel counters.
+    It runs in all three front ends, after redaction and the injection check, and outside the
+    response cache (a hit is governed like the miss, for the calling session only).
+  - **Measured.** `make harness`, large-results session (a 200 KB file and four list/search
+    endpoints): **234,700 → 18,515 tokens (−92.1%)**; normal-size results byte-identical; the
+    file pages back byte for byte. See
+    [`docs/benchmark-results.md`](docs/benchmark-results.md#7-response-governor-large-results)
+    and [`docs/configuration.md`](docs/configuration.md#response-token-governor-response).
+
 - **Streamable HTTP MCP front end: one shared local gateway, with auth and Origin checks** ([#309](https://github.com/mmornati/leanproxy-mcp/issues/309), audit §2.2).
   - **What.** `serve`, the only front end that took more than one client, speaks a custom
     newline-JSON protocol over TCP that no MCP client supports. So every IDE had to spawn

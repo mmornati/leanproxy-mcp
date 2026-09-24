@@ -203,6 +203,19 @@ results, resources, prompts) → redact response. Later stages (caching,
 metering, ...) plug into the same `Middleware` API. See
 [Security](./security.md#which-modes-are-protected).
 
+The full stage order (`cmd/telemetry.go`, `tracedMiddlewares`) is:
+
+```
+telemetry → response governor → tool pinning → policy → response cache → redact response → redact request → injection → dispatch
+```
+
+The response governor (#319, `pkg/mcp/middleware_governor.go` and
+`pkg/mcp/governor`) is opt-in. It shortens tool results over their token
+budget after redaction and the injection check, keeps the full result in a
+per-session spill store, and answers `read_result` and
+`resources/read leanproxy://results/<id>` from it. See
+[Configuration](./configuration.md#response-token-governor-response).
+
 Pre-configured redaction for:
 - API keys and secrets
 - Environment variables
