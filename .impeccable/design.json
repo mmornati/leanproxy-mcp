@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-24T18:44:03.865510Z",
+  "title": "Design System: LeanProxy-MCP",
+  "extensions": {
+    "colorMeta": {
+      "organic-amber": {
+        "role": "secondary",
+        "displayName": "Organic Amber",
+        "canonical": "#f08a24"
+      },
+      "cleared-teal": {
+        "role": "secondary",
+        "displayName": "Cleared Teal",
+        "canonical": "#1f9e78"
+      },
+      "metal-cobalt": {
+        "role": "secondary",
+        "displayName": "Metal Cobalt",
+        "canonical": "#2743c9"
+      },
+      "threat-red": {
+        "role": "tertiary",
+        "displayName": "Threat Red",
+        "canonical": "#e11d2a"
+      },
+      "dense-ink": {
+        "role": "primary",
+        "displayName": "Dense Ink",
+        "canonical": "#0f1a3a"
+      },
+      "scanner-ground": {
+        "role": "neutral",
+        "displayName": "Scanner Ground",
+        "canonical": "#f3f5f1"
+      }
+    },
+    "shadows": {
+      "button": "0 1px 2px rgba(15,26,58,.18), 0 8px 20px -10px rgba(15,26,58,.45)",
+      "slab": "0 2px 4px rgba(15,26,58,.12), 0 24px 48px -24px rgba(15,26,58,.55)"
+    },
+    "motion": {
+      "ease": "cubic-bezier(0.16, 1, 0.3, 1)",
+      "signature": "one scanner sweep on first view: exponential ease-out 2.6s to the far edge, 0.9s settle back to 62%; strips grow once when scrolled in; all disabled under prefers-reduced-motion"
+    },
+    "breakpoints": {
+      "narrow": "36em",
+      "compact": "44em",
+      "stack": "60em"
+    },
+    "narrative": {
+      "northStar": "The checkpoint scanner.",
+      "rules": [
+        "Red means caught.",
+        "Color carries a role.",
+        "Mono is for measurement.",
+        "Every number prints its test condition."
+      ]
+    }
+  }
+}

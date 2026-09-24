@@ -1,13 +1,349 @@
-/* Extra styles for MkDocs */
+/* ==========================================================================
+   LeanProxy-MCP docs theme: "X-ray checkpoint"
+   Baggage-scanner pseudocolor on a pale scanner ground. Amber = tokens
+   (weight), teal = cleared, cobalt = dense material, red = threats.
+   ========================================================================== */
 
+:root {
+  /* Scanner palette */
+  --xr-ground: #f3f5f1;
+  --xr-ground-2: #e7ebe4;
+  --xr-paper: #fbfcfa;
+  --xr-ink: #0f1a3a;
+  --xr-ink-2: #3a4566;
+  --xr-ink-3: #5d6784;
+  --xr-rule: #cfd5cc;
+  --xr-amber: #f08a24;
+  --xr-amber-ink: #a8520a;
+  --xr-teal: #1f9e78;
+  --xr-teal-ink: #0f6e52;
+  --xr-cobalt: #2743c9;
+  --xr-cobalt-ink: #2139b0;
+  --xr-threat: #e11d2a;
+  --xr-threat-ink: #b3121d;
+  --xr-blend: multiply;
+  --xr-fill-a: 0.58;
+
+  --xr-display: "Archivo", ui-sans-serif, system-ui, sans-serif;
+  --xr-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---------- Material light scheme ---------- */
+[data-md-color-scheme="xray"] {
+  --md-default-bg-color: var(--xr-paper);
+  --md-default-fg-color: var(--xr-ink);
+  --md-default-fg-color--light: var(--xr-ink-2);
+  --md-default-fg-color--lighter: #8a93aa;
+  --md-default-fg-color--lightest: #e3e7df;
+
+  --md-primary-fg-color: var(--xr-ink);
+  --md-primary-fg-color--light: #253464;
+  --md-primary-fg-color--dark: #09112a;
+  --md-primary-bg-color: #f3f5f1;
+  --md-primary-bg-color--light: rgba(243, 245, 241, 0.72);
+
+  --md-accent-fg-color: var(--xr-amber-ink);
+  --md-accent-fg-color--transparent: rgba(240, 138, 36, 0.12);
+
+  --md-typeset-color: var(--xr-ink);
+  --md-typeset-a-color: var(--xr-cobalt-ink);
+  --md-typeset-mark-color: rgba(240, 138, 36, 0.3);
+
+  --md-code-bg-color: #eef1ec;
+  --md-code-fg-color: #1d2a52;
+  --md-code-hl-keyword-color: var(--xr-cobalt-ink);
+  --md-code-hl-string-color: var(--xr-teal-ink);
+  --md-code-hl-number-color: var(--xr-amber-ink);
+  --md-code-hl-comment-color: #6b7591;
+  --md-code-hl-name-color: var(--xr-ink);
+  --md-code-hl-function-color: #6a2fb8;
+  --md-code-hl-constant-color: var(--xr-threat-ink);
+
+  --md-footer-bg-color: var(--xr-ink);
+  --md-footer-bg-color--dark: #09112a;
+}
+
+/* ---------- Material dark scheme: the scanner monitor at night ---------- */
+[data-md-color-scheme="xray-dark"] {
+  --xr-ground: #0c1226;
+  --xr-ground-2: #121a33;
+  --xr-paper: #0a0f20;
+  --xr-ink: #e9edf6;
+  --xr-ink-2: #b6bfd6;
+  --xr-ink-3: #8c96b2;
+  --xr-rule: #253052;
+  --xr-amber: #ff9a3d;
+  --xr-amber-ink: #ffb066;
+  --xr-teal: #33c79a;
+  --xr-teal-ink: #5fd9b1;
+  --xr-cobalt: #5b77ff;
+  --xr-cobalt-ink: #93a6ff;
+  --xr-threat: #ff4550;
+  --xr-threat-ink: #ff7a82;
+  --xr-blend: screen;
+  --xr-fill-a: 0.42;
+
+  --md-hue: 228;
+  --md-default-bg-color: var(--xr-paper);
+  --md-default-fg-color: var(--xr-ink);
+  --md-default-fg-color--light: var(--xr-ink-2);
+  --md-default-fg-color--lighter: #6f7a98;
+  --md-default-fg-color--lightest: #1b2442;
+
+  --md-primary-fg-color: #060a17;
+  --md-primary-fg-color--light: #121a33;
+  --md-primary-fg-color--dark: #03060f;
+  --md-primary-bg-color: #e9edf6;
+  --md-primary-bg-color--light: rgba(233, 237, 246, 0.7);
+
+  --md-accent-fg-color: var(--xr-amber-ink);
+  --md-accent-fg-color--transparent: rgba(255, 154, 61, 0.14);
+
+  --md-typeset-color: var(--xr-ink);
+  --md-typeset-a-color: var(--xr-cobalt-ink);
+  --md-typeset-mark-color: rgba(255, 154, 61, 0.3);
+
+  --md-code-bg-color: #121a33;
+  --md-code-fg-color: #dfe5f5;
+  --md-code-hl-keyword-color: var(--xr-cobalt-ink);
+  --md-code-hl-string-color: var(--xr-teal-ink);
+  --md-code-hl-number-color: var(--xr-amber-ink);
+  --md-code-hl-comment-color: #7d88a8;
+  --md-code-hl-name-color: var(--xr-ink);
+  --md-code-hl-function-color: #c6a2ff;
+  --md-code-hl-constant-color: var(--xr-threat-ink);
+
+  --md-footer-bg-color: #060a17;
+  --md-footer-bg-color--dark: #03060f;
+  --md-admonition-bg-color: var(--xr-ground);
+}
+
+/* ---------- Browser surfaces ---------- */
+::selection {
+  background: color-mix(in srgb, var(--xr-amber) 38%, transparent);
+  color: inherit;
+}
+html {
+  scrollbar-color: color-mix(in srgb, var(--xr-ink) 28%, transparent) transparent;
+  accent-color: var(--xr-cobalt);
+  caret-color: var(--xr-amber);
+}
+:focus-visible {
+  outline: 2px solid var(--xr-cobalt);
+  outline-offset: 2px;
+}
+.md-typeset a {
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.2em;
+}
+.md-typeset a:hover {
+  text-decoration: underline;
+}
+
+/* ---------- Header: the scanner console ---------- */
 .md-header {
-    display: none;
+  box-shadow: none;
+}
+.md-header::after {
+  /* conveyor rail: rollers under the console */
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 3px;
+  background:
+    linear-gradient(90deg, var(--xr-amber) 0 33.3%, var(--xr-teal) 33.3% 66.6%, var(--xr-cobalt) 66.6% 100%);
+  opacity: 0.9;
+}
+.md-header__topic:first-child {
+  font-family: var(--xr-display);
+  font-weight: 800;
+  font-stretch: 118%;
+  letter-spacing: -0.01em;
+}
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  height: 1.6rem;
+}
+.md-tabs {
+  background-color: var(--md-primary-fg-color);
+}
+.md-tabs__link {
+  font-weight: 600;
+  opacity: 0.78;
+}
+.md-tabs__item--active .md-tabs__link,
+.md-tabs__link:hover {
+  opacity: 1;
+  color: #ffb066;
 }
 
-[data-md-color-primary="indigo"] {
-    --md-primary-color: #3f51b5;
+/* ---------- Reading typography ---------- */
+.md-typeset {
+  font-size: 0.8rem;
+  line-height: 1.65;
+  font-variant-numeric: tabular-nums;
+}
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 {
+  font-family: var(--xr-display);
+  color: var(--xr-ink);
+  text-wrap: balance;
+}
+.md-typeset h1 {
+  font-weight: 800;
+  font-stretch: 116%;
+  letter-spacing: -0.025em;
+  font-size: 2.1em;
+  line-height: 1.1;
+  margin-bottom: 0.9em;
+}
+.md-typeset h2 {
+  font-weight: 750;
+  font-stretch: 110%;
+  letter-spacing: -0.015em;
+  margin-top: 2.2em;
+  padding-top: 0.9em;
+  border-top: 1px solid var(--xr-rule);
+}
+.md-typeset h3 {
+  font-weight: 700;
+  font-stretch: 104%;
+  margin-top: 1.8em;
+}
+.md-typeset h4 {
+  font-weight: 700;
+  letter-spacing: 0;
+}
+.md-typeset p,
+.md-typeset ul,
+.md-typeset ol {
+  max-width: 72ch;
+}
+.md-typeset code {
+  font-size: 0.86em;
+  border-radius: 4px;
+}
+.md-typeset pre > code {
+  border-radius: 8px;
+}
+.md-typeset .highlight,
+.md-typeset pre {
+  border-radius: 8px;
 }
 
-[data-md-color-accent="indigo"] {
-    --md-accent-color: #3f51b5;
+/* Tables: datasheet rows */
+.md-typeset table:not([class]) {
+  font-size: 0.72rem;
+  border: 1px solid var(--xr-rule);
+  border-radius: 8px;
+  box-shadow: none;
+}
+.md-typeset table:not([class]) th {
+  background: var(--xr-ground);
+  color: var(--xr-ink);
+  font-weight: 700;
+  font-family: var(--xr-display);
+  font-stretch: 104%;
+}
+.md-typeset table:not([class]) td {
+  border-top: 1px solid var(--xr-rule);
+  font-variant-numeric: tabular-nums;
+}
+.md-typeset table:not([class]) tbody tr:hover {
+  background: color-mix(in srgb, var(--xr-amber) 7%, transparent);
+  box-shadow: none;
+}
+
+/* Admonitions in scanner colors */
+.md-typeset .admonition,
+.md-typeset details {
+  border-width: 1px;
+  border-radius: 8px;
+  box-shadow: none;
+  font-size: 0.74rem;
+}
+.md-typeset .admonition.note,
+.md-typeset details.note,
+.md-typeset .admonition.info,
+.md-typeset details.info {
+  border-color: var(--xr-cobalt);
+}
+.md-typeset .note > .admonition-title,
+.md-typeset .info > .admonition-title,
+.md-typeset .note > summary,
+.md-typeset .info > summary {
+  background-color: color-mix(in srgb, var(--xr-cobalt) 10%, transparent);
+}
+.md-typeset .admonition.tip,
+.md-typeset details.tip {
+  border-color: var(--xr-teal);
+}
+.md-typeset .tip > .admonition-title,
+.md-typeset .tip > summary {
+  background-color: color-mix(in srgb, var(--xr-teal) 12%, transparent);
+}
+.md-typeset .admonition.warning,
+.md-typeset details.warning {
+  border-color: var(--xr-amber);
+}
+.md-typeset .warning > .admonition-title,
+.md-typeset .warning > summary {
+  background-color: color-mix(in srgb, var(--xr-amber) 14%, transparent);
+}
+.md-typeset .admonition.danger,
+.md-typeset details.danger {
+  border-color: var(--xr-threat);
+}
+.md-typeset .danger > .admonition-title,
+.md-typeset .danger > summary {
+  background-color: color-mix(in srgb, var(--xr-threat) 10%, transparent);
+}
+
+/* Blockquotes read as scanner notes, not decorations */
+.md-typeset blockquote {
+  border-left: 1px solid var(--xr-rule);
+  color: var(--xr-ink-2);
+}
+
+/* Navigation */
+.md-nav__link--active,
+.md-nav__item .md-nav__link--active {
+  color: var(--xr-cobalt-ink);
+  font-weight: 700;
+}
+.md-nav__title {
+  font-family: var(--xr-display);
+  font-stretch: 108%;
+}
+.md-footer-meta {
+  background-color: var(--md-footer-bg-color--dark);
+}
+
+/* Mermaid diagrams inherit the palette */
+.md-typeset .mermaid {
+  --md-mermaid-font-family: var(--md-text-font-family);
+  --md-mermaid-edge-color: var(--xr-ink-3);
+  --md-mermaid-node-bg-color: color-mix(in srgb, var(--xr-teal) 14%, var(--xr-paper));
+  --md-mermaid-node-fg-color: var(--xr-ink);
+  --md-mermaid-label-bg-color: var(--xr-paper);
+  --md-mermaid-label-fg-color: var(--xr-ink);
+}
+
+/* Page-level "status" chip used by docs (e.g. spike pages) */
+.md-typeset .lp-chip {
+  display: inline-block;
+  font: 600 0.62rem/1 var(--md-code-font-family);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.35em 0.6em;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  color: var(--xr-amber-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+  }
 }

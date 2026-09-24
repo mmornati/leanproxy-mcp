@@ -1,0 +1,296 @@
+{% extends "main.html" %}
+
+{% block tabs %}
+{{ super() }}
+<div class="lp-home">
+
+  <!-- ============ HERO: the checkpoint ============ -->
+  <section class="lp-hero" aria-labelledby="lp-title">
+    <div class="lp-wrap lp-hero__grid">
+      <div class="lp-hero__head">
+      <h1 id="lp-title" class="lp-display">
+          <span>10,049 tokens in.</span>
+          <span>318 out.</span>
+          <span><span class="lp-display__threat">Secrets stay home.</span></span>
+        </h1>
+        <div class="lp-code lp-code--hero">
+          <button class="lp-copy" type="button" data-copy="brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp&#10;brew install leanproxy-mcp"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="10" height="10" rx="2"/><path d="M13.5 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/></svg><span class="lp-copy__label">Copy</span></button>
+<pre aria-label="Install with Homebrew"><code><span class="lp-prompt">$</span> brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
+<span class="lp-prompt">$</span> brew install leanproxy-mcp</code></pre>
+        </div>
+      </div>
+      <div class="lp-hero__copy">
+        <p class="lp-lede">
+          A local token firewall between your AI client and every MCP server.
+          It cuts what tool schemas and tool results cost you, and it redacts,
+          screens and pins everything on the way through. One Go binary, and
+          nothing leaves your machine unless you turn it on.
+        </p>
+        <div class="lp-actions">
+          <a class="lp-btn lp-btn--primary" href="{{ 'installation/' | url }}">
+            Install LeanProxy
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4" /></svg>
+          </a>
+          <a class="lp-btn lp-btn--ghost" href="{{ 'benchmark-results/' | url }}">See the measurements</a>
+        </div>
+      </div>
+    </div>
+
+    <figure class="lp-scanner" data-scanner>
+      <div class="lp-scanner__rail" aria-hidden="true"></div>
+      <div class="lp-scanner__stage">
+        {% include "partials/xray-scanner.html" %}
+        <div class="lp-scanner__beam" aria-hidden="true"><span></span></div>
+        <input class="lp-scanner__range" type="range" min="0" max="100" value="62" step="0.5"
+               aria-label="Scan position: drag to scan the MCP request">
+      </div>
+      <div class="lp-scanner__rail" aria-hidden="true"></div>
+      <figcaption class="lp-readout">
+        <dl>
+          <div><dt>On the belt</dt><dd><output data-weight>10,049</output> tok</dd></div>
+          <div><dt>Threats</dt><dd><output data-threats>0 boxed</output> · 0 leaked</dd></div>
+          <div><dt>Overhead</dt><dd>0.56 ms p50 · 0.74 ms p95</dd></div>
+          <div><dt>Binary</dt><dd>16.4 MiB · 20 MiB RSS</dd></div>
+        </dl>
+        <p class="lp-cond">
+          Scan of the benchmark catalog: 5 servers, 118 tools, with sizes as
+          measured by <code>make harness</code> against the real binary. The
+          secret is a planted test value. Drag the scan line, or use the arrow keys.
+        </p>
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ LEGEND: what the scanner looks for ============ -->
+  <section class="lp-sec lp-legend" aria-labelledby="lp-legend-h">
+    <div class="lp-wrap">
+      <h2 id="lp-legend-h" class="lp-h2">What the scanner looks for</h2>
+      <p class="lp-intro">
+        Two kinds of cargo come through every MCP call: weight you pay for on
+        every turn, and payloads that can hurt you. LeanProxy handles both in
+        the same pass, before anything reaches your model provider.
+      </p>
+
+      <div class="lp-key">
+        <div class="lp-key__col">
+          <h3 class="lp-key__h"><span class="lp-sw lp-sw--amber" aria-hidden="true"></span>Weight <small>tokens you pay for</small></h3>
+          <ul>
+            <li><a href="{{ 'configuration/#exposure-modes-exposure' | url }}"><b>Router or passthrough</b></a>
+              <span>Four router tools cost 318 tokens instead of every schema on every turn. Clients that already search their own tools get every tool listed as <code>server__tool</code> instead.</span></li>
+            <li><a href="{{ 'benchmark-results/' | url }}"><b><code>search_tools</code></b></a>
+              <span>BM25 search across every server. A lookup costs 152 tokens on average, and it puts the right tool in the top 5 for 85.5% of 83 labeled intents.</span></li>
+            <li><a href="{{ 'configuration/#response-token-governor-response' | url }}"><b>Response governor</b></a>
+              <span>Per-tool field projection, head/tail and structural truncation, dedup within a session, and paging back through <code>read_result</code>.</span></li>
+            <li><a href="{{ 'configuration/' | url }}"><b>Response cache</b></a>
+              <span>An opt-in, exact-match cache for read tools you allowlist, bounded by bytes.</span></li>
+          </ul>
+        </div>
+
+        <div class="lp-key__col lp-key__col--threat">
+          <h3 class="lp-key__h"><span class="lp-sw lp-sw--threat" aria-hidden="true"></span>Threats <small>payloads that can hurt you</small></h3>
+          <ul>
+            <li><a href="{{ 'security/' | url }}"><b>Secret redaction</b></a>
+              <span>29 built-in patterns, in both directions, on by default. Add your own, or switch on the high-entropy detector for keys no pattern knows.</span></li>
+            <li><a href="{{ 'security/' | url }}"><b>Prompt injection guard</b></a>
+              <span>Switch it on and a local classifier screens requests, tool results, resources and prompts. Each risk band can block, quarantine, redact or annotate.</span></li>
+            <li><a href="{{ 'security/' | url }}"><b>Tool pinning</b></a>
+              <span>Hashes every upstream tool definition and flags rug pulls, hidden instructions and invisible unicode until you approve them.</span></li>
+            <li><a href="{{ 'security/' | url }}"><b>Per-tool policy</b></a>
+              <span>Allow, deny or confirm by tool glob and by annotation. Calls to tools a server never advertised are refused.</span></li>
+            <li><a href="{{ 'security/' | url }}"><b>Sandboxed servers</b></a>
+              <span>Runs third-party stdio servers in a Docker or Podman container, with no network and no filesystem access by default.</span></li>
+          </ul>
+        </div>
+
+        <div class="lp-key__col lp-key__col--clear">
+          <h3 class="lp-key__h"><span class="lp-sw lp-sw--teal" aria-hidden="true"></span>Cleared <small>what you can check afterwards</small></h3>
+          <ul>
+            <li><a href="{{ 'security/' | url }}"><b><code>doctor security</code></b></a>
+              <span>A read-only report mapped to the OWASP MCP Top 10, with <code>--json</code> for CI.</span></li>
+            <li><a href="{{ 'savings-report/' | url }}"><b>Savings report</b></a>
+              <span>Built from real counters, broken down by server and by session.</span></li>
+            <li><a href="{{ 'observability/' | url }}"><b>OpenTelemetry</b></a>
+              <span>Traces and metrics for every proxied call, exported over OTLP to the collector you already run.</span></li>
+            <li><a href="{{ 'commands/' | url }}"><b><code>tools pins</code> and <code>policy check</code></b></a>
+              <span>See what changed upstream before you approve it, and test a rule before a call hits it.</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MEASUREMENTS ============ -->
+  <section class="lp-sec lp-measure" aria-labelledby="lp-measure-h">
+    <div class="lp-wrap">
+      <h2 id="lp-measure-h" class="lp-h2">Measured, with the test conditions attached</h2>
+      <p class="lp-intro">
+        Three recorded working sessions, replayed through the binary. Native
+        MCP keeps all five servers' schemas in context on every turn; the
+        harness bills later turns at a 0.25× cache-read rate, a conservative
+        assumption (some providers charge less). The LeanProxy bars
+        include its own discovery calls.
+      </p>
+
+      <div class="lp-strips" role="table" aria-label="Tokens per session, native MCP versus LeanProxy">
+        <div class="lp-strips__legend" role="row">
+          <span role="columnheader"><i class="lp-sw lp-sw--amber"></i>Native MCP</span>
+          <span role="columnheader"><i class="lp-sw lp-sw--teal"></i>LeanProxy, <code>search_tools</code></span>
+          <span role="columnheader"><i class="lp-sw lp-sw--cobalt"></i>LeanProxy, <code>list_tools</code></span>
+        </div>
+        {% set sessions = [
+          ("Morning Sport", "4 prompts · 2 of 5 servers", 17586, 1148, "−93.5%", "+4", 2470, "−86.0%", "+3"),
+          ("Dev Workflow", "5 prompts · 2 of 5 servers", 20098, 3143, "−84.4%", "+6", 5234, "−74.0%", "+3"),
+          ("Full Day", "7 prompts · 3 of 5 servers", 25123, 8793, "−65.0%", "+10", 7302, "−70.9%", "+4"),
+        ] %}
+        {% for name, sub, native, search, ssave, sturns, list, lsave, lturns in sessions %}
+        <div class="lp-strip" role="row">
+          <div class="lp-strip__name" role="rowheader"><b>{{ name }}</b><span>{{ sub }}</span></div>
+          <div class="lp-strip__bars" role="cell">
+            <div class="lp-bar lp-bar--amber" style="--w: {{ native / 25123 * 100 }}%"><span>{{ "{:,}".format(native) }}</span></div>
+            <div class="lp-bar lp-bar--teal" style="--w: {{ search / 25123 * 100 }}%"><span>{{ "{:,}".format(search) }} <b>{{ ssave }}</b> <em>{{ sturns }} turns</em></span></div>
+            <div class="lp-bar lp-bar--cobalt" style="--w: {{ list / 25123 * 100 }}%"><span>{{ "{:,}".format(list) }} <b>{{ lsave }}</b> <em>{{ lturns }} turns</em></span></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="lp-note">
+        The savings leave out the token cost of the extra discovery turns, so
+        read them as upper bounds. In Full Day, 3 of 7 searches missed and paid
+        for a <code>list_tools</code> fallback as well. Earlier versions of this
+        table left both costs out and showed 81.5–93.7%.
+      </p>
+
+      <table class="lp-spec">
+        <caption>Specifications. Measured by <code>make harness</code> on linux/amd64 (4 CPUs).</caption>
+        <thead><tr><th scope="col">Parameter</th><th scope="col">Measured</th><th scope="col">Test condition</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Proxy overhead</th><td>0.56 ms p50 · 0.74 ms p95</td><td>Proxied minus direct, per call</td></tr>
+          <tr><th scope="row">Pipelined burst</th><td>9,723 req/s · 0 errors</td><td>500 calls spread over 5 servers</td></tr>
+          <tr><th scope="row">Large tool results</th><td>234,700 → 18,515 tok <b>−92.1%</b></td><td>Response governor, <code>max_tokens: 4000</code>, pages back byte-identical via <code>read_result</code></td></tr>
+          <tr><th scope="row">Repeated reads</th><td>13,780 → 3,640 tok <b>−73.6%</b></td><td><code>response.dedup: on</code>, same file read 3×</td></tr>
+          <tr><th scope="row">Secret leaks</th><td><span class="lp-bracket">0 of 3</span></td><td>Planted fake secrets, both directions, including <code>search_tools</code> output</td></tr>
+          <tr><th scope="row">Memory</th><td>20.4 MiB idle · 22.5 MiB after burst</td><td>Resident set size</td></tr>
+          <tr><th scope="row">Binary size</th><td>16.4 MiB</td><td>linux/amd64, stripped</td></tr>
+        </tbody>
+      </table>
+      <p class="lp-more"><a href="{{ 'benchmark-results/' | url }}">Full methodology and raw numbers</a></p>
+    </div>
+  </section>
+
+  <!-- ============ PASSTHROUGH: the honest part ============ -->
+  <section class="lp-sec lp-honest" aria-labelledby="lp-honest-h">
+    <div class="lp-wrap lp-honest__grid">
+      <h2 id="lp-honest-h" class="lp-h2">Your client already searches its tools? Good.</h2>
+      <div class="lp-honest__body">
+        <p>
+          Claude Code, Claude Desktop, Cursor and VS Code already defer and
+          search large tool lists on their own. For them, LeanProxy stops
+          hiding schemas behind a router. It lists every upstream tool as
+          <code>server__tool</code>, with full metadata and
+          <code>tools/list_changed</code>, and gets out of the way.
+        </p>
+        <p>
+          It still redacts, screens, pins and enforces policy on every listed
+          tool and every call. And the response side doesn't depend on the
+          mode: large tool results drop by <b>92.1%</b> and repeated reads by
+          <b>73.6%</b> in the harness, whichever client you use.
+        </p>
+        <p class="lp-more"><a href="{{ 'quickstart/#which-exposure-mode-each-ide-gets' | url }}">Which mode each client gets, and why</a></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SETUP ============ -->
+  <section class="lp-sec lp-steps" aria-labelledby="lp-steps-h">
+    <div class="lp-wrap">
+      <h2 id="lp-steps-h" class="lp-h2">Through the checkpoint in three steps</h2>
+      <ol class="lp-steplist">
+        <li>
+          <h3>Install the binary</h3>
+          <p>Homebrew or a release archive on macOS and Linux (amd64 and arm64), or <code>go build</code> from source.</p>
+          <div class="lp-code"><button class="lp-copy" type="button" data-copy="brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp&#10;brew install leanproxy-mcp"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="10" height="10" rx="2"/><path d="M13.5 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/></svg><span class="lp-copy__label">Copy</span></button>
+<pre><code>brew tap mmornati/leanproxy-mcp \
+  https://github.com/mmornati/leanproxy-mcp
+brew install leanproxy-mcp</code></pre></div>
+        </li>
+        <li>
+          <h3>Put your servers behind it</h3>
+          <p>Add each server once to <code>~/.config/leanproxy_servers.yaml</code>. Coming from Claude Code or OpenCode? <code>leanproxy-mcp migrate</code> imports what they already have.</p>
+          <div class="lp-code"><button class="lp-copy" type="button" data-copy="leanproxy-mcp server add filesystem -- npx -y @modelcontextprotocol/server-filesystem ~/projects"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="10" height="10" rx="2"/><path d="M13.5 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/></svg><span class="lp-copy__label">Copy</span></button>
+<pre><code>leanproxy-mcp server add filesystem -- \
+  npx -y @modelcontextprotocol/server-filesystem ~/projects</code></pre></div>
+        </li>
+        <li>
+          <h3>Point your client at LeanProxy</h3>
+          <p>Replace the servers in your client with one stdio server, or run a shared HTTP gateway with <code>serve</code>.</p>
+          <div class="lp-code"><button class="lp-copy" type="button" data-copy="claude mcp add leanproxy -- leanproxy-mcp server run --stdio"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6.5" y="6.5" width="10" height="10" rx="2"/><path d="M13.5 6.5V5a1.5 1.5 0 0 0-1.5-1.5H5A1.5 1.5 0 0 0 3.5 5v7A1.5 1.5 0 0 0 5 13.5h1.5"/></svg><span class="lp-copy__label">Copy</span></button>
+<pre><code><span class="lp-cmt"># Claude Code; other clients: same command</span>
+claude mcp add leanproxy -- \
+  leanproxy-mcp server run --stdio</code></pre></div>
+        </li>
+      </ol>
+      <p class="lp-more"><a href="{{ 'quickstart/' | url }}">Quick start for every client</a></p>
+    </div>
+  </section>
+
+  <!-- ============ COMPARISON ============ -->
+  <section class="lp-sec lp-compare" aria-labelledby="lp-compare-h">
+    <div class="lp-wrap">
+      <h2 id="lp-compare-h" class="lp-h2">How it compares</h2>
+      <p class="lp-intro">
+        Based on each project's own public documentation as of September 2026.
+        These projects move fast, so check the source before you rely on a row.
+      </p>
+      <div class="lp-table-scroll" tabindex="0" role="region" aria-label="Comparison with other MCP gateways">
+        <table class="lp-cmp">
+          <thead>
+            <tr><th scope="col"></th><th scope="col" class="lp-cmp__us">LeanProxy</th><th scope="col"><a href="https://mcpproxy.app/">MCPProxy</a></th><th scope="col"><a href="https://github.com/stacklok/toolhive">ToolHive</a></th><th scope="col"><a href="https://github.com/docker/mcp-gateway">Docker MCP Gateway</a></th><th scope="col"><a href="https://docs.litellm.ai/docs/mcp">LiteLLM</a></th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Response-side token governor</th><td class="lp-cmp__us lp-yes">Yes</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+            <tr><th scope="row">Injection classifier, request and response</th><td class="lp-cmp__us lp-yes"><span class="lp-bracket">Yes, local</span></td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+            <tr><th scope="row">Tool pinning, drift detection</th><td class="lp-cmp__us lp-yes">Yes</td><td class="lp-yes">Schema quarantine</td><td>—</td><td>—</td><td>—</td></tr>
+            <tr><th scope="row">Per-tool allow / deny / confirm</th><td class="lp-cmp__us lp-yes">Yes</td><td>—</td><td class="lp-yes">Access policies</td><td>—</td><td class="lp-yes">Per key / team</td></tr>
+            <tr><th scope="row">Sandboxed stdio servers</th><td class="lp-cmp__us lp-yes">Opt-in</td><td>—</td><td class="lp-yes">Yes</td><td class="lp-yes">Yes</td><td>n/a</td></tr>
+            <tr><th scope="row">Tool search across servers</th><td class="lp-cmp__us lp-yes">BM25</td><td class="lp-yes">BM25</td><td>—</td><td>—</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="lp-note">— means not documented. All five run as local, self-hosted binaries.</p>
+    </div>
+  </section>
+
+  <!-- ============ DEPARTURES ============ -->
+  <section class="lp-sec lp-depart" aria-labelledby="lp-depart-h">
+    <div class="lp-wrap">
+      <h2 id="lp-depart-h" class="lp-h2">Departures</h2>
+      <ol class="lp-board">
+        {% set gates = [
+          ("why-leanproxy/", "Why LeanProxy", "The economics of MCP, with the math"),
+          ("quickstart/", "Quick Start", "Configure servers, pick a mode, connect a client"),
+          ("configuration/", "Configuration", "Every key in leanproxy_servers.yaml"),
+          ("security/", "Security", "Threat model, redaction, injection, pinning, policy, sandbox"),
+          ("commands/", "Commands", "The full CLI reference"),
+          ("savings-report/", "Savings Report", "Auditable numbers from real counters"),
+          ("observability/", "Observability", "OpenTelemetry traces and metrics"),
+          ("servers/", "First-party servers", "Postgres, Redis, filesystem and GitHub servers built for the proxy"),
+          
+        ] %}
+        {% for href, name, what in gates %}
+        <li><a href="{{ href | url }}"><span class="lp-board__name">{{ name }}</span><span class="lp-board__what">{{ what }}</span><svg class="lp-board__go" viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4" /></svg></a></li>
+        {% endfor %}
+      </ol>
+      <div class="lp-close">
+        <p>One binary. Minutes to set up. Nothing leaves your machine.</p>
+        <div class="lp-actions">
+          <a class="lp-btn lp-btn--primary" href="{{ 'installation/' | url }}">Install LeanProxy
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10h11m-4-4 4 4-4 4" /></svg></a>
+          <a class="lp-btn lp-btn--ghost" href="https://github.com/mmornati/leanproxy-mcp">Star on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}
+
+{% block content %}{% endblock %}

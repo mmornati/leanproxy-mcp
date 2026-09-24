@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block fonts %}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&family=JetBrains+Mono:ital,wght@0,400..700;1,400..700&display=swap">
+  <style>:root{--md-text-font:"Archivo";--md-code-font:"JetBrains Mono"}</style>
+{% endblock %}
+
+{% block extrahead %}
+  <meta name="theme-color" content="#0f1a3a">
+  <meta property="og:title" content="{% if page and page.title and not page.is_homepage %}{{ page.title }} · {% endif %}{{ config.site_name }}">
+  <meta property="og:description" content="{{ config.site_description }}">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="{{ page.canonical_url if page else config.site_url }}">
+{% endblock %}
