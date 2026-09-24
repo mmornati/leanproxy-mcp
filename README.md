@@ -9,7 +9,7 @@
 </h1>
 
 <p align="center">
-  <strong>The Local CLI Proxy That Slashes Your AI Token Bill</strong>
+  <strong>Your local-first MCP security layer — and the proxy that slashes your AI token bill</strong>
 </p>
 
 <p align="center">
@@ -47,6 +47,21 @@ Measured by `make harness`: the real `leanproxy-mcp server run --stdio` binary, 
 
 ---
 
+## Your Local-First MCP Security Layer
+
+MCP servers run arbitrary, third-party code with your credentials and your filesystem access, and their tool descriptions and results are untrusted input the model reads. LeanProxy sits in front of every one of them, locally, and adds the layer most setups are missing:
+
+- **Redacts secrets** in tool arguments and responses, both directions, before they reach an LLM provider (regex + optional high-entropy detector, opt-in local-LLM sidecar for context-aware cases).
+- **Screens for prompt injection** in requests and tool output, with configurable risk-band actions (block / quarantine / redact / log) and a local classifier — no data leaves the machine.
+- **Pins every upstream tool definition** and flags drift ("rug pulls"), scans descriptions for hidden instructions and invisible unicode.
+- **Per-tool policy**: allow / deny / confirm rules by tool and by annotation (e.g. require confirmation on anything `destructiveHint`), refuses calls to tools a server never advertised.
+- **Sandboxes** third-party stdio servers in a container with no network and no filesystem access by default, and gives each server a minimal environment instead of your full one.
+- **One command tells you where you stand:** `leanproxy-mcp doctor security` — a local-only, read-only report mapped to the [OWASP MCP Top 10](docs/security.md#owasp-mcp-top-10-security-report-doctor-security-323), with a `--json` form for CI. See [docs/security.md](docs/security.md) for the full threat model — what this protects against and what it does not.
+
+None of this calls out to a third-party service: the proxy, the classifier, the redaction patterns and the report all run on your machine, against your own config.
+
+---
+
 ## The MCP Schema Tax is Killing Your AI Budget
 
 Every MCP server you connect injects **thousands of tokens** into every LLM request — even when you never use it. This is the "Schema Tax":
@@ -79,6 +94,8 @@ flowchart LR
 ```
 
 **The result?** You're burning tokens on tool definitions you'll never use in that session. The numbers above are the harness catalog's native `tools/list` payloads; see [Latest Benchmark](#latest-benchmark).
+
+> **Honest caveat:** some clients now do their own tool search or deferred loading (Claude Code, Claude Desktop, Cursor, VS Code). For those, LeanProxy lists every upstream tool directly (passthrough, [#322](https://github.com/mmornati/leanproxy-mcp/issues/322)) instead of hiding them behind a router — the schema tax above is *their* problem to solve, not one LeanProxy still needs to. The security layers (redaction, injection guard, policy, pinning) still apply to every listed tool and every call either way. See [Real Results, Real Savings](#real-results-real-savings) for what LeanProxy actually saves on the response side, which does not depend on which mode a client uses.
 
 ---
 
@@ -153,6 +170,25 @@ flowchart LR
 | 5 servers (118 tools) | 10,049 tokens | 318 tokens | **−96.8%** |
 
 This table counts only the static schema load. LeanProxy fetches tools on demand, with `search_tools` (152 tokens per lookup on average) or `list_tools` (GitHub: 1,638 tokens), and the session table above includes that cost. See [docs/benchmark-results.md](docs/benchmark-results.md) for the per-server `list_tools` sizes and the full methodology.
+
+---
+
+## How LeanProxy Compares
+
+A non-exhaustive comparison against other self-hostable MCP gateways/proxies, based on each project's own public documentation at the time of writing (2026-09); verify against the linked source before relying on any row, since these projects move fast.
+
+| | LeanProxy | [MCPProxy](https://mcpproxy.app/) | [ToolHive](https://github.com/stacklok/toolhive) | [Docker MCP Gateway](https://github.com/docker/mcp-gateway) | [LiteLLM MCP Gateway](https://docs.litellm.ai/docs/mcp) |
+|---|---|---|---|---|---|
+| Local, self-hosted binary | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Response-side token governor (per-tool budgets, projection, dedup, spill-store paging) | ✅ | not documented | not documented | not documented | not documented |
+| Prompt-injection classifier (request + response) | ✅ (local, no network call) | not documented | not documented | not documented | not documented |
+| Tool pinning / rug-pull drift detection | ✅ | ✅ (schema quarantine) | not documented as such | not documented | not documented |
+| Per-tool allow/deny/confirm policy | ✅ | not documented | ✅ (access policies) | not documented | ✅ (per key/team/org) |
+| Sandboxes stdio servers (container isolation) | ✅ (opt-in, docker/podman) | not documented | ✅ (runs servers via Docker/Podman) | ✅ (host-local) | not applicable (model-call gateway) |
+| Native tool search / BM25 discovery | ✅ (`search_tools`) | ✅ (BM25) | not documented | not documented | not documented |
+| Primary focus | MCP proxy: token cost + local security | MCP proxy: tool discovery + quarantine | MCP runtime: deployment, OAuth/OIDC, policy, audit | MCP proxy: container-based server aggregation | LLM gateway: 100+ model providers, MCP as one feature |
+
+LeanProxy's niche is the combination: token-cost reduction (response governor, schema loading) *and* a local, no-network-call security layer (redaction, injection guard, policy, pinning) in one small Go binary. ToolHive and Docker MCP Gateway focus more on deployment/runtime concerns (OAuth, Kubernetes, container orchestration); LiteLLM's MCP support is one feature of a much broader LLM-gateway product; MCPProxy is the closest in spirit (tool discovery + a quarantine concept) but does not document a response-side token governor or a request/response injection classifier.
 
 ---
 

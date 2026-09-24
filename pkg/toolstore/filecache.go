@@ -179,7 +179,7 @@ func (c *FileCache) SetTools(serverName string, tools []CachedTool) error {
 		return fmt.Errorf("toolstore: marshal tools for cache: %w", err)
 	}
 
-	if err := os.WriteFile(filePath, data, 0600); err != nil {
+	if err := writeFileAtomic(filePath, data); err != nil {
 		return fmt.Errorf("toolstore: write cache file: %w", err)
 	}
 
@@ -259,4 +259,30 @@ func sanitizeFilename(name string) string {
 		}
 	}
 	return string(result)
+}
+
+// writeFileAtomic replaces path with data so that a reader never sees a
+// partial file: os.WriteFile truncates first, so a proxy exiting (or a
+// concurrent write) mid-way left an empty or half-written cache that another
+// process (a second proxy, `policy check`) then failed to parse. The data is
+// written to a temporary file in the same directory and renamed over path.
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op once renamed
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

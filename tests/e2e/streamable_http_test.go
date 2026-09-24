@@ -645,7 +645,12 @@ func TestStreamableHTTP_Security(t *testing.T) {
 	doctor := exec.Command(e.proxyBin, "--config", cfg, "doctor", "security")
 	doctor.Env = append(os.Environ(), "HOME="+p.home)
 	out, err := doctor.CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "Running: "+p.url) || !strings.Contains(string(out), "Exposure: loopback only") ||
+	// Since #323, doctor security exits non-zero when any OWASP check is ❌;
+	// this fixture has no injection: block, so only 0 or 1 is expected.
+	if exitErr, ok := err.(*exec.ExitError); err != nil && (!ok || exitErr.ExitCode() != 1) {
+		t.Fatalf("doctor security: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "Running: "+p.url) || !strings.Contains(string(out), "Exposure: loopback only") ||
 		!strings.Contains(string(out), "Authentication: bearer token required") || strings.Contains(string(out), e2eServeToken) {
 		t.Fatalf("doctor security: %v\n%s", err, out)
 	}
