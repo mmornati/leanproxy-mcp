@@ -1,106 +1,163 @@
 # Installation
 
-LeanProxy-MCP can be installed on macOS, Linux, and Windows.
+LeanProxy-MCP is a single Go binary. Releases are published for macOS and
+Linux, on amd64 (x86_64) and arm64.
 
 ## Prerequisites
 
-- **macOS, Linux, or Windows**
-- **IDE with MCP support** (Claude Desktop, Cursor, OpenCode, Windsurf)
-- Optionally: **Go 1.25+** (for building from source)
+- **macOS or Linux**, amd64 or arm64. There is no Windows release.
+- **An MCP client**: Claude Code, Claude Desktop, Cursor, VS Code (GitHub
+  Copilot), OpenCode, or any other client that can start a stdio MCP server
+  or connect to a Streamable HTTP one.
+- **Go 1.25.5 or later**, only if you build from source.
 
-## Download Binary
+## Supported platforms
 
-Download the pre-built binary for your platform from the GitHub Releases page:
+| OS | Architecture | Release asset |
+|---|---|---|
+| macOS | arm64 (Apple Silicon) | `leanproxy-mcp_<version>_darwin_arm64.tar.gz` |
+| macOS | amd64 (Intel) | `leanproxy-mcp_<version>_darwin_amd64.tar.gz` |
+| Linux | amd64 (x86_64) | `leanproxy-mcp_<version>_linux_amd64.tar.gz` |
+| Linux | arm64 (aarch64) | `leanproxy-mcp_<version>_linux_arm64.tar.gz` |
 
-### Automatic (All Platforms)
+`<version>` is the release tag without the leading `v` (tag `v0.11` gives
+`leanproxy-mcp_0.11_linux_amd64.tar.gz`). Each release also has a
+`checksums.txt` file and an SBOM (`.sbom.json`) per archive.
 
-This single command works on macOS and Linux, automatically detecting your architecture:
+!!! note "Windows"
+    No Windows binary is released. Windows is not tested.
+
+## Download the binary
+
+### Automatic (macOS and Linux)
+
+This script picks the latest release, detects your OS and architecture, and
+installs the binary to `/usr/local/bin`:
 
 ```bash
-# Download latest version (auto-detects OS/arch)
-VERSION=${VERSION:-$(curl -sL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')}
+VERSION=${VERSION:-$(curl -fsSL https://api.github.com/repos/mmornati/leanproxy-mcp/releases/latest | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')}
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
 ARCH=$(uname -m)
-[ "$ARCH" = "x86_64" ] && ARCH="amd64"
-[ "$ARCH" = "arm64" ] && ARCH="arm64"
+case "$ARCH" in
+  x86_64)  ARCH=amd64 ;;   # Intel/AMD
+  aarch64) ARCH=arm64 ;;   # Linux on ARM reports aarch64
+esac
 curl -fsSL "https://github.com/mmornati/leanproxy-mcp/releases/download/${VERSION}/leanproxy-mcp_${VERSION#v}_${OS}_${ARCH}.tar.gz" -o leanproxy-mcp.tar.gz
-tar -xzf leanproxy-mcp.tar.gz
+tar -xzf leanproxy-mcp.tar.gz leanproxy-mcp
 chmod +x leanproxy-mcp
 sudo mv leanproxy-mcp /usr/local/bin/
 rm leanproxy-mcp.tar.gz
-
-# Override version: VERSION=v0.2.0 ... (run the full command above with VERSION set)
 ```
 
-### Manual Download
+To install a specific version, set `VERSION` first, for example
+`VERSION=v0.11`, then run the same commands.
 
-If you prefer, download manually from: https://github.com/mmornati/leanproxy-mcp/releases
+!!! tip "Verify the download"
+    To check the archive, run these two commands after the first `curl`
+    line and before `tar`. The two hashes must be the same:
 
-## Install via Homebrew (macOS/Linux)
+    ```bash
+    curl -fsSL "https://github.com/mmornati/leanproxy-mcp/releases/download/${VERSION}/checksums.txt" | grep "_${OS}_${ARCH}.tar.gz$"
+    shasum -a 256 leanproxy-mcp.tar.gz
+    ```
+
+### Manual download
+
+Download the archive for your platform from the
+[GitHub Releases page](https://github.com/mmornati/leanproxy-mcp/releases),
+extract it, and put `leanproxy-mcp` somewhere on your `PATH`.
+
+## Install with Homebrew (macOS and Linux)
 
 ```bash
-# Add custom tap (point to this repository)
 brew tap mmornati/leanproxy-mcp https://github.com/mmornati/leanproxy-mcp
-
-# Install
 brew install leanproxy-mcp
 ```
 
-## Build from Source
+!!! note
+    The formula is updated by a pull request after each release, so it can
+    lag behind the latest release. Run `leanproxy-mcp version` to check what
+    you got, and use the download script above if you need the newest
+    version.
+
+## Build from source
 
 ```bash
-# Clone repository
 git clone https://github.com/mmornati/leanproxy-mcp.git
 cd leanproxy-mcp
-
-# Build
 go build -o leanproxy-mcp .
-
-# Install
 sudo mv leanproxy-mcp /usr/local/bin/
 ```
 
-Or use the Makefile:
+The Makefile has two related targets:
 
-```bash
-make build
-sudo make install
-```
+| Target | What it does |
+|---|---|
+| `make build-local` | Builds for your platform into `dist/leanproxy-mcp` |
+| `make install` | Runs `go install`, which puts the binary in `$(go env GOPATH)/bin`. Make sure that directory is on your `PATH`. It does not install to `/usr/local/bin` and does not need `sudo` |
 
-## Verify Installation
+## Verify the installation
 
 ```bash
 leanproxy-mcp version
 ```
 
-Expected output:
+Example output:
+
 ```
- leanproxy-mcp version 0.5.2
- build date: 2026-05-04
- platform: darwin/arm64
- go: go1.25.5
+leanproxy-mcp version 0.11
+build date: 2026-09-24T04:56:34Z
+platform: darwin/arm64
+go: go1.25.14
 ```
 
-## IDE Configuration
+A binary built with plain `go build` reports `version dev` and
+`build date: unknown`.
 
-After installation, configure your IDE to use LeanProxy-MCP as an MCP server proxy. LeanProxy proxies existing MCP server configurations from your IDE.
+!!! note
+    The v0.11 release binary prints a few
+    `completion: failed to register completion for --...` lines on stderr
+    for every command. They are harmless and are fixed on `main`.
 
-### Step 1: Migrate Existing MCP Servers
+## Connect your IDE
 
-First, import your existing MCP server configurations from your IDE:
+LeanProxy reads its upstream MCP servers from one file,
+`~/.config/leanproxy_servers.yaml`. Your IDE then starts a single MCP
+server, `leanproxy-mcp server run --stdio`, instead of each server
+separately.
+
+### Step 1: import your existing MCP servers
 
 ```bash
-# Scan all IDEs at once (finds OpenCode, Claude Desktop, Cursor, VS Code)
+# Preview what would be imported
+leanproxy-mcp migrate --dry-run
+
+# Import
 leanproxy-mcp migrate
 ```
 
-This scans all supported IDEs and imports any found MCP server configurations into `~/.config/leanproxy_servers.yaml`.
+`migrate` reads these files and writes the servers it finds to
+`~/.config/leanproxy_servers.yaml` (or to `--target`, or to
+`$LEANPROXY_CONFIG`):
+
+| Source | File | Key read |
+|---|---|---|
+| OpenCode | `~/.config/opencode/opencode.json` | `mcp` (entries with a `command`) |
+| Claude Code | `~/.claude.json`, `~/.config/claude/mcp_config.json` | top-level `mcpServers` |
+| Cursor | `~/.cursor/mcp.json` | `mcp_servers` |
+| VS Code | user `settings.json` (`~/.config/Code/User/`, `~/Library/Application Support/Code/User/`, and the VSCodium equivalents) | `mcpExtensions` |
+| Generic | `~/.config/mcp.json` | `mcp_servers` |
 
 Example output:
+
 ```
 Found 4 MCP server(s) from 1 source(s):
 
   OpenCode: 4 server(s)
+  Claude:   0 server(s)
+  VS Code:  0 server(s)
+  Cursor:   0 server(s)
+  Generic:  0 server(s)
 
   [1] nexus-dev (opencode) - /usr/bin/env
   [2] nexus-dev-test (opencode) - /usr/bin/env
@@ -110,78 +167,78 @@ Found 4 MCP server(s) from 1 source(s):
 Import to ~/.config/leanproxy_servers.yaml? [y/N]:
 ```
 
-Confirm to import the servers.
+!!! warning "What `migrate` does not find"
+    - It imports **stdio servers only**. Remote (`url`) entries are not
+      imported; add them to the YAML file by hand
+      ([Quick Start](quickstart.md#1-configure-mcp-servers)).
+    - It does not read Claude Desktop's `claude_desktop_config.json`, VS
+      Code's `mcp.json` files, or Claude Code project-scoped servers.
+    - Cursor's own `mcp.json` uses the key `mcpServers`, which `migrate` does
+      not read, so Cursor servers are usually not found.
+    - In the Claude Code file, an `env` written as an object
+      (`"env": {"KEY": "value"}`) makes the whole file unreadable to
+      `migrate`, and it is skipped without an error.
+    - If LeanProxy itself is already configured in one of these files, it is
+      imported too. Remove that entry from `leanproxy_servers.yaml`, or LeanProxy
+      will try to start itself as an upstream server.
 
-### Step 2: Configure LeanProxy in Your IDE
+    Check the preview (`--dry-run`) and add anything missing with
+    [`server add`](quickstart.md#1-configure-mcp-servers) or by editing the
+    YAML file.
 
-Configure LeanProxy as an MCP server in your IDE. LeanProxy runs as a daemon and proxies all your existing MCP servers through a single connection.
+### Step 2: point your IDE at LeanProxy
 
-#### OpenCode
+Every client starts the same command: `leanproxy-mcp server run --stdio`.
+The [Quick Start](quickstart.md#connect-your-client) has the snippet for
+Claude Code, Claude Desktop, Cursor, VS Code and OpenCode.
 
-Add to your `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "leanproxy": {
-      "type": "local",
-      "command": ["leanproxy-mcp", "server", "run", "--stdio"],
-      "enabled": true
-    }
-  }
-}
-```
-
-#### Cursor
-
-Add to your `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "leanproxy": {
-      "command": "leanproxy-mcp",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-#### VS Code
-
-Add to your `~/.vscode/mcp.json` (create if it doesn't exist):
+For example, Cursor (`~/.cursor/mcp.json`):
 
 ```json
 {
   "mcpServers": {
     "leanproxy": {
       "command": "leanproxy-mcp",
-      "args": ["serve"]
+      "args": ["server", "run", "--stdio"]
     }
   }
 }
 ```
 
-> **Note:** When configured as an MCP server, LeanProxy automatically starts when your IDE connects. No need to run `leanproxy-mcp serve` manually.
+The client starts LeanProxy when it connects and stops it when it
+disconnects. You do not run anything by hand. LeanProxy then starts the
+upstream servers from `leanproxy_servers.yaml`.
 
-## Shell Completions
+!!! warning "Remove the original entries"
+    After you import your servers, remove them from the IDE's own MCP
+    configuration. Otherwise the IDE starts them twice (once directly, once
+    through LeanProxy) and sees every tool twice.
 
-Generate shell completions for your shell:
+!!! warning "Do not use `serve` for an IDE"
+    `leanproxy-mcp serve` speaks a line-based TCP protocol that no MCP client
+    understands, and it is deprecated. Use `server run --stdio`, or
+    `server run --http` for one shared gateway
+    ([Quick Start](quickstart.md#2b-or-run-one-shared-gateway-over-http)).
+
+## Shell completions
 
 ```bash
 # Bash
-leanproxy-mcp completion bash > /etc/bash_completion.d/leanproxy-mcp
+leanproxy-mcp completion bash | sudo tee /etc/bash_completion.d/leanproxy-mcp > /dev/null
 
-# Zsh
+# Zsh (the directory must be in your $fpath)
+mkdir -p ~/.zsh/completions
 leanproxy-mcp completion zsh > ~/.zsh/completions/_leanproxy-mcp
 
 # Fish
 leanproxy-mcp completion fish > ~/.config/fish/completions/leanproxy-mcp.fish
 ```
 
-## Next Steps
+Generate completions with the binary. The files in the repository's
+`completions/` directory are outdated.
 
-- [Quick Start Guide](./quickstart.md)
-- [Configuration](./configuration.md)
-- [Commands Reference](./commands.md)
+## Next steps
+
+- [Quick Start](quickstart.md)
+- [Configuration](configuration.md)
+- [Commands Reference](commands.md)

@@ -2,7 +2,7 @@
 
 site_name: LeanProxy-MCP
 site_description: "The local token firewall for MCP: cuts the tokens tool schemas and results cost, and redacts, screens and pins every call. One Go binary; nothing leaves your machine."
-site_author: "Massimo Mornati"
+site_author: "Marco Mornati"
 site_url: https://mmornati.github.io/leanproxy-mcp
 
 # Repository settings
@@ -11,7 +11,7 @@ repo_url: https://github.com/mmornati/leanproxy-mcp
 edit_uri: https://github.com/mmornati/leanproxy-mcp/edit/main/docs/
 
 # Copyright
-copyright: "Copyright &copy; 2026 Massimo Mornati"
+copyright: "Copyright &copy; 2026 Marco Mornati"
 
 # Theme
 theme:
