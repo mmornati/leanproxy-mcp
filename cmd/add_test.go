@@ -288,10 +288,12 @@ func TestRunAdd_FreshInstallWritesConfig(t *testing.T) {
 		SyncedAt: testNow(t),
 		Entries: []registry.RegistryFeedEntry{
 			{
-				Name:      "github",
-				Transport: "stdio",
-				Command:   "gh-mcp",
-				Args:      []string{"--stdio"},
+				Name:              "github",
+				Transport:         "stdio",
+				Command:           "gh-mcp",
+				Args:              []string{"--stdio"},
+				NamespaceVerified: true,
+				LastRelease:       time.Now().Format(time.RFC3339),
 			},
 		},
 	})
@@ -313,11 +315,120 @@ func TestRunAdd_FreshInstallWritesConfig(t *testing.T) {
 	if !strings.Contains(string(data), "github") {
 		t.Errorf("config missing github: %s", data)
 	}
+	if !strings.Contains(string(data), "enabled: false") {
+		t.Errorf("fresh, unconfirmed install should be written disabled: %s", data)
+	}
 	if !strings.Contains(stdout.String(), "Installed") {
 		t.Errorf("stdout should report install, got %q", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "Token-cost preview") {
 		t.Errorf("stdout should include token-cost preview, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "About to install") {
+		t.Errorf("stdout should show the install preview, got %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "gh-mcp --stdio") {
+		t.Errorf("stdout should show the exact command line, got %q", stdout.String())
+	}
+}
+
+func TestRunAdd_YesFlagEnablesServer(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "leanproxy_servers.yaml")
+	t.Setenv("LEANPROXY_CONFIG", cfgPath)
+	t.Setenv("HOME", dir)
+
+	writeIndex(t, filepath.Join(dir, ".leanproxy"), registry.FeedIndex{
+		SyncedAt: testNow(t),
+		Entries: []registry.RegistryFeedEntry{
+			{
+				Name:              "github",
+				Transport:         "stdio",
+				Command:           "gh-mcp",
+				NamespaceVerified: true,
+				LastRelease:       time.Now().Format(time.RFC3339),
+			},
+		},
+	})
+
+	stdout := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(stdout)
+	cmd.SetErr(&bytes.Buffer{})
+
+	prevYes := addServerYes
+	addServerYes = true
+	defer func() { addServerYes = prevYes }()
+
+	if err := runAdd(cmd, []string{"github"}); err != nil {
+		t.Fatalf("runAdd: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("config not written: %v", err)
+	}
+	if !strings.Contains(string(data), "enabled: true") {
+		t.Errorf("--yes install should be written enabled: true: %s", data)
+	}
+}
+
+func TestRunAdd_PinsVersionFromRegistryPackage(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "leanproxy_servers.yaml")
+	t.Setenv("LEANPROXY_CONFIG", cfgPath)
+	t.Setenv("HOME", dir)
+
+	writeIndex(t, filepath.Join(dir, ".leanproxy"), registry.FeedIndex{
+		SyncedAt: testNow(t),
+		Entries: []registry.RegistryFeedEntry{
+			{
+				Name:              "github",
+				Transport:         "stdio",
+				Command:           "npx",
+				Args:              []string{"-y", "@modelcontextprotocol/server-github"},
+				Version:           "1.2.3",
+				PackageRegistry:   "npm",
+				PackageIdentifier: "@modelcontextprotocol/server-github",
+				Source:            "official",
+				NamespaceVerified: true,
+				LastRelease:       time.Now().Format(time.RFC3339),
+			},
+		},
+	})
+
+	stdout := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(stdout)
+	cmd.SetErr(&bytes.Buffer{})
+
+	prevYes := addServerYes
+	addServerYes = true
+	defer func() { addServerYes = prevYes }()
+
+	if err := runAdd(cmd, []string{"github"}); err != nil {
+		t.Fatalf("runAdd: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("config not written: %v", err)
+	}
+	if !strings.Contains(string(data), "@modelcontextprotocol/server-github@1.2.3") {
+		t.Errorf("config should pin the exact version: %s", data)
+	}
+	if !strings.Contains(string(data), "installed_from:") || !strings.Contains(string(data), "registry: official") {
+		t.Errorf("config should record installed_from provenance: %s", data)
 	}
 }
 

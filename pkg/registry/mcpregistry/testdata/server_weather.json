@@ -1,0 +1,20 @@
+{
+  "name": "io.github.example/weather",
+  "description": "Weather lookup MCP server",
+  "version": "1.4.0",
+  "repository": {"url": "https://github.com/example/weather", "source": "github"},
+  "license": "MIT",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@example/weather-mcp",
+      "version": "1.4.0",
+      "environmentVariables": [
+        {"name": "WEATHER_API_KEY", "isRequired": true, "isSecret": true}
+      ]
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/official": {"isLatest": true, "isVerified": true, "status": "active"}
+  }
+}

@@ -14,34 +14,80 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/registry/mcpregistry"
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 )
 
 const (
-	DefaultRegistryURL  = "https://registry.mcp.io/index.ndjson"
+	// DefaultRegistryURL used to point FeedFetcher at an unowned domain
+	// (registry.mcp.io) by default, which would have handed whoever
+	// controls that domain code execution on every install (issue #313).
+	// LeanProxy does not own that domain, so there is no default NDJSON
+	// feed URL any more: FeedFetcher.Sync uses the official MCP Registry
+	// (see pkg/registry/mcpregistry) unless WithURL configures a specific,
+	// user-chosen custom feed. The constant is kept (empty) only so any
+	// external reference to it still compiles; do not set a URL here.
+	DefaultRegistryURL  = ""
 	DefaultSyncInterval = 1 * time.Hour
 	CacheStaleThreshold = 24 * time.Hour
 )
 
 type RegistryFeedEntry struct {
-	Name          string            `json:"name"`
-	Description   string            `json:"description,omitempty"`
-	URL           string            `json:"url,omitempty"`
-	Command       string            `json:"command,omitempty"`
-	Args          []string          `json:"args,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
-	Transport     string            `json:"transport,omitempty"`
-	TrustScore    int               `json:"trust_score,omitempty"`
-	LastRelease   string            `json:"last_release,omitempty"`
-	OpenIssues    int               `json:"open_issues,omitempty"`
-	Downloads     int               `json:"downloads,omitempty"`
-	TokensPerTurn int64             `json:"tokens_per_turn,omitempty"`
-	Categories    []string          `json:"categories,omitempty"`
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	URL         string            `json:"url,omitempty"`
+	Command     string            `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	Transport   string            `json:"transport,omitempty"`
+	// TrustScore is read from the feed for backward compatibility with old
+	// cache files only. It is never used by CalculateTrustScore (issue
+	// #313): a feed cannot be trusted to grade itself.
+	TrustScore    int      `json:"trust_score,omitempty"`
+	LastRelease   string   `json:"last_release,omitempty"`
+	OpenIssues    int      `json:"open_issues,omitempty"`
+	Downloads     int      `json:"downloads,omitempty"`
+	TokensPerTurn int64    `json:"tokens_per_turn,omitempty"`
+	Categories    []string `json:"categories,omitempty"`
+
+	// Version is the exact package/image version this entry pins, when
+	// known. Empty means the source did not publish a version (a legacy
+	// custom feed entry) — installers must not assume "latest" is safe and
+	// should pin best-effort (see pkg/migrate.buildServerConfig).
+	Version string `json:"version,omitempty"`
+	// PackageRegistry identifies which package registry Command/Args were
+	// derived from ("npm", "pypi", "oci"), when the entry came from a
+	// structured source (the official MCP Registry). Empty for legacy
+	// custom-feed entries that only ever provided a raw Command/Args pair.
+	PackageRegistry string `json:"package_registry,omitempty"`
+	// PackageIdentifier is the bare package name or image reference
+	// (without a version suffix) when PackageRegistry is set.
+	PackageIdentifier string `json:"package_identifier,omitempty"`
+	// Source names where this entry came from: "official" for the MCP
+	// Registry API, or the configured name of a custom NDJSON source
+	// (registry.sources). Used for provenance display and for
+	// InstalledFrom.Registry.
+	Source string `json:"source,omitempty"`
+	// NamespaceVerified reports whether the source registry verified that
+	// the publisher owns the server's namespace (DNS/GitHub verification
+	// on the official MCP Registry). Used only as a trust signal — see
+	// CalculateTrustScore.
+	NamespaceVerified bool `json:"namespace_verified,omitempty"`
+	// License is the SPDX identifier or free-form license name reported by
+	// the source, when known. Used only as a trust signal.
+	License string `json:"license,omitempty"`
 }
 
 type FeedIndex struct {
 	SyncedAt time.Time           `json:"synced_at"`
 	Entries  []RegistryFeedEntry `json:"entries"`
+}
+
+// NamedFeedSource is one opt-in custom NDJSON feed the operator configured
+// under registry.sources (pkg/migrate.RegistrySettings).
+type NamedFeedSource struct {
+	Name string
+	URL  string
 }
 
 type FeedFetcher struct {
@@ -50,6 +96,13 @@ type FeedFetcher struct {
 	logger      *slog.Logger
 	client      *http.Client
 	interval    time.Duration
+
+	// official is the official MCP Registry client used as the default
+	// source. Set by NewFeedFetcher; nil disables it (tests only).
+	official *mcpregistry.Client
+	// customSources are opt-in custom NDJSON feeds configured by the
+	// operator, synced in addition to the official registry.
+	customSources []NamedFeedSource
 
 	loadOnce sync.Once
 	loadErr  error
@@ -74,7 +127,22 @@ func NewFeedFetcher(logger *slog.Logger, cacheDir string) *FeedFetcher {
 		logger:      logger,
 		client:      &http.Client{Timeout: 30 * time.Second},
 		interval:    DefaultSyncInterval,
+		official:    mcpregistry.New(),
 	}
+}
+
+// WithOfficialClient overrides the official-registry client (e.g. to point
+// it at a test server, or to disable it by passing nil).
+func (f *FeedFetcher) WithOfficialClient(c *mcpregistry.Client) *FeedFetcher {
+	f.official = c
+	return f
+}
+
+// WithCustomSources sets the opt-in custom NDJSON feeds to sync alongside
+// the official registry. Only used on the default (no WithURL) sync path.
+func (f *FeedFetcher) WithCustomSources(sources []NamedFeedSource) *FeedFetcher {
+	f.customSources = sources
+	return f
 }
 
 func (f *FeedFetcher) WithURL(url string) *FeedFetcher {
@@ -100,22 +168,43 @@ func (f *FeedFetcher) IndexPath() string {
 	return filepath.Join(f.RegistryDir(), "index.json")
 }
 
+// Sync refreshes the local cache. When registryURL is set (via WithURL —
+// used directly by tests and by any caller that wants exactly one custom
+// NDJSON feed), it fetches only that feed, unchanged from prior releases.
+// Otherwise (the default) it syncs from the official MCP Registry plus any
+// configured custom sources (WithCustomSources) — see SyncSources.
 func (f *FeedFetcher) Sync(ctx context.Context) error {
-	f.logger.Debug("syncing registry feed", "url", f.registryURL)
+	if f.registryURL == "" && (f.official != nil || len(f.customSources) > 0) {
+		return f.SyncSources(ctx)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, f.registryURL, nil)
+	entries, err := f.fetchNDJSON(ctx, f.registryURL, "")
 	if err != nil {
-		return fmt.Errorf("registry feed: create request: %w", err)
+		return err
+	}
+	return f.finishSync(entries)
+}
+
+// fetchNDJSON downloads and parses one newline-delimited-JSON feed. source
+// tags each parsed entry's Source field for provenance (empty leaves the
+// entry's own Source untouched, matching pre-#313 behavior for the
+// single-URL path).
+func (f *FeedFetcher) fetchNDJSON(ctx context.Context, feedURL, source string) ([]RegistryFeedEntry, error) {
+	f.logger.Debug("syncing registry feed", "url", feedURL)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("registry feed: create request: %w", err)
 	}
 
 	resp, err := f.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("registry feed: network error: %w\nHint: check your connection or try again later with `leanproxy marketplace sync`", err)
+		return nil, fmt.Errorf("registry feed: network error: %w\nHint: check your connection or try again later with `leanproxy marketplace sync`", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("registry feed: registry returned HTTP %d\nHint: the registry may be temporarily unavailable; try again later with `leanproxy marketplace sync`", resp.StatusCode)
+		return nil, fmt.Errorf("registry feed: registry returned HTTP %d\nHint: the registry may be temporarily unavailable; try again later with `leanproxy marketplace sync`", resp.StatusCode)
 	}
 
 	entries := make([]RegistryFeedEntry, 0, 256)
@@ -131,12 +220,20 @@ func (f *FeedFetcher) Sync(ctx context.Context) error {
 			f.logger.Warn("registry feed: skipping malformed entry", "error", err)
 			continue
 		}
+		if source != "" && entry.Source == "" {
+			entry.Source = source
+		}
 		entries = append(entries, entry)
 	}
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("registry feed: read error: %w", err)
+		return nil, fmt.Errorf("registry feed: read error: %w", err)
 	}
+	return entries, nil
+}
 
+// finishSync stores entries as the new cache, mirroring the change-detection
+// and onSync-hook behavior Sync always had.
+func (f *FeedFetcher) finishSync(entries []RegistryFeedEntry) error {
 	index := FeedIndex{
 		SyncedAt: time.Now(),
 		Entries:  entries,

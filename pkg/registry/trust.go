@@ -8,9 +8,15 @@ import (
 )
 
 const (
-	TrustLow    = "low"
-	TrustMedium = "medium"
-	TrustHigh   = "high"
+	// TrustUnverified is the level assigned to a score of 0: no signal
+	// LeanProxy can independently verify was present at all. It is
+	// distinct from TrustLow (some signal was present but weak) so the
+	// display can tell "we checked and it looks risky" apart from "we have
+	// nothing to check".
+	TrustUnverified = "unverified"
+	TrustLow        = "low"
+	TrustMedium     = "medium"
+	TrustHigh       = "high"
 
 	trustWarningThreshold = 40
 	highTrustThreshold    = 70
@@ -29,20 +35,35 @@ const (
 	scoreModerateDownloads = 15
 	scoreFewDownloads      = 10
 	scoreSomeDownloads     = 5
+	scoreNamespaceVerified = 25
+	scoreHasLicense        = 15
 
 	futureDateTolerance = 24 * time.Hour
 )
 
+// CalculateTrustScore computes a trust score from 0-100 using only signals
+// LeanProxy itself can observe or independently verify:
+//
+//   - registry namespace verification status (entry.NamespaceVerified) —
+//     the registry API confirmed the publisher owns the namespace (DNS or
+//     GitHub verification for the official MCP Registry);
+//   - presence of a license (entry.License);
+//   - recency of the last release;
+//   - open issue count (as a maintenance signal);
+//   - download count.
+//
+// A feed-provided trust_score (entry.TrustScore) is never used: whoever
+// authors the feed does not get to grade their own homework (issue #313).
+// An entry with no verifiable signal at all scores 0, labeled "unverified"
+// (see TrustLevel), never a high score by default.
 func CalculateTrustScore(entry RegistryFeedEntry) int {
-	if entry.TrustScore > 0 {
-		return entry.TrustScore
-	}
-
-	if isEmptyEntry(entry) {
-		return 100
-	}
-
 	score := 0
+	if entry.NamespaceVerified {
+		score += scoreNamespaceVerified
+	}
+	if entry.License != "" {
+		score += scoreHasLicense
+	}
 	if entry.LastRelease != "" {
 		score += releaseRecencyScore(entry.LastRelease)
 	}
@@ -62,15 +83,25 @@ func CalculateTrustScore(entry RegistryFeedEntry) int {
 	return score
 }
 
-// isEmptyEntry reports whether the entry lacks every signal used by the
-// heuristic. Per spec, an entry with no trust-relevant data renders as "-"
-// placeholders and must not trigger the install warning.
-func isEmptyEntry(entry RegistryFeedEntry) bool {
-	return entry.LastRelease == "" &&
-		entry.OpenIssues == 0 &&
-		entry.Downloads == 0 &&
-		entry.Description == "" &&
-		len(entry.Categories) == 0
+// TrustSignal is one individually-displayable input to the trust score.
+type TrustSignal struct {
+	Name    string
+	Present bool
+	Detail  string
+}
+
+// TrustSignals returns the individual signals behind entry's trust score, in
+// a fixed display order, so callers can show "why" a score is what it is
+// instead of only the number (issue #313 acceptance criterion: "Display the
+// individual signals, not just a number").
+func TrustSignals(entry RegistryFeedEntry) []TrustSignal {
+	return []TrustSignal{
+		{Name: "namespace verified", Present: entry.NamespaceVerified, Detail: FormatString("")},
+		{Name: "license", Present: entry.License != "", Detail: FormatString(entry.License)},
+		{Name: "last release", Present: entry.LastRelease != "", Detail: FormatLastRelease(entry.LastRelease)},
+		{Name: "open issues", Present: entry.OpenIssues > 0, Detail: FormatInt(entry.OpenIssues)},
+		{Name: "downloads", Present: entry.Downloads > 0, Detail: FormatInt(entry.Downloads)},
+	}
 }
 
 func releaseRecencyScore(lastRelease string) int {
@@ -149,6 +180,8 @@ func downloadScore(downloads int) int {
 
 func TrustLevel(score int) string {
 	switch {
+	case score <= 0:
+		return TrustUnverified
 	case score >= highTrustThreshold:
 		return TrustHigh
 	case score >= trustWarningThreshold:

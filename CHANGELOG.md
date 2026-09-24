@@ -2,6 +2,41 @@
 
 ## Breaking in v0.11
 
+- **Marketplace supply-chain integrity: official registry, version pinning, honest trust score, confirm-before-enable** ([#313](https://github.com/mmornati/leanproxy-mcp/issues/313)).
+  - **What.** `pkg/registry/trust.go`'s `CalculateTrustScore` used to return a feed-provided
+    `trust_score` as-is when present, and scored an entry with **no** trust-relevant data **100**
+    (maximum trust) — the feed author decided how trustworthy their own entry looked. Nothing
+    installed from the registry was checksummed, signed or pinned: `add` wrote the feed's
+    `command`/`args`/`env` straight into `leanproxy_servers.yaml` with `enabled: true` and no
+    version pin, so `npx -y pkg` ran whatever was latest on every start, without showing the
+    command first. The default feed URL, `https://registry.mcp.io/index.ndjson`, is a domain this
+    project does not own.
+  - **Now.**
+    - `marketplace sync` defaults to the **official MCP Registry**
+      (`registry.modelcontextprotocol.io`, API `v0`), which verifies package identifiers, versions
+      and namespaces. The old unowned default domain is no longer used at all; a custom NDJSON feed
+      is now opt-in only, via `registry.sources` in `leanproxy_servers.yaml` (see
+      [`docs/configuration.md`](docs/configuration.md#marketplace-registry-sources-issue-313)).
+    - `CalculateTrustScore` **never** uses a feed-provided `trust_score`. It scores only from
+      signals LeanProxy can verify (registry namespace verification, license presence, release
+      recency, open issues, downloads). An entry with no signal at all scores **0**, labeled
+      `unverified` — never a free pass to 100. `marketplace search` and `add`'s install preview
+      both show the individual signals, not just the number.
+    - Installed stdio servers are pinned to an exact version (`npx -y pkg@1.2.3`,
+      `uvx pkg==1.2.3`, `docker run ... image@sha256:…` when available), recorded as
+      `installed_from: {registry, name, version, installed_at}` on the server entry.
+      `marketplace outdated` / `marketplace update <name>` show the version diff and ask for
+      confirmation.
+    - `add` prints the exact command line, env var *names* only (values are never printed or
+      logged), transport/URL and trust signals, then asks `Enable this server? [y/N]` before
+      writing anything. `--yes` skips the prompt for scripts; `--dry-run` only previews. A newly
+      installed server that is not confirmed is still written, but with `enabled: false`.
+  - **Migration.** Configs written by earlier versions of `add`/`marketplace update` keep working;
+    the new `installed_from` block is only added on the next install/update. If you relied on the
+    default `registry.mcp.io` feed, add it explicitly under `registry.sources` (or point at your
+    own feed) — see [`docs/security.md`](docs/security.md#marketplace-trust-model-issue-313) for
+    the full trust model.
+
 - **Least-privilege child environment: stdio servers no longer inherit the proxy's full environment** ([#311](https://github.com/mmornati/leanproxy-mcp/issues/311)).
   - **What.** `spawnLocked` used to build a stdio child's environment as
     `os.Environ()` (the proxy's own, in full) plus the server's configured `env`. Every

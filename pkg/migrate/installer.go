@@ -40,6 +40,19 @@ type CacheEntry struct {
 	Env           map[string]string
 	URL           string
 	TokensPerTurn int64
+	// Version is the exact version to pin at install time, when known
+	// (issue #313). Empty means the source did not publish one.
+	Version string
+	// PackageRegistry identifies the package registry Command/Args came
+	// from ("npm", "pypi", "oci"), when the entry is registry-sourced.
+	// Empty for legacy/custom entries that only ever had a raw command.
+	PackageRegistry string
+	// PackageIdentifier is the bare package/image name (no version
+	// suffix), set alongside PackageRegistry.
+	PackageIdentifier string
+	// Registry is the source this entry came from ("official", or a
+	// configured custom source name). Recorded into InstalledFrom.
+	Registry string
 }
 
 // CacheSnapshot is the materialized view of the registry cache. It is
@@ -122,6 +135,15 @@ type InstallOptions struct {
 	// DryRun, when true, prevents any filesystem writes and any stopper
 	// calls. The result still reflects what would have happened.
 	DryRun bool
+
+	// Enabled controls the written server's `enabled` field (issue #313).
+	// A newly installed server defaults to enabled: false (the caller must
+	// have shown the user the exact command, env names, transport/URL and
+	// trust signals and gotten confirmation — or passed --yes) before
+	// setting this true. Replacing an existing server keeps that server's
+	// previous enabled state instead of using this field, since the
+	// operator already made that call once.
+	Enabled bool
 }
 
 // InstallResult captures the outcome of a successful Install call. It is
@@ -202,6 +224,8 @@ func (i *Installer) Install(ctx context.Context, entry CacheEntry, opts InstallO
 	if err != nil {
 		return nil, fmt.Errorf("installer: build config for %q: %w", entry.Name, err)
 	}
+	enabled := opts.Enabled
+	sc.Enabled = &enabled
 
 	path := i.ConfigPath
 	if path == "" {
@@ -229,6 +253,14 @@ func (i *Installer) Install(ctx context.Context, entry CacheEntry, opts InstallO
 	replaced := existingIdx >= 0
 	if replaced && !opts.Force {
 		return nil, &ErrAlreadyInstalled{ServerID: sc.Name}
+	}
+	if replaced && cfg.Servers[existingIdx] != nil && cfg.Servers[existingIdx].Enabled != nil {
+		// Replacing an existing server keeps its previous enabled state:
+		// the operator already made that call once, and a routine
+		// version update should not silently re-disable a server they
+		// turned on (or silently re-enable one they turned off).
+		prevEnabled := *cfg.Servers[existingIdx].Enabled
+		sc.Enabled = &prevEnabled
 	}
 	result.Replaced = replaced
 	result.Transport = string(sc.Transport)
@@ -344,13 +376,21 @@ func defaultUserConfigPath() string {
 // the system can persist, validate, and start. Stdio is preferred when a
 // Command is present; otherwise HTTP is used and the URL is promoted into
 // http.url.
+// PreviewServerConfig builds the ServerConfig that Install would write for
+// entry, without writing anything. It is exported so callers (cmd/add) can
+// show the exact command line, env var names, transport and URL to the user
+// for confirmation before any file is touched (issue #313).
+func PreviewServerConfig(entry CacheEntry) (*ServerConfig, error) {
+	return buildServerConfig(entry)
+}
+
 func buildServerConfig(entry CacheEntry) (*ServerConfig, error) {
 	transport, err := normaliseTransport(entry.Transport)
 	if err != nil {
 		return nil, err
 	}
 
-	enabled := true
+	enabled := false
 	sc := &ServerConfig{
 		Name:           entry.Name,
 		Enabled:        &enabled,
@@ -361,12 +401,14 @@ func buildServerConfig(entry CacheEntry) (*ServerConfig, error) {
 
 	switch transport {
 	case TransportStdio:
-		if entry.Command == "" {
+		hasPackageIdentity := entry.PackageRegistry != "" && entry.PackageIdentifier != ""
+		if entry.Command == "" && !hasPackageIdentity {
 			return nil, fmt.Errorf("registry entry %q has no Command for stdio transport", entry.Name)
 		}
+		command, args := pinVersion(entry)
 		sc.Stdio = &StdioConfig{
-			Command: entry.Command,
-			Args:    append([]string(nil), entry.Args...),
+			Command: command,
+			Args:    args,
 			Env:     flattenEnv(entry.Env),
 		}
 	case TransportHTTP, TransportSSE:
@@ -381,7 +423,88 @@ func buildServerConfig(entry CacheEntry) (*ServerConfig, error) {
 		return nil, fmt.Errorf("registry entry %q has unsupported transport %q", entry.Name, transport)
 	}
 
+	if entry.Registry != "" || entry.Version != "" {
+		sc.InstalledFrom = &InstalledFromConfig{
+			Registry:    entry.Registry,
+			Name:        entry.Name,
+			Version:     entry.Version,
+			InstalledAt: time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+
 	return sc, nil
+}
+
+// pinVersion returns the exact, version-pinned command and args for a stdio
+// entry (issue #313 acceptance criterion: "Installed stdio servers must pin
+// an exact version").
+//
+//   - When the entry carries structured package identity (PackageRegistry +
+//     PackageIdentifier, as set by the official MCP Registry mapping in
+//     pkg/registry), the command/args are rebuilt deterministically from
+//     that identity and entry.Version, so the pin is always correct
+//     regardless of whatever Command/Args the source also happened to send.
+//   - Otherwise (a legacy/custom NDJSON feed entry that only ever provided
+//     a raw Command/Args pair) a best-effort pin is applied: for `npx`, the
+//     last non-flag argument is treated as the package spec and gets
+//     "@<version>" appended unless it already names a version. Other
+//     commands are left as the source configured them — the source did not
+//     give this function enough structure to pin them safely.
+func pinVersion(entry CacheEntry) (string, []string) {
+	if entry.PackageRegistry != "" && entry.PackageIdentifier != "" {
+		// The command/args are rebuilt entirely from the package identity;
+		// entry.Args (if any) is whatever raw command the source also sent
+		// and would duplicate the rebuilt spec, so it is intentionally not
+		// appended here.
+		return commandForRegistryPackage(entry.PackageRegistry, entry.PackageIdentifier, entry.Version, nil)
+	}
+
+	args := append([]string(nil), entry.Args...)
+
+	if entry.Version == "" || entry.Command != "npx" || len(args) == 0 {
+		return entry.Command, args
+	}
+	last := len(args) - 1
+	if strings.HasPrefix(args[last], "-") {
+		return entry.Command, args
+	}
+	if strings.Contains(args[last], "@") && !strings.HasPrefix(args[last], "@") {
+		return entry.Command, args // already pinned (scoped names may start with "@" without a version)
+	}
+	args[last] = args[last] + "@" + entry.Version
+	return entry.Command, args
+}
+
+// commandForRegistryPackage rebuilds the exact command/args for a
+// structured package identity. runtimeArgs (any extra args the entry
+// already carried, e.g. from a custom source that also set
+// PackageRegistry/PackageIdentifier) are appended after the pinned spec.
+func commandForRegistryPackage(registryType, identifier, version string, extraArgs []string) (string, []string) {
+	spec := identifier
+	if version != "" {
+		switch registryType {
+		case "pypi":
+			spec = identifier + "==" + version
+		case "oci":
+			if strings.HasPrefix(version, "sha256:") {
+				spec = identifier + "@" + version
+			} else {
+				spec = identifier + ":" + version
+			}
+		default:
+			spec = identifier + "@" + version
+		}
+	}
+	switch registryType {
+	case "npm":
+		return "npx", append([]string{"-y", spec}, extraArgs...)
+	case "pypi":
+		return "uvx", append([]string{spec}, extraArgs...)
+	case "oci":
+		return "docker", append([]string{"run", "--rm", "-i", spec}, extraArgs...)
+	default:
+		return spec, extraArgs
+	}
 }
 
 func normaliseTransport(raw string) (TransportType, error) {

@@ -1,0 +1,13 @@
+{
+  "servers": [
+    {
+      "name": "io.github.example/remote-search",
+      "description": "Remote search MCP server over HTTP",
+      "version": "2.0.0",
+      "remotes": [
+        {"transportType": "streamable-http", "url": "https://mcp.example.com/search"}
+      ]
+    }
+  ],
+  "metadata": {"count": 1}
+}

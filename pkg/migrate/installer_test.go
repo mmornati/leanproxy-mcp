@@ -459,3 +459,159 @@ func TestNewInstaller_NilLogger(t *testing.T) {
 		t.Error("NewInstaller should default Logger to slog.Default()")
 	}
 }
+
+func TestBuildServerConfig_DefaultsDisabled(t *testing.T) {
+	sc, err := buildServerConfig(CacheEntry{Name: "x", Transport: "stdio", Command: "gh"})
+	if err != nil {
+		t.Fatalf("buildServerConfig: %v", err)
+	}
+	if sc.Enabled == nil || *sc.Enabled {
+		t.Errorf("buildServerConfig should default Enabled to false, got %+v", sc.Enabled)
+	}
+}
+
+func TestPreviewServerConfig_MatchesInstall(t *testing.T) {
+	entry := CacheEntry{Name: "x", Transport: "stdio", Command: "gh"}
+	preview, err := PreviewServerConfig(entry)
+	if err != nil {
+		t.Fatalf("PreviewServerConfig: %v", err)
+	}
+	if preview.Name != "x" || preview.Stdio.Command != "gh" {
+		t.Errorf("unexpected preview: %+v", preview)
+	}
+}
+
+func TestInstall_EnabledOptionControlsWrittenState(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "leanproxy_servers.yaml")
+	inst := NewInstaller(&fakeSource{}, cfgPath, nil)
+
+	if _, err := inst.Install(context.Background(), CacheEntry{Name: "github", Transport: "stdio", Command: "gh"}, InstallOptions{Enabled: false}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	cfg, err := LoadConfig(context.Background(), cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Servers[0].Enabled == nil || *cfg.Servers[0].Enabled {
+		t.Errorf("expected enabled=false, got %+v", cfg.Servers[0].Enabled)
+	}
+
+	inst2 := NewInstaller(&fakeSource{}, cfgPath, nil)
+	if _, err := inst2.Install(context.Background(), CacheEntry{Name: "other", Transport: "stdio", Command: "gh"}, InstallOptions{Enabled: true}); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	cfg, err = LoadConfig(context.Background(), cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var other *ServerConfig
+	for _, s := range cfg.Servers {
+		if s.Name == "other" {
+			other = s
+		}
+	}
+	if other == nil || other.Enabled == nil || !*other.Enabled {
+		t.Errorf("expected enabled=true for 'other', got %+v", other)
+	}
+}
+
+func TestInstall_ReplaceKeepsExistingEnabledState(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "leanproxy_servers.yaml")
+	if err := os.WriteFile(cfgPath, []byte("version: \"1.0\"\nservers:\n  - name: github\n    transport: stdio\n    enabled: true\n    stdio:\n      command: old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inst := NewInstaller(&fakeSource{}, cfgPath, nil)
+	// opts.Enabled explicitly false, but the existing server was enabled:
+	// the replace must preserve that, not silently disable a running server.
+	_, err := inst.Install(context.Background(), CacheEntry{Name: "github", Transport: "stdio", Command: "new"}, InstallOptions{Force: true, Enabled: false})
+	if err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	cfg, err := LoadConfig(context.Background(), cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Servers[0].Enabled == nil || !*cfg.Servers[0].Enabled {
+		t.Errorf("expected enabled to stay true across replace, got %+v", cfg.Servers[0].Enabled)
+	}
+}
+
+func TestBuildServerConfig_PinsNpxVersion(t *testing.T) {
+	sc, err := buildServerConfig(CacheEntry{
+		Name: "github", Transport: "stdio", Command: "npx",
+		Args: []string{"-y", "@modelcontextprotocol/server-github"}, Version: "1.2.3",
+	})
+	if err != nil {
+		t.Fatalf("buildServerConfig: %v", err)
+	}
+	last := sc.Stdio.Args[len(sc.Stdio.Args)-1]
+	if last != "@modelcontextprotocol/server-github@1.2.3" {
+		t.Errorf("last arg = %q, want pinned version", last)
+	}
+}
+
+func TestBuildServerConfig_PinsFromStructuredPackage(t *testing.T) {
+	sc, err := buildServerConfig(CacheEntry{
+		Name: "github", Transport: "stdio",
+		Command: "npx", Args: []string{"-y", "server-github"}, // deliberately unpinned/stale
+		Version: "9.9.9", PackageRegistry: "npm", PackageIdentifier: "@modelcontextprotocol/server-github",
+	})
+	if err != nil {
+		t.Fatalf("buildServerConfig: %v", err)
+	}
+	if sc.Stdio.Command != "npx" {
+		t.Errorf("Command = %q", sc.Stdio.Command)
+	}
+	want := []string{"-y", "@modelcontextprotocol/server-github@9.9.9"}
+	if len(sc.Stdio.Args) != len(want) {
+		t.Fatalf("Args = %v, want %v", sc.Stdio.Args, want)
+	}
+	for i := range want {
+		if sc.Stdio.Args[i] != want[i] {
+			t.Errorf("Args[%d] = %q, want %q", i, sc.Stdio.Args[i], want[i])
+		}
+	}
+}
+
+func TestBuildServerConfig_PypiPin(t *testing.T) {
+	sc, err := buildServerConfig(CacheEntry{
+		Name: "x", Transport: "stdio", Version: "0.9.2",
+		PackageRegistry: "pypi", PackageIdentifier: "example-fs-mcp",
+	})
+	if err != nil {
+		t.Fatalf("buildServerConfig: %v", err)
+	}
+	if sc.Stdio.Command != "uvx" || len(sc.Stdio.Args) != 1 || sc.Stdio.Args[0] != "example-fs-mcp==0.9.2" {
+		t.Errorf("unexpected stdio config: %+v", sc.Stdio)
+	}
+}
+
+func TestBuildServerConfig_RecordsInstalledFrom(t *testing.T) {
+	sc, err := buildServerConfig(CacheEntry{
+		Name: "github", Transport: "stdio", Command: "gh", Version: "1.2.3", Registry: "official",
+	})
+	if err != nil {
+		t.Fatalf("buildServerConfig: %v", err)
+	}
+	if sc.InstalledFrom == nil {
+		t.Fatal("expected InstalledFrom to be set")
+	}
+	if sc.InstalledFrom.Registry != "official" || sc.InstalledFrom.Version != "1.2.3" || sc.InstalledFrom.Name != "github" {
+		t.Errorf("unexpected InstalledFrom: %+v", sc.InstalledFrom)
+	}
+	if sc.InstalledFrom.InstalledAt == "" {
+		t.Error("expected InstalledAt to be set")
+	}
+}
+
+func TestBuildServerConfig_NoInstalledFromWhenNoProvenance(t *testing.T) {
+	sc, err := buildServerConfig(CacheEntry{Name: "github", Transport: "stdio", Command: "gh"})
+	if err != nil {
+		t.Fatalf("buildServerConfig: %v", err)
+	}
+	if sc.InstalledFrom != nil {
+		t.Errorf("expected no InstalledFrom for a plain entry, got %+v", sc.InstalledFrom)
+	}
+}

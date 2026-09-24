@@ -11,8 +11,8 @@ func TestMarketplaceCmd_Subcommands(t *testing.T) {
 	}
 
 	subcommands := marketplaceCmd.Commands()
-	if len(subcommands) != 2 {
-		t.Fatalf("expected 2 subcommands, got %d", len(subcommands))
+	if len(subcommands) != 4 {
+		t.Fatalf("expected 4 subcommands, got %d", len(subcommands))
 	}
 
 	seen := map[string]bool{}
@@ -24,6 +24,12 @@ func TestMarketplaceCmd_Subcommands(t *testing.T) {
 	}
 	if !seen["search <query>"] {
 		t.Errorf("expected subcommand 'search'")
+	}
+	if !seen["outdated"] {
+		t.Errorf("expected subcommand 'outdated'")
+	}
+	if !seen["update <name>"] {
+		t.Errorf("expected subcommand 'update'")
 	}
 }
 

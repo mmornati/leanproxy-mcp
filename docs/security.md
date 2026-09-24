@@ -521,6 +521,70 @@ original).
   mode reaches the changed tool (in `block` mode the first call after a start
   waits for the comparison).
 
+## Marketplace trust model (issue #313)
+
+Installing a third-party MCP server from a registry is code execution on
+the next `server run`: whoever controls the entry's command/args (or the
+package it names) runs on the user's machine with whatever the server's
+config grants it. Three protections apply, in order.
+
+### 1. Registry source
+
+`marketplace sync` defaults to the **official MCP Registry**
+(`registry.modelcontextprotocol.io`, API `v0`), which verifies package
+identifiers, versions and namespaces (DNS/GitHub ownership) before
+publishing an entry. The previous default, `registry.mcp.io`, is a domain
+LeanProxy does not own and is no longer used unless an operator explicitly
+configures it as a [custom source](configuration.md#marketplace-registry-sources-issue-313).
+
+### 2. Version pinning
+
+An installed stdio server is written with an exact, pinned version —
+`npx -y pkg@1.2.3`, `uvx pkg==1.2.3`, or `docker run ... image@sha256:…`
+when a digest is available — never a bare `npx -y pkg` that resolves to
+whatever is latest on every start. The pinned source is recorded on the
+server entry as `installed_from: {registry, name, version, installed_at}`.
+`marketplace outdated` / `marketplace update <name>` show the diff between
+the pinned and current registry version and ask for confirmation before
+rewriting it.
+
+### 3. Honest trust score
+
+`CalculateTrustScore` computes a 0-100 score **only** from signals LeanProxy
+can itself observe or the registry independently verifies:
+
+| Signal | Points |
+|--------|--------|
+| Registry verified the publisher owns the namespace (DNS/GitHub, official registry only) | up to 25 |
+| A license is declared | up to 15 |
+| Recency of the last release | up to 30 |
+| Open issue count (maintenance signal) | up to 30 |
+| Download count | up to 25 |
+
+A feed- or registry-provided `trust_score` field is **never** used — a feed
+does not get to grade its own homework. An entry with no verifiable signal
+at all scores **0**, labeled `unverified` (never a high score by default).
+Scores below 40 (including `unverified`) are "low trust" and require
+`add --i-understand-the-risks` before the install preview even runs.
+`marketplace search` and `add`'s preview both show the individual signals
+behind the number, not just the score.
+
+### 4. Confirm before enable
+
+`add`/`marketplace update` print the exact command line, the env var
+*names* the server declares (values are never printed or logged), the
+transport/URL, and the trust signals, then ask `Enable this server? [y/N]`
+(`--yes` answers automatically for scripts; `--dry-run` only previews). A
+newly installed server that is not confirmed is still written to
+`leanproxy_servers.yaml`, but with `enabled: false` — it is never started
+until reviewed and turned on. Consider `--sandbox` (issue #312) for
+unverified servers once sandboxing is configured.
+
+Once a newly installed server starts for the first time, its tools are
+pinned automatically (trust-on-first-use, see
+[Tool Pinning & Rug-Pull Detection](#tool-pinning-rug-pull-detection)
+above); review them with `leanproxy tools pins`.
+
 ## Server-to-client traffic (#308)
 
 Upstream servers can send requests to the client (`elicitation/create`,

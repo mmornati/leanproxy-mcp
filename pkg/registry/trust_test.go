@@ -5,13 +5,16 @@ import (
 	"time"
 )
 
-func TestCalculateTrustScore_UsesExistingScore(t *testing.T) {
+func TestCalculateTrustScore_IgnoresFeedProvidedScore(t *testing.T) {
+	// A feed-provided trust_score must never be used (issue #313): the feed
+	// author does not get to grade their own homework. An entry with only
+	// TrustScore set and no verifiable signal scores 0.
 	entry := RegistryFeedEntry{
 		Name:       "test-server",
 		TrustScore: 85,
 	}
-	if got := CalculateTrustScore(entry); got != 85 {
-		t.Errorf("expected 85, got %d", got)
+	if got := CalculateTrustScore(entry); got != 0 {
+		t.Errorf("expected 0 (feed trust_score ignored), got %d", got)
 	}
 }
 
@@ -45,16 +48,23 @@ func TestCalculateTrustScore_StaleRelease(t *testing.T) {
 	}
 }
 
-func TestCalculateTrustScore_OpenIssuesZeroNotTrusted(t *testing.T) {
-	// An entry with OpenIssues=0 but no other signals should be treated as
-	// empty (per spec: "Unavailable data -> no warning") and score 100.
+func TestCalculateTrustScore_EmptyEntryIsUnverifiedZero(t *testing.T) {
+	// An entry with no verifiable signal at all — including OpenIssues=0,
+	// which by itself proves nothing — must score 0 and label "unverified",
+	// never a high score (issue #313 acceptance criterion).
 	entry := RegistryFeedEntry{Name: "zero-only", OpenIssues: 0}
-	if got := CalculateTrustScore(entry); got != 100 {
-		t.Errorf("expected 100 (empty entry), got %d", got)
+	if got := CalculateTrustScore(entry); got != 0 {
+		t.Errorf("expected 0 (unverified entry), got %d", got)
+	}
+	if lvl := TrustLevel(CalculateTrustScore(entry)); lvl != TrustUnverified {
+		t.Errorf("expected level %q, got %q", TrustUnverified, lvl)
 	}
 }
 
-func TestCalculateTrustScore_TrustScoreBeatsHeuristic(t *testing.T) {
+func TestCalculateTrustScore_FeedTrustScoreNeverBeatsHeuristic(t *testing.T) {
+	// A malicious/self-reported TrustScore must never override the
+	// computed heuristic, even when it tries to claim a low score to look
+	// falsely humble, or a high one.
 	entry := RegistryFeedEntry{
 		Name:        "override",
 		TrustScore:  15,
@@ -66,8 +76,44 @@ func TestCalculateTrustScore_TrustScoreBeatsHeuristic(t *testing.T) {
 		Command:     "x",
 		URL:         "https://x",
 	}
-	if got := CalculateTrustScore(entry); got != 15 {
-		t.Errorf("explicit TrustScore should win, got %d", got)
+	got := CalculateTrustScore(entry)
+	if got == 15 {
+		t.Errorf("feed-provided TrustScore must not be used, got %d", got)
+	}
+	if got < 50 {
+		t.Errorf("expected the heuristic score (recency+downloads), got %d", got)
+	}
+}
+
+func TestCalculateTrustScore_NamespaceVerifiedAndLicenseAreSignals(t *testing.T) {
+	base := CalculateTrustScore(RegistryFeedEntry{Name: "x"})
+	verified := CalculateTrustScore(RegistryFeedEntry{Name: "x", NamespaceVerified: true})
+	licensed := CalculateTrustScore(RegistryFeedEntry{Name: "x", License: "MIT"})
+	if verified <= base {
+		t.Errorf("namespace verification should raise the score: base=%d verified=%d", base, verified)
+	}
+	if licensed <= base {
+		t.Errorf("a license should raise the score: base=%d licensed=%d", base, licensed)
+	}
+}
+
+func TestTrustSignals_ReflectsPresence(t *testing.T) {
+	entry := RegistryFeedEntry{
+		Name:              "x",
+		NamespaceVerified: true,
+		License:           "MIT",
+		Downloads:         100,
+	}
+	signals := TrustSignals(entry)
+	present := map[string]bool{}
+	for _, s := range signals {
+		present[s.Name] = s.Present
+	}
+	if !present["namespace verified"] || !present["license"] || !present["downloads"] {
+		t.Errorf("expected verified/license/downloads to be present, got %+v", present)
+	}
+	if present["last release"] || present["open issues"] {
+		t.Errorf("expected last release/open issues to be absent, got %+v", present)
 	}
 }
 
@@ -241,7 +287,7 @@ func TestTrustLevel(t *testing.T) {
 		score int
 		want  string
 	}{
-		{0, "low"},
+		{0, "unverified"},
 		{20, "low"},
 		{39, "low"},
 		{40, "medium"},
