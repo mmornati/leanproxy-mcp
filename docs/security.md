@@ -310,8 +310,9 @@ Pipeline order for every request:
 client → redact request params → injection check → dispatch/upstream → injection check (response) → redact response → client
 ```
 
-The opt-in response governor (#319) wraps this pipeline: it shortens a tool
-result only after response redaction and the injection check ran (see
+The opt-in response governor (#319) wraps this pipeline: it projects (#320)
+and shortens a tool result only after response redaction and the injection
+check ran (see
 [Response governor spill store](#response-governor-spill-store-319)).
 
 - **Request redaction** covers every nested value of `params`, including the
@@ -770,8 +771,16 @@ through it with `read_result`. That copy is guarded like the result itself:
 - **Never hides an error.** Error results (`isError: true`) and JSON-RPC
   errors are never shortened, and neither are images or audio.
 - **Numbers only in telemetry.** The accounting (tokens before and after
-  per tool, truncations, store size) is exposed on `/metrics` and as OTel
-  counters; results are never logged or recorded.
+  per tool, truncations, projections, store size) is exposed on `/metrics`
+  and as OTel counters; results are never logged or recorded.
+- **Field projection (#320) hides nothing for good.** A projected result's
+  full (redacted) copy is stored the same way, per session, before anything
+  is dropped, and the note in the result names its id; if it cannot be
+  stored, the result is not projected. Error results are never projected.
+  The model's `fields` argument is removed from the `invoke_tool` envelope
+  by the governor, before pinning, policy and the firewall, and is never
+  sent upstream; the tool's own `arguments` are untouched. Projection
+  changes what the model sees, never what reaches the upstream.
 
 ## Marketplace trust model (issue #313)
 

@@ -1049,6 +1049,12 @@ response:
     max_bytes: 134217728    # 128 MiB, LRU by bytes
     disk: false             # true: keep full results in 0600 files instead of memory
     dir: ~/.leanproxy/results
+  projections:              # field projection (#320), first matching rule wins
+    - match: "github.list_issues"
+      keep: ["[].number", "[].title", "[].state", "[].labels[].name", "[].assignee.login", "[].updated_at"]
+    - match: "github.*"
+      drop: ["**.node_id", "**.*_url", "**.url", "**.reactions", "**.avatar_url", "**.gravatar_id"]
+  default_projections: false  # true: built-in drop pack for tools no rule matches
 ```
 
 ### Options
@@ -1064,10 +1070,14 @@ response:
 | `spill.max_bytes` | int | `134217728` (128 MiB) | Cap of the spill store; the least recently used results are evicted first. A single result larger than this is passed through unshortened |
 | `spill.disk` | bool | `false` | Keep the full results in files (mode `0600`, in a per-process `0700` directory under `spill.dir`, removed on shutdown) instead of memory |
 | `spill.dir` | path | `~/.leanproxy/results` | Parent directory for `spill.disk`; absolute or `~/…` |
+| `projections[].match` | string | — | `"server.tool"` exact name or `path.Match` glob. The first matching rule wins |
+| `projections[].keep` | list | — | Paths to keep (allowlist); see [Field projection](#field-projection-responseprojections) |
+| `projections[].drop` | list | — | Paths to drop (denylist); exclusive with `keep`. A rule with neither exempts the matching tools (from later rules and the default pack) |
+| `default_projections` | bool | `false` | Apply the built-in drop pack to the tools no rule matches |
 
 Invalid values (negative or tiny budgets, a bad glob, `passthrough` with
-`max_tokens`, a bad TTL, a relative `dir`) are rejected when the config is
-loaded.
+`max_tokens`, a bad TTL, a relative `dir`, a projection rule with both
+`keep` and `drop` or a bad path) are rejected when the config is loaded.
 
 ### What the model sees
 
@@ -1120,6 +1130,93 @@ An unknown, expired or evicted `result_id` — or one that belongs to another
 session — gets the same clear error (`isError: true`), so ids cannot be
 probed across sessions.
 
+### Field projection (`response.projections`)
+
+API-backed tools return verbose JSON: GitHub issues with full user objects,
+URLs, reactions and node ids; Jira issues with dozens of custom fields. The
+model usually needs a handful of fields. Field projection (#320) drops the
+others **before** the budget is applied, so more of what matters fits, and
+nothing is lost: the full result stays readable with `read_result`.
+
+It needs the governor on (`enabled: true`); set `max_tokens: 0` for
+projection without truncation.
+
+**Path syntax.** A small subset, separated by dots:
+
+| Syntax | Selects | Example |
+|--------|---------|---------|
+| `name` | An object member | `title`, `user.login` |
+| `*` in a name | Any run of characters in a key; a lone `*` is any key | `*_url`, `items.*.id` |
+| `[]` | Every element of an array | `[].number`, `labels[].name` |
+| `**` | Any depth (zero or more levels, objects and arrays) | `**.node_id` |
+
+A name step on an array applies to its elements (`labels.name` =
+`labels[].name`). A leading `$` or `$.` is ignored. Indexes and slices are
+not supported (`read_result`'s `jsonpath` has them); a key containing `.`,
+`[` or `]` cannot be named.
+
+**Rules.** Each rule has a `match` glob and either `keep` or `drop`:
+
+- `drop` removes every member a path selects, at any place it matches; a
+  drop path must end with a key name. Everything else is kept byte for byte.
+- `keep` rebuilds the document with only the paths' members: a selected value
+  is kept whole, the objects leading to it keep only the members on a path,
+  arrays keep their elements. A member a path names literally that is `null`
+  or has nothing further (`"assignee": null` for `[].assignee.login`) is kept
+  as it is.
+
+The first matching rule wins; a rule with neither `keep` nor `drop` exempts
+the tool. `default_projections: true` adds, after your rules, a conservative
+drop pack for the usual API noise: `**.*_url`, `**.node_id`,
+`**.avatar_url`, `**.gravatar_id`, `**._links`, `**.self`, `**.etag` (never
+a `keep`). Tools with `passthrough: true` are never projected by rules or
+the pack.
+
+**The model's `fields` argument.** `invoke_tool` accepts an optional
+`fields` list of paths (or one comma-separated string): a one-off `keep`
+for that call, which wins over the rules and applies to `passthrough`
+tools too. It is the proxy's argument: it is removed before any other stage
+and **never forwarded upstream** (the tool's own `arguments` are relayed
+byte for byte). While the governor is on, `tools/list` declares it on
+`invoke_tool` in one sentence; the default `tools/list` (governor off) is
+unchanged. `serve`'s gateway has no working `invoke_tool` (it answers a
+forwarding stub), so there only the configured rules apply.
+
+```json
+{"name": "invoke_tool", "arguments": {"server": "github", "tool": "list_issues",
+  "arguments": {"state": "open"}, "fields": ["[].number", "[].title", "[].labels[].name"]}}
+```
+
+**What is projected.**
+
+- Text items whose text is a JSON object or array, and `structuredContent`.
+- `structuredContent` only when the tool declares **no `outputSchema`**: a
+  projected value could fail a strict schema (a required member dropped), so
+  with an `outputSchema` only the text rendering is projected and
+  `structuredContent` passes through unchanged. A tool LeanProxy cannot look
+  up is treated as having one.
+- Never: error results (`isError: true`), non-JSON text (left to
+  truncation), images and audio. A projection that fails (not JSON, a bad
+  `fields` path) leaves the result unchanged and logs at debug level.
+
+**What the model sees.** The projected JSON, compact (no insignificant
+whitespace, no HTML escaping; kept strings and numbers are the upstream's
+exact bytes, so large integers keep their precision), then a note:
+
+```text
+[LeanProxy: github.list_issues JSON fields projected by response.projections rule "github.*" (drop **.node_id, **.*_url, …): 1,370 values left out, 29,536 → 8,225 tokens. Full result: result_id=r_…; call read_result with it (jsonpath, e.g. $[0], or grep) to get omitted fields.]
+```
+
+Clients on MCP 2025-06-18+ also get a `resource_link` to the full copy.
+When the projected result is still over budget it is truncated as usual:
+the truncation marker points at the projected document, the note at the
+full one.
+
+**Order.** Redaction and the injection check, then projection, then
+truncation. The full copy is the redacted result, kept per session like a
+spilled one (same TTL and byte cap); if it cannot be stored, the result is
+not projected.
+
 ### Pipeline placement
 
 ```
@@ -1142,6 +1239,13 @@ four list/search endpoints) with the governor off and on: **234,700 →
 18,515 tokens (−92.1%)**, every governed response ≤ 4,000 tokens, the file
 paged back byte for byte in 13 `read_result` calls, and normal-size results
 byte-identical. See [Benchmark Results](benchmark-results.md#7-response-governor-large-results).
+
+With field projection (the `github.*` drop pack above plus
+`default_projections`), the three noisy listings shrink by 21.5% before any
+truncation, and within the same 4,000-token budget `list_issues` shows 26
+issues instead of 19 (65 with a six-path `fields` argument). A realistic
+30-issue GitHub fixture shrinks by 72.2%. See
+[Benchmark Results](benchmark-results.md#8-field-projection-large-results).
 
 ## Telemetry (OpenTelemetry)
 

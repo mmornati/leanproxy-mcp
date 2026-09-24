@@ -161,7 +161,7 @@ This table counts only the static schema load. LeanProxy fetches tools on demand
 |:--------|:--------|
 | 🛡️ **Token Firewall** | Redacts secrets in tool arguments and responses (on by default) and screens calls for prompt injection — in both `server run --stdio` and `serve` |
 | ⚡ **JIT Schema Loading** | Tool schemas load only when actually called — not on every request |
-| ✂️ **Response Token Governor** | Opt-in: caps large tool results (smart head/tail truncation, structural JSON truncation) and keeps the full result per session for paged `read_result` / `grep` / `jsonpath` retrieval — −92% on a large-results session ([docs](docs/configuration.md#response-token-governor-response)) |
+| ✂️ **Response Token Governor** | Opt-in: drops unneeded JSON fields per tool (`keep`/`drop` projection rules, a default noise pack, or the model's `fields` argument), caps large tool results (smart head/tail truncation, structural JSON truncation) and keeps the full result per session for paged `read_result` / `grep` / `jsonpath` retrieval — −92% on a large-results session, −72% from projection alone on a GitHub issue listing ([docs](docs/configuration.md#response-token-governor-response)) |
 | 🔄 **Connection Pooling** | HTTP MCP clients reuse connections; concurrent calls to a stdio server are multiplexed over its single pipe |
 | 📦 **Multi-Transport** | Supports stdio, HTTP, and SSE transport protocols |
 | 👥 **Multi-Team Namespaces** | Hierarchical organization for enterprise teams |
