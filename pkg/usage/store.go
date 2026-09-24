@@ -176,7 +176,7 @@ func readRecords(path string) ([]Record, error) {
 	}
 	defer f.Close()
 
-	var records []Record
+	records := make([]Record, 0, 16) // a day's file is usually a handful of records
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
 	for scanner.Scan() {

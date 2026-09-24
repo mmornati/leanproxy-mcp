@@ -24,7 +24,7 @@ schema savings (router vs. passthrough tools/list size), discovery cost
 (search_tools/list_tools/list_servers), and the response governor's
 truncation/projection/dedup/summarization savings (issues #319-#321).
 
-Every figure is labelled measured or estimated, with the estimator named
+Every figure is labeled measured or estimated, with the estimator named
 (chars/4). There is no simulated or modeled "native cost" anywhere in this
 report -- see docs/savings-report.md for the exact methodology, and
 docs/benchmark-results.md for how these numbers compare with the benchmark

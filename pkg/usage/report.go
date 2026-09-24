@@ -3,7 +3,7 @@
 // GovernorStats (#319-#321), the schema/discovery counters (#324) and
 // telemetry's plain counters (#317), all read from this package's JSONL
 // store (Store.Load). Every number is either measured (an exact count or a
-// size the pipeline computed from a real payload) or explicitly labelled
+// size the pipeline computed from a real payload) or explicitly labeled
 // estimated, and the estimator is always named: the whole proxy, the
 // response governor and the benchmark harness all use the same chars/4
 // heuristic (reporter.DefaultCharsPerToken), so runtime accounting and
@@ -26,7 +26,7 @@ import (
 )
 
 // MechanismSavings is one row of the report's breakdown by mechanism: a
-// single savings (or cost) category, always labelled measured or
+// single savings (or cost) category, always labeled measured or
 // estimated.
 type MechanismSavings struct {
 	Mechanism string `json:"mechanism"`

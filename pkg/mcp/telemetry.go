@@ -235,7 +235,7 @@ type TelemetryCounters struct {
 	// are measured from the real marshaled tools/list payload; in
 	// passthrough/hybrid exposure mode native and sent are the same payload
 	// (no router compaction happens), so the saving there is legitimately
-	// zero rather than modelled.
+	// zero rather than modeled.
 	SchemaListings     int64 `json:"schema_listings_total"`
 	SchemaNativeTokens int64 `json:"schema_native_tokens_total"`
 	SchemaSentTokens   int64 `json:"schema_sent_tokens_total"`

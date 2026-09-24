@@ -663,7 +663,7 @@ func policyMark(confirm bool) string {
 // (list_tools, list_servers, search_tools) and records its size as
 // discovery tokens (issue #324's "discovery via search_tools" category):
 // these are tokens the client spends reading a discovery result instead of
-// a fixed schema, so the savings report can show them as a labelled,
+// a fixed schema, so the savings report can show them as a labeled,
 // separate line rather than folding them into schema savings.
 func toolListingResult(ctx context.Context, id interface{}, text string, structured []StructuredTool) *Response {
 	result := map[string]interface{}{
