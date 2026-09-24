@@ -12,19 +12,27 @@ import (
 type ScanResult struct {
 	Scanners []string
 	Servers  []DiscoveredServer
+	// Skipped are entries that run LeanProxy itself (see
+	// IsLeanProxyServer); they are not imported.
+	Skipped []DiscoveredServer
+	// Warnings are files or entries that could not be read. They do not
+	// stop the scan of the other files.
+	Warnings []error
 }
 
 type MigrationSummary struct {
 	OpenCodeCount int
 	ClaudeCount   int
-	VSCodeCount   int
-	CursorCount   int
-	GenericCount  int
-	TotalServers  int
+	// ClaudeDesktopCount counts Claude Desktop's servers.
+	ClaudeDesktopCount int
+	VSCodeCount        int
+	CursorCount        int
+	GenericCount       int
+	TotalServers       int
 }
 
 func (s *MigrationSummary) Total() int {
-	return s.OpenCodeCount + s.ClaudeCount + s.VSCodeCount + s.CursorCount + s.GenericCount
+	return s.OpenCodeCount + s.ClaudeCount + s.ClaudeDesktopCount + s.VSCodeCount + s.CursorCount + s.GenericCount
 }
 
 type ImportResult struct {
@@ -43,6 +51,7 @@ func NewMigrator() *Migrator {
 		scanners: []Scanner{
 			&OpenCodeScanner{},
 			&ClaudeScanner{},
+			&ClaudeDesktopScanner{},
 			&VSCodeScanner{},
 			&CursorScanner{},
 			&GenericScanner{},
@@ -59,11 +68,19 @@ func (m *Migrator) Scan(ctx context.Context) (*ScanResult, error) {
 	for _, scanner := range m.scanners {
 		servers, err := scanner.Scan(ctx)
 		if err != nil {
-			return nil, fmt.Errorf("scanner %s: %w", scanner.Name(), err)
+			result.Warnings = append(result.Warnings, fmt.Errorf("%s: %w", scanner.Name(), err))
 		}
-		if len(servers) > 0 {
+		kept := 0
+		for _, srv := range servers {
+			if IsLeanProxyServer(srv) {
+				result.Skipped = append(result.Skipped, srv)
+				continue
+			}
+			result.Servers = append(result.Servers, srv)
+			kept++
+		}
+		if kept > 0 {
 			result.Scanners = append(result.Scanners, scanner.Name())
-			result.Servers = append(result.Servers, servers...)
 		}
 	}
 
@@ -79,6 +96,8 @@ func (m *Migrator) Summarize(servers []DiscoveredServer) *MigrationSummary {
 			summary.OpenCodeCount++
 		case "claude":
 			summary.ClaudeCount++
+		case "claude-desktop":
+			summary.ClaudeDesktopCount++
 		case "vscode":
 			summary.VSCodeCount++
 		case "cursor":

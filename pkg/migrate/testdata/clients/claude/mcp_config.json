@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "memory": {
+      "command": "/usr/local/bin/mcp-memory",
+      "args": [],
+      "env": ["MEMORY_DIR=/tmp/memory"]
+    }
+  }
+}

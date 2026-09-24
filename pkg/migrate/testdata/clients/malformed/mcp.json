@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "good": {"command": "node", "args": ["server.js"]},
+    "bad-env": {"command": "node", "env": "FOO=bar"},
+    "empty": {},
+    "weird-type": {"type": "websocket", "url": "ws://localhost:1234"}
+  }
+}

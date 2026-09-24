@@ -142,45 +142,55 @@ leanproxy-mcp migrate
 
 | Source | File | Key read |
 |---|---|---|
-| OpenCode | `~/.config/opencode/opencode.json` | `mcp` (entries with a `command`) |
-| Claude Code | `~/.claude.json`, `~/.config/claude/mcp_config.json` | top-level `mcpServers` |
-| Cursor | `~/.cursor/mcp.json` | `mcp_servers` |
-| VS Code | user `settings.json` (`~/.config/Code/User/`, `~/Library/Application Support/Code/User/`, and the VSCodium equivalents) | `mcpExtensions` |
-| Generic | `~/.config/mcp.json` | `mcp_servers` |
+| OpenCode | `~/.config/opencode/opencode.json` | `mcp` (`local` and `remote` entries) |
+| Claude Code | `~/.claude.json`, `~/.config/claude/mcp_config.json` | top-level `mcpServers` (user scope) |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `~/.config/Claude/claude_desktop_config.json` (Linux), `%APPDATA%\Claude\claude_desktop_config.json` (Windows) | `mcpServers` |
+| Cursor | `~/.cursor/mcp.json` | `mcpServers` |
+| VS Code | `mcp.json` and `settings.json` in the user profile folder (`~/Library/Application Support/Code/User/` on macOS, `~/.config/Code/User/` on Linux, `%APPDATA%\Code\User\` on Windows, plus the `Code - Insiders` and `VSCodium` equivalents); `.vscode/mcp.json` in the current directory | `servers` in `mcp.json`, `mcp.servers` in `settings.json` |
+| Generic | `~/.config/mcp.json` | `mcp_servers` or `mcpServers` |
+
+How entries are converted:
+
+- An entry with a `command` becomes a `stdio` server. `env` can be an object
+  (`{"KEY": "value"}`) or an array of `"KEY=value"` strings. Cursor and VS
+  Code `${env:NAME}` references become `${NAME}`, which LeanProxy expands from
+  its own environment.
+- An entry with a `url` becomes an `http` server, or an `sse` server when its
+  `type` is `sse` (or it has no `type` and the URL path ends in `/sse`). The
+  URL goes to `http.url` and `headers` are copied as they are.
+- Entries that run LeanProxy itself (`leanproxy-mcp` as the command, or run
+  through `npx`/`go run`/`env`, or named `leanproxy`) are skipped, so the
+  proxy does not start itself as an upstream server.
+- A file or entry that cannot be read is printed as a warning; the other
+  files are still imported.
 
 Example output:
 
 ```
-Found 4 MCP server(s) from 1 source(s):
+Skipping leanproxy (claude-desktop): it runs leanproxy-mcp itself
+Found 4 MCP server(s) from 3 source(s):
 
-  OpenCode: 4 server(s)
-  Claude:   0 server(s)
-  VS Code:  0 server(s)
-  Cursor:   0 server(s)
-  Generic:  0 server(s)
+  OpenCode:       0 server(s)
+  Claude Code:    2 server(s)
+  Claude Desktop: 1 server(s)
+  VS Code:        0 server(s)
+  Cursor:         1 server(s)
+  Generic:        0 server(s)
 
-  [1] nexus-dev (opencode) - /usr/bin/env
-  [2] nexus-dev-test (opencode) - /usr/bin/env
-  [3] garmin (opencode) - uvx
-  [4] Intervals.icu (opencode) - /usr/bin/env
+  [1] filesystem (claude) - npx
+  [2] linear (claude) - http https://mcp.linear.app/mcp
+  [3] github (claude-desktop) - docker
+  [4] events (cursor) - sse http://localhost:9000/sse
 
 Import to ~/.config/leanproxy_servers.yaml? [y/N]:
 ```
 
 !!! warning "What `migrate` does not find"
-    - It imports **stdio servers only**. Remote (`url`) entries are not
-      imported; add them to the YAML file by hand
-      ([Quick Start](quickstart.md#1-configure-mcp-servers)).
-    - It does not read Claude Desktop's `claude_desktop_config.json`, VS
-      Code's `mcp.json` files, or Claude Code project-scoped servers.
-    - Cursor's own `mcp.json` uses the key `mcpServers`, which `migrate` does
-      not read, so Cursor servers are usually not found.
-    - In the Claude Code file, an `env` written as an object
-      (`"env": {"KEY": "value"}`) makes the whole file unreadable to
-      `migrate`, and it is skipped without an error.
-    - If LeanProxy itself is already configured in one of these files, it is
-      imported too. Remove that entry from `leanproxy_servers.yaml`, or LeanProxy
-      will try to start itself as an upstream server.
+    - Project-scoped servers: Claude Code's `.mcp.json` and `projects`
+      entries in `~/.claude.json`, and Cursor's `.cursor/mcp.json`.
+    - LeanProxy does not expand `${...}` in HTTP headers. Replace such
+      references in the imported `headers` with the value.
+    - VS Code `${input:...}` values are copied as-is; replace them by hand.
 
     Check the preview (`--dry-run`) and add anything missing with
     [`server add`](quickstart.md#1-configure-mcp-servers) or by editing the

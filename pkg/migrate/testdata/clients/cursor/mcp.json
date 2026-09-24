@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "Home Assistant": {
+      "command": "uvx",
+      "args": ["mcp-proxy"],
+      "env": {"SSE_URL": "http://homeassistant.local:8123/mcp_server/sse", "API_ACCESS_TOKEN": "${env:HA_TOKEN}"}
+    },
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {"Authorization": "Bearer ${env:GITHUB_TOKEN}"}
+    },
+    "events": {
+      "url": "http://localhost:9000/sse"
+    },
+    "gateway": {
+      "command": "npx",
+      "args": ["-y", "leanproxy-mcp@latest", "server", "run", "--stdio"]
+    }
+  }
+}

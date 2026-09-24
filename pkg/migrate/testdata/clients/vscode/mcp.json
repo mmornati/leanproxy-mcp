@@ -1,0 +1,20 @@
+// VS Code user mcp.json (JSONC)
+{
+  "inputs": [
+    {"type": "promptString", "id": "perplexity-key", "description": "Perplexity API Key", "password": true}
+  ],
+  "servers": {
+    "perplexity": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "server-perplexity-ask"],
+      "env": {"PERPLEXITY_API_KEY": "${input:perplexity-key}"}
+    },
+    /* remote server */
+    "fetch": {
+      "type": "http",
+      "url": "https://example.com/mcp", // trailing comment
+      "headers": {"X-Api-Key": "abc"},
+    },
+  },
+}
