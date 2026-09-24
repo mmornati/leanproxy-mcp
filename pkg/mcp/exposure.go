@@ -247,6 +247,15 @@ func (h *Handler) passthroughTools(ctx context.Context) []Tool {
 	servers := h.pool.ListServers()
 	h.awaitColdServers(ctx, servers)
 	h.awaitPinned(ctx, servers)
+	return h.exposedToolsSnapshot(ctx)
+}
+
+// exposedToolsSnapshot renders the current passthrough view (same
+// transformation passthroughTools applies) without ever waiting for a cold
+// or unpinned server: safe to call from an accounting path (schema savings,
+// issue #324) that must never change a request's latency or block on a
+// server that is still starting.
+func (h *Handler) exposedToolsSnapshot(ctx context.Context) []Tool {
 	sess := h.sessionFor(ctx)
 	r := h.exposure.Load()
 	view := h.exposedTools()

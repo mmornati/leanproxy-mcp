@@ -376,9 +376,12 @@ func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response,
 	// mode sends. In passthrough/hybrid mode these are computed from the
 	// same tool set, so the measured saving is legitimately zero: the
 	// router's compaction is what creates the gap.
+	// exposedToolsSnapshot (never awaits a cold/unpinned server) so this
+	// accounting never changes tools/list's own latency or blocks on a
+	// server that is still starting.
 	nativeTools := tools
 	if mode == exposure.ModeRouter {
-		nativeTools = h.passthroughTools(ctx)
+		nativeTools = h.exposedToolsSnapshot(ctx)
 	}
 	nativeBytes, _ := json.Marshal(ToolsListResult{Tools: nativeTools})
 	RecordSchemaListing(ctx, int64(governor.Tokens(len(nativeBytes))), int64(governor.Tokens(len(resultBytes))))
