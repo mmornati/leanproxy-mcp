@@ -15,6 +15,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
+	"github.com/mmornati/leanproxy-mcp/pkg/policy"
 	"github.com/mmornati/leanproxy-mcp/pkg/telemetry"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolpin"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
@@ -292,6 +293,12 @@ type Config struct {
 	// available as the default source and needs no entry here; Sources
 	// lists additional opt-in custom NDJSON feeds.
 	Registry *RegistrySettings `yaml:"registry,omitempty"`
+	// Policy is the per-tool policy layer (issue #314): allow / deny /
+	// confirm rules on "server.tool" globs and annotations, and what
+	// happens to calls to tools a server does not advertise. Absent means
+	// the defaults: every advertised tool allowed, unadvertised ones
+	// refused.
+	Policy *policy.Config `yaml:"policy,omitempty"`
 }
 
 // RegistrySettings is the `registry:` block.
@@ -488,6 +495,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Registry.Validate(); err != nil {
+		return err
+	}
+	if err := c.Policy.Validate(); err != nil {
 		return err
 	}
 	return nil
