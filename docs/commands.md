@@ -1439,7 +1439,7 @@ github     Down     -         -         -        -       -
 
 > **Deprecated.** `savings`' tracker is never fed by the live pipeline (see
 > issue #324): its numbers are always the estimated/zero placeholder state.
-> Use [`report`](#report---auditable-savings-report) for an auditable
+> Use [`report`](#report-auditable-savings-report) for an auditable
 > savings report built entirely from real counters.
 
 Display cumulative token savings statistics.
@@ -1502,7 +1502,7 @@ By server:
 
 > **Deprecated.** `cost`'s tracker is never fed by the live pipeline (see
 > issue #324): its numbers are always the estimated/zero placeholder state.
-> Use [`report`](#report---auditable-savings-report) for an auditable
+> Use [`report`](#report-auditable-savings-report) for an auditable
 > savings report built entirely from real counters.
 
 Display token usage broken down by tool and server for the current session. This allows you to see which tools consume the most tokens.

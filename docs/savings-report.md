@@ -8,7 +8,7 @@ is the report's methodology: what each category counts, its baseline, and
 how it maps to [`docs/benchmark-results.md`](benchmark-results.md)'s harness
 numbers.
 
-See `docs/commands.md`'s [`report`](commands.md#report---auditable-savings-report)
+See `docs/commands.md`'s [`report`](commands.md#report-auditable-savings-report)
 section for the CLI flags and sample output.
 
 ## Why a rewrite
