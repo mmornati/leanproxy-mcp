@@ -1628,6 +1628,52 @@ the whole catalog. It pays off when the client defers definitions itself. The
 `make harness` comparison is in
 [Benchmark Results](benchmark-results.md#10-exposure-modes-322).
 
+## Code Mode (`code_mode`, experimental)
+
+!!! warning "Experimental spike (#325): not in the release binary"
+    Code mode exists only in a binary built with `go build -tags codemode`. A default build parses
+    and validates this block, but ignores it: when `enabled: true`, it logs a warning at start.
+    The design, the measurements and the go / no-go recommendation (currently **no-go**) are in
+    [Code mode: design spike](design/code-mode.md).
+
+With code mode on, `tools/list` gains one tool, `execute_code {code, language?: "js"}`. The model
+sends a short JavaScript program (the body of an async function). The program calls upstream tools
+as `await tools.<server>.<tool>(args)`, filters their results, and returns only its answer.
+
+- **Where it runs.** The program runs in a separate sandbox process: the same binary running its
+  hidden `codemode-worker` command, with an empty environment and kernel limits on Linux.
+- **What the program can reach.** It has no filesystem, network, `require` or timers.
+- **How its calls are checked.** Each tool call it makes goes through the whole pipeline, like an
+  `invoke_tool` call: policy (deny, confirm and unknown tools), tool pinning, redaction, the
+  injection guard, the response governor and telemetry.
+
+```yaml
+code_mode:
+  enabled: true
+  timeout: 30s
+  cpu_time: 5s
+  max_memory_mb: 256
+  max_calls: 32
+  max_concurrent_calls: 4
+  max_output_bytes: 65536
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `code_mode.enabled` | bool | `false` | List and serve `execute_code`. Needs a `-tags codemode` build. |
+| `code_mode.timeout` | duration | `30s` | Wall clock per `execute_code`, tool calls included. The program is interrupted at the limit and the sandbox is killed 1 s later. The maximum is `10m`. |
+| `code_mode.cpu_time` | duration | `5s` | Sandbox CPU time (`RLIMIT_CPU` on Linux). The minimum is `1s`. |
+| `code_mode.max_memory_mb` | int | `256` | The heap watchdog interrupts above this, and `RLIMIT_AS` (Linux) stops a huge native allocation. The minimum is `64`. |
+| `code_mode.max_calls` | int | `32` | Tool calls per program. |
+| `code_mode.max_concurrent_calls` | int | `4` | Tool calls in flight at once (`Promise.all`). |
+| `code_mode.max_output_bytes` | int | `65536` | The largest answer a program may return. |
+
+- **The hard limits are Linux-only.** On macOS and Windows the prototype only has the heap
+  watchdog and the wall-clock kill.
+- **The response governor also shortens the results a program reads.** The program then computes
+  from truncated data: see the design doc before enabling both.
+- **Front ends.** Only `server run` (stdio and Streamable HTTP) serves `execute_code`.
+
 ## Tool Search (`search_tools`)
 
 `search_tools` is the recommended discovery path of `leanproxy-mcp server run

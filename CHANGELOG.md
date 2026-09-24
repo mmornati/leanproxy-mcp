@@ -161,6 +161,33 @@
 
 ## Added in v0.11
 
+- **EXPERIMENTAL: code mode spike, `execute_code` in a sandbox (not in the release binary)** ([#325](https://github.com/mmornati/leanproxy-mcp/issues/325), audit §5 item 23).
+  - **What.** A design doc and a throw-away prototype of "code mode". The model sends one
+    `execute_code` call holding a short JavaScript program. The program calls several tools
+    (`await tools.<server>.<tool>(args)`), filters their results outside the context window, and
+    returns only its answer.
+  - **How it runs.** The program runs in goja, inside a child process with an empty environment
+    and Linux kernel limits (CPU, address space, file size, open files), plus wall-clock, output,
+    call-count and concurrency caps. Every tool call a program makes goes through the whole
+    middleware pipeline: policy (deny, confirm and unknown tools), tool pinning, redaction, the
+    injection guard, the response governor and OTel.
+  - **Availability.** Compiled only with `go build -tags codemode`, and off until
+    `code_mode.enabled: true`. The default binary is unchanged: the same size as before for
+    `CGO_ENABLED=0`, and goja is not linked. A default build ignores an enabled `code_mode:` block
+    with a warning.
+  - **Measured by `make harness`.**
+    - A 5-call "top 3 issues" task: −99.9% tokens (289,982 → 230), correct answer.
+    - Small tasks: +100–200% once the 213-token tool definition is counted, and an 18 ms sandbox
+      floor per call.
+    - With the response governor on, the program silently returns a **wrong** answer, because it
+      reads shortened results.
+    - `-tags codemode` adds 6.1 MiB to the binary.
+  - **Recommendation: no-go for v1.0.** See [`docs/design/code-mode.md`](docs/design/code-mode.md).
+  - **Dependency.** New, only in `-tags codemode` builds: `github.com/dop251/goja` (MIT, pinned
+    pseudo-version).
+  - **CI.** CI now runs the sandbox tests (`make test-codemode`) and
+    `govulncheck -tags codemode`.
+
 - **`report`: auditable savings report built from real counters** ([#324](https://github.com/mmornati/leanproxy-mcp/issues/324), audit §4.3 / §2.3).
   - **What.** `report`/`savings`/`cost` (`cmd/report.go`, `cmd/savings.go`, `cmd/cost.go`,
     `pkg/reporter`) produced savings figures from a simulated "native cost", and their trackers
