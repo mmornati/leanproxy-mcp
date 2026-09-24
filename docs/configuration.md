@@ -188,6 +188,55 @@ picked up implicitly):
 
 See also [Security: Least-Privilege Child Environment](security.md#least-privilege-child-environment-311).
 
+### Sandbox (`stdio.sandbox`) (#312)
+
+Runs a stdio server's command inside a container (Docker or Podman) instead
+of spawning it directly on the host. Off by default (`runtime: none`); an
+operator opts in per server.
+
+```yaml
+servers:
+  - name: some-community-server
+    transport: stdio
+    stdio:
+      command: npx
+      args: ["-y", "some-mcp-server@1.2.3"]
+      sandbox:
+        runtime: docker          # docker | podman | none (default: none)
+        image: node:22-alpine    # required unless inferable from the command
+        network: none            # none | bridge | host (default: none)
+        mounts:                  # explicit, default none
+          - host: ~/projects/foo
+            container: /work
+            read_only: true
+        memory: 512m
+        cpus: "1"
+        cache_volume: true
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `servers[].stdio.sandbox.runtime` | string | `none` | `docker`, `podman`, or `none` (unsandboxed). A configured runtime binary that is missing from `PATH` fails that server's start with a clear error; it is never silently run unsandboxed. |
+| `servers[].stdio.sandbox.image` | string | inferred | The container image. Required unless the command is `npx`/`npm`/`node` (defaults to `node:22-alpine`) or `uvx`/`uv`/`python`/`python3` (defaults to `ghcr.io/astral-sh/uv:python3.12-alpine`). |
+| `servers[].stdio.sandbox.network` | string | `none` | `none`, `bridge`, or `host`. |
+| `servers[].stdio.sandbox.mounts` | list | none | Explicit host↔container bind mounts: `host`, `container`, and optional `read_only` (default `false`). Both paths must be absolute and must not contain `:` or `,` (they are passed as `-v host:container[:ro]`). No mounts by default — the container gets no host filesystem access beyond its own read-only root and a `/tmp` tmpfs. |
+| `servers[].stdio.sandbox.memory` | string | none (runtime default) | A Docker/Podman memory limit, e.g. `512m`, `1g`. |
+| `servers[].stdio.sandbox.cpus` | string | none (runtime default) | A Docker/Podman CPU limit, e.g. `1`, `0.5`. |
+| `servers[].stdio.sandbox.cache_volume` | bool | `false` | Mounts a named volume for `npx`/`npm`/`node`'s or `uvx`/`uv`'s package cache, so repeated starts do not re-download packages. No effect for other commands. |
+
+Validated at load: an unknown `runtime`, a missing `image` with no inferable
+default, an invalid `network`, a mount missing `host`/`container`, or a
+malformed `memory`/`cpus` value each fail `leanproxy-mcp` at config-load
+time rather than at spawn time.
+
+`leanproxy-mcp add <server-id> --sandbox docker` (or `--sandbox podman`)
+records this block automatically when installing from the marketplace
+(#313); it stays off by default for any other install path.
+
+See [Security: Sandboxing servers](security.md#sandboxing-servers-312) for
+what isolation this does and does not provide, and `leanproxy-mcp doctor
+sandbox` to check runtime availability without starting anything.
+
 ### Concurrent Requests per Stdio Server (`max_in_flight`)
 
 A stdio server is one child process with one stdin/stdout pipe, but the

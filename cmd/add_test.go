@@ -594,6 +594,84 @@ func TestRunAdd_LowTrustDryRunBypassesGate(t *testing.T) {
 	}
 }
 
+// TestRunAdd_SandboxFlagRecordsSandboxConfig verifies --sandbox docker
+// (#312/#313) writes a stdio.sandbox block into the installed server's
+// config, and that an invalid value is rejected up front.
+func TestRunAdd_SandboxFlagRecordsSandboxConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "cfg")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(cfgDir, "leanproxy_servers.yaml")
+	t.Setenv("LEANPROXY_CONFIG", cfgPath)
+	t.Setenv("HOME", dir)
+
+	writeIndex(t, filepath.Join(dir, ".leanproxy"), registry.FeedIndex{
+		SyncedAt: testNow(t),
+		Entries: []registry.RegistryFeedEntry{
+			{
+				Name:              "community-tool",
+				Transport:         "stdio",
+				Command:           "npx",
+				Args:              []string{"-y", "community-tool"},
+				NamespaceVerified: true,
+				LastRelease:       time.Now().Format(time.RFC3339),
+			},
+		},
+	})
+
+	stdout := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(stdout)
+	cmd.SetErr(&bytes.Buffer{})
+
+	prevSandbox := addServerSandbox
+	addServerSandbox = "docker"
+	defer func() { addServerSandbox = prevSandbox }()
+
+	if err := runAdd(cmd, []string{"community-tool"}); err != nil {
+		t.Fatalf("runAdd: %v", err)
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("config not written: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "sandbox:") || !strings.Contains(text, "runtime: docker") {
+		t.Errorf("expected sandbox.runtime: docker written to config, got: %s", text)
+	}
+	if !strings.Contains(stdout.String(), "Sandbox:") || !strings.Contains(stdout.String(), "runtime=docker") {
+		t.Errorf("expected sandbox line in install preview, got: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "node:22-alpine") {
+		t.Errorf("expected inferred image for npx in preview, got: %s", stdout.String())
+	}
+}
+
+// TestRunAdd_SandboxFlagRejectsUnknownValue verifies --sandbox only accepts
+// "docker" or "podman".
+func TestRunAdd_SandboxFlagRejectsUnknownValue(t *testing.T) {
+	prevSandbox := addServerSandbox
+	addServerSandbox = "firejail"
+	defer func() { addServerSandbox = prevSandbox }()
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+
+	err := runAdd(cmd, []string{"anything"})
+	if err == nil {
+		t.Fatal("expected an error for an unsupported --sandbox value")
+	}
+	if !strings.Contains(err.Error(), "--sandbox") {
+		t.Errorf("expected error to mention --sandbox, got: %v", err)
+	}
+}
+
 func containsString(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {

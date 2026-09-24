@@ -71,3 +71,51 @@ servers:
 		t.Errorf("expected Passed/Dropped sections, got: %s", out)
 	}
 }
+
+// TestRunSandboxDiagnostic verifies `doctor sandbox` reports, per stdio
+// server, whether it is sandboxed and, when it is, whether the configured
+// runtime binary is available (#312).
+func TestRunSandboxDiagnostic(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "leanproxy_servers.yaml")
+	cfg := `version: "1.0"
+servers:
+  - name: plain
+    transport: stdio
+    enabled: true
+    stdio:
+      command: echo
+      args: ["hi"]
+  - name: sandboxed
+    transport: stdio
+    enabled: true
+    stdio:
+      command: npx
+      args: ["-y", "some-pkg"]
+      sandbox:
+        runtime: docker
+        network: none
+`
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origPath := GlobalConfigPath
+	GlobalConfigPath = cfgPath
+	defer func() { GlobalConfigPath = origPath }()
+
+	out := captureStdout(t, runSandboxDiagnostic)
+
+	if !strings.Contains(out, "plain") || !strings.Contains(out, "unsandboxed") {
+		t.Errorf("expected plain server reported as unsandboxed, got: %s", out)
+	}
+	if !strings.Contains(out, "sandboxed") || !strings.Contains(out, "runtime=docker") {
+		t.Errorf("expected sandboxed server with runtime=docker, got: %s", out)
+	}
+	if !strings.Contains(out, "image=node:22-alpine") {
+		t.Errorf("expected inferred image for npx, got: %s", out)
+	}
+	if !strings.Contains(out, "network=none") {
+		t.Errorf("expected network=none, got: %s", out)
+	}
+}

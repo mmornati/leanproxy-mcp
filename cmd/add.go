@@ -24,6 +24,7 @@ var (
 	addServerGracefulWait    int
 	addServerStopExisting    bool
 	addServerUnderstandRisks bool
+	addServerSandbox         string
 )
 
 // feedSourceAdapter satisfies migrate.ServerSource by reading from a registry
@@ -97,6 +98,7 @@ func init() {
 	addRegistryCmd.Flags().BoolVar(&addServerStopExisting, "stop-existing", true, "Gracefully stop any running server with the same name before replacing")
 	addRegistryCmd.Flags().IntVar(&addServerGracefulWait, "graceful-wait", 10, "Seconds to wait for graceful stop before proceeding (0 = no wait)")
 	addRegistryCmd.Flags().BoolVar(&addServerUnderstandRisks, "i-understand-the-risks", false, "Acknowledge low-trust server warning and proceed with installation")
+	addRegistryCmd.Flags().StringVar(&addServerSandbox, "sandbox", "", "Run this server in a container sandbox (#312): \"docker\" or \"podman\" (unset/\"\" installs it unsandboxed, the default)")
 	RootCmd.AddCommand(addRegistryCmd)
 }
 
@@ -109,6 +111,11 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	serverID := strings.TrimSpace(args[0])
 	if serverID == "" {
 		return fmt.Errorf("server id is required")
+	}
+
+	sandbox, err := parseSandboxFlag(addServerSandbox)
+	if err != nil {
+		return err
 	}
 
 	cacheDir, err := registry.LeanProxyDir()
@@ -211,6 +218,9 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	if previewErr != nil {
 		return fmt.Errorf("preview %q: %w", serverID, previewErr)
 	}
+	if sandbox != nil && preview.Stdio != nil {
+		preview.Stdio.Sandbox = sandbox
+	}
 	feedEntry, feedFound := findFeedEntry(cache.Entries, entry.Name)
 	printInstallPreview(stdout, entry, preview, feedEntry, feedFound)
 
@@ -232,6 +242,7 @@ func runAdd(cmd *cobra.Command, args []string) error {
 		Logger:          slog.Default(),
 		DryRun:          dryRun,
 		Enabled:         enable,
+		Sandbox:         sandbox,
 	}
 
 	installCtx := cmd.Context()
@@ -267,8 +278,8 @@ func runAdd(cmd *cobra.Command, args []string) error {
 	if result.Stopped {
 		fmt.Fprintln(stdout, "  Graceful stop: yes")
 	}
-	if lowTrust {
-		fmt.Fprintln(stdout, "  Tip: this server's trust score is low; consider running it with --sandbox once sandboxing is configured.")
+	if lowTrust && sandbox == nil {
+		fmt.Fprintln(stdout, "  Tip: this server's trust score is low; consider re-running with --sandbox docker (or podman) to run it in a container.")
 	}
 	if !result.DryRun {
 		fmt.Fprintln(stdout, "  Tools will be pinned automatically (trust-on-first-use) the first time this server starts;")
@@ -292,6 +303,13 @@ func printInstallPreview(w io.Writer, entry migrate.CacheEntry, preview *migrate
 		fmt.Fprintf(w, "  Command:   %s\n", strings.TrimSpace(preview.Stdio.Command+" "+strings.Join(preview.Stdio.Args, " ")))
 		if names := envNames(entry.Env); len(names) > 0 {
 			fmt.Fprintf(w, "  Env vars:  %s (values are never printed or logged)\n", strings.Join(names, ", "))
+		}
+		if preview.Stdio.Sandbox != nil {
+			image := preview.Stdio.Sandbox.Image
+			if image == "" {
+				image, _ = migrate.InferSandboxImage(preview.Stdio.Command)
+			}
+			fmt.Fprintf(w, "  Sandbox:   runtime=%s image=%s network=%s\n", preview.Stdio.Sandbox.Runtime, image, sandboxNetworkOrDefault(preview.Stdio.Sandbox.Network))
 		}
 	case preview.HTTP != nil:
 		fmt.Fprintf(w, "  Transport: %s\n", preview.Transport)
@@ -424,6 +442,31 @@ func trustFlagLabel(dryRun, acknowledged bool) string {
 	default:
 		return ""
 	}
+}
+
+// parseSandboxFlag validates --sandbox and returns the SandboxConfig it
+// asks for, or nil when the flag was left unset (#312/#313 — the actual
+// default stays off for compatibility; the operator opts in explicitly).
+// The image is left empty here so it is inferred from the resolved
+// command at install/spawn time (migrate.InferSandboxImage).
+func parseSandboxFlag(value string) (*migrate.SandboxConfig, error) {
+	switch value {
+	case "":
+		return nil, nil
+	case "docker", "podman":
+		return &migrate.SandboxConfig{Runtime: value, Network: "none"}, nil
+	default:
+		return nil, fmt.Errorf("--sandbox must be \"docker\" or \"podman\", got %q", value)
+	}
+}
+
+// sandboxNetworkOrDefault returns network, or "none" (the sandbox default)
+// when it is unset, for display purposes.
+func sandboxNetworkOrDefault(network string) string {
+	if network == "" {
+		return "none"
+	}
+	return network
 }
 
 func descriptionFor(entry migrate.CacheEntry) string {
