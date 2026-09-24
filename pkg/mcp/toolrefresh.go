@@ -79,6 +79,9 @@ func (h *Handler) StartBackgroundRefresh(ctx context.Context) {
 		h.startRefresh(name, false)
 	}
 	go h.retryLoop(ctx, interval)
+	if h.exposure.Load().MayListUpstreamTools() {
+		go h.watchExposure(ctx)
+	}
 }
 
 // handleServerEvent refreshes a server's tools when the pool reports that
@@ -315,6 +318,8 @@ func (h *Handler) setServerTools(name string, tools []Tool) {
 	if !changed {
 		return
 	}
+	// Passthrough and hybrid clients list these tools themselves (#322).
+	h.exposureChanged(true)
 	h.refreshMu.Lock()
 	listeners := append([]func(string, []Tool){}, h.toolsListeners...)
 	h.refreshMu.Unlock()

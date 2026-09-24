@@ -85,7 +85,7 @@ func newFakeClient(t *testing.T, h *Handler, caps string) *fakeClient {
 	s, closeSession := h.OpenSession(c.notify)
 	t.Cleanup(closeSession)
 	s.EnableRequests(c.request)
-	s.setInitialized(LatestProtocolVersion, InitializeParams{ClientInfo: ClientInfo{Name: "fake"}}, json.RawMessage(caps))
+	s.setInitialized(LatestProtocolVersion, InitializeParams{ClientInfo: ClientInfo{Name: "fake"}}, json.RawMessage(caps), "")
 	c.session = s
 	return c
 }
@@ -263,7 +263,7 @@ func TestRelay_NoCapableClient(t *testing.T) {
 	// A capable client whose front end cannot carry requests is not used.
 	s, closeSession := h.OpenSession(func(string, json.RawMessage) {})
 	defer closeSession()
-	s.setInitialized(LatestProtocolVersion, InitializeParams{}, json.RawMessage(`{"elicitation":{}}`))
+	s.setInitialized(LatestProtocolVersion, InitializeParams{}, json.RawMessage(`{"elicitation":{}}`), "")
 	_, rpcErr = h.HandleServerRequest(WithClientSession(context.Background(), s), "alpha", methodElicitationCreate, json.RawMessage(`{"message":"hi"}`))
 	require.NotNil(t, rpcErr)
 	assert.Equal(t, ErrCodeMethodNotFound, rpcErr.Code)
@@ -518,7 +518,7 @@ func TestRelay_DisconnectUnsubscribesOrphans(t *testing.T) {
 	h := NewHandler(up, quietLogger())
 	c := &fakeClient{t: t}
 	s, closeSession := h.OpenSession(c.notify)
-	s.setInitialized(LatestProtocolVersion, InitializeParams{}, nil)
+	s.setInitialized(LatestProtocolVersion, InitializeParams{}, nil, "")
 	uri := ResourceURI("alpha", "file:///a/one.txt")
 	require.Nil(t, call(t, h, s, MethodResourcesSubscribe, map[string]string{"uri": uri}).Error)
 	_, end := h.BeginUpstreamCall(WithClientSession(context.Background(), s), "alpha", json.RawMessage(`{"_meta":{"progressToken":"t"}}`), json.RawMessage(`{}`))
@@ -643,7 +643,7 @@ func TestClientSession_QueuedNotificationsNeverBlockTheCaller(t *testing.T) {
 		written++
 		mu.Unlock()
 	})
-	s.setInitialized(LatestProtocolVersion, InitializeParams{}, nil)
+	s.setInitialized(LatestProtocolVersion, InitializeParams{}, nil, "")
 
 	done := make(chan int)
 	go func() {
@@ -690,7 +690,7 @@ func TestRelay_ProgressFlushedBeforeTheCallEnds(t *testing.T) {
 		mu.Unlock()
 	})
 	defer closeSession()
-	s.setInitialized(LatestProtocolVersion, InitializeParams{}, nil)
+	s.setInitialized(LatestProtocolVersion, InitializeParams{}, nil, "")
 	ctx := WithClientSession(context.Background(), s)
 	up, end := h.BeginUpstreamCall(ctx, "alpha", json.RawMessage(`{"_meta":{"progressToken":"t"}}`), json.RawMessage(`{}`))
 	for i := 1; i <= 5; i++ {

@@ -131,7 +131,7 @@ func (h *Handler) handleSearchTools(ctx context.Context, req *Request, params To
 			tool = Tool{Name: hit.Tool.Name, Description: hit.Tool.Description, InputSchema: hit.Tool.InputSchema}
 		}
 		confirm := h.policyConfirm(hit.Tool.Server, tool)
-		lines = append(lines, formatToolMarked(tool, hit.Tool.Server, searchDescChars, confirm))
+		lines = append(lines, formatToolMarkedAs(tool, h.exposedToolName(ctx, hit.Tool.Server, hit.Tool.Name), searchDescChars, confirm))
 		if structured != nil {
 			structured = append(structured, StructuredTool{Server: hit.Tool.Server, Tool: tool, Policy: policyMark(confirm)})
 		}

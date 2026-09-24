@@ -332,7 +332,14 @@ Example:
   leanproxy-mcp server run --stdio --config /path/to/config.yaml
   leanproxy-mcp server run --stdio --log-file /tmp/leanproxy.log
   leanproxy-mcp server run --http 127.0.0.1:8765
-  leanproxy-mcp server run --http 127.0.0.1:8765 --http-allowed-origins https://app.example`,
+  leanproxy-mcp server run --http 127.0.0.1:8765 --http-allowed-origins https://app.example
+  leanproxy-mcp server run --stdio --exposure passthrough
+
+Exposure: clients with native tool search (Claude Code, Claude Desktop,
+Cursor, VS Code) get every upstream tool listed as <server>__<tool>
+(passthrough); any other client gets LeanProxy's discovery router
+(search_tools, invoke_tool, ...). --exposure forces one mode for every
+client; the exposure: config block sets it per client.`,
 	RunE: runServerRun,
 }
 
@@ -347,6 +354,7 @@ var runFlags struct {
 	httpAllowedHosts   []string
 	httpAllowedOrigins []string
 	noAuth             bool
+	exposure           string
 }
 
 func init() {
@@ -360,6 +368,7 @@ func init() {
 	runCmd.Flags().StringSliceVar(&runFlags.httpAllowedHosts, "http-allowed-hosts", nil, "Extra Host header values accepted by the HTTP front end, beyond the bind host and loopback names (adds to server.http.allowed_hosts)")
 	runCmd.Flags().StringSliceVar(&runFlags.httpAllowedOrigins, "http-allowed-origins", nil, "Browser origins (https://app.example) allowed to call the HTTP front end (adds to server.http.allowed_origins)")
 	runCmd.Flags().BoolVar(&runFlags.noAuth, "no-auth", false, "Serve --http without a bearer token (only allowed on a loopback address)")
+	runCmd.Flags().StringVar(&runFlags.exposure, "exposure", "", "Force how the upstream tools are exposed to every client: router, passthrough or hybrid (default: per client, see exposure: in the config)")
 	serverCmd.AddCommand(runCmd)
 
 	var healthCmd = &cobra.Command{
@@ -397,6 +406,13 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {
 		return fmt.Errorf("no servers configured in %s", configPath)
+	}
+
+	// Exposure modes (#322): resolved (and the flag validated) before
+	// anything starts.
+	exposureResolver, err := newExposureResolver(cfg, runFlags.exposure)
+	if err != nil {
+		return err
 	}
 
 	// The HTTP front end's security settings are resolved before anything
@@ -564,6 +580,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	}
 
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), cache)
+	handler.SetExposure(exposureResolver)
 	for _, srv := range cfg.Servers {
 		if srv.TimeoutValue > 0 {
 			handler.SetTimeout(srv.Name, srv.TimeoutValue)
@@ -604,7 +621,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	gov.SetInjectionGuard(firewall.Injection)
 	handler.SetGovernor(gov)
 	slog.Info(gov.Summary())
-	handler.Use(tracedMiddlewares(respCache, firewall, pins, pol, gov)...)
+	handler.Use(tracedMiddlewares(handler, respCache, firewall, pins, pol, gov)...)
 
 	// Server-to-client requests, progress and resource updates from the
 	// upstreams (#308): per-server policy (allow_sampling, roots), the same

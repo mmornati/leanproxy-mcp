@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"sync"
 	"sync/atomic"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/exposure"
 )
 
 // MCP protocol revisions LeanProxy speaks (issue #307).
@@ -90,6 +92,9 @@ type ClientSession struct {
 	protocolVersion string
 	clientInfo      ClientInfo
 	capabilities    json.RawMessage
+	// exposureMode is how the upstream tools are exposed to this client
+	// (#322), decided at initialize.
+	exposureMode exposure.Mode
 
 	// Server-to-client requests (issue #308, see session_requests.go).
 	reqMu       sync.Mutex
@@ -180,10 +185,22 @@ func (s *ClientSession) AtLeast(minVersion string) bool {
 	return ProtocolAtLeast(s.ProtocolVersion(), minVersion)
 }
 
-func (s *ClientSession) setInitialized(version string, params InitializeParams, caps json.RawMessage) {
+// ExposureMode returns the exposure mode decided at initialize ("" before
+// that).
+func (s *ClientSession) ExposureMode() exposure.Mode {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.exposureMode
+}
+
+func (s *ClientSession) setInitialized(version string, params InitializeParams, caps json.RawMessage, mode exposure.Mode) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.initialized = true
+	s.exposureMode = mode
 	s.protocolVersion = version
 	s.clientInfo = params.ClientInfo
 	s.capabilities = append(json.RawMessage(nil), caps...)

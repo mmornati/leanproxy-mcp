@@ -28,6 +28,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/gateway"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/exposure"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
@@ -426,6 +427,13 @@ func runServe(cmd *cobra.Command, args []string) {
 	}
 
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), toolStore)
+	// Exposure modes (#322): per client from the exposure: block (serve has
+	// no --exposure flag; `server run` does).
+	exposureResolver, err := newExposureResolver(loadedCfg, "")
+	if err != nil {
+		logError("invalid exposure configuration: %v", err)
+	}
+	handler.SetExposure(exposureResolver)
 	servePins.Set(newToolPinner(loadedCfg))
 	servePins.SetServerNames(knownServerNames)
 	handler.SetToolPins(servePins)
@@ -656,7 +664,7 @@ func serveRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Router, gt g
 		req.Params = mreq.Params
 		return toMCPResponse(dispatchServeRequest(ctx, req, r, gt, p)), nil
 	}
-	resp, _ := mcp.Chain(dispatch, tracedMiddlewares(serveResponseCache, serveFirewall, servePins, servePolicy, serveGovernor)...)(ctx, toMCPRequest(req))
+	resp, _ := mcp.Chain(dispatch, tracedMiddlewares(serveMCPHandler.Load(), serveResponseCache, serveFirewall, servePins, servePolicy, serveGovernor)...)(ctx, toMCPRequest(req))
 	return fromMCPResponse(resp)
 }
 
@@ -669,7 +677,7 @@ func dispatchServeRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Rout
 		return handleGatewayToolSync(ctx, req, gt)
 	}
 
-	if h := serveMCPHandler.Load(); h != nil && isMCPProtocolMethod(req.Method) {
+	if h := serveMCPHandler.Load(); h != nil && (isMCPProtocolMethod(req.Method) || handlerAnswersListing(ctx, h, req)) {
 		// Session-level and aggregated MCP methods are answered by the
 		// shared handler (per-connection session in ctx), never routed to
 		// one backend and never served from a cache.
@@ -1086,6 +1094,22 @@ func isMCPProtocolMethod(method string) bool {
 		mcp.MethodResourcesSubscribe, mcp.MethodResourcesUnsubscribe,
 		mcp.MethodPromptsList, mcp.MethodPromptsGet:
 		return true
+	default:
+		return false
+	}
+}
+
+// handlerAnswersListing reports whether the shared handler answers req for
+// a session in passthrough or hybrid exposure (#322): tools/list (the
+// upstream tools, namespaced) and, in hybrid, tools/call search_tools. A
+// router session keeps serve's own gateway (tools/list is not answered, the
+// gateway tools are methods), as before #322.
+func handlerAnswersListing(ctx context.Context, h *mcp.Handler, req *proxy.JSONRPCRequest) bool {
+	switch {
+	case req.Method == mcp.MethodToolsList:
+		return h.ExposureMode(ctx).ListsUpstreamTools()
+	case req.Method == mcp.MethodToolsCall && toolCallName(req) == "search_tools":
+		return h.ExposureMode(ctx) == exposure.ModeHybrid
 	default:
 		return false
 	}
