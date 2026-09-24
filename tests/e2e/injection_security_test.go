@@ -28,8 +28,12 @@ func TestStory_13_2_DoctorSecurity_ReportsPolicyBands(t *testing.T) {
 	stdout, stderr, exitCode := runBinary("doctor", "--security")
 	t.Logf("doctor --security: exit=%d stdout=%q stderr=%q", exitCode, stdout, stderr)
 
-	if exitCode != 0 {
-		t.Fatalf("doctor --security should exit 0, got %d", exitCode)
+	// Since #323, the exit code is non-zero when any OWASP check is ❌; with
+	// no config file at all (as here) the injection guard (MCP06) and
+	// redaction defaults legitimately report gaps, so only 0 or 1 (checks
+	// failed) are expected, never a crash.
+	if exitCode != 0 && exitCode != 1 {
+		t.Fatalf("doctor --security should exit 0 or 1, got %d", exitCode)
 	}
 
 	output := stdout
@@ -67,17 +71,22 @@ func TestStory_13_2_DoctorSecurity_JSON(t *testing.T) {
 
 	stdout, _, exitCode := runBinary("doctor", "--security", "--json")
 	t.Logf("doctor --security --json: exit=%d stdout=%q", exitCode, stdout)
-	if exitCode != 0 {
-		t.Skip("--json variant not yet supported on doctor")
+	// Since #323, --json is always supported and its exit code is 0 or 1
+	// (non-zero when any check is ❌; see TestStory_13_2_DoctorSecurity_ReportsPolicyBands).
+	if exitCode != 0 && exitCode != 1 {
+		t.Fatalf("doctor --security --json should exit 0 or 1, got %d", exitCode)
 	}
 
 	trimmed := strings.TrimSpace(stdout)
 	if trimmed == "" || trimmed[0] != '{' {
-		t.Skipf("--json returned non-object output: %s", trimmed)
+		t.Fatalf("--json must print a JSON object, got: %s", trimmed)
 	}
 
 	var parsed map[string]interface{}
 	if err := json.Unmarshal([]byte(trimmed), &parsed); err != nil {
 		t.Fatalf("doctor --security --json did not parse: %v\nraw=%s", err, trimmed)
+	}
+	if parsed["schema"] != "leanproxy.doctor.security/v1" {
+		t.Fatalf("schema = %v, want leanproxy.doctor.security/v1", parsed["schema"])
 	}
 }
