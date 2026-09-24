@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -74,6 +75,11 @@ type Redactor struct {
 	alertManager *AlertManager
 	bufferSize   int
 	maxOverlap   int
+
+	// streamScans counts the regex scans RedactStream runs over its
+	// carry. The rescan throttle bounds it; tests assert on it because a
+	// scan count, unlike wall-clock time, does not depend on the runner.
+	streamScans atomic.Int64
 }
 
 // NewRedactor builds a redactor for patterns. Built-in patterns keep their
@@ -421,6 +427,7 @@ func (r *Redactor) RedactStream(reader io.Reader, writer io.Writer, meta ...*Red
 		var spans []span
 		if atEOF || lastScanCarryLen == 0 || len(carry)-lastScanCarryLen >= rescanInterval {
 			spans = r.findSpansInto(carry, spansBuf)
+			r.streamScans.Add(1)
 			lastScanCarryLen = len(carry)
 		}
 		hold := 0
