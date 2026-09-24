@@ -3,17 +3,29 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
+// savingsCmd's tracker (globalSavingsTracker) is never fed from the live
+// pipeline (nothing calls Track/TrackOriginal outside tests), so its
+// numbers are always the modeled/estimated zero state described in issue
+// #324's problem statement. Kept for backward compatibility; use `report`
+// for the auditable numbers built from real counters.
 var savingsCmd = &cobra.Command{
 	Use:   "savings",
-	Short: "Display token savings statistics",
-	Long:  `Display cumulative token savings across all requests or filter by server.`,
-	Run:   runSavings,
+	Short: "[DEPRECATED, estimate-only] Display token savings statistics",
+	Long: `DEPRECATED: this command's numbers are estimated/modeled, not measured from
+the live pipeline. Use 'leanproxy-mcp report' for an auditable savings
+report built entirely from real counters (see docs/savings-report.md).
+
+Display cumulative token savings across all requests or filter by server.`,
+	Run: runSavings,
 }
+
+const savingsDeprecationNotice = "NOTE: this command's numbers are ESTIMATED, not measured from the live pipeline. Use `leanproxy-mcp report` for the auditable, measured savings report.\n"
 
 var savingsFlags struct {
 	reset   bool
@@ -31,6 +43,9 @@ func init() {
 }
 
 func runSavings(cmd *cobra.Command, args []string) {
+	if !savingsFlags.jsonOut {
+		fmt.Fprint(os.Stderr, savingsDeprecationNotice)
+	}
 	if savingsFlags.reset {
 		globalSavingsTracker.Reset()
 		fmt.Println("Savings counters reset")

@@ -7,6 +7,7 @@ import (
 )
 
 func TestDebugFullReport(t *testing.T) {
+	isolateUsageHome(t)
 	resetReportFlags()
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "export.csv")

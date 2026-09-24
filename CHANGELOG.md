@@ -2,6 +2,19 @@
 
 ## Breaking in v0.11
 
+- **`report --export csv|json` now exports the auditable savings mechanism breakdown, not raw per-call cost rows** ([#324](https://github.com/mmornati/leanproxy-mcp/issues/324)).
+  - **What.** `--export csv`/`--export json` used to export `reporter.CallLogEntry` rows (one
+    per tracked tool call: timestamp, server, tool, tokens, estimated cost) — but nothing in the
+    live pipeline ever fed that tracker, so the export was always empty.
+  - **Now.** They export the same mechanism-breakdown report `report`'s default text output
+    shows (schema, discovery, response governor truncation/projection/dedup/summarization),
+    built from real counters. `--export md` is new. See
+    [`docs/savings-report.md`](docs/savings-report.md).
+  - **Migration.** A script parsing the old CSV/JSON shape (`timestamp,team,project,server,
+    tool,tokens,estimated_cost`) needs updating to the new schema (`mechanism,measured,is_cost,
+    original_tokens,resulting_tokens,saved_tokens,calls,notes` for CSV; see `docs/commands.md`
+    for the JSON schema).
+
 - **Claude Code, Claude Desktop, Cursor and VS Code now see the upstream tools directly (passthrough)** ([#322](https://github.com/mmornati/leanproxy-mcp/issues/322)).
   - **What.** Every client got LeanProxy's 4-tool router (`search_tools`, `list_servers`,
     `list_tools`, `invoke_tool`), which hid the tools from clients that search and defer large
@@ -147,6 +160,31 @@
     [`docs/security.md`](docs/security.md#first-party-servers-hardening-postgres-redis-318).
 
 ## Added in v0.11
+
+- **`report`: auditable savings report built from real counters** ([#324](https://github.com/mmornati/leanproxy-mcp/issues/324), audit §4.3 / §2.3).
+  - **What.** `report`/`savings`/`cost` (`cmd/report.go`, `cmd/savings.go`, `cmd/cost.go`,
+    `pkg/reporter`) produced savings figures from a simulated "native cost", and their trackers
+    were never fed by the live pipeline — always the estimated/zero placeholder state, with no
+    way to audit where a claimed saving came from.
+  - **Now.** `report [--since 7d] [--by tool|server|session] [--export csv|json|md]
+    [--price-per-mtok N]` rebuilds the savings breakdown entirely from real counters: schema
+    savings (router vs. passthrough `tools/list` size, `pkg/mcp/telemetry.go`'s new
+    `schema_native_tokens`/`schema_sent_tokens`), discovery cost
+    (`search_tools`/`list_tools`/`list_servers`, `discovery_tokens`), and the response governor's
+    truncation/projection/dedup/summarization savings (`GovernorStats`, issues #319-#321). Every
+    front end (`server run --stdio`, `server run --http`, `serve`) appends a snapshot of these
+    counters to an offline, append-only JSONL store (`pkg/usage`, mode `0600`, daily rotation,
+    pruned after 90 days by default) at startup, every 5s and at shutdown; `report` reads it, so
+    it needs no running proxy. Every figure is labelled **measured** or **estimated** (the
+    estimator, `chars/4`, is named); the breakdown sums to the total; nothing ever carries a
+    payload, argument or secret. `savings`/`cost` are kept for backward compatibility, marked
+    deprecated in `--help`, and point at `report`.
+  - **Migration.** `report --export csv|json` used to export raw per-call cost rows; it now
+    exports the mechanism breakdown documented in
+    [`docs/savings-report.md`](docs/savings-report.md). A script parsing the old shape needs
+    updating.
+  - See [`report`](docs/commands.md#report---auditable-savings-report) and
+    [`docs/savings-report.md`](docs/savings-report.md).
 
 - **`doctor security`: OWASP-MCP-Top-10-mapped local security report** ([#323](https://github.com/mmornati/leanproxy-mcp/issues/323), audit §2.3 / §6).
   - **What.** `doctor security` grew, feature by feature, into loosely related sections (tool

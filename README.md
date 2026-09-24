@@ -251,7 +251,7 @@ leanproxy-mcp server run --stdio
 # Preview savings without executing
 leanproxy-mcp server run --dry-run --stdio
 
-# Generate a detailed savings report
+# Generate an auditable savings report, built from real counters (docs/savings-report.md)
 leanproxy-mcp report --output report.md
 ```
 

@@ -29,9 +29,9 @@ leanproxy-mcp [command] [flags]
 | `compactor` | Manage manifest caching |
 | `cache` | Inspect and manage the tool cache |
 | `status` | Display real-time server status |
-| `savings` | Display token savings statistics |
-| `cost` | Display token cost attribution statistics |
-| `report` | Generate token savings report |
+| `savings` | (deprecated, estimate-only) Display token savings statistics |
+| `cost` | (deprecated, estimate-only) Display token cost attribution statistics |
+| `report` | Auditable savings report built from real counters |
 | `doctor` | Run diagnostic checks on the installation |
 | `tools pins` | List, diff, approve or reset pinned tool definitions (rug-pull detection, #310) |
 | `marketplace` | Interact with the MCP Registry marketplace |
@@ -1435,7 +1435,12 @@ github     Down     -         -         -        -       -
 
 ---
 
-## `savings` - Token Savings
+## `savings` - Token Savings (deprecated, estimate-only)
+
+> **Deprecated.** `savings`' tracker is never fed by the live pipeline (see
+> issue #324): its numbers are always the estimated/zero placeholder state.
+> Use [`report`](#report-auditable-savings-report) for an auditable
+> savings report built entirely from real counters.
 
 Display cumulative token savings statistics.
 
@@ -1493,7 +1498,12 @@ By server:
 
 ---
 
-## `cost` - Token Cost Attribution
+## `cost` - Token Cost Attribution (deprecated, estimate-only)
+
+> **Deprecated.** `cost`'s tracker is never fed by the live pipeline (see
+> issue #324): its numbers are always the estimated/zero placeholder state.
+> Use [`report`](#report-auditable-savings-report) for an auditable
+> savings report built entirely from real counters.
 
 Display token usage broken down by tool and server for the current session. This allows you to see which tools consume the most tokens.
 
@@ -1634,9 +1644,19 @@ The status file includes a `cost_tracking` section when enabled:
 
 ---
 
-## `report` - Generate Report
+## `report` - Auditable Savings Report
 
-Generate a Markdown-formatted report on token savings and security risks.
+Generate a savings report built entirely from real counters the proxy
+records while it runs (issue #324): schema savings (router vs. passthrough
+`tools/list` size), the discovery-tool cost (`search_tools`/`list_tools`/
+`list_servers`), and the response governor's truncation, projection, dedup
+and summarization savings (issues #319-#321). Every figure is labelled
+**measured** or **estimated**, with the estimator named (`chars/4`). There
+is no simulated or modeled "native cost" anywhere in this report.
+
+See [`docs/savings-report.md`](savings-report.md) for the full methodology
+(what each mechanism measures, its baseline, and how it maps to
+`docs/benchmark-results.md`'s harness numbers).
 
 ### Usage
 
@@ -1648,63 +1668,108 @@ leanproxy-mcp report [flags]
 
 | Flag | Type | Description |
 |------|------|-------------|
-| `--json` | bool | Output JSON instead of Markdown |
-| `--no-security` | bool | Exclude security events |
-| `--output` | string | Output file path |
-| `--session-id` | string | Generate for specific session |
-| `--export` | string | Export raw cost data format (`csv`, `json`) |
-| `--since` | string | Include entries since this date (YYYY-MM-DD, requires `--export`) |
+| `--since` | string | Only include usage since this time: a duration (`7d`, `24h`, `1d12h`) or an absolute date (`2026-01-02`). Default: every retained record. |
+| `--by` | string | Extra breakdown to show: `tool` (default), `server` or `session` |
+| `--export` | string | Export format: `csv`, `json` or `md` (default: human-readable text) |
+| `--output` | string | Output file path (default: stdout), written with mode `0600` |
+| `--json` | bool | Shorthand for `--export json` |
+| `--price-per-mtok` | string | Optional: compute an estimated cost saved at this price per million tokens (your own number; there is no built-in price table) |
 
 #### Examples
 
 ```bash
-# Generate report
+# Human-readable summary
 leanproxy-mcp report
 
-# Output to file
-leanproxy-mcp report --output savings.md
+# Last 7 days, broken down by server
+leanproxy-mcp report --since 7d --by server
 
-# JSON output
-leanproxy-mcp report --json
-
-# Exclude security
-leanproxy-mcp report --no-security
-
-# Export cost data as CSV
-leanproxy-mcp report --export csv
-
-# Export cost data as JSON
+# JSON, the documented stable schema
 leanproxy-mcp report --export json
 
-# Export cost data since a specific date
-leanproxy-mcp report --export csv --since 2026-06-01
+# Markdown, to a file (mode 0600)
+leanproxy-mcp report --export md --output savings.md
 
-# Export to file
-leanproxy-mcp report --export csv --output cost-report.csv
+# CSV, for a spreadsheet
+leanproxy-mcp report --export csv --output savings.csv
+
+# With an estimated cost saved at $3/MTok
+leanproxy-mcp report --price-per-mtok 3.00
 ```
 
-#### Output (Markdown)
+#### Output (text)
 
-```markdown
-# LeanProxy Session Report
-
-## Summary
-- Session ID: abc123
-- Duration: 1h 23m
-- Total Requests: 1,456
-
-## Token Savings
-| Server | Original | Redacted | Savings |
-|--------|----------|---------|---------|
-| filesystem | 45,678 | 32,222 | 29.4% |
-| github | 12,345 | 9,876 | 20.0% |
-
-## Security Events
-| Type | Count |
-|------|-------|
-| api-key | 15 |
-| bearer-token | 3 |
 ```
+LeanProxy Savings Report (generated 2026-09-24T09:00:00Z)
+Sessions: 3 | Estimator: chars/4 (measured unless noted)
+
+MECHANISM                  MEASURED     ORIGINAL    RESULTING       SAVED    CALLS NOTES
+schema                      measured        10049          318        9731        3 router's compacted tools/list vs. the same real passthrough tool set; zero in passthrough/hybrid mode
+response_truncation         measured       234700        18515      205604       15 structural truncation + spill-to-read_result (#319); the governor's residual saving after projection/dedup/summarization
+response_projection         measured            0            0        1029        5 field projection (#320): removed fields, before truncation; ...
+response_dedup              measured            0            0       10140        3 in-session dedup (#321): identical results replaced by a short stub
+response_summarization      measured            0            0           0        0 local-LLM summarization (#321); 0 attempt(s) fell back to truncation
+discovery                 measured/cost         0            0        -642        4 search_tools/list_tools/list_servers result size: a token cost, not a saving; not counted in the total
+
+Total saved (excludes discovery cost): 226504 tokens of 244749 (92.5%)
+Extra turns (estimated from 4 discovery call(s), NOT a token figure): 4
+
+Top tools by response size (hint for projection rules):
+  github.get_file_contents                    54850 tokens over 3 call(s)
+  ...
+
+Every *_tokens number is measured from a real payload the proxy handled ...
+```
+
+#### Output (`--export json`)
+
+The stable, documented JSON schema (`pkg/usage.SavingsReport`):
+
+```json
+{
+  "generated_at": "2026-09-24T09:00:00Z",
+  "since": "2026-09-17T09:00:00Z",
+  "session_count": 3,
+  "estimator": "chars/4",
+  "mechanisms": [
+    {
+      "mechanism": "schema",
+      "measured": true,
+      "estimator": "chars/4",
+      "original_tokens": 10049,
+      "resulting_tokens": 318,
+      "saved_tokens": 9731,
+      "calls": 3,
+      "notes": "router's compacted tools/list vs. the same real passthrough tool set; zero in passthrough/hybrid mode"
+    }
+  ],
+  "total_original_tokens": 244749,
+  "total_saved_tokens": 226504,
+  "total_saved_percent": 92.5,
+  "extra_turns_estimate": 4,
+  "top_tools_by_response_size": [{"tool": "github.get_file_contents", "original_tokens": 54850, "calls": 3}],
+  "top_servers_by_response_size": [{"tool": "github", "original_tokens": 61000, "calls": 4}],
+  "per_session": [{"session_id": "stdio-1234-...", "timestamp": "...", "total_original_tokens": 12000, "total_saved_tokens": 10500}],
+  "methodology": "Every *_tokens number is measured from a real payload the proxy handled ..."
+}
+```
+
+`mechanism` rows are always: `schema`, `response_truncation`,
+`response_projection`, `response_dedup`, `response_summarization`,
+`discovery` (`is_cost: true`, excluded from the total). The non-cost rows
+always sum to `total_saved_tokens`.
+
+### How it works
+
+Every front end (`server run --stdio`, `server run --http`, `serve`) appends
+a snapshot of its real counters (the response governor's `GovernorStats`,
+the schema/discovery telemetry counters) to an append-only, offline JSONL
+store under `~/.leanproxy/usage/` (mode `0600`, one file per UTC day),
+on startup, every 5 seconds while running, and at shutdown. `report` reads
+that store; it needs no running proxy and never touches a payload,
+argument or secret — only names, numbers and timestamps. Files older than
+90 days are pruned automatically (configurable with
+`LEANPROXY_USAGE_RETENTION_DAYS`).
 
 ---
 

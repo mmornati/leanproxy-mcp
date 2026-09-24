@@ -18,6 +18,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/internal/version"
 	"github.com/mmornati/leanproxy-mcp/pkg/errors"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/exposure"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/governor"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
@@ -368,6 +369,23 @@ func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response,
 	resultBytes, _ := json.Marshal(ToolsListResult{Tools: tools})
 	h.logger.Info("tools/list sent to client", "exposure", string(mode), "count", len(tools))
 
+	// Schema savings accounting (issue #324): schema_sent_tokens is exactly
+	// what was marshaled above; schema_native_tokens is what the client
+	// would have received listing every upstream tool the security layers
+	// allow (h.passthroughTools), i.e. the same real payload passthrough
+	// mode sends. In passthrough/hybrid mode these are computed from the
+	// same tool set, so the measured saving is legitimately zero: the
+	// router's compaction is what creates the gap.
+	// exposedToolsSnapshot (never awaits a cold/unpinned server) so this
+	// accounting never changes tools/list's own latency or blocks on a
+	// server that is still starting.
+	nativeTools := tools
+	if mode == exposure.ModeRouter {
+		nativeTools = h.exposedToolsSnapshot(ctx)
+	}
+	nativeBytes, _ := json.Marshal(ToolsListResult{Tools: nativeTools})
+	RecordSchemaListing(ctx, int64(governor.Tokens(len(nativeBytes))), int64(governor.Tokens(len(resultBytes))))
+
 	return &Response{
 		JSONRPC: JSONRPCVersion,
 		Result:  resultBytes,
@@ -615,7 +633,7 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 			structured = append(structured, StructuredTool{Server: serverName, Tool: tool, Policy: policyMark(confirm[tool.Name])})
 		}
 	}
-	return toolListingResult(req.ID, text, structured), nil
+	return toolListingResult(ctx, req.ID, text, structured), nil
 }
 
 // StructuredTool is one entry of the structuredContent list_tools and
@@ -641,7 +659,13 @@ func policyMark(confirm bool) string {
 // toolListingResult is a tools/call result carrying the compact text
 // listing and, when structured is non-nil, the full tool objects as
 // structuredContent ({"tools": [...]}).
-func toolListingResult(id interface{}, text string, structured []StructuredTool) *Response {
+// toolListingResult builds the response for the discovery tools
+// (list_tools, list_servers, search_tools) and records its size as
+// discovery tokens (issue #324's "discovery via search_tools" category):
+// these are tokens the client spends reading a discovery result instead of
+// a fixed schema, so the savings report can show them as a labeled,
+// separate line rather than folding them into schema savings.
+func toolListingResult(ctx context.Context, id interface{}, text string, structured []StructuredTool) *Response {
 	result := map[string]interface{}{
 		"content": []map[string]string{{"type": "text", "text": text}},
 	}
@@ -649,6 +673,7 @@ func toolListingResult(id interface{}, text string, structured []StructuredTool)
 		result["structuredContent"] = map[string]interface{}{"tools": structured}
 	}
 	resultBytes, _ := json.Marshal(result)
+	RecordDiscovery(ctx, int64(governor.Tokens(len(resultBytes))))
 	return &Response{JSONRPC: JSONRPCVersion, Result: resultBytes, ID: id}
 }
 
