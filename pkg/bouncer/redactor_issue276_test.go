@@ -390,30 +390,38 @@ func (s *sequenceReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// TestRedactStreamScanThrottle is a timing-based proxy for the rescan
-// throttle: a clean ~65 KB stream delivered in 1-byte chunks must finish
-// quickly. Without the throttle, every byte triggers a full regex scan
-// and the test takes many seconds (with eight built-in patterns this is
-// tens of thousands of full regex passes). With the throttle, only a
-// handful of scans run and the test finishes well under the bound below.
-// The bound is generous to accommodate slow CI runners; the un-throttled
-// implementation would take >30s.
+// TestRedactStreamScanThrottle checks the rescan throttle: a clean ~65 KB
+// stream delivered in 1-byte chunks must not trigger a full regex scan per
+// byte. The throttle rescans only after rescanInterval new bytes (plus the
+// final scan at EOF), so the scan count is bounded by the payload size over
+// that interval. The un-throttled implementation scanned once per byte.
+//
+// The test counts scans instead of measuring wall-clock time: a timing bound
+// failed on loaded CI runners (10.9 s against a 10 s bound, while the same
+// test takes 0.45 s under -race locally).
 func TestRedactStreamScanThrottle(t *testing.T) {
 	redactor := NewRedactor(PatternsToRegexps(BuiltInPatterns))
 
 	payload := bytes.Repeat([]byte("a"), 65_000)
 
 	var out bytes.Buffer
-	start := time.Now()
 	if err := redactor.RedactStream(&chunkedReader{data: payload, n: 1}, &out); err != nil {
 		t.Fatalf("RedactStream failed: %v", err)
-	}
-	elapsed := time.Since(start)
-
-	if elapsed > 10*time.Second {
-		t.Fatalf("rescan throttle ineffective: 65KB bytewise stream took %v (expected well under 10s on any reasonable runner)", elapsed)
 	}
 	if !bytes.Equal(out.Bytes(), payload) {
 		t.Fatalf("clean stream altered: got %d bytes, want %d", out.Len(), len(payload))
 	}
+
+	scans := redactor.streamScans.Load()
+	// Carry is flushed as it grows, so each new rescanInterval bytes costs
+	// at most one scan; allow a few more for the first scan, carry resets
+	// and the final scan at EOF.
+	limit := int64(len(payload)/rescanInterval) + 8
+	if scans > limit {
+		t.Fatalf("rescan throttle ineffective: %d regex scans for a %d-byte bytewise stream, want at most %d (rescanInterval=%d)", scans, len(payload), limit, rescanInterval)
+	}
+	if scans == 0 {
+		t.Fatal("no regex scan ran; the stream was not inspected")
+	}
+	t.Logf("%d regex scans for %d bytes delivered one at a time", scans, len(payload))
 }
