@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -92,6 +93,117 @@ type StdioConfig struct {
 	// default, false) should be preferred.
 	InheritEnv bool   `yaml:"inherit_env"`
 	CWD        string `yaml:"cwd"`
+	// Sandbox, when set, runs this stdio server inside a container runtime
+	// (docker/podman) instead of spawning it directly on the host (#312).
+	// Absent (or runtime: none, the default) means unsandboxed, unchanged
+	// from pre-#312 behavior.
+	Sandbox *SandboxConfig `yaml:"sandbox,omitempty"`
+}
+
+// SandboxConfig is servers[].stdio.sandbox (#312): optional container
+// isolation for a stdio MCP server. Marketplace-installed third-party
+// servers (npx/uvx packages) run arbitrary code with the full filesystem
+// and network access of the proxy's own user by default; this wraps the
+// configured command in `docker run`/`podman run` with network and
+// filesystem restrictions instead.
+type SandboxConfig struct {
+	// Runtime selects the container engine: "docker", "podman", or "none"
+	// (the default — unsandboxed). An empty value is treated as "none".
+	Runtime string `yaml:"runtime"`
+	// Image is the container image the command runs in. Required unless it
+	// can be inferred from the stdio command (npx/npm/node -> a Node
+	// image, uvx/uv/python(3) -> a Python/uv image); see
+	// InferSandboxImage.
+	Image string `yaml:"image,omitempty"`
+	// Network is the container network mode: "none" (default — no network
+	// access), "bridge", or "host".
+	Network string `yaml:"network,omitempty"`
+	// Mounts are explicit host<->container bind mounts. Empty by default:
+	// the container gets no access to the host filesystem beyond its own
+	// read-only root and the /tmp tmpfs.
+	Mounts []SandboxMount `yaml:"mounts,omitempty"`
+	// Memory is a Docker/Podman memory limit (e.g. "512m", "1g"). Empty
+	// means the runtime's own default (unlimited).
+	Memory string `yaml:"memory,omitempty"`
+	// CPUs is a Docker/Podman CPU limit (e.g. "1", "0.5"). Empty means the
+	// runtime's own default (unlimited).
+	CPUs string `yaml:"cpus,omitempty"`
+	// CacheVolume, when true, mounts a named volume for the package
+	// manager cache of a well-known interpreter command (npm for
+	// npx/npm/node, uv for uvx/uv) so repeated starts do not re-download
+	// packages. Off by default; unrecognized commands are unaffected.
+	CacheVolume bool `yaml:"cache_volume,omitempty"`
+}
+
+// SandboxMount is one entry of sandbox.mounts: an explicit host directory
+// bound into the container at container, optionally read-only.
+type SandboxMount struct {
+	Host      string `yaml:"host"`
+	Container string `yaml:"container"`
+	ReadOnly  bool   `yaml:"read_only,omitempty"`
+}
+
+// sandboxMemoryPattern matches a Docker/Podman memory limit like "512m",
+// "1g", "2G" or a bare byte count.
+var sandboxMemoryPattern = regexp.MustCompile(`(?i)^[0-9]+[bkmg]?$`)
+
+// sandboxCPUsPattern matches a Docker/Podman --cpus value like "1" or
+// "0.5".
+var sandboxCPUsPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
+
+// InferSandboxImage returns a sensible default sandbox image for a
+// well-known interpreter command, and whether one was found. Used when
+// sandbox.image is left unset (#312): npx/npm/node get a current Node
+// Alpine image, uvx/uv/python(3) get a current Python (uv) Alpine image.
+// Any other command must set sandbox.image explicitly.
+func InferSandboxImage(command string) (string, bool) {
+	switch filepath.Base(command) {
+	case "npx", "npm", "node":
+		return "node:22-alpine", true
+	case "uvx", "uv", "python", "python3":
+		return "ghcr.io/astral-sh/uv:python3.12-alpine", true
+	default:
+		return "", false
+	}
+}
+
+// Validate checks sandbox settings. command is the stdio server's own
+// command, used to check whether an omitted Image can be inferred. A nil
+// receiver (no sandbox configured) is always valid.
+func (s *SandboxConfig) Validate(serverName, command string) error {
+	if s == nil {
+		return nil
+	}
+	switch s.Runtime {
+	case "", "none", "docker", "podman":
+	default:
+		return fmt.Errorf("server %s: sandbox.runtime must be docker, podman or none, got %q", serverName, s.Runtime)
+	}
+	if s.Runtime == "" || s.Runtime == "none" {
+		return nil
+	}
+	if s.Image == "" {
+		if _, ok := InferSandboxImage(command); !ok {
+			return fmt.Errorf("server %s: sandbox.image is required (no default image can be inferred for command %q)", serverName, command)
+		}
+	}
+	switch s.Network {
+	case "", "none", "bridge", "host":
+	default:
+		return fmt.Errorf("server %s: sandbox.network must be none, bridge or host, got %q", serverName, s.Network)
+	}
+	for i, m := range s.Mounts {
+		if strings.TrimSpace(m.Host) == "" || strings.TrimSpace(m.Container) == "" {
+			return fmt.Errorf("server %s: sandbox.mounts[%d] requires both host and container", serverName, i)
+		}
+	}
+	if s.Memory != "" && !sandboxMemoryPattern.MatchString(s.Memory) {
+		return fmt.Errorf("server %s: sandbox.memory %q is not a valid memory value (e.g. 512m, 1g)", serverName, s.Memory)
+	}
+	if s.CPUs != "" && !sandboxCPUsPattern.MatchString(s.CPUs) {
+		return fmt.Errorf("server %s: sandbox.cpus %q must be a number (e.g. 1, 0.5)", serverName, s.CPUs)
+	}
+	return nil
 }
 
 type HTTPConfig struct {
@@ -441,6 +553,11 @@ func (c *ServerConfig) Validate() error {
 	case TransportStdio:
 		if c.Stdio == nil || c.Stdio.Command == "" {
 			return fmt.Errorf("server %s: command is required for stdio transport", c.Name)
+		}
+		if c.Stdio.Sandbox != nil {
+			if err := c.Stdio.Sandbox.Validate(c.Name, c.Stdio.Command); err != nil {
+				return err
+			}
 		}
 	case TransportHTTP, TransportSSE:
 		if c.HTTP == nil || c.HTTP.URL == "" {
