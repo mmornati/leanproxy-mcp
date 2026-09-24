@@ -44,10 +44,23 @@ import (
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Start the JSON-RPC streaming proxy server",
-	Long:  `Start the LeanProxy MCP proxy server which listens for incoming connections and forwards JSON-RPC requests.`,
-	Run:   runServe,
+	Short: "Start the JSON-RPC streaming proxy server (deprecated line-TCP protocol; use `server run --http`)",
+	Long: `Start the LeanProxy MCP proxy server which listens for incoming connections and forwards JSON-RPC requests.
+
+Deprecated: the newline-delimited JSON-RPC over TCP protocol of serve is not
+an MCP transport, so no MCP client speaks it. Use the MCP Streamable HTTP
+front end instead:
+
+  leanproxy-mcp server run --http 127.0.0.1:8765
+
+It uses the same token file. The line-TCP protocol is scheduled for removal
+in v1.0; see "Migrating from serve" in docs/quickstart.md.`,
+	Run: runServe,
 }
+
+// serveDeprecationMessage is logged when serve starts (#309).
+const serveDeprecationMessage = "serve: the line-TCP protocol is deprecated and will be removed in v1.0; " +
+	"MCP clients should connect to `leanproxy-mcp server run --http 127.0.0.1:8765` (Streamable HTTP, same token file)"
 
 var serveFlags struct {
 	listenAddr            string
@@ -181,6 +194,7 @@ func init() {
 
 func runServe(cmd *cobra.Command, args []string) {
 	initLogger(cmd)
+	slog.Warn(serveDeprecationMessage)
 	ctx := context.Background()
 
 	dr := dryrun.NewDryRunner(DryRunEnabled)

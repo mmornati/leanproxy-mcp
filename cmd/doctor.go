@@ -12,6 +12,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 	"github.com/mmornati/leanproxy-mcp/pkg/pool"
+	"github.com/mmornati/leanproxy-mcp/pkg/statusfile"
 	"github.com/spf13/cobra"
 )
 
@@ -138,7 +139,69 @@ func runSecurityDiagnostic() {
 	printPolicyStatus(os.Stdout)
 	fmt.Println()
 
+	printHTTPFrontendStatus(os.Stdout)
+	fmt.Println()
+
 	printSandboxStatus(os.Stdout)
+}
+
+// printHTTPFrontendStatus reports the exposure of the Streamable HTTP front
+// end (#309): the configured browser/Host allowlists and limits, the token
+// file, and — when a `server run --http` instance is running — its URL,
+// whether it is loopback-only and whether it requires the token.
+func printHTTPFrontendStatus(w io.Writer) {
+	cfg, err := loadPolicyConfig()
+	if err != nil {
+		fmt.Fprintln(w, "## HTTP Front End (server run --http)")
+		fmt.Fprintln(w)
+		fmt.Fprintf(w, "  ERROR: %v\n", err)
+		return
+	}
+	running, _ := statusfile.ReadCurrentStatus()
+	home, _ := os.UserHomeDir()
+	printHTTPFrontendStatusFor(w, cfg, running, home)
+}
+
+func printHTTPFrontendStatusFor(w io.Writer, cfg *migrate.Config, running *statusfile.StatusInfo, home string) {
+	fmt.Fprintln(w, "## HTTP Front End (server run --http)")
+	fmt.Fprintln(w)
+	h := cfg.EffectiveHTTPFrontend()
+	if running != nil && running.HTTP != nil {
+		st := running.HTTP
+		exposure := "loopback only"
+		if !st.Loopback {
+			exposure = "NON-LOOPBACK: reachable from the network, traffic unencrypted"
+		}
+		auth := "bearer token required"
+		if !st.Auth {
+			auth = "DISABLED (--no-auth): any local process can drive the upstream servers"
+		}
+		fmt.Fprintf(w, "  Running: %s (pid %d)\n", st.URL, running.PID)
+		fmt.Fprintf(w, "  Exposure: %s\n", exposure)
+		fmt.Fprintf(w, "  Authentication: %s\n", auth)
+		fmt.Fprintf(w, "  Allowed browser origins: %s\n", joinOrNone(st.AllowedOrigins))
+		fmt.Fprintf(w, "  Extra allowed Host names: %s\n", joinOrNone(st.AllowedHosts))
+		fmt.Fprintf(w, "  Max sessions: %d\n", st.MaxSessions)
+	} else {
+		fmt.Fprintln(w, "  Not running (start it with: leanproxy-mcp server run --http 127.0.0.1:8765)")
+		fmt.Fprintf(w, "  Configured browser origins (server.http.allowed_origins): %s\n", joinOrNone(h.AllowedOrigins))
+		fmt.Fprintf(w, "  Configured extra Host names (server.http.allowed_hosts): %s\n", joinOrNone(h.AllowedHosts))
+		fmt.Fprintf(w, "  Max sessions: %d, idle timeout: %s, max body: %d bytes\n", h.MaxSessions, h.SessionIdleTimeout, h.MaxBodyBytes)
+	}
+	if home != "" {
+		path := serveTokenPath(home)
+		if info, err := os.Stat(path); err == nil {
+			mode := info.Mode().Perm()
+			note := "ok"
+			if mode&0o077 != 0 {
+				note = "WARNING: readable by other users (tightened to 0600 on next start)"
+			}
+			fmt.Fprintf(w, "  Token file: %s (mode %s, %s)\n", path, mode, note)
+		} else {
+			fmt.Fprintf(w, "  Token file: %s (not created yet; generated on first start)\n", path)
+		}
+	}
+	fmt.Fprintln(w, "  Host and Origin headers are always validated; non-loopback binds require a token.")
 }
 
 // runEnvDiagnostic prints, per configured stdio server, the environment
