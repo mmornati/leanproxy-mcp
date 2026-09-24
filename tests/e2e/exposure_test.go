@@ -284,10 +284,15 @@ func exposureScenario(t *testing.T, e *pinEnv, c *protoClient) {
 	if byName, _, _ := listTools(t, c); byName[name("fresh")].Name != "" {
 		t.Fatal("a new tool must stay hidden until approved (block mode)")
 	}
+	// The upstream change above sends more than one list_changed (the list
+	// refresh and the pin event). Read whatever is still in flight before
+	// counting, or a late note from that change would satisfy the wait
+	// below before the approval has been picked up.
+	drainIncoming(c, 500*time.Millisecond)
+	before = len(c.notes)
 	if out, err := e.cli("approve", s, "fresh"); err != nil {
 		t.Fatalf("approve: %v\n%s", err, out)
 	}
-	before = len(c.notes)
 	if !waitNoteAfter(c, before, "notifications/tools/list_changed", 15*time.Second) {
 		t.Fatalf("no tools/list_changed after the approval; notes %v", c.notes)
 	}
@@ -313,6 +318,23 @@ func waitNoteAfter(c *protoClient, from int, method string, timeout time.Duratio
 		line, ok := c.next(left)
 		if !ok {
 			return false
+		}
+		var m protoMsg
+		if json.Unmarshal([]byte(line), &m) == nil {
+			m.raw = line
+			c.handleIncoming(m)
+		}
+	}
+}
+
+// drainIncoming handles every message that arrives until the connection
+// has been quiet for the given duration, so notifications already in flight
+// are counted before the next step's baseline is taken.
+func drainIncoming(c *protoClient, quiet time.Duration) {
+	for {
+		line, ok := c.next(quiet)
+		if !ok {
+			return
 		}
 		var m protoMsg
 		if json.Unmarshal([]byte(line), &m) == nil {
