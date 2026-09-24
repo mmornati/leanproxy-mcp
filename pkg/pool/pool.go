@@ -206,6 +206,7 @@ func (p *StdioPool) StartServer(ctx context.Context, config *migrate.ServerConfi
 		EnvPassthrough:     config.Stdio.EnvPassthrough,
 		InheritEnv:         config.Stdio.InheritEnv,
 		CWD:                config.Stdio.CWD,
+		Sandbox:            config.Stdio.Sandbox,
 		MaxInFlight:        config.MaxInFlight,
 		IdleTimeout:        config.IdleTimeoutValue,
 		RequestTimeout:     config.TimeoutValue,

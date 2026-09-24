@@ -20,6 +20,7 @@ import (
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	errs "github.com/mmornati/leanproxy-mcp/pkg/errors"
+	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
 )
 
 const (
@@ -48,6 +49,10 @@ type StdioServerConfig struct {
 	// InheritEnv restores full inheritance of the proxy's environment
 	// (pre-#311 behavior), logging one warning per spawn.
 	InheritEnv bool
+	// Sandbox, when set with a runtime other than "none", runs this
+	// server's command inside a container (docker/podman) instead of
+	// spawning it directly on the host (#312).
+	Sandbox *migrate.SandboxConfig
 	// MaxInFlight caps the number of requests multiplexed concurrently
 	// over the server's stdio pipe. Callers beyond the cap wait (respecting
 	// their context) instead of being rejected. 0 means
@@ -176,6 +181,12 @@ type StdioServerV2 struct {
 	// nextRequestID generates the internal wire IDs used toward the child
 	// process so responses can be matched to the exact in-flight request.
 	nextRequestID atomic.Int64
+	// sandboxRuntimePath and sandboxContainer identify the current
+	// generation's container runtime binary and container name when
+	// config.Sandbox is enabled (#312); both are empty for an unsandboxed
+	// server. Guarded by mu.
+	sandboxRuntimePath string
+	sandboxContainer   string
 }
 
 func newServerV2(name string, config StdioServerConfig, logger *slog.Logger) *StdioServerV2 {
@@ -339,7 +350,6 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	// restart timed out.
 	genCtx := context.WithoutCancel(ctx)
 
-	cmd := exec.CommandContext(genCtx, s.config.Command, s.config.Args...) // #nosec G204 -- the command is the operator's own configured MCP server
 	// Build a least-privilege environment (#311): a minimal allowlist from
 	// the proxy's own environment, plus the server's own env_passthrough
 	// names and explicit env (with ${VAR} expansion), plus
@@ -351,6 +361,35 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 		s.mu.Unlock()
 		return fmt.Errorf("pool: %w", err)
 	}
+
+	command := s.config.Command
+	args := s.config.Args
+	var sandboxRuntimePath, sandboxContainer string
+	if sandboxEnabled(s.config.Sandbox) {
+		// Detected up front: a missing runtime binary fails this server's
+		// start with a clear error instead of silently running it
+		// unsandboxed on the host (#312).
+		runtimePath, rErr := resolveSandboxRuntime(s.config.Sandbox.Runtime)
+		if rErr != nil {
+			atomic.StoreInt32(&s.state, stateError)
+			s.mu.Unlock()
+			return fmt.Errorf("pool: %w", rErr)
+		}
+		sandboxRuntimePath = runtimePath
+		// generation() has not been incremented yet for this spawn (that
+		// happens below, once the process is confirmed started); the next
+		// generation number is Load()+1.
+		sandboxContainer = sandboxContainerName(s.name, s.generation.Load()+1)
+		// Only variable *names* go on the container runtime's argv (-e
+		// NAME); the values are inherited by the runtime CLI process
+		// itself from cmd.Env below, so a secret value never appears in
+		// argv, in the "server spawned" log line, or in `ps` output.
+		sandboxArgv := buildSandboxArgv(sandboxContainer, s.config.Command, s.config.Args, envNamesOf(env), s.config.Sandbox)
+		command = sandboxRuntimePath
+		args = sandboxArgv
+	}
+
+	cmd := exec.CommandContext(genCtx, command, args...) // #nosec G204 -- the command is the operator's own configured MCP server (or, when sandboxed, the resolved docker/podman binary with an argv this package builds)
 	cmd.Env = env
 	if s.config.CWD != "" {
 		cmd.Dir = s.config.CWD
@@ -409,6 +448,8 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	s.process = cmd
 	pgid := processGroupID(cmd.Process)
 	s.pgid = pgid
+	s.sandboxRuntimePath = sandboxRuntimePath
+	s.sandboxContainer = sandboxContainer
 	atomic.StoreInt32(&s.state, stateIdle)
 	s.backoff = s.initialBackoff
 	s.lastSpawnAt = time.Now()
@@ -439,7 +480,11 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	// Args are redacted (#304): a server is routinely started with a
 	// secret on its command line (e.g. --api-key=...), and this line is
 	// logged at Info, unconditionally.
-	s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", redactArgs(s.config.Args))
+	if sandboxContainer != "" {
+		s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", redactArgs(s.config.Args), "sandbox_runtime", s.config.Sandbox.Runtime, "sandbox_container", sandboxContainer)
+	} else {
+		s.logger.Info("server spawned", "name", s.name, "pid", cmd.Process.Pid, "pgid", s.pgid, "command", s.config.Command, "args", redactArgs(s.config.Args))
+	}
 
 	s.mu.Unlock()
 
@@ -448,7 +493,7 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	// blocks on its next write.
 	go drainStderr(stderrR, s.captureStderrLine)
 	s.wg.Add(1)
-	go s.waitForExit(genCtx, cmd, conn, stdin, genStopCh, genStopOnce)
+	go s.waitForExit(genCtx, cmd, conn, stdin, genStopCh, genStopOnce, sandboxRuntimePath, sandboxContainer)
 	s.wg.Add(1)
 	go s.readResponses(conn, stdoutR, cmd, pgid, genStopCh)
 	s.wg.Add(1)
@@ -472,11 +517,19 @@ func (s *StdioServerV2) spawnLocked(ctx context.Context) error {
 	return nil
 }
 
-func (s *StdioServerV2) waitForExit(ctx context.Context, cmd *exec.Cmd, conn *stdioConn, stdin io.Closer, stopCh chan struct{}, stopOnce *sync.Once) {
+func (s *StdioServerV2) waitForExit(ctx context.Context, cmd *exec.Cmd, conn *stdioConn, stdin io.Closer, stopCh chan struct{}, stopOnce *sync.Once, sandboxRuntimePath, sandboxContainer string) {
 	err := cmd.Wait()
 	// We own the stdin write end (see spawnLocked). Closing it also
 	// releases any writer still blocked on the dead child's full pipe.
 	_ = stdin.Close()
+
+	// The pool's process-group kill (elsewhere) only ever reaches the
+	// container runtime CLI process, never the container itself, which the
+	// daemon keeps running independently (#312). This runs on every exit
+	// path — graceful, crashed, or killed after a failed post-spawn check —
+	// so a `leanproxy-*` container is never left behind regardless of how
+	// this generation ended.
+	sandboxCleanup(sandboxRuntimePath, sandboxContainer, s.logger)
 
 	// Fail every request still waiting on this generation right away (the
 	// stdout reader normally does this first on EOF; this is the backstop).
