@@ -41,6 +41,107 @@ start also warns when a well-known server package (e.g.
 `@modelcontextprotocol/server-github`) likely needs a variable that is
 present in the proxy's environment but not being passed to it.
 
+## Sandboxing servers (#312)
+
+Every stdio MCP server runs as the proxy's own user with full filesystem and
+network access by default — including marketplace-installed third-party
+servers (`npx some-package`, `uvx some-tool`), which are arbitrary code.
+`stdio.sandbox` runs one server's command inside a container (Docker or
+Podman) instead, with network and filesystem access restricted to what the
+config explicitly allows:
+
+```yaml
+servers:
+  - name: some-community-server
+    transport: stdio
+    stdio:
+      command: npx
+      args: ["-y", "some-mcp-server@1.2.3"]
+      sandbox:
+        runtime: docker          # docker | podman | none (default: none)
+        image: node:22-alpine    # inferred for npx/npm/node and uvx/uv/python(3) if omitted
+        network: none            # none | bridge | host (default: none)
+        mounts:                  # explicit, default none
+          - host: ~/projects/foo
+            container: /work
+            read_only: true
+        memory: 512m
+        cpus: "1"
+        cache_volume: true       # optional named volume for npm/uv's package cache
+```
+
+See [Configuration: Sandbox](configuration.md#sandbox-stdiosandbox-312) for
+every field and its defaults.
+
+### What it isolates
+
+The generated invocation is, roughly:
+
+```
+docker run --rm -i --init --name leanproxy-<server>-<gen> \
+  --network <net> --read-only --tmpfs /tmp --cap-drop ALL \
+  --security-opt no-new-privileges --pids-limit 256 \
+  [-m <mem>] [--cpus <cpus>] [-v <host>:<container>[:ro]]... \
+  [-e NAME]... <image> <command> <args>
+```
+
+- **No network** by default (`network: none`); `bridge` or `host` must be
+  opted into explicitly.
+- **Read-only root filesystem** plus a `tmpfs` at `/tmp`: the container can
+  write nowhere on disk except what `mounts` explicitly grants (and its own
+  scratch space).
+- **No Linux capabilities** (`--cap-drop ALL`) and `no-new-privileges`: the
+  process cannot regain privileges even if it finds a setuid binary.
+- **A process-count limit** (`--pids-limit 256`) bounds a fork bomb.
+- **Env values never touch argv.** The environment computed by the
+  least-privilege rules above (#311) is set on the container runtime CLI's
+  *own* process (`cmd.Env`); the container gets each variable via a bare
+  `-e NAME` (name only). Docker/Podman read the value from their own
+  process environment, so a secret value never appears in the runtime's
+  argv, in the proxy's "server spawned" log line, or in `ps` output for
+  either process.
+
+### Detection and cleanup
+
+- If the configured runtime binary (`docker`/`podman`) is not on `PATH`,
+  that server's start fails with a clear error naming the runtime. It is
+  **never** silently run unsandboxed — sandboxing is opt-in per server, but
+  once configured it is not optional. A missing runtime for one server does
+  not stop any other server from starting.
+- Each process generation gets a unique, deterministic container name
+  (`leanproxy-<server>-<generation>`). The pool's ordinary process-group
+  kill (SIGTERM/SIGKILL) reaches the runtime CLI process, not the container
+  itself — the daemon keeps a container running independently of the CLI
+  that started it — so the pool also runs `<runtime> rm -f
+  <container-name>` on every stop, restart and crash, bounded by a short
+  timeout. `docker ps -a --filter name=leanproxy-` (or the equivalent
+  `podman ps -a`) is expected to be empty once the proxy (or that server)
+  has stopped.
+- `leanproxy-mcp doctor sandbox` lists, per stdio server, whether it is
+  sandboxed, its runtime, image and network mode, and whether the runtime
+  binary is currently available — without starting anything. The same
+  summary appears in `leanproxy-mcp doctor security`.
+
+### Limits
+
+- **This is not a VM-grade boundary.** A container shares the host kernel;
+  a kernel-level exploit or a misconfigured `mounts`/`network: host` entry
+  can still escape it. Treat it as raising the cost of a compromised
+  third-party server, not as a hard security boundary against a
+  sufficiently capable attacker.
+- **Docker Desktop (macOS/Windows)** runs containers inside its own Linux
+  VM: `network: none` and the read-only root still apply, but a host bind
+  mount (`mounts`) only ever sees paths Docker Desktop's file-sharing
+  settings expose to that VM, and I/O across the VM boundary is slower
+  than a native Linux mount.
+- The package-cache volume (`cache_volume: true`) is a named Docker/Podman
+  volume shared across restarts of the same server; it is not itself
+  network-isolated from the container that mounts it (the volume holds
+  only package manager cache data, not the server's own filesystem access).
+- Sandboxing wraps the process only; it does nothing to the JSON-RPC
+  traffic itself. Combine it with redaction, injection protection, tool
+  pinning and per-tool policy for defense in depth.
+
 ## Dashboard & metrics hardening (#316)
 
 `leanproxy-mcp serve`'s dashboard (`--dashboard-bind`) and metrics

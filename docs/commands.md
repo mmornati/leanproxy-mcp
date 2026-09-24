@@ -66,6 +66,7 @@ leanproxy-mcp add <server-id> [flags]
 | `-y, --yes` | bool | false | Skip the confirmation prompt when overwriting |
 | `-n, --dry-run` | bool | false | Preview the install without writing the config |
 | `--i-understand-the-risks` | bool | false | Acknowledge low-trust server warning and proceed |
+| `--sandbox` | string | `""` | Run this server in a container sandbox (#312): `docker` or `podman`. Unset installs it unsandboxed (the default). Records `stdio.sandbox` in the written config. |
 
 ### Examples
 
@@ -84,6 +85,9 @@ leanproxy add filesystem --force
 
 # Preview installation without writing config
 leanproxy add github --dry-run
+
+# Install a low-trust community server sandboxed in Docker (#312)
+leanproxy add some-community-server --sandbox docker
 ```
 
 ### Output
@@ -2101,6 +2105,39 @@ Names only — values are never shown.
   Passed (5): GITHUB_PERSONAL_ACCESS_TOKEN, HOME, PATH, PYTHONUNBUFFERED, TERM
   Dropped (3): AWS_SECRET_ACCESS_KEY, OPENAI_API_KEY, STRIPE_KEY
 ```
+
+---
+
+### `doctor sandbox` - Sandbox Status Diagnostic
+
+Show, per configured stdio server, whether it runs sandboxed (#312) — its
+container runtime, image and network mode — and whether the configured
+runtime binary is actually available on `PATH`. Never starts a container.
+
+#### Usage
+
+```bash
+leanproxy-mcp doctor sandbox
+```
+
+#### Examples
+
+```bash
+# Show sandbox status and runtime availability per stdio server
+leanproxy-mcp doctor sandbox
+```
+
+#### Output
+
+```
+# Sandbox Status (#312)
+
+  plain                    unsandboxed
+  some-community-server    runtime=docker (available) image=node:22-alpine network=none
+  another-server           runtime=docker (MISSING (sandbox: runtime "docker" not found on PATH; install it, or set sandbox.runtime: none to run this server unsandboxed)) image=node:22-alpine network=none
+```
+
+The same summary also appears in `doctor security`'s output.
 
 ---
 

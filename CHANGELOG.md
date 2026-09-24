@@ -126,6 +126,40 @@
 
 ## Added in v0.11
 
+- **Optional sandbox runner for stdio servers: Docker/Podman network & filesystem isolation** ([#312](https://github.com/mmornati/leanproxy-mcp/issues/312), audit S7 follow-up, market parity with Docker MCP Gateway / ToolHive / MCPProxy).
+  - **What.** Every stdio MCP server, including marketplace-installed third-party packages
+    (`npx some-package`), used to run directly on the host with the proxy's own filesystem and
+    network access. New `stdio.sandbox` runs the server's command inside a container instead,
+    off by default per server.
+  - **Runner.** `docker run --rm -i --init --name leanproxy-<server>-<gen> --network <net>
+    --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges --pids-limit 256
+    [-m <mem>] [--cpus <cpus>] [-v host:container[:ro]]... [-e NAME]... <image> <command>
+    <args>`, built as argv (never a shell) so no config or environment value can inject an
+    extra flag. `network: none` (default), a read-only root filesystem with a `/tmp` tmpfs,
+    dropped capabilities and `no-new-privileges` are always applied; `mounts` (explicit,
+    default none), `memory`, `cpus` and a `cache_volume` for the npm/uv package cache are
+    opt-in.
+  - **Env never touches argv.** The least-privilege child environment (#311) is set on the
+    container runtime CLI process itself; the container gets each variable via a bare `-e
+    NAME` (name only), so a secret value never appears in the runtime's argv, in the "server
+    spawned" log line, or in `ps` output.
+  - **Detection & cleanup.** A configured runtime binary missing from `PATH` fails that
+    server's start with a clear error — never a silent fallback to unsandboxed — without
+    affecting any other server. Every process generation gets a unique container name; since
+    the pool's own process-group kill only ever reaches the runtime CLI (the daemon keeps the
+    container running independently), the pool also runs `<runtime> rm -f <name>` on every
+    stop, restart and crash, so `docker ps -a --filter name=leanproxy-` is empty once a
+    sandboxed server (or the proxy) has stopped.
+  - **Marketplace integration.** `leanproxy-mcp add <server-id> --sandbox docker` (or
+    `podman`) records `stdio.sandbox` on install (#313); the low-trust install tip now points
+    at this flag. The actual default stays off for compatibility.
+  - **`leanproxy-mcp doctor sandbox`** (and `doctor security`) reports, per stdio server,
+    whether it is sandboxed, its runtime/image/network, and whether the runtime binary is
+    currently available — without starting anything.
+  - See [`docs/security.md`](docs/security.md#sandboxing-servers-312) (isolation, limits,
+    Docker Desktop specifics) and
+    [`docs/configuration.md`](docs/configuration.md#sandbox-stdiosandbox-312).
+
 - **Per-tool policy: allow / deny lists, confirmation of destructive tools, no calls to unlisted tools** ([#314](https://github.com/mmornati/leanproxy-mcp/issues/314), audit S14, OWASP MCP02 / MCP07).
   - New `policy:` block: `default` (allow | deny), `unknown_tools` (deny | allow) and ordered
     `rules` — a glob on `server.tool` (`*`, `?`), optional `annotations`
