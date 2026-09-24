@@ -189,3 +189,57 @@ func TestSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestOriginAllowed(t *testing.T) {
+	allowed := OriginSet([]string{" https://App.Example/ ", ""})
+	if len(allowed) != 1 {
+		t.Fatalf("OriginSet = %v", allowed)
+	}
+	tests := []struct {
+		origin, host string
+		want         bool
+	}{
+		{"https://app.example", "127.0.0.1:8765", true},
+		{"HTTPS://APP.EXAMPLE/", "127.0.0.1:8765", true},
+		{"http://127.0.0.1:8765", "127.0.0.1:8765", true},
+		{"http://localhost:8765", "LOCALHOST:8765", true},
+		{"https://evil.example", "127.0.0.1:8765", false},
+		{"http://127.0.0.1:9999", "127.0.0.1:8765", false},
+		{"null", "127.0.0.1:8765", false},
+		{"", "127.0.0.1:8765", false},
+	}
+	for _, tt := range tests {
+		if got := OriginAllowed(tt.origin, tt.host, allowed); got != tt.want {
+			t.Errorf("OriginAllowed(%q, %q) = %v, want %v", tt.origin, tt.host, got, tt.want)
+		}
+	}
+}
+
+func TestValidBearer(t *testing.T) {
+	token := "tok-" + "0123456789abcdef"
+	tests := []struct {
+		header string
+		want   bool
+	}{
+		{"Bearer " + token, true},
+		{"bearer " + token, true},
+		{"Bearer " + token + "x", false},
+		{"Bearer", false},
+		{"Basic " + token, false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		if tt.header != "" {
+			r.Header.Set("Authorization", tt.header)
+		}
+		if got := ValidBearer(r, token); got != tt.want {
+			t.Errorf("ValidBearer(%q) = %v, want %v", tt.header, got, tt.want)
+		}
+	}
+	r := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	r.Header.Set("Authorization", "Bearer ")
+	if ValidBearer(r, "") {
+		t.Error("an empty token must never match")
+	}
+}

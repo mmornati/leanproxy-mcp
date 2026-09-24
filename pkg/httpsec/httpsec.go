@@ -1,11 +1,13 @@
-// Package httpsec holds the Host/Origin validation and security-header
-// middleware shared by LeanProxy's small local admin HTTP servers
-// (pkg/dashboard, pkg/metrics). Both packages stay independent of each
-// other; this package only avoids duplicating the DNS-rebinding defenses
-// between them (issue #316).
+// Package httpsec holds the Host/Origin validation, bearer-token and
+// security-header helpers shared by LeanProxy's local HTTP servers: the
+// admin endpoints (pkg/dashboard, pkg/metrics, issue #316) and the
+// Streamable HTTP MCP front end (pkg/streamhttp, issue #309). The packages
+// stay independent of each other; this package only avoids duplicating the
+// DNS-rebinding and authentication defenses between them.
 package httpsec
 
 import (
+	"crypto/subtle"
 	"net"
 	"net/http"
 	"strings"
@@ -141,4 +143,58 @@ func SecurityHeaders() func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// OriginSet builds the canonical set of allowlisted browser origins
+// ("scheme://host[:port]", lower-cased, without a trailing slash) from
+// operator-supplied values. Empty entries are skipped.
+func OriginSet(origins []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(origins))
+	for _, o := range origins {
+		o = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(o)), "/")
+		if o != "" {
+			set[o] = struct{}{}
+		}
+	}
+	return set
+}
+
+// OriginAllowed reports whether a request carrying the Origin header value
+// origin may reach a server whose (already validated) Host header is host:
+// the origin is either the server's own ("http://<host>", i.e. a page it
+// served itself) or allowlisted. The opaque origin "null" (sandboxed
+// frames, file:// pages) is never allowed. Callers only consult it when an
+// Origin header is present: non-browser clients do not send one.
+func OriginAllowed(origin, host string, allowed map[string]struct{}) bool {
+	origin = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(origin)), "/")
+	if origin == "" || origin == "null" {
+		return false
+	}
+	if _, ok := allowed[origin]; ok {
+		return true
+	}
+	return originMatchesHost(origin, strings.ToLower(host))
+}
+
+// BearerToken returns the token of an "Authorization: Bearer <token>"
+// header (scheme matched case-insensitively), and whether there was one.
+func BearerToken(r *http.Request) (string, bool) {
+	auth := r.Header.Get("Authorization")
+	scheme, token, ok := strings.Cut(auth, " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return "", false
+	}
+	token = strings.TrimSpace(token)
+	return token, token != ""
+}
+
+// ValidBearer reports whether r carries "Authorization: Bearer <token>"
+// with exactly token, compared in constant time. An empty token never
+// matches.
+func ValidBearer(r *http.Request, token string) bool {
+	provided, ok := BearerToken(r)
+	if !ok || token == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
 }
