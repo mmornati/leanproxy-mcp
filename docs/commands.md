@@ -2043,7 +2043,7 @@ Intended to compress tool descriptions with an LLM and cache the result.
     To cut the tokens your client spends on tool definitions, use the
     [exposure modes](configuration.md#exposure-modes-exposure),
     `search_tools`, and the
-    [response governor](configuration.md) instead.
+    [response governor](configuration.md#response-token-governor-response) instead.
 
 ### Usage
 
