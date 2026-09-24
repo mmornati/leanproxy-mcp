@@ -12,6 +12,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
 | **Prompt Injection Protection** | Classifies the decoded text of requests and tool outputs (indirect injection) with risk scoring and per-direction actions |
 | **Tool Pinning & Rug-Pull Detection** | Hashes every upstream tool definition, reports or blocks drift, scans descriptions for hidden instructions and strips invisible unicode (#310) |
+| **Per-Tool Policy** | Allow / deny / confirm rules per `server.tool` glob and annotation; calls to tools a server does not advertise are refused by default (#314) |
 | **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model for sensitive data beyond regex |
 | **Batch Size Limits** | Prevents DoS via large JSON-RPC batch requests |
 | **ReDoS Protection** | Validates regex patterns to prevent catastrophic backtracking |
@@ -520,6 +521,49 @@ original).
 - A tool call made between an upstream change and the next refresh in `warn`
   mode reaches the changed tool (in `block` mode the first call after a start
   waits for the comparison).
+
+## Per-Tool Policy (#314)
+
+Without a policy, any tool of any configured server can be called — including
+tools the server never advertised — and a destructive tool (`delete_file`,
+`pg_execute`, `merge_pull_request`) runs with no extra friction (OWASP MCP02
+excessive permissions, MCP07 insufficient authorization). The
+[`policy:`](./configuration.md#per-tool-policy-policy) block adds per-tool
+authorization in the proxy itself, like an infrastructure gateway's:
+
+- **Unadvertised tools are refused by default** (`unknown_tools: deny`): a
+  name that is not in the server's current `tools/list` never reaches the
+  server.
+- **Allow / deny lists** with globs on `server.tool` (first match wins,
+  `default: allow | deny`). Denied tools are hidden from `list_tools` and
+  `search_tools`, so the model does not even see them.
+- **Confirmation** (`action: confirm`, e.g. for every tool annotated
+  `destructiveHint: true`): the user approves each call through MCP
+  elicitation, or approves the tool for the session. A client that cannot be
+  asked is refused — the policy never falls back to allow.
+- **Per-tool injection policy**: stricter prompt-injection bands for tools
+  that return untrusted content (a web fetcher), looser ones for trusted
+  internal tools.
+
+It is one middleware of the unified pipeline, after tool pinning and before
+the response cache, so both front ends and every call form (`invoke_tool`,
+namespaced `tools/call`, `serve`'s methods) are covered identically. Each
+refused or confirmed call is logged (server, tool, rule, outcome, a hash of
+the redacted arguments — never the arguments) and counted in the
+`leanproxy.policy.decisions` metric.
+
+### Limitations
+
+- Annotations are hints the server declares about itself. An annotation rule
+  (`destructiveHint: true → confirm`) protects against honest-but-dangerous
+  tools, not against a malicious server that omits the hint: use name globs
+  (and tool pinning, which reports a changed annotation) for servers you do not
+  trust.
+- "Approve for this session" lasts as long as the client connection (the
+  `server run --stdio` process, or one `serve` connection).
+- Resources, prompts and server-to-client requests are not covered by the
+  policy; `allow_sampling` and `roots` govern the latter
+  ([Server-to-client traffic](#server-to-client-traffic-308)).
 
 ## Marketplace trust model (issue #313)
 

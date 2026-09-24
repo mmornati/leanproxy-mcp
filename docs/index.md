@@ -147,6 +147,7 @@ For most developers, GitHub has G/N ≈ 5-10% (fetch issue + create PR), making 
 | **Token Firewall** | Pre-configured redaction engine that intercepts secrets, API keys, and PII |
 | **Prompt Injection Protection** | Classifies the decoded text of requests and of tool results, resources and prompts, with separate policies (block, quarantine, redact, annotate) |
 | **Tool Pinning** | Pins a hash of every upstream tool definition; warns about (default) or blocks new/changed tools and poisoned descriptions until approved |
+| **Per-Tool Policy** | Allow / deny / confirm (MCP elicitation) rules per tool glob and annotation; calls to tools a server does not advertise are refused |
 | **Sidecar LLM Redaction** | Context-aware redaction via a local Ollama model |
 | **Semantic Cache** | Vector-similarity caching reduces redundant LLM calls |
 | **MCP Registry Marketplace** | Discover, search, and install community MCP servers |

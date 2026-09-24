@@ -2,6 +2,19 @@
 
 ## Breaking in v0.11
 
+- **Calls to tools a server does not advertise are refused** ([#314](https://github.com/mmornati/leanproxy-mcp/issues/314), audit S14).
+  - **What.** `invoke_tool`, a namespaced `tools/call` and `serve`'s `server.tool` methods forwarded
+    any tool name to the upstream, including tools the server never listed in its `tools/list`
+    (hidden debug or admin tools, typos a model turned into a call).
+  - **Now.** The new per-tool policy's `unknown_tools: deny` default refuses such a call with a
+    JSON-RPC `-32600` error that suggests `search_tools`; the upstream is not called. The server's
+    tool list is fetched (or refreshed once, at most every 10 s per server) before a name is
+    declared unknown, so a tool added without `notifications/tools/list_changed` is still found.
+    Everything the servers advertise keeps working exactly as before (`policy.default: allow`).
+  - **Migration.** If you rely on calling tools a server does not list, set
+    `policy: { unknown_tools: allow }` (see
+    [`docs/configuration.md`](docs/configuration.md#per-tool-policy-policy)).
+
 - **Marketplace supply-chain integrity: official registry, version pinning, honest trust score, confirm-before-enable** ([#313](https://github.com/mmornati/leanproxy-mcp/issues/313)).
   - **What.** `pkg/registry/trust.go`'s `CalculateTrustScore` used to return a feed-provided
     `trust_score` as-is when present, and scored an entry with **no** trust-relevant data **100**
@@ -112,6 +125,34 @@
     [`docs/security.md`](docs/security.md#first-party-servers-hardening-postgres-redis-318).
 
 ## Added in v0.11
+
+- **Per-tool policy: allow / deny lists, confirmation of destructive tools, no calls to unlisted tools** ([#314](https://github.com/mmornati/leanproxy-mcp/issues/314), audit S14, OWASP MCP02 / MCP07).
+  - New `policy:` block: `default` (allow | deny), `unknown_tools` (deny | allow) and ordered
+    `rules` — a glob on `server.tool` (`*`, `?`), optional `annotations`
+    (`destructiveHint: true`, ...) and an `action` (allow | deny | confirm). The first matching
+    rule wins; `unknown_tools` is checked before the rules, `default` applies when nothing
+    matches. Validated when the config is loaded.
+  - One middleware of the unified pipeline, in both front ends (`server run --stdio` and
+    `serve`), for every call form (`invoke_tool`, namespaced `tools/call`, `serve`'s
+    `invoke_tool` and `server.tool` methods), placed after tool pinning and before the response
+    cache: a refused call never reaches the cache or the upstream.
+  - `deny` → JSON-RPC `-32600` naming the rule (as tool pinning does); `confirm` → an
+    `elicitation/create` form (Approve / Approve for this session / Deny) showing the redacted,
+    500-character-max argument summary; a client without form elicitation is refused, never
+    silently allowed.
+  - Discovery reflects the policy: denied tools are hidden from `list_tools` / `search_tools`,
+    tools that need confirmation are marked `[confirm]` (and `"policy": "confirm"` in
+    `structuredContent`).
+  - Audit log line per deny / confirm decision (server, tool, rule, outcome, SHA-256 of the
+    redacted arguments — never the arguments); `leanproxy.policy.decisions` metric (`outcome`,
+    `mcp.server.name`) and `leanproxy.policy.decision` / `leanproxy.policy.rule` span attributes.
+  - Per-tool injection policy (carried over from #315): a rule's `injection.request_policies` /
+    `injection.response_policies` replace the guard's risk bands for the tools it matches.
+  - `leanproxy-mcp policy check <server.tool>` explains which rule decides a call;
+    `doctor security` reports the active policy.
+  - `response_cache.honor_annotations` now works (carried over from #307): a tool annotated
+    `readOnlyHint: true` and `idempotentHint: true` (and not `destructiveHint: true`) is cached
+    without being listed in `response_cache.tools`.
 
 - **Tool pinning and rug-pull detection** ([#310](https://github.com/mmornati/leanproxy-mcp/issues/310), OWASP MCP03).
   - **What.** Upstream tool definitions used to reach the model unchecked: a server could hide

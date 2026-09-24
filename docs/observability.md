@@ -99,6 +99,15 @@ attributes `event` (`server_pinned`, `tool_added`, `tool_changed`,
 `leanproxy.tool_pin.blocked: true`. Tool definitions and diffs are never
 recorded, only logged.
 
+The per-tool policy (#314) counts every decided tool call in
+`leanproxy.policy.decisions`, with the attributes `outcome` (`allow`, `deny`,
+`deny_unknown_tool`, `confirm_approved`, `confirm_approved_session`,
+`confirm_cached`, `confirm_denied`, `confirm_unavailable`, `confirm_timeout`)
+and `mcp.server.name`; the request's span carries
+`leanproxy.policy.decision` (the same outcome) and `leanproxy.policy.rule`
+(e.g. `rules[1] (match "github.delete_*")`). The policy stage has its own
+child span, `mcp.middleware.policy`. The call's arguments are never recorded.
+
 A request an upstream sends to the client (`elicitation/create`,
 `sampling/createMessage`, `roots/list`; #308) gets its own SERVER span,
 `<method> <server>` (for example `elicitation/create github`), with
@@ -119,5 +128,5 @@ telemetry:
 
 `leanproxy-mcp serve --metrics-bind 127.0.0.1:9091` keeps working exactly as
 before; it now has a `telemetry` section fed by the same counters
-OpenTelemetry records (including `tool_pin_events_total`), useful when you want a quick number without standing
+OpenTelemetry records (including `tool_pin_events_total` and `policy_decisions_total`), useful when you want a quick number without standing
 up a collector.
