@@ -47,13 +47,21 @@ func initTelemetry(ctx context.Context, cfg *migrate.Config) *telemetry.Provider
 // `serve` (the per-request mcp.Chain in serveRequest) build their pipeline
 // from, so the two front ends stay instrumented identically.
 //
-// Tool pinning (#310) comes right after the telemetry span and before the
-// response cache, so a call to a tool blocked since its answer was cached
-// is still refused. The per-tool policy (#314) follows it, also before the
+// Tool pinning (#310) comes before the response cache, so a call to a
+// tool blocked since its answer was cached is still refused. The per-tool policy (#314) follows it, also before the
 // cache: a denied call is never answered, even from the cache, and an
 // allowed one carries its rule's injection override to the firewall.
-func tracedMiddlewares(respCache *mcp.ResponseCache, firewall *mcp.Firewall, pins *mcp.ToolPins, pol *mcp.Policy) []mcp.Middleware {
+//
+// The response governor (#319) comes right after the telemetry span,
+// outside every other stage: it shortens responses that were already
+// redacted and injection-scanned, the cache keeps the full (redacted)
+// response, and read_result is answered from the governor's spill store
+// (see mcp.Governor for the full rationale).
+func tracedMiddlewares(respCache *mcp.ResponseCache, firewall *mcp.Firewall, pins *mcp.ToolPins, pol *mcp.Policy, gov *mcp.Governor) []mcp.Middleware {
 	mws := []mcp.Middleware{mcp.TelemetryMiddleware()}
+	if gov.Enabled() {
+		mws = append(mws, mcp.Traced("governor", gov.Middleware()))
+	}
 	if pins != nil {
 		mws = append(mws, mcp.Traced("tool_pinning", pins.Middleware()))
 	}

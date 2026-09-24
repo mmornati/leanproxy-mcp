@@ -15,6 +15,7 @@ import (
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/governor"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
 	"github.com/mmornati/leanproxy-mcp/pkg/policy"
 	"github.com/mmornati/leanproxy-mcp/pkg/telemetry"
@@ -426,6 +427,11 @@ type Config struct {
 	// the defaults: every advertised tool allowed, unadvertised ones
 	// refused.
 	Policy *policy.Config `yaml:"policy,omitempty"`
+	// Response is the response token governor (issue #319): per-tool
+	// budgets for tool results, smart truncation, and the spill store
+	// read_result pages from. Absent or enabled: false means off (the
+	// default).
+	Response *governor.Config `yaml:"response,omitempty"`
 }
 
 // RegistrySettings is the `registry:` block.
@@ -750,6 +756,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Policy.Validate(); err != nil {
+		return err
+	}
+	if err := c.Response.Validate(); err != nil {
 		return err
 	}
 	return nil
