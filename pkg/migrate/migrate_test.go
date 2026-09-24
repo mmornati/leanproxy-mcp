@@ -12,8 +12,8 @@ func TestNewMigrator(t *testing.T) {
 	if m == nil {
 		t.Fatal("NewMigrator() returned nil")
 	}
-	if len(m.scanners) != 5 {
-		t.Errorf("NewMigrator() has %d scanners, want 5", len(m.scanners))
+	if len(m.scanners) != 6 {
+		t.Errorf("NewMigrator() has %d scanners, want 6", len(m.scanners))
 	}
 }
 

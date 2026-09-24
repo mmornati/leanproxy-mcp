@@ -3,22 +3,24 @@ package migrate
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 )
 
-type vscodeSettings struct {
-	MCPExtensions map[string]vscodeMCPExtension `json:"mcpExtensions"`
+// VSCodeScanner reads VS Code's MCP servers (VS Code, VS Code Insiders and
+// VSCodium):
+//   - "servers" of the user profile's mcp.json,
+//   - "mcp": {"servers": ...} (or "mcp.servers") of the user settings.json,
+//   - "servers" of the workspace .vscode/mcp.json in the current directory.
+type VSCodeScanner struct {
+	// goos and workspaceDir override runtime.GOOS and the current
+	// directory (tests).
+	goos         string
+	workspaceDir string
 }
-
-type vscodeMCPExtension struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
-	Env     []string `json:"env,omitempty"`
-}
-
-type VSCodeScanner struct{}
 
 func (s *VSCodeScanner) Name() string {
 	return "vscode"
@@ -26,98 +28,70 @@ func (s *VSCodeScanner) Name() string {
 
 func (s *VSCodeScanner) Scan(ctx context.Context) ([]DiscoveredServer, error) {
 	var servers []DiscoveredServer
-
-	paths := getVSCodeSettingsPaths()
-
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-
-		var settings map[string]interface{}
-		if err := json.Unmarshal(data, &settings); err != nil {
-			continue
-		}
-
-		if mcpExts, ok := settings["mcpExtensions"].(map[string]interface{}); ok {
-			for name, ext := range mcpExts {
-				if extMap, ok := ext.(map[string]interface{}); ok {
-					cmd, _ := extMap["command"].(string)
-					args, _ := extMap["args"].([]interface{})
-					env, _ := extMap["env"].([]interface{})
-
-					var argsList []string
-					for _, a := range args {
-						if s, ok := a.(string); ok {
-							argsList = append(argsList, s)
-						}
-					}
-
-					var envList []string
-					for _, e := range env {
-						if s, ok := e.(string); ok {
-							envList = append(envList, s)
-						}
-					}
-
-					servers = append(servers, DiscoveredServer{
-						Name:      name,
-						Source:    "vscode",
-						Transport: "stdio",
-						Stdio: &StdioConfig{
-							Command: cmd,
-							Args:    argsList,
-							Env:     envList,
-							CWD:     filepath.Dir(cmd),
-						},
-					})
-				}
-			}
-		}
+	var errs []error
+	add := func(found []DiscoveredServer, e []error) {
+		servers = append(servers, found...)
+		errs = append(errs, e...)
 	}
 
-	return servers, nil
+	for _, dir := range vscodeUserDirs(s.goos) {
+		add(scanServerMapFile(filepath.Join(dir, "mcp.json"), "vscode", "servers"))
+		add(scanVSCodeSettings(filepath.Join(dir, "settings.json")))
+	}
+
+	workspace := s.workspaceDir
+	if workspace == "" {
+		workspace, _ = os.Getwd()
+	}
+	if workspace != "" {
+		add(scanServerMapFile(filepath.Join(workspace, ".vscode", "mcp.json"), "vscode", "servers"))
+	}
+
+	return servers, errors.Join(errs...)
 }
 
-func getVSCodeSettingsPaths() []string {
+// scanVSCodeSettings reads the servers configured in a settings.json, either
+// nested ("mcp": {"servers": {...}}) or as the flat "mcp.servers" key.
+func scanVSCodeSettings(path string) ([]DiscoveredServer, []error) {
+	doc, found, err := readConfigDoc(path)
+	if err != nil || !found {
+		return nil, errSlice(err)
+	}
+	servers, errs := convertServerMap(doc["mcp.servers"], "vscode", path, "mcp.servers")
+	if raw, ok := doc["mcp"]; ok {
+		var mcp struct {
+			Servers json.RawMessage `json:"servers"`
+		}
+		if err := json.Unmarshal(raw, &mcp); err != nil {
+			return servers, append(errs, fmt.Errorf("%s: mcp: %w", path, err))
+		}
+		found, e := convertServerMap(mcp.Servers, "vscode", path, "mcp.servers")
+		servers = append(servers, found...)
+		errs = append(errs, e...)
+	}
+	return servers, errs
+}
+
+// vscodeUserDirs returns the user profile directories of VS Code, VS Code
+// Insiders and VSCodium.
+func vscodeUserDirs(goos string) []string {
+	if goos == "" {
+		goos = runtime.GOOS
+	}
 	home := homeDir()
-	var paths []string
-
-	switch {
-	case isMacOS():
-		paths = []string{
-			filepath.Join(home, "Library/Application Support/Code/User/settings.json"),
-			filepath.Join(home, "Library/Application Support/VSCodium/User/settings.json"),
-		}
-	case isWindows():
-		paths = []string{
-			filepath.Join(os.Getenv("APPDATA"), "Code/User/settings.json"),
-			filepath.Join(os.Getenv("APPDATA"), "VSCodium/User/settings.json"),
-		}
+	var base string
+	switch goos {
+	case "darwin":
+		base = filepath.Join(home, "Library", "Application Support")
+	case "windows":
+		base = appDataDir(home)
 	default:
-		paths = []string{
-			filepath.Join(home, ".config/Code/User/settings.json"),
-			filepath.Join(home, ".config/VSCodium/User/settings.json"),
-		}
+		base = filepath.Join(home, ".config")
 	}
-
-	return paths
-}
-
-func isMacOS() bool {
-	if _, err := exec.LookPath("darwin"); err == nil {
-		return true
+	products := []string{"Code", "Code - Insiders", "VSCodium"}
+	dirs := make([]string, len(products))
+	for i, p := range products {
+		dirs[i] = filepath.Join(base, p, "User")
 	}
-	exec.LookPath("uname")
-	cmd := exec.Command("uname")
-	out, _ := cmd.Output()
-	return string(out) == "Darwin\n"
-}
-
-func isWindows() bool {
-	return os.Getenv("OS") == "Windows_NT" || filepath.Separator == '\\'
+	return dirs
 }

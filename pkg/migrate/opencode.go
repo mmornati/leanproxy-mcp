@@ -3,20 +3,26 @@ package migrate
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
+	"errors"
+	"fmt"
+	"sort"
 )
 
 type opencodeConfig struct {
-	MCP map[string]opencodeServer `json:"mcp"`
+	MCP map[string]json.RawMessage `json:"mcp"`
 }
 
 type opencodeServer struct {
-	Type    string   `json:"type"`
-	Command []string `json:"command"`
-	Enabled bool     `json:"enabled"`
+	Type        string            `json:"type"`
+	Command     []string          `json:"command"`
+	Environment envList           `json:"environment"`
+	URL         string            `json:"url"`
+	Headers     map[string]string `json:"headers"`
+	Enabled     *bool             `json:"enabled"`
 }
 
+// OpenCodeScanner reads the "mcp" block of ~/.config/opencode/opencode.json:
+// "local" entries (a command array) and "remote" entries (a url).
 type OpenCodeScanner struct{}
 
 func (s *OpenCodeScanner) Name() string {
@@ -26,46 +32,52 @@ func (s *OpenCodeScanner) Name() string {
 func (s *OpenCodeScanner) Scan(ctx context.Context) ([]DiscoveredServer, error) {
 	path := expandPath("~/.config/opencode/opencode.json")
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
+	data, found, err := readConfigFile(path)
+	if err != nil || !found {
 		return nil, err
 	}
 
 	var cfg opencodeConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 
+	names := make([]string, 0, len(cfg.MCP))
+	for name := range cfg.MCP {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
 	var servers []DiscoveredServer
-	for name, srv := range cfg.MCP {
-		if len(srv.Command) == 0 {
+	var errs []error
+	for _, name := range names {
+		var srv opencodeServer
+		if err := json.Unmarshal(cfg.MCP[name], &srv); err != nil {
+			errs = append(errs, fmt.Errorf("%s: server %q: %w", path, name, err))
 			continue
 		}
 
-		enabled := srv.Enabled
-		command := srv.Command[0]
-		args := srv.Command[1:]
+		// OpenCode enables an entry unless it says "enabled": false.
+		enabled := srv.Enabled == nil || *srv.Enabled
 
-		cwd := ""
-		if len(srv.Command) > 0 {
-			cwd = filepath.Dir(srv.Command[0])
+		entry := mcpServerEntry{
+			Type:    srv.Type,
+			Env:     srv.Environment,
+			URL:     srv.URL,
+			Headers: srv.Headers,
 		}
-
-		servers = append(servers, DiscoveredServer{
-			Name:      name,
-			Source:    "opencode",
-			Transport: "stdio",
-			Enabled:   &enabled,
-			Stdio: &StdioConfig{
-				Command: command,
-				Args:    args,
-				CWD:     cwd,
-			},
-		})
+		if len(srv.Command) > 0 {
+			entry.Command = srv.Command[0]
+			entry.Args = srv.Command[1:]
+		}
+		discovered, err := entry.toDiscovered(name, "opencode")
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", path, err))
+			continue
+		}
+		discovered.Enabled = &enabled
+		servers = append(servers, discovered)
 	}
 
-	return servers, nil
+	return servers, errors.Join(errs...)
 }

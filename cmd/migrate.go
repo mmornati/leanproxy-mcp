@@ -20,8 +20,10 @@ var (
 var migrateCmd = &cobra.Command{
 	Use:   "migrate",
 	Short: "Auto-detect and import MCP server configurations from other tools",
-	Long: `Scan for existing MCP configurations from OpenCode, Claude Code, VS Code, and Cursor.
-Import discovered servers into leanproxy_servers.yaml with proper conflict resolution.`,
+	Long: `Scan for existing MCP configurations from OpenCode, Claude Code, Claude Desktop,
+VS Code, Cursor and ~/.config/mcp.json. Import discovered servers (stdio, http and sse)
+into leanproxy_servers.yaml with proper conflict resolution. Entries that run
+leanproxy-mcp itself are skipped.`,
 	RunE: runMigrate,
 }
 
@@ -43,6 +45,13 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("scan failed: %w", err)
 	}
 
+	for _, warn := range result.Warnings {
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", warn)
+	}
+	for _, srv := range result.Skipped {
+		fmt.Printf("Skipping %s (%s): it runs leanproxy-mcp itself\n", srv.Name, srv.Source)
+	}
+
 	if len(result.Servers) == 0 {
 		fmt.Println("No MCP configurations found on this system.")
 		fmt.Println("To add servers manually, use: leanproxy-mcp server add")
@@ -52,18 +61,30 @@ func runMigrate(cmd *cobra.Command, args []string) error {
 	summary := migrator.Summarize(result.Servers)
 
 	fmt.Printf("Found %d MCP server(s) from %d source(s):\n\n", summary.TotalServers, len(result.Scanners))
-	fmt.Printf("  OpenCode: %d server(s)\n", summary.OpenCodeCount)
-	fmt.Printf("  Claude:   %d server(s)\n", summary.ClaudeCount)
-	fmt.Printf("  VS Code:  %d server(s)\n", summary.VSCodeCount)
-	fmt.Printf("  Cursor:   %d server(s)\n", summary.CursorCount)
-	fmt.Printf("  Generic:  %d server(s)\n\n", summary.GenericCount)
+	for _, row := range []struct {
+		label string
+		count int
+	}{
+		{"OpenCode", summary.OpenCodeCount},
+		{"Claude Code", summary.ClaudeCount},
+		{"Claude Desktop", summary.ClaudeDesktopCount},
+		{"VS Code", summary.VSCodeCount},
+		{"Cursor", summary.CursorCount},
+		{"Generic", summary.GenericCount},
+	} {
+		fmt.Printf("  %-15s %d server(s)\n", row.label+":", row.count)
+	}
+	fmt.Println()
 
 	for i, srv := range result.Servers {
-		cmdStr := ""
-		if srv.Stdio != nil {
-			cmdStr = srv.Stdio.Command
+		target := ""
+		switch {
+		case srv.Stdio != nil:
+			target = srv.Stdio.Command
+		case srv.HTTP != nil:
+			target = fmt.Sprintf("%s %s", srv.Transport, srv.HTTP.URL)
 		}
-		fmt.Printf("  [%d] %s (%s) - %s\n", i+1, srv.Name, srv.Source, cmdStr)
+		fmt.Printf("  [%d] %s (%s) - %s\n", i+1, srv.Name, srv.Source, target)
 	}
 
 	if migrateDryRun || DryRunEnabled {

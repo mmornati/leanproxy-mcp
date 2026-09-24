@@ -17,10 +17,20 @@ leanproxy-mcp migrate --dry-run   # preview
 leanproxy-mcp migrate             # import
 ```
 
-`migrate` reads OpenCode, Claude Code (`~/.claude.json`), Cursor, VS Code
-user settings and `~/.config/mcp.json`, and imports stdio servers only. It
-misses some formats; see
-[what `migrate` scans](installation.md#step-1-import-your-existing-mcp-servers).
+`migrate` reads these files and imports their `stdio`, `http` and `sse`
+servers. Entries that run LeanProxy itself are skipped.
+
+| Source | File | Key read |
+|---|---|---|
+| OpenCode | `~/.config/opencode/opencode.json` | `mcp` (`local` and `remote` entries) |
+| Claude Code | `~/.claude.json`, `~/.config/claude/mcp_config.json` | top-level `mcpServers` (user scope) |
+| Claude Desktop | `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS), `~/.config/Claude/claude_desktop_config.json` (Linux), `%APPDATA%\Claude\claude_desktop_config.json` (Windows) | `mcpServers` |
+| Cursor | `~/.cursor/mcp.json` | `mcpServers` |
+| VS Code | `mcp.json` and `settings.json` in the user profile folder (`~/Library/Application Support/Code/User/` on macOS, `~/.config/Code/User/` on Linux, `%APPDATA%\Code\User\` on Windows, plus the `Code - Insiders` and `VSCodium` equivalents); `.vscode/mcp.json` in the current directory | `servers` in `mcp.json`, `mcp.servers` in `settings.json` |
+| Generic | `~/.config/mcp.json` | `mcp_servers` or `mcpServers` |
+
+See [what `migrate` scans](installation.md#step-1-import-your-existing-mcp-servers)
+for how entries are converted and what it does not read.
 
 **Add a server from the command line.** Put `--` before the server's
 command, so flags such as `-y` belong to the server and not to LeanProxy:

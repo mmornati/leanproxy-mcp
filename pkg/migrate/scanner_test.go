@@ -97,6 +97,7 @@ func TestClaudeScanner_Name(t *testing.T) {
 }
 
 func TestClaudeScanner_Scan_NotFound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	s := &ClaudeScanner{}
 	servers, err := s.Scan(context.Background())
 	if err != nil {
@@ -115,12 +116,13 @@ func TestCursorScanner_Name(t *testing.T) {
 }
 
 func TestCursorScanner_Scan_NotFound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	s := &CursorScanner{}
 	servers, err := s.Scan(context.Background())
 	if err != nil {
 		t.Errorf("Scan() error = %v", err)
 	}
-	if servers != nil {
+	if len(servers) != 0 {
 		t.Errorf("Scan() = %v, want nil for non-existent file", servers)
 	}
 }
@@ -133,12 +135,13 @@ func TestGenericScanner_Name(t *testing.T) {
 }
 
 func TestGenericScanner_Scan_NotFound(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	s := &GenericScanner{}
 	servers, err := s.Scan(context.Background())
 	if err != nil {
 		t.Errorf("Scan() error = %v", err)
 	}
-	if servers != nil {
+	if len(servers) != 0 {
 		t.Errorf("Scan() = %v, want nil for non-existent file", servers)
 	}
 }

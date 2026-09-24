@@ -1,0 +1,29 @@
+{
+  "numStartups": 42,
+  "mcpServers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/me/Projects/leanproxy-mcp"],
+      "env": {"LOG_LEVEL": "debug", "API_KEY": "${API_KEY}"}
+    },
+    "linear": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp",
+      "headers": {"Authorization": "Bearer ${LINEAR_TOKEN}"}
+    },
+    "legacy-sse": {
+      "type": "sse",
+      "url": "https://example.com/sse"
+    },
+    "leanproxy": {
+      "type": "stdio",
+      "command": "leanproxy-mcp",
+      "args": ["server", "run", "--stdio"],
+      "env": {}
+    }
+  },
+  "projects": {
+    "/Users/me/app": {"mcpServers": {"project-only": {"command": "node", "args": ["srv.js"]}}}
+  }
+}
