@@ -99,7 +99,14 @@ func startStdioProxy(t *testing.T, proxyBin, configPath string) *stdioSession {
 // (KEY=VALUE) on top of the test process's own.
 func startStdioProxyEnv(t *testing.T, proxyBin, configPath string, env []string) *stdioSession {
 	t.Helper()
-	cmd := exec.Command(proxyBin, "server", "run", "--stdio", "--config", configPath)
+	return startStdioProxyArgs(t, proxyBin, env, "--config", configPath)
+}
+
+// startStdioProxyArgs starts `server run --stdio` with extra arguments
+// (the config among them) and environment variables.
+func startStdioProxyArgs(t *testing.T, proxyBin string, env []string, args ...string) *stdioSession {
+	t.Helper()
+	cmd := exec.Command(proxyBin, append([]string{"server", "run", "--stdio"}, args...)...)
 	if len(env) > 0 {
 		cmd.Env = append(os.Environ(), env...)
 	}

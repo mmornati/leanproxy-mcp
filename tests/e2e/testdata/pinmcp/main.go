@@ -8,7 +8,13 @@
 //
 // State file: {"server": "name", "tools": [{"name": "...", "description": "...",
 // "annotations": {...}}]} (annotations optional; the policy tests of #314
-// use them).
+// use them). The exposure tests of #322 also use, per tool: "extra" (more
+// members of the tools/list entry: title, outputSchema, icons, _meta),
+// "result" (the text tools/call returns instead of "called <name>"; the
+// special value "{{arguments}}" returns the arguments as received,
+// "{{redaction-probe}}" whether they arrived redacted) and
+// "notify" (after answering a call to it, the server sends
+// notifications/tools/list_changed).
 package main
 
 import (
@@ -16,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type state struct {
@@ -24,8 +31,19 @@ type state struct {
 		Name        string                 `json:"name"`
 		Description string                 `json:"description"`
 		Annotations map[string]interface{} `json:"annotations,omitempty"`
+		Extra       map[string]interface{} `json:"extra,omitempty"`
+		Result      string                 `json:"result,omitempty"`
+		Notify      bool                   `json:"notify,omitempty"`
 	} `json:"tools"`
 }
+
+// Special tool results: echoArguments returns the call's arguments;
+// redactionProbe says whether they arrived redacted (without echoing them,
+// so the answer itself is never redacted on the way back).
+const (
+	echoArguments  = "{{arguments}}"
+	redactionProbe = "{{redaction-probe}}"
+)
 
 type request struct {
 	Method string          `json:"method"`
@@ -60,6 +78,7 @@ func main() {
 			continue
 		}
 		var result interface{}
+		notify := false
 		switch req.Method {
 		case "initialize":
 			result = map[string]interface{}{
@@ -79,24 +98,49 @@ func main() {
 				if t.Annotations != nil {
 					tool["annotations"] = t.Annotations
 				}
+				for k, v := range t.Extra {
+					tool[k] = v
+				}
 				tools = append(tools, tool)
 			}
 			result = map[string]interface{}{"tools": tools}
 		case "tools/call":
 			var p struct {
-				Name string `json:"name"`
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
 			}
 			_ = json.Unmarshal(req.Params, &p)
 			if f, err := os.OpenFile(callsPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil { // #nosec G304 -- test fixture path from argv
 				_, _ = f.WriteString(p.Name + "\n")
 				_ = f.Close()
 			}
-			result = map[string]interface{}{"content": []map[string]string{{"type": "text", "text": "called " + p.Name}}}
+			text := "called " + p.Name
+			for _, t := range load(statePath).Tools {
+				if t.Name == p.Name && t.Result != "" {
+					text = t.Result
+					switch text {
+					case echoArguments:
+						text = string(p.Arguments)
+					case redactionProbe:
+						text = "upstream received: raw"
+						if strings.Contains(string(p.Arguments), "[SECRET_REDACTED]") {
+							text = "upstream received: redacted"
+						}
+					}
+				}
+				if t.Name == p.Name && t.Notify {
+					notify = true
+				}
+			}
+			result = map[string]interface{}{"content": []map[string]string{{"type": "text", "text": text}}}
 		default:
 			result = map[string]interface{}{}
 		}
 		data, _ := json.Marshal(map[string]interface{}{"jsonrpc": "2.0", "id": req.ID, "result": result})
 		_, _ = out.Write(append(data, '\n'))
+		if notify {
+			_, _ = out.WriteString(`{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}` + "\n")
+		}
 		_ = out.Flush()
 	}
 }
