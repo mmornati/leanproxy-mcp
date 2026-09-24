@@ -15,6 +15,7 @@ import (
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp/exposure"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/governor"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
 	"github.com/mmornati/leanproxy-mcp/pkg/policy"
@@ -432,6 +433,13 @@ type Config struct {
 	// read_result pages from. Absent or enabled: false means off (the
 	// default).
 	Response *governor.Config `yaml:"response,omitempty"`
+	// Exposure decides how the upstream tools reach each client (issue
+	// #322): through LeanProxy's discovery router, or listed directly
+	// (passthrough / hybrid) for clients with native tool search. Absent
+	// means the defaults: the built-in client table (Claude Code, Claude
+	// Desktop, Cursor, VS Code get passthrough), router for any other
+	// client.
+	Exposure *exposure.Config `yaml:"exposure,omitempty"`
 }
 
 // RegistrySettings is the `registry:` block.
@@ -759,6 +767,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Response.Validate(); err != nil {
+		return err
+	}
+	if err := c.Exposure.Validate(); err != nil {
 		return err
 	}
 	return nil
