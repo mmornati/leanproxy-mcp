@@ -109,6 +109,11 @@ bench: ## Run the tests/bench micro-benchmarks, capture into bench-results/
 	@echo "Results written to bench-results/"
 	@ls -la bench-results/
 
+.PHONY: test-codemode
+test-codemode: ## Unit tests of the experimental code mode spike (#325), built with -tags codemode
+	$(GO) vet -tags codemode ./...
+	$(GO) test -race -count=1 -timeout 5m -tags codemode ./pkg/codemode/ ./pkg/mcp/
+
 .PHONY: harness
 harness: ## End-to-end benchmark + conformance harness through the real binary; writes bench-results/harness.md
 	@mkdir -p bench-results

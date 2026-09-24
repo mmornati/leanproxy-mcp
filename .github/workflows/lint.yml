@@ -49,6 +49,11 @@ jobs:
       - name: Run govulncheck
         run: $(go env GOPATH)/bin/govulncheck ./...
 
+      # The code mode spike (#325) and its JavaScript runtime (goja) are
+      # only compiled with -tags codemode.
+      - name: Run govulncheck (-tags codemode)
+        run: $(go env GOPATH)/bin/govulncheck -tags codemode ./...
+
   # Requires "Dependency graph" to be enabled in the repository settings
   # (Settings -> Code security -> Dependency graph). Until the maintainer
   # enables it, the action fails with "Dependency review is not supported",

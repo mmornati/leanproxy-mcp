@@ -15,6 +15,7 @@ import (
 
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer"
 	"github.com/mmornati/leanproxy-mcp/pkg/bouncer/injection"
+	"github.com/mmornati/leanproxy-mcp/pkg/codemode"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/exposure"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/governor"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
@@ -440,6 +441,11 @@ type Config struct {
 	// Desktop, Cursor, VS Code get passthrough), router for any other
 	// client.
 	Exposure *exposure.Config `yaml:"exposure,omitempty"`
+	// CodeMode is the EXPERIMENTAL execute_code tool (issue #325): a
+	// sandboxed JavaScript program that calls several tools and returns
+	// only its answer. Only a binary built with `-tags codemode` has it;
+	// absent or enabled: false means off (the default).
+	CodeMode *codemode.Config `yaml:"code_mode,omitempty"`
 }
 
 // RegistrySettings is the `registry:` block.
@@ -770,6 +776,9 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Exposure.Validate(); err != nil {
+		return err
+	}
+	if err := c.CodeMode.Validate(); err != nil {
 		return err
 	}
 	return nil

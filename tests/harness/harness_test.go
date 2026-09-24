@@ -139,7 +139,13 @@ func newEnv(t testing.TB, bins binaries, servers []serverSpec, extra string) *en
 
 func (e *env) startProxy(t testing.TB, bins binaries) *proc {
 	t.Helper()
-	p := startProc(t, e.vars, bins.proxy, "server", "run", "--stdio", "--config", e.cfg, "--log-file", filepath.Join(e.dir, "leanproxy.log"))
+	return e.startProxyBin(t, bins.proxy)
+}
+
+// startProxyBin starts `server run --stdio` from the given proxy binary.
+func (e *env) startProxyBin(t testing.TB, bin string) *proc {
+	t.Helper()
+	p := startProc(t, e.vars, bin, "server", "run", "--stdio", "--config", e.cfg, "--log-file", filepath.Join(e.dir, "leanproxy.log"))
 	p.initialize()
 	return p
 }
@@ -766,12 +772,14 @@ func TestHarness(t *testing.T) {
 	pr := measureProjection(t, bins, cat)
 	dr := measureDedup(t, bins, cat)
 	xr := measureExposure(t, bins, cat, tr)
+	cr := measureCodeMode(t, bins, cat)
 
 	asserts := append(evaluate(lr, sc), governorAssertions(gr)...)
 	asserts = append(asserts, projectionAssertions(pr, gr)...)
 	asserts = append(asserts, dedupAssertions(dr)...)
 	asserts = append(asserts, exposureAssertions(xr, cat)...)
-	md := renderReport(cat, tr, lr, sc, asserts, time.Since(started)) + renderGovernor(gr) + renderProjection(pr, gr) + renderDedup(dr) + renderExposure(xr)
+	asserts = append(asserts, codeModeAssertions(cr)...)
+	md := renderReport(cat, tr, lr, sc, asserts, time.Since(started)) + renderGovernor(gr) + renderProjection(pr, gr) + renderDedup(dr) + renderExposure(xr) + renderCodeMode(cr)
 	out := filepath.Join(repoRoot(t), "bench-results", "harness.md")
 	if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
 		t.Fatal(err)
