@@ -43,7 +43,7 @@ of the implementation language.
 ### Where can I download the binary?
 
 From GitHub Releases: <https://github.com/mmornati/leanproxy-mcp/releases>.
-See [Installation](installation.md) for a download script and Homebrew.
+See [Installation](installation.md) for the install script and Homebrew.
 
 ### Which platforms are supported?
 

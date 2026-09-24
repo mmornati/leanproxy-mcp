@@ -2206,21 +2206,25 @@ Print a shell completion script on stdout.
 leanproxy-mcp completion <bash|zsh|fish|powershell>
 ```
 
-The command parses no flags: `completion --help` fails with
-`unsupported shell "--help"` (use `leanproxy-mcp help completion`), and the
-`--no-desc` and `--description` flags shown in its usage cannot be used.
 Without an argument it prints its usage.
 
-!!! warning "The generated scripts complete the wrong command name"
-    The scripts are generated for the `completion` subcommand instead of
-    for `leanproxy-mcp` (the zsh script starts with `#compdef completion`,
-    the fish script registers `complete -c completion`), so they do not
-    complete `leanproxy-mcp` commands.
+### Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `--no-desc` | `false` | Leave command descriptions out of the completion suggestions |
+
+!!! note "v0.11 and earlier"
+    In v0.11 and earlier the command parses no flags (`--no-desc` is
+    rejected as an unsupported shell), and the scripts are generated for the
+    `completion` subcommand instead of for `leanproxy-mcp` (the zsh script
+    starts with `#compdef completion`), so they do not complete anything.
+    Both are fixed on `main`.
 
 ### Examples
 
 ```bash
-leanproxy-mcp completion bash > /etc/bash_completion.d/leanproxy-mcp
+leanproxy-mcp completion bash | sudo tee /etc/bash_completion.d/leanproxy-mcp > /dev/null
 leanproxy-mcp completion zsh > ~/.zsh/completions/_leanproxy-mcp
 leanproxy-mcp completion fish > ~/.config/fish/completions/leanproxy-mcp.fish
 ```

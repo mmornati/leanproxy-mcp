@@ -2,55 +2,46 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
 
-var (
-	noDesc         bool
-	completionDesc string
-)
+var noDesc bool
 
 var completionCmd = &cobra.Command{
 	Use:   "completion [bash|zsh|fish|powershell]",
 	Short: "Generate shell completion scripts",
-	Long: `Generate and install shell completion scripts for bash, zsh, fish, or PowerShell.
+	Long: `Generate shell completion scripts for bash, zsh, fish, or PowerShell.
 
 This command outputs the completion script to stdout. Redirect to a file to save it.
 
 Examples:
-  # Generate bash completion and display it
-  leanproxy completion bash
+  # Bash (requires the bash-completion package)
+  leanproxy-mcp completion bash > /etc/bash_completion.d/leanproxy-mcp
 
-  # Generate zsh completion and display it
-  leanproxy completion zsh
+  # Zsh (the directory must be on your $fpath)
+  leanproxy-mcp completion zsh > "${HOME}/.zsh/completions/_leanproxy-mcp"
 
-  # Generate fish completion
-  leanproxy completion fish
+  # Fish
+  leanproxy-mcp completion fish > ~/.config/fish/completions/leanproxy-mcp.fish
 
-  # Generate PowerShell completion
-  leanproxy completion powershell
+  # PowerShell
+  leanproxy-mcp completion powershell | Out-String | Invoke-Expression
 
-  # Install bash completion to system directory
-  leanproxy completion bash > /etc/bash_completion.d/leanproxy
-
-  # Install zsh completion to home directory
-  leanproxy completion zsh > "${HOME}/.zsh/completions/_leanproxy"
-
-  # Install fish completion
-  leanproxy completion fish > ~/.config/fish/completions/leanproxy.fish
+  # Omit command descriptions from the completion candidates
+  leanproxy-mcp completion zsh --no-desc
 `,
-	DisableFlagParsing: true,
-	RunE:               runCompletion,
-	ValidArgs:          []string{"bash", "zsh", "fish", "powershell"},
+	Args:      cobra.MatchAll(cobra.MaximumNArgs(1), cobra.OnlyValidArgs),
+	RunE:      runCompletion,
+	ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
 }
 
 func init() {
 	RootCmd.AddCommand(completionCmd)
-	completionCmd.Flags().BoolVar(&noDesc, "no-desc", false, "Suppress command descriptions")
-	completionCmd.Flags().StringVar(&completionDesc, "description", "", "Custom completion description")
+	completionCmd.Flags().BoolVar(&noDesc, "no-desc", false, "Omit command descriptions from completion candidates")
 }
 
 func runCompletion(cmd *cobra.Command, args []string) error {
@@ -60,49 +51,32 @@ func runCompletion(cmd *cobra.Command, args []string) error {
 		}
 		return nil
 	}
-
-	shell := args[0]
-
-	switch shell {
-	case "bash":
-		generateBashCompletion(cmd)
-	case "zsh":
-		generateZshCompletion(cmd)
-	case "fish":
-		generateFishCompletion(cmd)
-	case "powershell":
-		generatePowerShellCompletion(cmd)
-	default:
-		return fmt.Errorf("completion: unsupported shell %q (supported: bash, zsh, fish, powershell)", shell)
+	if err := generateCompletion(cmd.Root(), args[0], !noDesc, cmd.OutOrStdout()); err != nil {
+		return fmt.Errorf("completion: failed to generate %s completion: %w", args[0], err)
 	}
 	return nil
 }
 
-func generateBashCompletion(cmd *cobra.Command) {
-	if err := cmd.GenBashCompletion(os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "completion: failed to generate bash completion: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func generateZshCompletion(cmd *cobra.Command) {
-	if err := cmd.GenZshCompletion(os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "completion: failed to generate zsh completion: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func generateFishCompletion(cmd *cobra.Command) {
-	if err := cmd.GenFishCompletion(os.Stdout, !noDesc); err != nil {
-		fmt.Fprintf(os.Stderr, "completion: failed to generate fish completion: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func generatePowerShellCompletion(cmd *cobra.Command) {
-	if err := cmd.GenPowerShellCompletion(os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "completion: failed to generate powershell completion: %v\n", err)
-		os.Exit(1)
+// generateCompletion writes the completion script for root (the whole CLI,
+// not the completion subcommand itself) in the given shell's syntax.
+func generateCompletion(root *cobra.Command, shell string, includeDesc bool, w io.Writer) error {
+	switch shell {
+	case "bash":
+		return root.GenBashCompletionV2(w, includeDesc)
+	case "zsh":
+		if includeDesc {
+			return root.GenZshCompletion(w)
+		}
+		return root.GenZshCompletionNoDesc(w)
+	case "fish":
+		return root.GenFishCompletion(w, includeDesc)
+	case "powershell":
+		if includeDesc {
+			return root.GenPowerShellCompletionWithDesc(w)
+		}
+		return root.GenPowerShellCompletion(w)
+	default:
+		return fmt.Errorf("unsupported shell %q (supported: bash, zsh, fish, powershell)", shell)
 	}
 }
 
