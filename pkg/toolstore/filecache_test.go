@@ -300,3 +300,59 @@ func TestListCachedServers_Empty(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, servers)
 }
+
+// TestFileCacheWriteIsAtomic: a process reading the cache from disk (a
+// second proxy, `policy check`) must never see a truncated or half-written
+// file while another process rewrites it. With a truncate-then-write, the
+// reader intermittently got empty or partial JSON and treated the server as
+// having no cached tools.
+func TestFileCacheWriteIsAtomic(t *testing.T) {
+	tmpDir := t.TempDir()
+	writer, err := newFileCacheWithDir(nil, tmpDir)
+	require.NoError(t, err)
+
+	tools := make([]CachedTool, 200)
+	for i := range tools {
+		tools[i] = CachedTool{Name: fmt.Sprintf("tool_%03d", i), Description: "a reasonably long description to make the file span several writes"}
+	}
+	require.NoError(t, writer.SetTools("srv", tools))
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				_ = writer.SetTools("srv", tools)
+			}
+		}()
+	}
+	for i := 0; i < 300; i++ {
+		// A fresh cache per read skips the in-memory copy, like another process.
+		reader, err := newFileCacheWithDir(nil, tmpDir)
+		require.NoError(t, err)
+		got, err := reader.GetTools("srv")
+		if err != nil || len(got) != len(tools) {
+			close(stop)
+			wg.Wait()
+			t.Fatalf("read %d: got %d tools, err %v (partial file visible)", i, len(got), err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+
+	entries, err := os.ReadDir(tmpDir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		assert.Equal(t, "srv.json", e.Name(), "no temporary files left behind")
+	}
+	info, err := os.Stat(filepath.Join(tmpDir, "srv.json"))
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
