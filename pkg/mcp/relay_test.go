@@ -702,3 +702,43 @@ func TestRelay_ProgressFlushedBeforeTheCallEnds(t *testing.T) {
 	defer mu.Unlock()
 	assert.Equal(t, 5, written, "every progress notification is written before the call ends")
 }
+
+// TestRelay_ResponseRouteFollowsTheCall (#309): a request an upstream
+// raises during a call reaches the front end with the response route of
+// the client request that made the call, so a front end with one response
+// stream per request (Streamable HTTP) writes it on that stream.
+func TestRelay_ResponseRouteFollowsTheCall(t *testing.T) {
+	h := relayHandler(t)
+	session, closeSession := h.OpenSession(func(string, json.RawMessage) {})
+	defer closeSession()
+	_, _ = h.HandleRequest(WithClientSession(context.Background(), session), &Request{JSONRPC: JSONRPCVersion, ID: 1, Method: MethodInitialize,
+		Params: json.RawMessage(`{"protocolVersion":"2025-11-25","capabilities":{"elicitation":{}},"clientInfo":{"name":"t","version":"1"}}`)})
+	routes := make(chan any, 2)
+	session.EnableContextRequests(func(ctx context.Context, id, _ string, _ json.RawMessage) error {
+		routes <- ResponseRouteFrom(ctx)
+		go session.DeliverResponse(json.RawMessage(`"`+id+`"`), json.RawMessage(`{"action":"decline"}`), nil)
+		return nil
+	})
+
+	type route struct{ name string }
+	callRoute := &route{"call"}
+	ctx := WithResponseRoute(WithClientSession(context.Background(), session), callRoute)
+	_, end := h.BeginUpstreamCall(ctx, "alpha", nil, nil)
+	// A stdio upstream asks with no caller context: the call's route.
+	_, rpcErr := h.HandleServerRequest(context.Background(), "alpha", methodElicitationCreate, json.RawMessage(`{"message":"?"}`))
+	require.Nil(t, rpcErr)
+	assert.Same(t, callRoute, <-routes)
+	end()
+
+	// An HTTP upstream answering on the call's own stream carries the
+	// caller's context: its route is kept as is.
+	own := &route{"own"}
+	_, rpcErr = h.HandleServerRequest(WithResponseRoute(WithClientSession(context.Background(), session), own), "alpha", methodElicitationCreate, json.RawMessage(`{"message":"?"}`))
+	require.Nil(t, rpcErr)
+	assert.Same(t, own, <-routes)
+
+	// No call in flight: no route (the front end picks its default).
+	_, rpcErr = h.HandleServerRequest(context.Background(), "alpha", methodElicitationCreate, json.RawMessage(`{"message":"?"}`))
+	require.Nil(t, rpcErr)
+	assert.Nil(t, <-routes)
+}

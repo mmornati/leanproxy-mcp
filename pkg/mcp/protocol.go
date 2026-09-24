@@ -93,7 +93,7 @@ type ClientSession struct {
 
 	// Server-to-client requests (issue #308, see session_requests.go).
 	reqMu       sync.Mutex
-	sendRequest RequestFunc
+	sendRequest ContextRequestFunc
 	pending     map[string]chan clientReply
 	reqClosed   bool
 	nextReqID   atomic.Uint64
@@ -210,6 +210,23 @@ func WithClientSession(ctx context.Context, s *ClientSession) context.Context {
 func ClientSessionFrom(ctx context.Context) *ClientSession {
 	s, _ := ctx.Value(clientSessionKey{}).(*ClientSession)
 	return s
+}
+
+type responseRouteKey struct{}
+
+// WithResponseRoute returns a context carrying route, an opaque value a
+// front end attaches to a client request so that the server-to-client
+// messages it causes go back where that request is answered (the
+// Streamable HTTP front end, #309, uses the request's response stream).
+// The relay keeps the route of every upstream call, so a request an
+// upstream sends during a call carries the route of that call.
+func WithResponseRoute(ctx context.Context, route any) context.Context {
+	return context.WithValue(ctx, responseRouteKey{}, route)
+}
+
+// ResponseRouteFrom returns the route carried by ctx, or nil.
+func ResponseRouteFrom(ctx context.Context) any {
+	return ctx.Value(responseRouteKey{})
 }
 
 // OpenSession registers a new client session whose notifications are

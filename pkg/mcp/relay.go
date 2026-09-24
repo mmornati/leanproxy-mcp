@@ -104,6 +104,9 @@ type RelayPolicy struct {
 // upstreamCall is one call in flight to an upstream on behalf of a client.
 type upstreamCall struct {
 	session *ClientSession
+	// route is the response route of the client request that made the
+	// call (WithResponseRoute), or nil.
+	route any
 }
 
 // progressRoute maps a proxy progress token back to its client.
@@ -211,7 +214,7 @@ func (h *Handler) BeginUpstreamCall(ctx context.Context, server string, clientPa
 	if session == nil {
 		return upstreamParams, func() {}
 	}
-	call := &upstreamCall{session: session}
+	call := &upstreamCall{session: session, route: ResponseRouteFrom(ctx)}
 	var proxyToken string
 	if token := progressToken(clientParams); token != nil {
 		proxyToken = progressTokenPrefix + strconv.FormatUint(h.relay.seq.Add(1), 10)
@@ -321,14 +324,21 @@ func withProgressToken(params json.RawMessage, token string) (json.RawMessage, b
 // pickSession chooses the client of a request from server that needs
 // capability (see the relay comment at the top of this file).
 func (h *Handler) pickSession(ctx context.Context, server, capability string) *ClientSession {
+	s, _ := h.pickSessionRoute(ctx, server, capability)
+	return s
+}
+
+// pickSessionRoute is pickSession that also returns the response route of
+// the client request the upstream request belongs to (nil when unknown).
+func (h *Handler) pickSessionRoute(ctx context.Context, server, capability string) (*ClientSession, any) {
 	can := func(s *ClientSession) bool {
 		return s != nil && s.Initialized() && s.AcceptsRequests() && s.HasCapability(capability)
 	}
 	if s := ClientSessionFrom(ctx); s != nil {
 		if can(s) {
-			return s
+			return s, ResponseRouteFrom(ctx)
 		}
-		return nil
+		return nil, nil
 	}
 
 	h.relay.mu.Lock()
@@ -337,10 +347,10 @@ func (h *Handler) pickSession(ctx context.Context, server, capability string) *C
 	if len(calls) > 0 {
 		for i := len(calls) - 1; i >= 0; i-- {
 			if can(calls[i].session) {
-				return calls[i].session
+				return calls[i].session, calls[i].route
 			}
 		}
-		return nil
+		return nil, nil
 	}
 
 	h.sessionsMu.Lock()
@@ -351,11 +361,11 @@ func (h *Handler) pickSession(ctx context.Context, server, capability string) *C
 			continue
 		}
 		if only != nil {
-			return nil
+			return nil, nil
 		}
 		only = s
 	}
-	return only
+	return only, nil
 }
 
 // HandleServerRequest answers a server-to-client request from an upstream
@@ -408,7 +418,7 @@ func (h *Handler) relayToClient(ctx context.Context, server, method string, para
 	if string(params) == "null" {
 		params = nil
 	}
-	session := h.pickSession(ctx, server, capability)
+	session, route := h.pickSessionRoute(ctx, server, capability)
 	if session == nil {
 		h.logger.Info("server-to-client request not relayed: no client that declared the capability", "server", server, "method", method, "capability", capability)
 		return nil, rpcError(NewError(ErrCodeMethodNotFound, fmt.Sprintf("%s is not supported by the client (no %s capability)", method, capability)))
@@ -462,7 +472,11 @@ func (h *Handler) relayToClient(ctx context.Context, server, method string, para
 	if elicitationID != "" {
 		h.trackElicitation(server, elicitationID, session)
 	}
-	result, rpcErr := session.Request(ctx, method, params)
+	reqCtx := ctx
+	if route != nil && ResponseRouteFrom(ctx) == nil {
+		reqCtx = WithResponseRoute(ctx, route)
+	}
+	result, rpcErr := session.Request(reqCtx, method, params)
 	if elicitationID != "" && (rpcErr != nil || !elicitationAccepted(result)) {
 		h.untrackElicitation(server, elicitationID)
 	}
