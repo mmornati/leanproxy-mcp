@@ -514,6 +514,10 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		updateStdioServerStatusOnce(statusStore, stdioPool)
 	}
 
+	// Response token governor (#319), off by default. Built before
+	// closePools so shutdown removes its spilled results.
+	gov := mcp.NewGovernor(cfg.Response)
+
 	// closePools stops the health checker before closing the pools so no
 	// health-triggered restart can race the shutdown sweep and orphan a
 	// freshly spawned process. It runs once, from the signal handler or
@@ -532,6 +536,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 			stdioPool.Close()
 			httpPool.Close()
 			ssePool.Close()
+			gov.Close()
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
@@ -596,7 +601,9 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	pol := newPolicy(cfg, firewall)
 	handler.SetPolicy(pol)
 	slog.Info(pol.Summary())
-	handler.Use(tracedMiddlewares(respCache, firewall, pins, pol)...)
+	handler.SetGovernor(gov)
+	slog.Info(gov.Summary())
+	handler.Use(tracedMiddlewares(respCache, firewall, pins, pol, gov)...)
 
 	// Server-to-client requests, progress and resource updates from the
 	// upstreams (#308): per-server policy (allow_sampling, roots), the same
@@ -609,6 +616,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	metrics.SetResponseCacheProvider(func() metrics.ResponseCacheMetric {
 		return toMetricsResponseCache(respCache)
 	})
+	metrics.SetResponseGovernorProvider(gov.Stats)
 
 	if httpOpts != nil {
 		return handleHTTP(handler, *httpOpts, sigChan, closePools, statusStore)

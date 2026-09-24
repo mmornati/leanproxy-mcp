@@ -126,6 +126,11 @@ var servePins = &mcp.ToolPins{}
 // lets every call through.
 var servePolicy = &mcp.Policy{}
 
+// serveGovernor is serve's response token governor (#319), the same
+// middleware as `server run --stdio`; runServe builds it from the
+// response: block. The zero value is disabled.
+var serveGovernor = &mcp.Governor{}
+
 // serveMCPHandler is the pkg/mcp handler behind serve's MCP protocol
 // methods (initialize with version negotiation, and the resources/prompts
 // aggregation of #307): the same handler `server run --stdio` uses, without
@@ -432,6 +437,13 @@ func runServe(cmd *cobra.Command, args []string) {
 	slog.Info(servePolicy.Summary())
 	serveResponseCache.SetToolSource(handler)
 	if loadedCfg != nil {
+		serveGovernor = mcp.NewGovernor(loadedCfg.Response)
+	}
+	serveGovernor.SetServerNames(knownServerNames)
+	handler.SetGovernor(serveGovernor)
+	slog.Info(serveGovernor.Summary())
+	metrics.SetResponseGovernorProvider(serveGovernor.Stats)
+	if loadedCfg != nil {
 		for _, srv := range loadedCfg.Servers {
 			if srv.TimeoutValue > 0 {
 				handler.SetTimeout(srv.Name, srv.TimeoutValue)
@@ -567,6 +579,7 @@ func runServe(cmd *cobra.Command, args []string) {
 				if sc := cache.GlobalSemanticCache(); sc != nil {
 					sc.Stop()
 				}
+				serveGovernor.Close()
 				if stdioPool != nil {
 					stdioPool.Close()
 				}
@@ -642,7 +655,7 @@ func serveRequest(ctx context.Context, req *proxy.JSONRPCRequest, r Router, gt g
 		req.Params = mreq.Params
 		return toMCPResponse(dispatchServeRequest(ctx, req, r, gt, p)), nil
 	}
-	resp, _ := mcp.Chain(dispatch, tracedMiddlewares(serveResponseCache, serveFirewall, servePins, servePolicy)...)(ctx, toMCPRequest(req))
+	resp, _ := mcp.Chain(dispatch, tracedMiddlewares(serveResponseCache, serveFirewall, servePins, servePolicy, serveGovernor)...)(ctx, toMCPRequest(req))
 	return fromMCPResponse(resp)
 }
 

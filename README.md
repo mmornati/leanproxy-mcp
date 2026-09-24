@@ -37,6 +37,7 @@ Measured by `make harness`: the real `leanproxy-mcp server run --stdio` binary, 
 | 500-call pipelined burst over 5 servers | **0 errors**, 9,723 req/s | 0 errors | ✅ |
 | 50 parallel calls to a 100 ms tool | **205 ms** wall | < 1 s | ✅ |
 | 5 MB tool response relayed | **581 ms** (direct: 51 ms) | relayed intact | ✅ |
+| Large tool results (a 200 KB file + 4 list/search endpoints) with the opt-in response governor, `max_tokens: 4000` | **234,700 → 18,515 tokens (−92.1%)**, pages back byte-identical via `read_result` | ≥ 50% | ✅ |
 | Secret redaction, both directions (incl. `search_tools` output) | **0 of 3** fake secrets leaked | active | ✅ |
 | Proxy RSS, idle / after burst | **20.4 / 22.5 MiB** | – | measured |
 | Binary size (linux/amd64, stripped) | **16.4 MiB** | < 20 MB | ✅ |
@@ -160,6 +161,7 @@ This table counts only the static schema load. LeanProxy fetches tools on demand
 |:--------|:--------|
 | 🛡️ **Token Firewall** | Redacts secrets in tool arguments and responses (on by default) and screens calls for prompt injection — in both `server run --stdio` and `serve` |
 | ⚡ **JIT Schema Loading** | Tool schemas load only when actually called — not on every request |
+| ✂️ **Response Token Governor** | Opt-in: caps large tool results (smart head/tail truncation, structural JSON truncation) and keeps the full result per session for paged `read_result` / `grep` / `jsonpath` retrieval — −92% on a large-results session ([docs](docs/configuration.md#response-token-governor-response)) |
 | 🔄 **Connection Pooling** | HTTP MCP clients reuse connections; concurrent calls to a stdio server are multiplexed over its single pipe |
 | 📦 **Multi-Transport** | Supports stdio, HTTP, and SSE transport protocols |
 | 👥 **Multi-Team Namespaces** | Hierarchical organization for enterprise teams |

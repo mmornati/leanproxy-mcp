@@ -246,11 +246,27 @@ func (h *Handler) OpenSession(notify NotifyFunc) (*ClientSession, func()) {
 		once.Do(func() {
 			h.sessionsMu.Lock()
 			delete(h.sessions, s)
+			hooks := append([]func(*ClientSession){}, h.sessionCloseHooks...)
 			h.sessionsMu.Unlock()
 			s.closeRequests()
 			h.dropRelaySession(s)
+			for _, hook := range hooks {
+				hook(s)
+			}
 		})
 	}
+}
+
+// OnSessionClose registers fn to run when a client session opened with
+// OpenSession ends (the response governor drops the session's spilled
+// results, #319).
+func (h *Handler) OnSessionClose(fn func(*ClientSession)) {
+	if fn == nil {
+		return
+	}
+	h.sessionsMu.Lock()
+	h.sessionCloseHooks = append(h.sessionCloseHooks, fn)
+	h.sessionsMu.Unlock()
 }
 
 // sessionFor returns the session of the request context, or the handler's

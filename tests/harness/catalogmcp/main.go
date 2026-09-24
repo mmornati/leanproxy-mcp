@@ -30,6 +30,10 @@
 //	                       resources and prompts, and serve one resource
 //	                       (catalog://NAME/readme), one template and one
 //	                       prompt ("brief")
+//	--large-results        make the read and list tools return realistic
+//	                       large results (a ~200 KB file, JSON listings of
+//	                       hundreds of objects) for the response governor
+//	                       measurements (#319); see largeResult
 package main
 
 import (
@@ -73,6 +77,7 @@ type server struct {
 	responseBytes int
 	secrets       bool
 	resources     bool
+	largeResults  bool
 
 	outMu sync.Mutex
 	out   *bufio.Writer
@@ -89,6 +94,7 @@ func main() {
 	secrets := flag.Bool("secrets", false, "embed fake credentials in tools/call results and in the first tool's description")
 	concurrent := flag.Bool("concurrent", false, "handle requests concurrently, answering out of order")
 	resources := flag.Bool("resources", false, "advertise and serve resources and prompts, echo the requested protocol version")
+	largeResults := flag.Bool("large-results", false, "return large results from the read and list tools")
 	flag.Parse()
 
 	cat, err := harness.LoadCatalog()
@@ -120,6 +126,7 @@ func main() {
 		responseBytes: *responseBytes,
 		secrets:       *secrets,
 		resources:     *resources,
+		largeResults:  *largeResults,
 		out:           bufio.NewWriterSize(os.Stdout, 64*1024),
 		waiting:       make(map[string]chan json.RawMessage),
 	}
@@ -239,6 +246,12 @@ func (s *server) toolCall(msg message) {
 	}
 	if s.delay > 0 {
 		time.Sleep(s.delay)
+	}
+	if s.largeResults {
+		if text, ok := harness.LargeResult(p.Name); ok {
+			s.reply(msg.ID, map[string]interface{}{"content": []map[string]string{{"type": "text", "text": text}}})
+			return
+		}
 	}
 	payload := map[string]interface{}{"server": s.name, "called": p.Name, "args": p.Arguments}
 	if s.secrets {

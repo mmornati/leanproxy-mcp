@@ -1,6 +1,10 @@
 package metrics
 
-import "sync/atomic"
+import (
+	"sync/atomic"
+
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
+)
 
 // ResponseCacheMetric is the response cache's (issue #299) counters as
 // exposed on the /metrics endpoint. It deliberately mirrors
@@ -35,5 +39,30 @@ func responseCacheSnapshot() *ResponseCacheMetric {
 		return nil
 	}
 	m := (*p)()
+	return &m
+}
+
+var responseGovernorProvider atomic.Pointer[func() mcp.GovernorStats]
+
+// SetResponseGovernorProvider registers the function Snapshot uses to
+// populate ResponseGovernor (issue #319). Front ends call it once at
+// startup with their *mcp.Governor's Stats. Passing nil clears it.
+func SetResponseGovernorProvider(f func() mcp.GovernorStats) {
+	if f == nil {
+		responseGovernorProvider.Store(nil)
+		return
+	}
+	responseGovernorProvider.Store(&f)
+}
+
+func responseGovernorSnapshot() *mcp.GovernorStats {
+	p := responseGovernorProvider.Load()
+	if p == nil {
+		return nil
+	}
+	m := (*p)()
+	if !m.Enabled {
+		return nil
+	}
 	return &m
 }

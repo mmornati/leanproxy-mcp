@@ -327,7 +327,53 @@ None of them is a proxy-level number, and none is quoted in the README.
 | 50 MB payload estimate ~7 ms | Token estimator over a 50 MB buffer; no relay | **5 MB relayed in 581 ms** (estimator benchmark renamed `BenchmarkEstimateTokens_50MB`) |
 | Binary 15.8 MB (darwin-arm64) | `dist/` build on the maintainer's machine | **16.4 MiB** (linux/amd64, harness build) |
 
-## 7. Known limits and follow-ups
+## 7. Response governor (large results)
+
+The response governor (#319, `response:` block, off by default) caps each
+tool result at a token budget and keeps the full result for `read_result`.
+The harness measures it with `catalogmcp --large-results`, where five tools
+answer with realistic large results:
+
+| Call | Result |
+|---|---|
+| `github.get_file_contents` | a ~200 KB Go source file |
+| `github.list_issues` | 300 issues with user objects, URLs, labels and bodies |
+| `github.search_code` | 400 code-search hits with text matches |
+| `jira.jira_search` | 250 issues with custom fields |
+| `postgres.pg_query` | 1,500 rows |
+
+The same calls go through two proxies: the default config (governor off)
+and `response: {enabled: true, max_tokens: 4000}`. Tokens are those of the
+whole JSON-RPC response line. The session row applies the session model of
+§3: each result enters the context once and is re-read at 0.25× on every
+later turn.
+
+| Call | Governor off | Governor on | Savings |
+|---|---:|---:|---:|
+| `github.get_file_contents` | 54,850 | 3,445 | −93.7% |
+| `github.list_issues` | 57,949 | 3,748 | −93.5% |
+| `github.search_code` | 41,635 | 3,784 | −90.9% |
+| `jira.jira_search` | 35,069 | 3,739 | −89.3% |
+| `postgres.pg_query` | 45,197 | 3,799 | −91.6% |
+| **Total (each result once)** | **234,700** | **18,515** | **−92.1%** |
+| **Session (5 turns)** | **362,597** | **27,598** | **−92.4%** |
+
+The harness also asserts that:
+
+- every governed response line stays within `max_tokens` (largest: 3,799);
+- `read_result` pages the file back (13 pages of 4,000 tokens) and the
+  concatenation is byte-identical to the ungoverned result;
+- the 16 normal-size calls of the replayed sessions are byte-identical with
+  the governor on (a result under budget is not even parsed), and the paced
+  `invoke_tool` latency is unchanged within noise (p50 0.54 ms off, 0.65 ms
+  on, same run; the stage costs about 3 µs per call in
+  `BenchmarkGovernor_SmallResult`).
+
+The savings are an upper bound for what the model keeps in context: a
+model that needs the omitted part pays for the `read_result` pages it
+reads (the file above is 13 pages).
+
+## 8. Known limits and follow-ups
 
 - **`search_tools`.** The audit prototype estimated about −92% for Full
   Day; the harness measures −65.0%, because 3 of Full Day's 7 queries miss

@@ -1018,6 +1018,131 @@ response_cache:
 - The cached *value* is the redacted response, so a cache hit can never leak
   anything a cache miss wouldn't already have redacted.
 
+## Response Token Governor (`response`)
+
+Once tool schemas are handled (`search_tools`), the biggest token cost of an
+agent session is **tool results**: file contents, API listings, search
+results, database rows. Each one is re-sent on every later turn. The
+response governor (#319) caps each tool result at a token budget and keeps
+the full result, per session, for the model to page through with the
+`read_result` tool.
+
+It is **off by default** (v1.0-rc1): nothing changes until `enabled: true`.
+It runs in every front end (`server run --stdio`, `server run --http`,
+`serve`).
+
+### Configuration
+
+```yaml
+response:
+  enabled: false            # default: off
+  max_tokens: 4000          # per-call budget in estimated tokens; 0 = no truncation
+  tools:                    # first matching rule wins ("server.tool", path.Match glob)
+    - match: "filesystem.read_file"
+      max_tokens: 12000
+    - match: "db.*"
+      passthrough: true     # never shortened
+    - match: "github.list_*"
+      max_tokens: 0         # no truncation (still counted)
+  spill:
+    ttl: 30m                # how long a full result stays retrievable
+    max_bytes: 134217728    # 128 MiB, LRU by bytes
+    disk: false             # true: keep full results in 0600 files instead of memory
+    dir: ~/.leanproxy/results
+```
+
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | bool | `false` | Master switch |
+| `max_tokens` | int | `4000` | Budget per tool call, in estimated tokens (`pkg/reporter.Estimator`, 1 token ≈ 4 bytes), for the result's text items and `structuredContent` together. `0` = no truncation; otherwise at least `100` |
+| `tools[].match` | string | — | `"server.tool"` exact name or `path.Match` glob (`"github.*"`). Rules are tried in order; the first match wins |
+| `tools[].max_tokens` | int | global | Budget for the matching tools (`0` = no truncation) |
+| `tools[].passthrough` | bool | `false` | Never shorten the matching tools' results (exclusive with `max_tokens`) |
+| `spill.ttl` | duration | `30m` | How long a spilled result stays readable |
+| `spill.max_bytes` | int | `134217728` (128 MiB) | Cap of the spill store; the least recently used results are evicted first. A single result larger than this is passed through unshortened |
+| `spill.disk` | bool | `false` | Keep the full results in files (mode `0600`, in a per-process `0700` directory under `spill.dir`, removed on shutdown) instead of memory |
+| `spill.dir` | path | `~/.leanproxy/results` | Parent directory for `spill.disk`; absolute or `~/…` |
+
+Invalid values (negative or tiny budgets, a bad glob, `passthrough` with
+`max_tokens`, a bad TTL, a relative `dir`) are rejected when the config is
+loaded.
+
+### What the model sees
+
+- **Text over budget.** About 70% of the budget from the start and 20% from
+  the end, both cut on line boundaries (never inside a UTF-8 character),
+  joined by a marker line:
+
+  ```text
+  … [LeanProxy: 46,123 tokens omitted — call read_result with id=r_k3j…, offset=11204 to page] …
+  ```
+
+- **JSON over budget** (a text item that is a JSON object or array, or
+  `structuredContent`): shortened **structurally**, always valid JSON.
+  Arrays keep their first elements and end with an
+  `{"__leanproxy_omitted": {"items": 950, "result_id": "r_…"}}` element;
+  objects keep their small members whole, shorten the large ones and report
+  dropped members with a `"__leanproxy_omitted": {"keys": N, …}` member;
+  long strings keep their start and end. Kept values are byte for byte
+  (large integers keep their precision).
+- **Clients that negotiated MCP 2025-06-18 or newer** also get a
+  `resource_link` content item (`leanproxy://results/<id>`), which
+  `resources/read` serves in full; older clients get the marker only (the
+  `resource_link` type does not exist for them). With the governor on,
+  `initialize` always advertises the `resources` capability.
+- **Never shortened:** error results (`isError: true`) and JSON-RPC errors,
+  images and audio (passed through as sent; only text and
+  `structuredContent` count against the budget), tools with
+  `passthrough: true`, and results that fit.
+
+### `read_result`
+
+With the governor on, `tools/list` adds one gateway tool (the default
+four-tool router is unchanged while it is off):
+
+| Argument | Description |
+|----------|-------------|
+| `result_id` | From the marker, the omission object or the `resource_link` (required) |
+| `offset` | Byte offset to read from (the marker gives the first omitted byte). With `grep`, the line to start at |
+| `limit_tokens` | Page size (default `max_tokens`, at most 50,000) |
+| `grep` | RE2 regular expression: matching lines with their line numbers and 2 lines of context (`12:match`, `11-context`), like `grep -n -C2` |
+| `jsonpath` | For JSON results: `$.items[10:20]`, `$[500:510]`, `$..name`, `$.a.b`, `$['a']`, `[*]`, `.*`, negative indexes |
+
+Pages are verbatim slices of the full (redacted) result, cut on line
+boundaries when possible: concatenating the pages from offset 0 gives the
+result back exactly. Every answer ends with a navigation line
+(`next: read_result with id=…, offset=…` or `end of result`). `serve`
+clients can also send `read_result` as a method, like `invoke_tool`.
+
+An unknown, expired or evicted `result_id` — or one that belongs to another
+session — gets the same clear error (`isError: true`), so ids cannot be
+probed across sessions.
+
+### Pipeline placement
+
+```
+telemetry → governor → tool pinning → policy → response cache → redact response → redact request → injection → dispatch
+```
+
+The governor only sees responses that were already redacted and scanned
+for prompt injection, so a spilled result never holds anything the client
+would not have received in full. The response cache sits inside it and
+stores the full (redacted) response: a cache hit is shortened exactly like
+the miss, with a result id of the calling session. `read_result` and
+`resources/read` of `leanproxy://results/…` are answered from the spill
+store before any other stage. A configured server named `results` keeps
+working: only URIs whose path is a well-formed result id are intercepted.
+
+### Measured
+
+`make harness` replays a "large results" session (a 200 KB file read and
+four list/search endpoints) with the governor off and on: **234,700 →
+18,515 tokens (−92.1%)**, every governed response ≤ 4,000 tokens, the file
+paged back byte for byte in 13 `read_result` calls, and normal-size results
+byte-identical. See [Benchmark Results](benchmark-results.md#7-response-governor-large-results).
+
 ## Telemetry (OpenTelemetry)
 
 leanproxy-mcp can emit OpenTelemetry traces and metrics over OTLP/HTTP: off
