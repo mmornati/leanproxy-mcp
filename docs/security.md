@@ -8,7 +8,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 |---------|-------------|
 | **Least-Privilege Child Environment** | Stdio MCP servers get a minimal environment by default instead of the proxy's full environment (#311) |
 | **Streamable HTTP Front End** | `server run --http`: loopback by default, bearer token (no unauthenticated non-loopback bind), Host/Origin validation, unguessable per-credential session ids, body/session/concurrency limits (#309) |
-| **Dashboard & Metrics Hardening** | Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
+| **Dashboard & Metrics Hardening** | Deprecated `serve` only: Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
 | **First-Party Servers Hardening** | Postgres: real read-only transaction, not just a text prefix check. Redis: pool that can't deadlock, bounded RESP allocations, per-command deadlines (#318) |
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
 | **Prompt Injection Protection** | Classifies the decoded text of requests and tool outputs (indirect injection) with risk scoring and per-direction actions |
