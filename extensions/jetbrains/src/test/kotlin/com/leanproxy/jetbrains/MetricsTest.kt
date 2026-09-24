@@ -1,88 +1,63 @@
 package com.leanproxy.jetbrains
 
 import com.google.gson.Gson
+import com.sun.net.httpserver.HttpServer
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import java.net.InetSocketAddress
 
 class MetricsTest {
 
     private val gson = Gson()
 
+    private val sampleJson = """
+        {
+            "telemetry": {"requests_total": 12},
+            "usage": {
+                "estimator": "chars/4",
+                "today": {
+                    "since": "2026-09-23T00:00:00Z", "sessions": 1,
+                    "original_tokens": 5000, "saved_tokens": 4000, "saved_percent": 80.0,
+                    "discovery_calls": 1, "discovery_tokens": 90, "tool_calls": 2,
+                    "top_server": "github", "top_tool": "github.search_code",
+                    "by_server": [{"server": "github", "tools": 1, "calls": 2, "original_tokens": 900, "returned_tokens": 300, "saved_tokens": 600}],
+                    "by_tool": [{"server": "github", "tool": "search_code", "calls": 2, "original_tokens": 900, "returned_tokens": 300, "saved_tokens": 600}]
+                },
+                "week": {"sessions": 3, "original_tokens": 50000, "saved_tokens": 30000, "saved_percent": 60.0, "by_server": [], "by_tool": []}
+            }
+        }
+    """.trimIndent()
+
     @Test
     fun `test metrics snapshot deserialization`() {
-        val json = """
-            {
-                "by_tool": [
-                    {"tool_name": "get_weather", "token_count": 1500},
-                    {"tool_name": "search_docs", "token_count": 3200}
-                ],
-                "by_server": [
-                    {"server_name": "weather-server", "token_count": 1500},
-                    {"server_name": "docs-server", "token_count": 3200}
-                ],
-                "total_spend": 4700,
-                "top_5_expensive_tools": [
-                    {"tool_name": "search_docs", "token_count": 3200},
-                    {"tool_name": "get_weather", "token_count": 1500}
-                ]
-            }
-        """.trimIndent()
-
-        val snapshot = gson.fromJson(json, MetricsSnapshot::class.java)
-
-        assertEquals(4700L, snapshot.total_spend)
-        assertEquals(2, snapshot.by_tool?.size)
-        assertEquals(2, snapshot.by_server?.size)
-        assertEquals(2, snapshot.top_5_expensive_tools?.size)
-
-        assertEquals("get_weather", snapshot.by_tool?.get(0)?.tool_name)
-        assertEquals(1500L, snapshot.by_tool?.get(0)?.token_count)
-        assertEquals("search_docs", snapshot.by_tool?.get(1)?.tool_name)
-        assertEquals(3200L, snapshot.by_tool?.get(1)?.token_count)
+        val snapshot = gson.fromJson(sampleJson, MetricsSnapshot::class.java)
+        val usage = snapshot.usage
+        assertNotNull(usage)
+        assertEquals("chars/4", usage!!.estimator)
+        assertEquals(4000L, usage.today?.saved_tokens)
+        assertEquals(30000L, usage.week?.saved_tokens)
+        assertEquals("github", usage.today?.by_server?.get(0)?.server)
+        assertEquals("github.search_code", usage.today?.by_tool?.get(0)?.displayName())
+        assertEquals(600L, usage.today?.by_tool?.get(0)?.saved_tokens)
     }
 
     @Test
-    fun `test empty metrics snapshot deserialization`() {
-        val json = """
-            {
-                "by_tool": [],
-                "by_server": [],
-                "total_spend": 0,
-                "top_5_expensive_tools": []
-            }
-        """.trimIndent()
-
-        val snapshot = gson.fromJson(json, MetricsSnapshot::class.java)
-
-        assertEquals(0L, snapshot.total_spend)
-        assertTrue(snapshot.by_tool?.isEmpty() ?: true)
-        assertTrue(snapshot.by_server?.isEmpty() ?: true)
-        assertTrue(snapshot.top_5_expensive_tools?.isEmpty() ?: true)
+    fun `test snapshot without usage section`() {
+        val snapshot = gson.fromJson("""{"telemetry": {}}""", MetricsSnapshot::class.java)
+        assertNull(snapshot.usage)
     }
 
     @Test
-    fun `test cost calculation`() {
-        val totalSpend: Long = 10000
-        val costPer1000 = 0.002
-        val expectedCost = (10000 / 1000.0) * costPer1000
-        assertEquals(0.02, expectedCost, 0.0001)
+    fun `test estimated cost needs a price`() {
+        assertNull(estimatedCost(1_000_000, 0.0))
+        assertEquals(2.0, estimatedCost(1_000_000, 0.002)!!, 0.0001)
     }
 
     @Test
-    fun `test cost calculation with zero spend`() {
-        val totalSpend: Long = 0
-        val costPer1000 = 0.002
-        val expectedCost = (0 / 1000.0) * costPer1000
-        assertEquals(0.0, expectedCost, 0.0001)
-    }
-
-    @Test
-    fun `test cost calculation formatting`() {
-        val totalSpend: Long = 1234567
-        val costPer1000 = 0.002
-        val cost = (totalSpend / 1000.0) * costPer1000
-        val formatted = String.format("%s %.4f", "$", cost)
-        assertEquals("$ 2.4691", formatted)
+    fun `test format tokens`() {
+        assertEquals("999", formatTokens(999))
+        assertEquals("1.5K", formatTokens(1500))
+        assertEquals("2.5M", formatTokens(2_500_000))
     }
 
     @Test
@@ -92,5 +67,37 @@ class MetricsTest {
         assertTrue(result.isFailure)
         val exception = result.exceptionOrNull()
         assertTrue(exception is MetricsConnectionException)
+    }
+
+    @Test
+    fun `test metrics client sends bearer token`() {
+        var authorization: String? = null
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/metrics") { exchange ->
+            authorization = exchange.requestHeaders.getFirst("Authorization")
+            val status = if (authorization == "Bearer s3cret") 200 else 401
+            val body = if (status == 200) sampleJson.toByteArray() else ByteArray(0)
+            exchange.sendResponseHeaders(status, if (body.isEmpty()) -1 else body.size.toLong())
+            if (body.isNotEmpty()) exchange.responseBody.use { it.write(body) }
+            exchange.close()
+        }
+        server.start()
+        try {
+            val endpoint = "http://127.0.0.1:${server.address.port}/metrics"
+            val client = MetricsClient(gson)
+
+            val unauthorized = client.fetch(endpoint)
+            assertNull(authorization)
+            val error = unauthorized.exceptionOrNull()
+            assertTrue(error is MetricsHttpException)
+            assertEquals(401, (error as MetricsHttpException).statusCode)
+            assertTrue(error.message!!.contains("token"))
+
+            val ok = client.fetch(endpoint, "s3cret")
+            assertEquals("Bearer s3cret", authorization)
+            assertEquals(4000L, ok.getOrThrow().usage?.today?.saved_tokens)
+        } finally {
+            server.stop(0)
+        }
     }
 }

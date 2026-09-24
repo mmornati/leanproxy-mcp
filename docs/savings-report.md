@@ -27,7 +27,8 @@ notice pointing here. `report` was rewritten to read only real counters.
 Every front end (`server run --stdio`, `server run --http`, `serve`) already
 maintains the same process-wide counters, exposed unconditionally on the
 `/metrics` JSON endpoint (`pkg/metrics.Snapshot`, token-protected since
-issue #316): the response governor's `GovernorStats`
+issue #316, available on both `server run` and `serve` via
+`--metrics-bind`): the response governor's `GovernorStats`
 (`pkg/mcp/middleware_governor.go`, issues #319-#321) and the schema/
 discovery telemetry counters (`pkg/mcp/telemetry.go`, this issue). Each
 front end also appends a snapshot of `pkg/metrics.Snapshot()` to an
@@ -50,6 +51,31 @@ Records are grouped by session id, and only the **latest** snapshot of
 each session is used (each `Record.Snapshot` is that process's own
 cumulative total, so summing every snapshot of the same session would
 double count).
+
+### The dashboard, `/metrics` and the IDE extensions
+
+The [web dashboard](dashboard.md), the `/metrics` endpoint's `usage`
+section and the [IDE extensions](extensions.md) read the same store, from
+a running proxy (`server run` or `serve` with `--dashboard-bind` /
+`--metrics-bind`). They show two fixed windows, **today** (since 00:00 UTC)
+and **week to date** (since Monday 00:00 UTC), computed with the same
+`BuildSavingsReport`, so their totals are `report`'s `total_*` numbers.
+There is one difference in how a window is cut:
+
+- `report --since X` keeps each session whose latest snapshot is at or
+  after `X` and uses that snapshot's cumulative total, including anything
+  the session recorded before `X`.
+- A dashboard window uses, per session, the latest snapshot **minus** the
+  session's last snapshot before the window started
+  (`pkg/usage.Summarize` / `pkg/usage.Live`), so a long-running proxy only
+  contributes what it recorded inside the window.
+
+For a session that started inside the window the two agree. The
+dashboard's per-server and per-tool rows are the same governor data as
+`report --by server|tool` (empty while the governor is off). The old
+dashboard/metrics fields fed by `reporter.CostTracker` (`total_spend`,
+`by_tool`, `by_server`, `top_5_expensive_tools`, prompt hashes) were
+always empty and have been removed.
 
 ## The estimator
 

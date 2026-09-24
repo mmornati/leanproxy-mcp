@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 )
 
@@ -21,13 +22,13 @@ func TestStoreAppendAndLoad(t *testing.T) {
 		Timestamp: now.Add(-2 * time.Hour),
 		SessionID: "s1",
 		Estimator: "chars/4",
-		Snapshot:  metrics.MetricsSnapshot{TotalSpend: 100},
+		Snapshot:  metrics.MetricsSnapshot{Telemetry: mcp.TelemetryCounters{RequestsTotal: 100}},
 	}
 	rec2 := Record{
 		Timestamp: now,
 		SessionID: "s2",
 		Estimator: "chars/4",
-		Snapshot:  metrics.MetricsSnapshot{TotalSpend: 200},
+		Snapshot:  metrics.MetricsSnapshot{Telemetry: mcp.TelemetryCounters{RequestsTotal: 200}},
 	}
 	if err := s.Append(rec1); err != nil {
 		t.Fatalf("Append rec1: %v", err)

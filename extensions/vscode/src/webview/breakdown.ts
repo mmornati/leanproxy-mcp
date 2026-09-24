@@ -1,18 +1,39 @@
-interface ToolMetric {
-  tool_name: string;
-  token_count: number;
+// Mirrors src/metrics.ts's types (this file is compiled as a standalone
+// webview script, without module imports).
+interface UsageTool {
+  server: string;
+  tool: string;
+  calls: number;
+  original_tokens: number;
+  returned_tokens: number;
+  saved_tokens: number;
 }
 
-interface ServerMetric {
-  server_name: string;
-  token_count: number;
+interface UsageServer {
+  server: string;
+  tools: number;
+  calls: number;
+  original_tokens: number;
+  saved_tokens: number;
 }
 
-interface MetricsSnapshot {
-  by_tool: ToolMetric[];
-  by_server: ServerMetric[];
-  total_spend: number;
-  top_5_expensive_tools: ToolMetric[];
+interface UsageWindow {
+  sessions: number;
+  original_tokens: number;
+  saved_tokens: number;
+  saved_percent: number;
+  discovery_tokens: number;
+  by_server: UsageServer[];
+  by_tool: UsageTool[];
+}
+
+interface MetricsResponse {
+  usage?: { estimator: string; today: UsageWindow; week: UsageWindow };
+}
+
+interface Display {
+  currencySymbol: string;
+  tokenCostPer1000: number;
 }
 
 declare function acquireVsCodeApi(): {
@@ -26,82 +47,105 @@ const vscode = acquireVsCodeApi();
 window.addEventListener('message', (event: MessageEvent) => {
   const message = event.data;
   if (message.type === 'metrics') {
-    renderMetrics(message.payload as MetricsSnapshot);
+    renderMetrics(message.payload as MetricsResponse, message.display as Display);
   } else if (message.type === 'error') {
     renderError(message.payload as string);
   }
 });
 
-function renderMetrics(data: MetricsSnapshot): void {
+function renderMetrics(data: MetricsResponse, display: Display): void {
   const app = document.getElementById('app');
   if (!app) return;
 
   app.innerHTML = '';
 
   const h1 = document.createElement('h1');
-  h1.textContent = 'LeanProxy Cost Breakdown';
+  h1.textContent = 'LeanProxy Token Usage';
   app.appendChild(h1);
 
-  const totalCard = document.createElement('div');
-  totalCard.className = 'metric-card';
-  const totalRow = document.createElement('div');
-  totalRow.className = 'metric-row';
-  const totalLabel = document.createElement('span');
-  totalLabel.className = 'label';
-  totalLabel.textContent = 'Total Spend (tokens)';
-  const totalValue = document.createElement('span');
-  totalValue.className = 'value total';
-  totalValue.textContent = data.total_spend.toLocaleString();
-  totalRow.appendChild(totalLabel);
-  totalRow.appendChild(totalValue);
-  totalCard.appendChild(totalRow);
-  app.appendChild(totalCard);
+  const usage = data.usage;
+  if (!usage) {
+    app.appendChild(emptyState('No usage data: the proxy could not read its usage store (~/.leanproxy/usage).'));
+    return;
+  }
 
-  const serverTitle = document.createElement('div');
-  serverTitle.className = 'section-title';
-  serverTitle.textContent = 'By Server';
-  app.appendChild(serverTitle);
+  app.appendChild(windowCard('Today', usage.today, display));
+  app.appendChild(windowCard('This week', usage.week, display));
 
+  const note = document.createElement('p');
+  note.className = 'note';
+  note.textContent = `Tokens measured by the proxy (${usage.estimator}). Today is since 00:00 UTC; the week starts Monday 00:00 UTC.`;
+  app.appendChild(note);
+
+  app.appendChild(sectionTitle('By server (today)'));
   const serverCard = document.createElement('div');
   serverCard.className = 'metric-card';
-  if (data.by_server.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty-state';
-    empty.textContent = 'No server data';
-    serverCard.appendChild(empty);
+  if (usage.today.by_server.length === 0) {
+    serverCard.appendChild(emptyState('No tool results today. Per-server and per-tool figures need the response governor (response.enabled: true).'));
   } else {
-    serverCard.appendChild(buildTable(['Server', 'Tokens'], data.by_server.map((s) => [s.server_name, s.token_count.toLocaleString()])));
+    serverCard.appendChild(buildTable(
+      ['Server', 'Calls', 'Response tokens', 'Saved'],
+      usage.today.by_server.map((s) => [s.server || '(no server)', num(s.calls), num(s.original_tokens), num(s.saved_tokens)])
+    ));
   }
   app.appendChild(serverCard);
 
-  const toolTitle = document.createElement('div');
-  toolTitle.className = 'section-title';
-  toolTitle.textContent = 'By Tool';
-  app.appendChild(toolTitle);
-
-  const toolCard = document.createElement('div');
-  toolCard.className = 'metric-card';
-  if (data.by_tool.length === 0) {
-    const empty = document.createElement('div');
-    empty.className = 'empty-state';
-    empty.textContent = 'No tool data';
-    toolCard.appendChild(empty);
-  } else {
-    toolCard.appendChild(buildTable(['Tool', 'Tokens'], data.by_tool.map((t) => [t.tool_name, t.token_count.toLocaleString()])));
+  if (usage.today.by_tool.length > 0) {
+    app.appendChild(sectionTitle('Top tools by response size (today)'));
+    const toolCard = document.createElement('div');
+    toolCard.className = 'metric-card';
+    toolCard.appendChild(buildTable(
+      ['Tool', 'Calls', 'Response tokens', 'Saved'],
+      usage.today.by_tool.slice(0, 10).map((t) => [t.server ? `${t.server}.${t.tool}` : t.tool, num(t.calls), num(t.original_tokens), num(t.saved_tokens)])
+    ));
+    app.appendChild(toolCard);
   }
-  app.appendChild(toolCard);
+}
 
-  if (data.top_5_expensive_tools.length > 0) {
-    const topTitle = document.createElement('div');
-    topTitle.className = 'section-title';
-    topTitle.textContent = 'Top 5 Most Expensive Tools';
-    app.appendChild(topTitle);
-
-    const topCard = document.createElement('div');
-    topCard.className = 'metric-card';
-    topCard.appendChild(buildTable(['Tool', 'Tokens'], data.top_5_expensive_tools.map((t) => [t.tool_name, t.token_count.toLocaleString()])));
-    app.appendChild(topCard);
+function windowCard(label: string, w: UsageWindow, display: Display): HTMLElement {
+  const card = document.createElement('div');
+  card.className = 'metric-card';
+  card.appendChild(row(`${label}: tokens saved`, num(w.saved_tokens), 'value total'));
+  card.appendChild(row('Of original tokens', `${num(w.original_tokens)} (${w.saved_percent.toFixed(1)}%)`));
+  if (display.tokenCostPer1000 > 0) {
+    const cost = (w.saved_tokens / 1000) * display.tokenCostPer1000;
+    card.appendChild(row('Estimated cost saved (your price)', `${display.currencySymbol}${cost.toFixed(4)}`));
   }
+  card.appendChild(row('Discovery cost (tokens)', num(w.discovery_tokens)));
+  card.appendChild(row('Sessions', num(w.sessions)));
+  return card;
+}
+
+function row(label: string, value: string, valueClass = 'value'): HTMLElement {
+  const r = document.createElement('div');
+  r.className = 'metric-row';
+  const l = document.createElement('span');
+  l.className = 'label';
+  l.textContent = label;
+  const v = document.createElement('span');
+  v.className = valueClass;
+  v.textContent = value;
+  r.appendChild(l);
+  r.appendChild(v);
+  return r;
+}
+
+function sectionTitle(text: string): HTMLElement {
+  const title = document.createElement('div');
+  title.className = 'section-title';
+  title.textContent = text;
+  return title;
+}
+
+function emptyState(text: string): HTMLElement {
+  const empty = document.createElement('div');
+  empty.className = 'empty-state';
+  empty.textContent = text;
+  return empty;
+}
+
+function num(n: number): string {
+  return n.toLocaleString();
 }
 
 function renderError(message: string): void {
@@ -123,7 +167,7 @@ function renderError(message: string): void {
 
   const p2 = document.createElement('p');
   p2.style.cssText = 'font-size:0.85em;color:var(--vscode-descriptionForeground);';
-  p2.textContent = 'Ensure LeanProxy is running and the metrics endpoint is accessible.';
+  p2.textContent = 'Start LeanProxy with --metrics-bind 127.0.0.1:9091 and check leanproxy.metricsEndpoint.';
   errorDiv.appendChild(p2);
 
   app.appendChild(errorDiv);

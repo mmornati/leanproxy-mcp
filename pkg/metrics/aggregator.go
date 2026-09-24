@@ -1,18 +1,21 @@
 package metrics
 
 import (
-	"sort"
-
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
-	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
 )
 
+// MetricsSnapshot is this process's live counters. It is what /metrics
+// serves (plus the usage store's windows, see UsageSummary) and what every
+// front end appends to the usage store (pkg/usage.Record), so it must stay
+// payload-free: only numbers, server/tool names and flags.
+//
+// It used to carry by_tool/by_server/total_spend/top_5_expensive_tools
+// from reporter.GlobalCostTracker, which nothing in the live pipeline
+// feeds; those were always empty and are gone. Per-server/per-tool token
+// figures now come from the usage store (UsageSummary), built from the
+// response governor's per-tool accounting below.
 type MetricsSnapshot struct {
-	ByTool             []ToolMetric         `json:"by_tool"`
-	ByServer           []ServerMetric       `json:"by_server"`
-	TotalSpend         int64                `json:"total_spend"`
-	Top5ExpensiveTools []ToolMetric         `json:"top_5_expensive_tools"`
-	ResponseCache      *ResponseCacheMetric `json:"response_cache,omitempty"`
+	ResponseCache *ResponseCacheMetric `json:"response_cache,omitempty"`
 	// ResponseGovernor is the response token governor's accounting (issue
 	// #319): tokens before/after per tool, truncations, spill store size.
 	// Omitted while the governor is off.
@@ -26,46 +29,11 @@ type MetricsSnapshot struct {
 	Telemetry mcp.TelemetryCounters `json:"telemetry"`
 }
 
-type ToolMetric struct {
-	ToolName   string `json:"tool_name"`
-	TokenCount int64  `json:"token_count"`
-}
-
-type ServerMetric struct {
-	ServerName string `json:"server_name"`
-	TokenCount int64  `json:"token_count"`
-}
-
+// Snapshot returns this process's live counters.
 func Snapshot() MetricsSnapshot {
-	tracker := reporter.GlobalCostTracker()
-	breakdown := tracker.GetBreakdown()
-
-	byTool := make([]ToolMetric, len(breakdown.ByTool))
-	for i, tc := range breakdown.ByTool {
-		byTool[i] = ToolMetric{ToolName: tc.ToolName, TokenCount: tc.TokenCount}
-	}
-
-	byServer := make([]ServerMetric, len(breakdown.ByServer))
-	for i, sc := range breakdown.ByServer {
-		byServer[i] = ServerMetric{ServerName: sc.ServerName, TokenCount: sc.TokenCount}
-	}
-
-	top5 := make([]ToolMetric, 0, len(byTool))
-	top5 = append(top5, byTool...)
-	sort.Slice(top5, func(i, j int) bool {
-		return top5[i].TokenCount > top5[j].TokenCount
-	})
-	if len(top5) > 5 {
-		top5 = top5[:5]
-	}
-
 	return MetricsSnapshot{
-		ByTool:             byTool,
-		ByServer:           byServer,
-		TotalSpend:         breakdown.Total,
-		Top5ExpensiveTools: top5,
-		ResponseCache:      responseCacheSnapshot(),
-		ResponseGovernor:   responseGovernorSnapshot(),
-		Telemetry:          mcp.TelemetrySnapshot(),
+		ResponseCache:    responseCacheSnapshot(),
+		ResponseGovernor: responseGovernorSnapshot(),
+		Telemetry:        mcp.TelemetrySnapshot(),
 	}
 }

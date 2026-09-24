@@ -1,31 +1,46 @@
 {{define "serverRows"}}
+{{if .Servers}}
 <table class="server-table">
   <thead>
     <tr>
       <th>Server</th>
       <th>Tools</th>
-      <th>Tokens</th>
+      <th>Calls</th>
+      <th>Response tokens</th>
+      <th>Returned</th>
+      <th>Saved</th>
       <th></th>
     </tr>
   </thead>
   <tbody>
-    {{range .}}
-    <tr class="server-row" hx-get="/api/dashboard/servers/{{.Name}}" hx-target="#drilldown-content" hx-trigger="click" hx-swap="innerHTML" role="button" tabindex="0">
-      <td class="cell-server">{{.Name}}</td>
-      <td class="cell-count">{{.ToolCount}}</td>
-      <td class="cell-tokens">{{.TokenCount}}</td>
-      <td class="cell-arrow">&rarr;</td>
+    {{range .Servers}}
+    {{if .Name}}
+    <tr class="server-row" hx-get="/api/dashboard/servers/{{.Path}}" hx-target="#drilldown-content" hx-trigger="click" hx-swap="innerHTML" role="button" tabindex="0">
+    {{else}}
+    <tr>
+    {{end}}
+      <td class="cell-server">{{.Label}}</td>
+      <td class="cell-count">{{.Tools}}</td>
+      <td class="cell-count">{{.Calls}}</td>
+      <td class="cell-tokens">{{.Original}}</td>
+      <td class="cell-tokens">{{.Returned}}</td>
+      <td class="cell-tokens">{{.Saved}}</td>
+      <td class="cell-arrow">{{if .Name}}&rarr;{{end}}</td>
     </tr>
     {{end}}
   </tbody>
 </table>
+{{else if .Available}}
+<div class="empty-state">No tool results recorded today. Per-server and per-tool figures come from the response governor's accounting:
+  enable it with <code>response.enabled: true</code> (see the configuration reference).</div>
+{{end}}
 {{end}}
 
 {{define "drilldown"}}
 <div class="drilldown-panel">
   <div class="drilldown-header">
     <h2>Server: {{.ServerName}}</h2>
-    <span class="drilldown-total">{{.TotalTokens}} total tokens</span>
+    <span class="drilldown-total">{{.OriginalTokens}} response tokens today</span>
   </div>
   {{if .Tools}}
   <table class="drilldown-table">
@@ -33,52 +48,27 @@
       <tr>
         <th>Tool</th>
         <th>Calls</th>
-        <th>Tokens</th>
-        <th>Avg Tokens/Call</th>
-        <th>Last Invoked</th>
+        <th>Response tokens</th>
+        <th>Returned</th>
+        <th>Saved</th>
+        <th>Avg tokens/call</th>
       </tr>
     </thead>
     <tbody>
       {{range .Tools}}
-      <tr class="tool-row" hx-get="/api/dashboard/servers/{{$.ServerName}}/tools/{{.ToolName}}/prompts" hx-target="#prompt-content" hx-trigger="click" hx-swap="innerHTML" role="button" tabindex="0">
-        <td class="cell-tool">{{.ToolName}}</td>
-        <td class="cell-count">{{.CallCount}}</td>
-        <td class="cell-tokens">{{.TokenCount}}</td>
-        <td class="cell-avg">{{printf "%.1f" .AvgTokensCall}}</td>
-        <td class="cell-time">{{.LastInvoked.Format "15:04:05"}}</td>
+      <tr>
+        <td class="cell-tool">{{.Tool}}</td>
+        <td class="cell-count">{{.Calls}}</td>
+        <td class="cell-tokens">{{.OriginalTokens}}</td>
+        <td class="cell-tokens">{{.ReturnedTokens}}</td>
+        <td class="cell-tokens">{{.SavedTokens}}</td>
+        <td class="cell-avg">{{printf "%.1f" .AvgTokensPerCall}}</td>
       </tr>
       {{end}}
     </tbody>
   </table>
   {{else}}
-  <p class="empty-state">No tools recorded for this server.</p>
-  {{end}}
-  <div id="prompt-content"></div>
-</div>
-{{end}}
-
-{{define "prompts"}}
-<div class="prompt-panel">
-  <h3>Prompt Hashes <span class="badge">opt-in</span></h3>
-  {{if .Hashes}}
-  <table class="prompt-table">
-    <thead>
-      <tr>
-        <th>Hash</th>
-        <th>Token Cost</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .Hashes}}
-      <tr>
-        <td class="cell-hash"><code>{{.Hash}}</code></td>
-        <td class="cell-tokens">{{.TokenCost}}</td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-  {{else}}
-  <p class="empty-state">No prompt hashes recorded.</p>
+  <p class="empty-state">No tool results recorded today for this server.</p>
   {{end}}
 </div>
 {{end}}

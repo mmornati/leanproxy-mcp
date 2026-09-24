@@ -1887,11 +1887,13 @@ leanproxy-mcp serve --sidecar-provider ollama --sidecar-model llama3.1:8b
 
 ## Dashboard
 
-The web dashboard provides real-time monitoring of token usage.
+The web dashboard shows the tokens saved today and this week, per server and
+per tool, read from the usage store (see [Web Dashboard](dashboard.md)).
 
 ### Configuration
 
-Configured via CLI flags on `serve`:
+Configured via CLI flags on `server run` (off by default) and `serve`
+(defaults below):
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -1904,8 +1906,12 @@ See [Dashboard hardening](#dashboard-hardening-host-and-origin-validation) below
 ### Metrics Endpoint
 
 ```bash
+leanproxy-mcp server run --http 127.0.0.1:8765 --metrics-bind 127.0.0.1:9091
 leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 ```
+
+`127.0.0.1:9091` is the address the [IDE extensions](extensions.md) use by
+default.
 
 | Flag | Default | Description |
 |------|---------|-------------|

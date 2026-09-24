@@ -1,7 +1,7 @@
 {
   "name": "leanproxy-cost",
   "displayName": "LeanProxy Cost Monitor",
-  "description": "Real-time AI cost monitoring for LeanProxy in your VS Code status bar",
+  "description": "Token savings from LeanProxy (today and week-to-date) in your VS Code status bar",
   "version": "0.1.0",
   "publisher": "leanproxy",
   "license": "MIT",
@@ -21,9 +21,9 @@
   "keywords": [
     "leanproxy",
     "ai",
-    "cost",
-    "monitoring",
-    "tokens"
+    "tokens",
+    "savings",
+    "monitoring"
   ],
   "icon": "icon.png",
   "activationEvents": [
@@ -39,6 +39,10 @@
       {
         "command": "leanproxy.refreshStatusBar",
         "title": "LeanProxy: Refresh Status Bar"
+      },
+      {
+        "command": "leanproxy.setMetricsToken",
+        "title": "LeanProxy: Set Metrics Token"
       }
     ],
     "configuration": {
@@ -46,24 +50,25 @@
       "properties": {
         "leanproxy.metricsEndpoint": {
           "type": "string",
-          "default": "http://127.0.0.1:9090/metrics",
-          "description": "URL of the LeanProxy metrics endpoint"
+          "default": "http://127.0.0.1:9091/metrics",
+          "description": "URL of the LeanProxy metrics endpoint: the address given to --metrics-bind (serve or server run) plus /metrics. Not the dashboard's port (9090). Set the --metrics-token, if any, with \"LeanProxy: Set Metrics Token\"."
         },
         "leanproxy.pollInterval": {
           "type": "number",
-          "default": 1000,
-          "minimum": 500,
-          "description": "Polling interval in milliseconds"
+          "default": 5000,
+          "minimum": 1000,
+          "description": "Polling interval in milliseconds, for the status bar and the panel. The proxy records a new usage snapshot every 5 seconds."
         },
         "leanproxy.currencySymbol": {
           "type": "string",
           "default": "$",
-          "description": "Currency symbol for cost display"
+          "description": "Currency symbol for the estimated cost saved"
         },
         "leanproxy.tokenCostPer1000": {
           "type": "number",
-          "default": 0.002,
-          "description": "Cost per 1000 tokens"
+          "default": 0,
+          "minimum": 0,
+          "description": "Your price per 1000 tokens, used to show an estimated cost saved. 0 (the default) shows tokens only: LeanProxy has no built-in price table."
         }
       }
     }

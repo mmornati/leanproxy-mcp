@@ -258,8 +258,8 @@ docker run --rm -i --init --name leanproxy-<server>-<gen> \
 
 ## Dashboard & metrics hardening (#316)
 
-`leanproxy-mcp serve`'s dashboard (`--dashboard-bind`) and metrics
-(`--metrics-bind`) endpoints:
+The dashboard (`--dashboard-bind`) and metrics (`--metrics-bind`)
+endpoints of `leanproxy-mcp server run` and `serve`:
 
 - **Refuse to start** on a non-loopback bind with no token configured
   (`--dashboard-token` / `--metrics-token`), instead of only logging a

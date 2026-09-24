@@ -16,9 +16,11 @@ import (
 // at /metrics that exposes per-server / per-tool / top-tools / total spend so
 // I can drive a status bar widget without scraping Prometheus text.
 //
-// Acceptance: GET /metrics returns application/json with keys
-//   by_server, by_tool, total_spend, top_tools
-// and that the endpoint can be disabled via --metrics-bind off.
+// Acceptance: GET /metrics returns application/json with this process's
+// live counters (telemetry) and the usage store's today / week-to-date
+// windows (usage), and the endpoint can be disabled via --metrics-bind off.
+// The old by_server / by_tool / total_spend / top_5_expensive_tools keys,
+// fed by a cost tracker nothing called, are gone.
 
 func TestStory_14_1_MetricsEndpoint_JSONShape(t *testing.T) {
 	if !binaryAvailable() {
@@ -64,9 +66,20 @@ servers: []
 	}
 
 	// The /metrics endpoint exposes a snapshot with at least these keys.
-	for _, key := range []string{"by_server", "by_tool", "total_spend"} {
+	for _, key := range []string{"telemetry", "usage"} {
 		if _, ok := parsed[key]; !ok {
 			t.Errorf("metrics JSON missing key %q, got keys: %v", key, mapKeys(parsed))
+		}
+	}
+	for _, key := range []string{"by_server", "by_tool", "total_spend", "top_5_expensive_tools"} {
+		if _, ok := parsed[key]; ok {
+			t.Errorf("metrics JSON still has the removed key %q", key)
+		}
+	}
+	usage, _ := parsed["usage"].(map[string]interface{})
+	for _, key := range []string{"estimator", "today", "week"} {
+		if _, ok := usage[key]; !ok {
+			t.Errorf("metrics usage section missing key %q, got keys: %v", key, mapKeys(usage))
 		}
 	}
 }
@@ -151,7 +164,7 @@ servers: []
 	if respCards.StatusCode != http.StatusOK {
 		t.Fatalf("GET /api/dashboard returned %d, body=%s", respCards.StatusCode, cardsBody)
 	}
-	for _, expected := range []string{"WTD Spend", "Top Server", "Top Tool"} {
+	for _, expected := range []string{"Saved today", "Saved this week", "Top server today", "Top tool today"} {
 		if !strings.Contains(cardsBody, expected) {
 			t.Errorf("dashboard cards missing expected text %q, got:\n%s", expected, cardsBody)
 		}
@@ -193,7 +206,7 @@ servers: []
 		t.Fatalf("dashboard JSON did not parse: %v\nraw=%s", err, body)
 	}
 
-	for _, key := range []string{"today_spend", "wtd_spend", "top_server", "top_tool", "server_count", "tool_count"} {
+	for _, key := range []string{"estimator", "today", "week"} {
 		if _, ok := parsed[key]; !ok {
 			t.Errorf("dashboard JSON missing key %q, got keys: %v", key, mapKeys(parsed))
 		}

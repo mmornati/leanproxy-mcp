@@ -261,7 +261,7 @@ leanproxy-mcp serve --verbose
 # Enable web dashboard on default port
 leanproxy-mcp serve --dashboard-bind 127.0.0.1:9090
 
-# Enable metrics endpoint
+# Enable metrics endpoint (the IDE extensions' default address)
 leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 
 # Enable semantic cache with Ollama embeddings
@@ -337,6 +337,12 @@ leanproxy-mcp server run --http 127.0.0.1:8765 [flags]
 | `--http-allowed-hosts` | strings | (none) | Extra `Host` header values accepted, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]`. Added to `server.http.allowed_hosts` |
 | `--http-allowed-origins` | strings | (none) | Browser origins (`https://app.example`) allowed to call the endpoint. Added to `server.http.allowed_origins` |
 | `--exposure` | string | `""` | Force how the upstream tools are exposed to every client: `router`, `passthrough` or `hybrid`. Default: per client, from its `clientInfo.name` (see [`exposure`](configuration.md#exposure-modes-exposure)) |
+| `--dashboard-bind` | string | `""` (off) | Serve the [web dashboard](dashboard.md) on this address, e.g. `127.0.0.1:9090`. Off by default here (an MCP client may start several `server run --stdio` processes, which cannot share a port). A non-loopback bind without `--dashboard-token` refuses to start |
+| `--dashboard-token` | string | `""` | Bearer token for the dashboard, same rules as `serve`'s |
+| `--dashboard-allowed-hosts` | strings | (none) | Extra `Host` header values the dashboard accepts |
+| `--metrics-bind` | string | `""` (off) | Serve the [`/metrics` JSON endpoint](dashboard.md#metrics-endpoint) on this address, e.g. `127.0.0.1:9091` (the IDE extensions' default). A non-loopback bind without `--metrics-token` refuses to start |
+| `--metrics-token` | string | `""` | Bearer token for the metrics endpoint |
+| `--metrics-allowed-hosts` | strings | (none) | Extra `Host` header values the metrics endpoint accepts |
 | `--config` | string | `~/.config/leanproxy_servers.yaml` | Path to config file |
 | `--log-file` | string | "" | Path to log file |
 | `--log-level` | string | `info` | Log level (debug, info, warn, error) |
@@ -400,6 +406,10 @@ leanproxy-mcp server run --http 127.0.0.1:8765
 
 # Let a browser app call it
 leanproxy-mcp server run --http 127.0.0.1:8765 --http-allowed-origins https://app.example
+
+# Shared gateway with the dashboard and the metrics endpoint the IDE extensions read
+leanproxy-mcp server run --http 127.0.0.1:8765 \
+  --dashboard-bind 127.0.0.1:9090 --metrics-bind 127.0.0.1:9091
 ```
 
 #### OpenCode Configuration

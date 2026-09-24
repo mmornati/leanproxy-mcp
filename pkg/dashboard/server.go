@@ -9,13 +9,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/httpsec"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
-	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolpin"
 )
 
@@ -34,30 +32,74 @@ type Config struct {
 	// Each is combined with the dashboard's own port unless it already
 	// names one. See pkg/httpsec.AllowedHosts.
 	AllowedHosts []string
+
+	// Usage supplies the today / week-to-date figures, read from the usage
+	// store (pkg/usage.Live). A nil func, or one returning nil (the store
+	// could not be read), renders an "unavailable" state instead of zeros.
+	Usage func() *metrics.UsageSummary
 }
 
+// DashboardData is what the index and summary cards render: the usage
+// store's today and week-to-date windows (see metrics.UsageWindow), with
+// token counts pre-formatted.
 type DashboardData struct {
-	TodaySpend  string
-	WTDSpend    string
-	TopServer   string
-	TopTool     string
-	ServerCount int
-	ToolCount   int
-	Servers     []ServerRow
+	// Available is false when there is no usage data source.
+	Available bool
+	Estimator string
+
+	TodaySaved    string
+	TodayOriginal string
+	TodayPercent  string
+	WeekSaved     string
+	WeekOriginal  string
+	WeekPercent   string
+	TopServer     string
+	TopTool       string
+	ServerCount   int
+	ToolCount     int
+	// NoToolData is true when today has no per-tool rows, which is what
+	// the response governor being off (the default) looks like.
+	NoToolData bool
+	Servers    []ServerRow
 }
 
+// ServerRow is one row of the server table (today's window).
 type ServerRow struct {
-	Name       string
-	ToolCount  int
-	TokenCount string
+	// Name is the server's name, empty for tool results the governor did
+	// not attribute to a server; Label is what the table shows and Path is
+	// Name escaped for the drill-down URL.
+	Name     string
+	Label    string
+	Path     string
+	Tools    int
+	Calls    int64
+	Original string
+	Returned string
+	Saved    string
 }
 
-var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
+// ServerDrillDown is one server's tools in today's window.
+type ServerDrillDown struct {
+	ServerName     string
+	OriginalTokens string
+	Tools          []metrics.UsageTool
+}
+
+// pages holds every HTML template (the index, the cards partial and
+// views/drilldown.html) in one set, so the index can include the partials
+// the htmx endpoints also render on their own.
+var pages = func() *template.Template {
+	t := template.Must(template.New("index").Parse(indexHTML))
+	template.Must(t.New("cards").Parse(cardsHTML))
+	return template.Must(t.ParseFS(viewsFS, "views/drilldown.html"))
+}()
+
+const indexHTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LeanProxy Cost Dashboard</title>
+<title>LeanProxy Dashboard</title>
 <script src="/static/htmx.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -68,44 +110,46 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
   }
   .container { max-width: 900px; width: 100%; }
   h1 {
-    font-size: 1.75rem; font-weight: 700; margin-bottom: 2rem;
+    font-size: 1.75rem; font-weight: 700; margin-bottom: 0.5rem;
     text-align: center; color: #38bdf8;
   }
+  .subtitle { text-align: center; font-size: 0.8rem; color: #64748b; margin-bottom: 2rem; }
   .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
   .card {
     background: #1e293b; border-radius: 0.75rem; padding: 1.25rem;
-    border: 1px solid #334155; text-align: center;
+    border: 1px solid #334155; text-align: center; min-width: 0;
   }
   .card .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 0.5rem; }
-  .card .value { font-size: 1.5rem; font-weight: 700; color: #f1f5f9; }
+  .card .value { font-size: 1.5rem; font-weight: 700; color: #f1f5f9; overflow-wrap: anywhere; }
   .card .value.token { color: #a78bfa; }
   .card .value.server { color: #34d399; }
-  .card .value.tool { color: #f472b6; }
+  .card .value.tool { color: #f472b6; font-size: 1.1rem; }
+  .card .detail { font-size: 0.75rem; color: #64748b; margin-top: 0.35rem; }
   .meta { text-align: center; font-size: 0.875rem; color: #64748b; margin-top: 1.5rem; }
   .meta span { margin: 0 0.75rem; }
   .error-card {
     background: #1e293b; border-radius: 0.75rem; padding: 2rem;
-    border: 1px solid #ef4444; text-align: center;
+    border: 1px solid #ef4444; text-align: center; margin-bottom: 1.5rem;
   }
   .error-card .value { font-size: 1rem; color: #fca5a5; }
   .section-title {
     font-size: 1.1rem; font-weight: 600; color: #e2e8f0;
     margin: 1.5rem 0 0.75rem;
   }
-  .server-table, .drilldown-table, .prompt-table {
+  .server-table, .drilldown-table {
     width: 100%; border-collapse: collapse; margin-bottom: 1rem;
     background: #1e293b; border-radius: 0.75rem; overflow: hidden;
   }
-  .server-table th, .drilldown-table th, .prompt-table th {
+  .server-table th, .drilldown-table th {
     text-align: left; padding: 0.75rem 1rem;
     font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
     color: #94a3b8; border-bottom: 1px solid #334155;
   }
-  .server-table td, .drilldown-table td, .prompt-table td {
+  .server-table td, .drilldown-table td {
     padding: 0.75rem 1rem; border-bottom: 1px solid #1e293b;
     font-size: 0.875rem;
   }
-  .server-table tbody tr:hover, .drilldown-table tbody tr:hover {
+  .server-table tbody tr.server-row:hover {
     background: #334155; cursor: pointer;
   }
   .cell-server { color: #34d399; font-weight: 600; }
@@ -115,7 +159,6 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
   .cell-avg { color: #94a3b8; font-family: monospace; }
   .cell-time { color: #64748b; font-family: monospace; font-size: 0.75rem; }
   .cell-arrow { color: #475569; text-align: right; font-size: 1.1rem; }
-  .cell-hash code { color: #facc15; font-size: 0.8rem; }
   .drilldown-panel {
     background: #1e293b; border-radius: 0.75rem; padding: 1.25rem;
     border: 1px solid #334155; margin-bottom: 1rem;
@@ -126,16 +169,8 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
   }
   .drilldown-header h2 { font-size: 1.1rem; color: #38bdf8; }
   .drilldown-total { font-size: 0.85rem; color: #a78bfa; font-family: monospace; }
-  .prompt-panel {
-    background: #0f172a; border-radius: 0.75rem; padding: 1rem;
-    border: 1px solid #334155; margin-top: 1rem;
-  }
-  .prompt-panel h3 { font-size: 0.95rem; color: #facc15; margin-bottom: 0.75rem; }
-  .badge {
-    font-size: 0.65rem; background: #334155; color: #94a3b8;
-    padding: 0.15rem 0.5rem; border-radius: 0.5rem; vertical-align: middle;
-  }
   .empty-state { color: #64748b; text-align: center; padding: 2rem; font-style: italic; }
+  .empty-state code { font-style: normal; color: #94a3b8; }
   @media (max-width: 600px) {
     .cards { grid-template-columns: repeat(2, 1fr); }
   }
@@ -143,20 +178,22 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
 </head>
 <body>
 <div class="container">
-  <h1>LeanProxy Cost Dashboard</h1>
+  <h1>LeanProxy Dashboard</h1>
+  <p class="subtitle">Tokens measured by the proxy ({{or .Estimator "chars/4"}}), read from the usage store every front end on this machine writes to.
+    Today is since 00:00 UTC; the week starts Monday 00:00 UTC.</p>
   <div id="dashboard-cards" hx-get="/api/dashboard" hx-trigger="every 5s" hx-swap="innerHTML">
     {{template "cards" .}}
   </div>
   <div class="meta">
     <span>Auto-refresh every 5s</span>
     <span>&middot;</span>
-    <span>{{.ServerCount}} servers</span>
+    <span>{{.ServerCount}} servers today</span>
     <span>&middot;</span>
-    <span>{{.ToolCount}} tools</span>
+    <span>{{.ToolCount}} tools today</span>
   </div>
-  <div class="section-title">Servers</div>
+  <div class="section-title">Servers today</div>
   <div id="server-table" hx-get="/api/dashboard/servers" hx-trigger="every 5s" hx-swap="innerHTML">
-    {{template "serverRows" .Servers}}
+    {{template "serverRows" .}}
   </div>
   <div id="drilldown-content"></div>
   <div class="section-title">Tool pinning</div>
@@ -164,28 +201,36 @@ var indexTemplate = template.Must(template.New("index").Parse(`<!DOCTYPE html>
 </div>
 </body>
 </html>
-`))
+`
 
-var cardsTemplate = template.Must(template.New("cards").Parse(`
+const cardsHTML = `
+{{if .Available}}
 <div class="cards">
   <div class="card">
-    <div class="label">Today&rsquo;s Spend</div>
-    <div class="value token">{{.TodaySpend}}</div>
+    <div class="label">Saved today</div>
+    <div class="value token">{{.TodaySaved}}</div>
+    <div class="detail">of {{.TodayOriginal}} tokens ({{.TodayPercent}})</div>
   </div>
   <div class="card">
-    <div class="label">WTD Spend</div>
-    <div class="value token">{{.WTDSpend}}</div>
+    <div class="label">Saved this week</div>
+    <div class="value token">{{.WeekSaved}}</div>
+    <div class="detail">of {{.WeekOriginal}} tokens ({{.WeekPercent}})</div>
   </div>
   <div class="card">
-    <div class="label">Top Server</div>
+    <div class="label">Top server today</div>
     <div class="value server">{{.TopServer}}</div>
+    <div class="detail">by response size</div>
   </div>
   <div class="card">
-    <div class="label">Top Tool</div>
+    <div class="label">Top tool today</div>
     <div class="value tool">{{.TopTool}}</div>
+    <div class="detail">by response size</div>
   </div>
 </div>
-`))
+{{else}}
+<div class="error-card"><div class="value">Usage data unavailable: the usage store (~/.leanproxy/usage) could not be read. See the proxy's log.</div></div>
+{{end}}
+`
 
 // toolPinTemplate renders this process's latest tool pinning events
 // (#310): drift, identity changes, scanner findings, collisions.
@@ -222,7 +267,10 @@ func handleToolPins(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-var drilldownTemplates = template.Must(template.ParseFS(viewsFS, "views/drilldown.html"))
+// server holds the dashboard's data source; its methods are the handlers.
+type server struct {
+	usage func() *metrics.UsageSummary
+}
 
 func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 	globalLogger = logger
@@ -264,25 +312,9 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 		actualPort = port
 	}
 
-	// mux holds every route that requires the dashboard token (when one is
-	// configured); /login is registered separately, unprotected, since it is
-	// how a browser exchanges the token for a cookie in the first place.
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("GET /api/dashboard", handleDashboardJSON)
-	mux.HandleFunc("GET /api/dashboard/json", func(w http.ResponseWriter, r *http.Request) {
-		DashboardJSON(w, r)
-	})
-	mux.HandleFunc("GET /api/dashboard/servers", handleServerTable)
-	mux.HandleFunc("GET /api/dashboard/tool-pins", handleToolPins)
-	mux.HandleFunc("GET /api/dashboard/servers/{server}", handleServerDrilldown)
-	mux.HandleFunc("GET /api/dashboard/servers/{server}/tools/{tool}/prompts", handleToolPrompts)
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assetsFS))))
-	mux.HandleFunc("GET /{$}", handleDashboardIndex)
-
 	topMux := http.NewServeMux()
 	topMux.HandleFunc("GET /login", handleLogin(cfg.Token))
-	topMux.Handle("/", requireBearerToken(cfg.Token, logger)(mux))
+	topMux.Handle("/", requireBearerToken(cfg.Token, logger)((&server{usage: cfg.Usage}).routes()))
 
 	allowedHosts := httpsec.AllowedHosts(host, actualPort, cfg.AllowedHosts)
 	handler := httpsec.SecurityHeaders()(httpsec.ValidateHost(allowedHosts)(topMux))
@@ -303,134 +335,134 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 	return srv, nil
 }
 
-func collectDashboardData() DashboardData {
-	snap := metrics.Snapshot()
-	tracker := reporter.GlobalCostTracker()
+// routes returns every route that requires the dashboard token (when one
+// is configured); /login is registered separately, unprotected, since it
+// is how a browser exchanges the token for a cookie in the first place.
+func (s *server) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/dashboard", s.handleCards)
+	mux.HandleFunc("GET /api/dashboard/json", s.handleJSON)
+	mux.HandleFunc("GET /api/dashboard/servers", s.handleServerTable)
+	mux.HandleFunc("GET /api/dashboard/tool-pins", handleToolPins)
+	mux.HandleFunc("GET /api/dashboard/servers/{server}", s.handleServerDrilldown)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assetsFS))))
+	mux.HandleFunc("GET /{$}", s.handleIndex)
+	return mux
+}
 
-	sort.Slice(snap.ByServer, func(i, j int) bool {
-		return snap.ByServer[i].TokenCount > snap.ByServer[j].TokenCount
-	})
-	sort.Slice(snap.ByTool, func(i, j int) bool {
-		return snap.ByTool[i].TokenCount > snap.ByTool[j].TokenCount
-	})
+func (s *server) summary() *metrics.UsageSummary {
+	if s.usage == nil {
+		return nil
+	}
+	return s.usage()
+}
 
+func collectDashboardData(sum *metrics.UsageSummary) DashboardData {
+	if sum == nil {
+		return DashboardData{TopServer: "-", TopTool: "-", Servers: []ServerRow{}}
+	}
+	today, week := sum.Today, sum.Week
 	data := DashboardData{
-		TodaySpend:  formatTokens(snap.TotalSpend),
-		WTDSpend:    formatTokens(snap.TotalSpend),
-		ServerCount: len(snap.ByServer),
-		ToolCount:   len(snap.ByTool),
-		Servers:     make([]ServerRow, 0, len(snap.ByServer)),
+		Available:     true,
+		Estimator:     sum.Estimator,
+		TodaySaved:    formatTokens(today.SavedTokens),
+		TodayOriginal: formatTokens(today.OriginalTokens),
+		TodayPercent:  fmt.Sprintf("%.1f%%", today.SavedPercent),
+		WeekSaved:     formatTokens(week.SavedTokens),
+		WeekOriginal:  formatTokens(week.OriginalTokens),
+		WeekPercent:   fmt.Sprintf("%.1f%%", week.SavedPercent),
+		TopServer:     orDash(today.TopServer),
+		TopTool:       orDash(today.TopTool),
+		ServerCount:   len(today.ByServer),
+		ToolCount:     len(today.ByTool),
+		NoToolData:    len(today.ByTool) == 0,
+		Servers:       make([]ServerRow, 0, len(today.ByServer)),
 	}
-
-	if len(snap.ByServer) > 0 {
-		data.TopServer = snap.ByServer[0].ServerName
-	} else {
-		data.TopServer = "-"
-	}
-
-	if len(snap.ByTool) > 0 {
-		data.TopTool = snap.ByTool[0].ToolName
-	} else {
-		data.TopTool = "-"
-	}
-
-	for _, s := range snap.ByServer {
-		stats := tracker.GetServerToolStats(s.ServerName)
+	for _, sv := range today.ByServer {
 		data.Servers = append(data.Servers, ServerRow{
-			Name:       s.ServerName,
-			ToolCount:  len(stats),
-			TokenCount: formatTokens(s.TokenCount),
+			Name:     sv.Server,
+			Label:    serverLabel(sv.Server),
+			Path:     url.PathEscape(sv.Server),
+			Tools:    sv.Tools,
+			Calls:    sv.Calls,
+			Original: formatTokens(sv.OriginalTokens),
+			Returned: formatTokens(sv.ReturnedTokens),
+			Saved:    formatTokens(sv.SavedTokens),
 		})
 	}
-
 	return data
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
+
+// serverLabel is how the tables show a server; tool results the governor
+// did not attribute to a server have an empty name.
+func serverLabel(name string) string {
+	if name == "" {
+		return "(no server)"
+	}
+	return name
 }
 
 var globalLogger = slog.Default()
 
-func handleDashboardIndex(w http.ResponseWriter, r *http.Request) {
-	data := collectDashboardData()
+func (s *server) render(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := indexTemplate.Execute(w, data); err != nil {
-		globalLogger.Error("failed to render dashboard index", "error", err)
+	if err := pages.ExecuteTemplate(w, name, data); err != nil {
+		globalLogger.Error("failed to render dashboard template", "template", name, "error", err)
 	}
 }
 
-func handleDashboardJSON(w http.ResponseWriter, r *http.Request) {
-	data := collectDashboardData()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := cardsTemplate.Execute(w, data); err != nil {
-		globalLogger.Error("failed to render dashboard cards", "error", err)
-	}
+func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "index", collectDashboardData(s.summary()))
 }
 
-func handleServerTable(w http.ResponseWriter, r *http.Request) {
-	data := collectDashboardData()
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := drilldownTemplates.ExecuteTemplate(w, "serverRows", data.Servers); err != nil {
-		globalLogger.Error("failed to render server table", "error", err)
-	}
+func (s *server) handleCards(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "cards", collectDashboardData(s.summary()))
 }
 
-func handleServerDrilldown(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleServerTable(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "serverRows", collectDashboardData(s.summary()))
+}
+
+func (s *server) handleServerDrilldown(w http.ResponseWriter, r *http.Request) {
+	// PathValue is already percent-decoded (rows link with Path).
 	serverName := r.PathValue("server")
 	if serverName == "" {
 		http.Error(w, "server name required", http.StatusBadRequest)
 		return
 	}
-	serverName, err := url.QueryUnescape(serverName)
-	if err != nil {
-		http.Error(w, "invalid server name", http.StatusBadRequest)
-		return
-	}
 
-	since := parseSinceParam(r)
-	dd := metrics.ServerDrilldown(serverName, since)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := drilldownTemplates.ExecuteTemplate(w, "drilldown", dd); err != nil {
-		globalLogger.Error("failed to render drilldown", "error", err)
+	dd := ServerDrillDown{ServerName: serverName, Tools: []metrics.UsageTool{}, OriginalTokens: "0"}
+	if sum := s.summary(); sum != nil {
+		dd.Tools = sum.Today.ServerTools(serverName)
+		var total int64
+		for _, t := range dd.Tools {
+			total += t.OriginalTokens
+		}
+		dd.OriginalTokens = formatTokens(total)
 	}
+	s.render(w, "drilldown", dd)
 }
 
-func handleToolPrompts(w http.ResponseWriter, r *http.Request) {
-	serverName := r.PathValue("server")
-	toolName := r.PathValue("tool")
-	if serverName == "" || toolName == "" {
-		http.Error(w, "server and tool name required", http.StatusBadRequest)
+// handleJSON serves the usage summary (both windows, per server and per
+// tool) as JSON: the same object /metrics serves under "usage". It answers
+// 503 when there is no usage data source, rather than a misleading zero.
+func (s *server) handleJSON(w http.ResponseWriter, r *http.Request) {
+	sum := s.summary()
+	if sum == nil {
+		http.Error(w, "usage data unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	var err error
-	serverName, err = url.QueryUnescape(serverName)
-	if err != nil {
-		http.Error(w, "invalid server name", http.StatusBadRequest)
-		return
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(sum); err != nil {
+		globalLogger.Error("failed to encode dashboard JSON", "error", err)
 	}
-	toolName, err = url.QueryUnescape(toolName)
-	if err != nil {
-		http.Error(w, "invalid tool name", http.StatusBadRequest)
-		return
-	}
-
-	ph := metrics.ServerToolPromptHashes(serverName, toolName)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := drilldownTemplates.ExecuteTemplate(w, "prompts", ph); err != nil {
-		globalLogger.Error("failed to render prompts", "error", err)
-	}
-}
-
-func parseSinceParam(r *http.Request) time.Time {
-	daysStr := r.URL.Query().Get("days")
-	if daysStr == "" {
-		daysStr = r.URL.Query().Get("since")
-	}
-	if daysStr == "" {
-		return time.Time{}
-	}
-	var days int
-	if _, err := fmt.Sscanf(daysStr, "%d", &days); err != nil || days <= 0 {
-		return time.Time{}
-	}
-	return time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 }
 
 func formatTokens(n int64) string {
@@ -441,61 +473,5 @@ func formatTokens(n int64) string {
 		return fmt.Sprintf("%.1fK", float64(n)/1_000)
 	default:
 		return fmt.Sprintf("%d", n)
-	}
-}
-
-func DashboardJSON(w http.ResponseWriter, r *http.Request) {
-	snap := metrics.Snapshot()
-
-	sort.Slice(snap.ByServer, func(i, j int) bool {
-		return snap.ByServer[i].TokenCount > snap.ByServer[j].TokenCount
-	})
-	sort.Slice(snap.ByTool, func(i, j int) bool {
-		return snap.ByTool[i].TokenCount > snap.ByTool[j].TokenCount
-	})
-
-	var topServer, topTool string
-	if len(snap.ByServer) > 0 {
-		topServer = snap.ByServer[0].ServerName
-	}
-	if len(snap.ByTool) > 0 {
-		topTool = snap.ByTool[0].ToolName
-	}
-
-	resp := map[string]interface{}{
-		"today_spend":  snap.TotalSpend,
-		"wtd_spend":    snap.TotalSpend,
-		"top_server":   topServer,
-		"top_tool":     topTool,
-		"server_count": len(snap.ByServer),
-		"tool_count":   len(snap.ByTool),
-	}
-
-	perServer := make([]map[string]interface{}, 0, len(snap.ByServer))
-	for _, s := range snap.ByServer {
-		perServer = append(perServer, map[string]interface{}{
-			"server": s.ServerName,
-			"tokens": s.TokenCount,
-		})
-	}
-
-	perTool := make([]map[string]interface{}, 0, len(snap.ByTool))
-	for _, t := range snap.ByTool {
-		perTool = append(perTool, map[string]interface{}{
-			"tool":   t.ToolName,
-			"tokens": t.TokenCount,
-		})
-	}
-
-	resp["per_server"] = perServer
-	resp["per_tool"] = perTool
-
-	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(w)
-	if strings.Contains(r.Header.Get("Accept"), "application/json") {
-		enc.SetIndent("", "")
-	}
-	if err := enc.Encode(resp); err != nil {
-		globalLogger.Error("failed to encode dashboard JSON", "error", err)
 	}
 }

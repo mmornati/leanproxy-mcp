@@ -32,7 +32,8 @@ class LeanProxyStatusBarWidget(private val project: Project) : StatusBarWidget, 
     private var displayText: String = "LeanProxy..."
     private var pollFuture: ScheduledFuture<*>? = null
     private val metricsClient = MetricsClient()
-    private var connected = false
+    private var tooltip: String = "LeanProxy unavailable"
+    private var scheduledIntervalMs: Long = 0
 
     override fun ID(): String = "LeanProxyStatusBar"
 
@@ -42,9 +43,7 @@ class LeanProxyStatusBarWidget(private val project: Project) : StatusBarWidget, 
 
     override fun getAlignment(): Float = JLabel.LEFT
 
-    override fun getTooltipText(): String? =
-        if (connected) "LeanProxy AI Cost \u2014 Click for details"
-        else "LeanProxy unavailable"
+    override fun getTooltipText(): String? = tooltip
 
     override fun getIcon(): javax.swing.Icon? = null
 
@@ -57,9 +56,14 @@ class LeanProxyStatusBarWidget(private val project: Project) : StatusBarWidget, 
 
     fun start() {
         poll()
-        val settings = LeanProxySettings.getInstance()
+        schedule()
+    }
+
+    private fun schedule() {
+        pollFuture?.cancel(false)
+        scheduledIntervalMs = LeanProxySettings.getInstance().effectivePollIntervalMs()
         pollFuture = AppExecutorUtil.getAppScheduledExecutorService()
-            .scheduleWithFixedDelay({ poll() }, settings.pollIntervalMs, settings.pollIntervalMs, TimeUnit.MILLISECONDS)
+            .scheduleWithFixedDelay({ poll() }, scheduledIntervalMs, scheduledIntervalMs, TimeUnit.MILLISECONDS)
     }
 
     override fun dispose() {
@@ -77,30 +81,43 @@ class LeanProxyStatusBarWidget(private val project: Project) : StatusBarWidget, 
 
     private fun poll() {
         val settings = LeanProxySettings.getInstance()
-        val result = metricsClient.fetch(settings.metricsEndpoint)
+        // Pick up a poll interval changed in the settings.
+        if (pollFuture != null && settings.effectivePollIntervalMs() != scheduledIntervalMs) {
+            schedule()
+        }
+        val result = metricsClient.fetch(settings.metricsEndpoint, LeanProxySettings.metricsToken())
         result.onSuccess { snapshot ->
-            connected = true
-            updateDisplay(snapshot.total_spend)
+            updateDisplay(snapshot.usage, settings)
         }.onFailure { error ->
-            connected = false
             displayText = when (error) {
                 is MetricsConnectionException -> "\u26A0 LeanProxy"
                 is MetricsHttpException -> "\u26A0 HTTP ${error.statusCode}"
                 else -> "\u26A0 LeanProxy Error"
             }
+            tooltip = "LeanProxy unavailable \u2014 ${error.message}"
             updateWidget()
         }
     }
 
-    private fun updateDisplay(totalSpend: Long?) {
-        val safeTotal = totalSpend ?: 0
-        val settings = LeanProxySettings.getInstance()
-        val estimatedCost = (safeTotal / 1000.0) * settings.tokenCostPer1000
-        displayText = if (!estimatedCost.isFinite()) {
-            "$ LeanProxy N/A"
-        } else {
-            String.format("%s %.4f", settings.currencySymbol, estimatedCost)
+    private fun updateDisplay(usage: UsageSummary?, settings: LeanProxySettings) {
+        if (usage == null) {
+            displayText = "LeanProxy: no usage data"
+            tooltip = "LeanProxy is running but could not read its usage store"
+            updateWidget()
+            return
         }
+        val savedToday = usage.today?.saved_tokens ?: 0
+        val savedWeek = usage.week?.saved_tokens ?: 0
+        val cost = estimatedCost(savedToday, settings.tokenCostPer1000)
+        displayText = if (cost == null) {
+            "LeanProxy: ${formatTokens(savedToday)} saved"
+        } else {
+            String.format("LeanProxy: %s%.4f saved", settings.currencySymbol, cost)
+        }
+        tooltip = String.format(
+            "LeanProxy: %,d tokens saved today (%.1f%%), %,d this week \u2014 Click for details",
+            savedToday, usage.today?.saved_percent ?: 0.0, savedWeek
+        )
         updateWidget()
     }
 

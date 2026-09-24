@@ -142,8 +142,10 @@ telemetry:
 
 ## Existing `/metrics` JSON endpoint
 
-`leanproxy-mcp serve --metrics-bind 127.0.0.1:9091` keeps working exactly as
-before; it now has a `telemetry` section fed by the same counters
+`leanproxy-mcp serve --metrics-bind 127.0.0.1:9091` (or `server run
+--metrics-bind 127.0.0.1:9091`) serves it, with a `usage` section of
+today / week-to-date totals from the usage store (see
+[Web Dashboard](dashboard.md#metrics-output)) and a `telemetry` section fed by the same counters
 OpenTelemetry records (including `tool_pin_events_total` and `policy_decisions_total`), useful when you want a quick number without standing
 up a collector. With the response governor on, a `response_governor`
 section adds its accounting: results seen and shortened, original and
