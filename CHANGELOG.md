@@ -2,6 +2,16 @@
 
 ## Breaking in v0.11
 
+- **`serve`'s line-TCP protocol is deprecated** ([#309](https://github.com/mmornati/leanproxy-mcp/issues/309)).
+  - **What.** `serve` speaks newline-delimited JSON-RPC over raw TCP, which is not an MCP
+    transport.
+  - **Now.** It still works unchanged, but logs a deprecation warning at start. **It will be
+    removed in v1.0.**
+  - **Migration.** Point MCP clients at `leanproxy-mcp server run --http 127.0.0.1:8765` (the
+    `/mcp` endpoint, same token file, `Authorization: Bearer` header). See
+    [Migrating from `serve`](docs/quickstart.md#migrating-from-serve). The IDE extensions only
+    read the metrics endpoint and are not affected.
+
 - **Calls to tools a server does not advertise are refused** ([#314](https://github.com/mmornati/leanproxy-mcp/issues/314), audit S14).
   - **What.** `invoke_tool`, a namespaced `tools/call` and `serve`'s `server.tool` methods forwarded
     any tool name to the upstream, including tools the server never listed in its `tools/list`
@@ -125,6 +135,41 @@
     [`docs/security.md`](docs/security.md#first-party-servers-hardening-postgres-redis-318).
 
 ## Added in v0.11
+
+- **Streamable HTTP MCP front end: one shared local gateway, with auth and Origin checks** ([#309](https://github.com/mmornati/leanproxy-mcp/issues/309), audit §2.2).
+  - **What.** `serve`, the only front end that took more than one client, speaks a custom
+    newline-JSON protocol over TCP that no MCP client supports. So every IDE had to spawn
+    its own `server run --stdio`, each with its own child servers.
+  - **Now.** `leanproxy-mcp server run --http 127.0.0.1:8765` serves the MCP Streamable HTTP
+    transport (2025-03-26, 2025-06-18, 2025-11-25) at `/mcp`:
+    - POST gets a JSON or SSE response, GET opens the session stream, DELETE ends the
+      session.
+    - `Mcp-Session-Id` carries a per-session negotiated version, and `MCP-Protocol-Version`
+      is validated.
+    - Any number of clients (Claude Code, Cursor, VS Code, OpenCode, other agents) connect
+      by URL and share one set of child servers.
+    - Every message runs through the same pipeline as stdio: redaction, injection guard,
+      response cache, tool pinning, per-tool policy (confirm through elicitation) and
+      telemetry.
+    - The server-to-client relays of #308 (elicitation, sampling, roots, progress,
+      cancellation, resource updates) travel on the session's SSE streams. A message caused
+      by a request goes on that request's own stream.
+  - **Security.**
+    - Loopback bind by default. A non-loopback bind without a token is refused, and
+      `--no-auth` is accepted on loopback only.
+    - `Authorization: Bearer` with the `serve` token file (`--http-token`,
+      `$LEANPROXY_SERVE_TOKEN`), compared in constant time.
+    - `Host` and `Origin` validation through `pkg/httpsec` (DNS rebinding, cross-site calls),
+      with `server.http.allowed_hosts` and `allowed_origins` allowlists.
+    - 256-bit session ids bound to the credential, capped (`max_sessions`) and expired when
+      idle (`session_idle_timeout`).
+    - Body (`max_body_bytes`, 64 MiB), header, read and write limits, and the shared
+      `server.max_concurrent_requests` cap.
+    - `doctor security` reports the running endpoint's exposure.
+  - **Not included.** Resumability (`Last-Event-ID`) is not supported: events have no id.
+    Full OAuth 2.1 resource-server support is a follow-up. See
+    [`docs/quickstart.md`](docs/quickstart.md#2b-or-run-one-shared-gateway-over-http) for
+    client snippets.
 
 - **Optional sandbox runner for stdio servers: Docker/Podman network & filesystem isolation** ([#312](https://github.com/mmornati/leanproxy-mcp/issues/312), audit S7 follow-up, market parity with Docker MCP Gateway / ToolHive / MCPProxy).
   - **What.** Every stdio MCP server, including marketplace-installed third-party packages

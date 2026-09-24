@@ -69,6 +69,7 @@ watch:
 | `server.max_concurrent_requests` | int | `64` | Maximum number of client requests `server run --stdio` handles in parallel (for `serve`: per connection). `0` or absent means the default; negative values are rejected. See below. |
 | `server.max_line_bytes` | int | `67108864` (64 MiB) | Largest incoming JSON-RPC message (one line), for both `serve` and `server run --stdio`. A longer line gets a parse-error response and is skipped; `serve` also closes the connection. `0` or absent means the default |
 | `server.max_connections` | int | `32` | `serve` only: client connections open at once; extra ones are closed right away. `0` or absent means the default |
+| `server.http.*` | block | see below | Limits and browser allowlists of the Streamable HTTP front end (`server run --http`, #309). See [Streamable HTTP front end](#streamable-http-front-end-serverhttp) |
 
 ### Concurrent Client Requests (`server.max_concurrent_requests`)
 
@@ -122,6 +123,41 @@ server:
   one finishes.
 - **Disconnects** cancel the connection's in-flight requests and their
   upstream calls.
+
+### Streamable HTTP front end (`server.http`)
+
+`leanproxy-mcp server run --http 127.0.0.1:8765` serves the MCP Streamable
+HTTP transport (#309). The address and the token come from the command line
+(`--http`, `--http-token`, `--no-auth`, see
+[`server run`](commands.md#server-run-run-the-mcp-front-end)). This block
+holds the limits and allowlists:
+
+```yaml
+server:
+  max_concurrent_requests: 64        # shared by every HTTP session
+  http:
+    allowed_hosts: [gateway.lan]     # extra Host header values
+    allowed_origins: ["https://app.example"]  # browser origins allowed to call
+    max_body_bytes: 67108864         # one POST body, default 64 MiB
+    max_sessions: 64                 # open sessions, default 64
+    session_idle_timeout: 30m        # default 30m
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `server.http.allowed_hosts` | list | (none) | `Host` header values accepted beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` (`host` or `host:port`). Any other `Host` gets `403`, which blocks DNS rebinding. `--http-allowed-hosts` adds to it |
+| `server.http.allowed_origins` | list | (none) | Browser origins (`scheme://host[:port]`, no path or wildcard) allowed to call the endpoint. They get CORS headers. A request carrying any other `Origin` gets `403`, except the server's own origin. Requests without `Origin` (every non-browser MCP client) are not affected. `--http-allowed-origins` adds to it |
+| `server.http.max_body_bytes` | int | `67108864` (64 MiB) | Largest POST body. A larger one gets `413` |
+| `server.http.max_sessions` | int | `64` | Sessions open at once. Beyond it, `initialize` first ends idle sessions, then gets `503` with `Retry-After` |
+| `server.http.session_idle_timeout` | duration | `30m` | A session with no request in flight and no GET stream open is ended after this long. Its next request gets `404` and the client initializes again |
+| `server.max_concurrent_requests` | int | `64` | Client requests handled at once across all HTTP sessions. More wait for a slot and are never rejected. A client's answer to an elicitation never waits for a slot |
+
+Values are validated when the config loads: negative sizes, a malformed or
+non-positive duration, and an origin that is not `http(s)://host[:port]` are
+all refused. The HTTP server also bounds request headers to 64 KiB, the
+header read to 10 s, a POST body read to 60 s and each write to 30 s (so a
+client that stops reading cannot hold a stream). Keep-alive connections idle
+for more than 120 s are closed.
 
 ### Child Process Environment (`env`, `env_passthrough`, `inherit_env`)
 

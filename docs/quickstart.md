@@ -135,6 +135,120 @@ With custom config:
 leanproxy-mcp server run --stdio --config /path/to/config.yaml
 ```
 
+### 2b. Or run one shared gateway over HTTP
+
+`server run --stdio` serves one client: every IDE spawns its own LeanProxy,
+with its own child servers. `server run --http` serves the MCP **Streamable
+HTTP** transport instead. It is one local gateway that any number of MCP
+clients reach by URL, and they all share one set of child servers:
+
+```bash
+leanproxy-mcp server run --http 127.0.0.1:8765
+# endpoint: http://127.0.0.1:8765/mcp
+```
+
+- **Token.** Clients authenticate with `Authorization: Bearer <token>`. The
+  token is the same one `serve` uses: `--http-token`, else
+  `$LEANPROXY_SERVE_TOKEN`, else `~/.config/leanproxy/serve.token`, which
+  is generated (mode 0600) on first start. Print it with
+  `cat ~/.config/leanproxy/serve.token`.
+- **Loopback.** Bind a loopback address. Binding another interface requires
+  the token, and `--no-auth` is only accepted on loopback.
+- **Browsers.** Requests with an unknown `Host` header, or from a browser
+  origin you did not allow (`--http-allowed-origins`), are refused with 403.
+
+See [`server run`](commands.md#server-run-run-the-mcp-front-end) for every
+flag and [Security](security.md#streamable-http-front-end-309) for the
+details.
+
+#### Client configuration: stdio or HTTP
+
+In the HTTP snippets, replace `<token>` with the content of
+`~/.config/leanproxy/serve.token`, or use your client's secret or
+environment substitution.
+
+**Claude Code**
+
+```bash
+# stdio: Claude Code starts its own LeanProxy
+claude mcp add leanproxy -- leanproxy-mcp server run --stdio
+
+# HTTP: connect to the shared gateway
+claude mcp add --transport http leanproxy http://127.0.0.1:8765/mcp \
+  --header "Authorization: Bearer $(cat ~/.config/leanproxy/serve.token)"
+```
+
+**Cursor** (`~/.cursor/mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "leanproxy-stdio": { "command": "leanproxy-mcp", "args": ["server", "run", "--stdio"] },
+    "leanproxy-http": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+**VS Code** (`.vscode/mcp.json`)
+
+```json
+{
+  "inputs": [
+    { "type": "promptString", "id": "leanproxy-token", "description": "LeanProxy token", "password": true }
+  ],
+  "servers": {
+    "leanproxy-stdio": { "type": "stdio", "command": "leanproxy-mcp", "args": ["server", "run", "--stdio"] },
+    "leanproxy-http": {
+      "type": "http",
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer ${input:leanproxy-token}" }
+    }
+  }
+}
+```
+
+**OpenCode** (`~/.config/opencode/opencode.json`)
+
+```json
+{
+  "mcp": {
+    "leanproxy-stdio": { "type": "local", "command": ["leanproxy-mcp", "server", "run", "--stdio"], "enabled": true },
+    "leanproxy-http": {
+      "type": "remote",
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": { "Authorization": "Bearer {env:LEANPROXY_SERVE_TOKEN}" },
+      "enabled": true
+    }
+  }
+}
+```
+
+Configure only one of the two entries per client. With both, the client
+would see every tool twice.
+
+#### Migrating from `serve`
+
+`leanproxy-mcp serve` speaks newline-delimited JSON-RPC over raw TCP, which
+is not an MCP transport. It is **deprecated**: it logs a warning at start
+and will be removed in v1.0. To move to the Streamable HTTP front end:
+
+| `serve` | `server run --http` |
+|---|---|
+| `--listen 127.0.0.1:8080` | `--http 127.0.0.1:8765` (endpoint `/mcp`) |
+| `--auth-token`, `$LEANPROXY_SERVE_TOKEN`, `serve.token` | `--http-token`, `$LEANPROXY_SERVE_TOKEN`, the same `serve.token` |
+| First line `{"method":"auth","params":{"token":…}}` | `Authorization: Bearer <token>` header on every request |
+| `--no-auth` (loopback only) | `--no-auth` (loopback only) |
+| One TCP connection = one client session | One `Mcp-Session-Id` = one client session |
+| `server.max_connections`, `server.max_line_bytes` | `server.http.max_sessions`, `server.http.max_body_bytes` |
+
+Any MCP client that supports Streamable HTTP can connect directly, with no
+custom client. The IDE extensions (`extensions/vscode`,
+`extensions/jetbrains`) only read the metrics endpoint and never connected to
+`serve`, so they need no change.
+
 ### 3. Run in Dry-Run Mode
 
 Simulate proxy behavior and see potential token savings:

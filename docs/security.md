@@ -7,6 +7,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | Feature | Description |
 |---------|-------------|
 | **Least-Privilege Child Environment** | Stdio MCP servers get a minimal environment by default instead of the proxy's full environment (#311) |
+| **Streamable HTTP Front End** | `server run --http`: loopback by default, bearer token (no unauthenticated non-loopback bind), Host/Origin validation, unguessable per-credential session ids, body/session/concurrency limits (#309) |
 | **Dashboard & Metrics Hardening** | Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
 | **First-Party Servers Hardening** | Postgres: real read-only transaction, not just a text prefix check. Redis: pool that can't deadlock, bounded RESP allocations, per-command deadlines (#318) |
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
@@ -213,7 +214,73 @@ so a malicious or compromised Redis server (or a man-in-the-middle on a connecti
 See [Configuration: First-Party Servers](configuration.md#first-party-servers-postgres-and-redis) for the
 full environment-variable reference.
 
+## Streamable HTTP front end (#309)
+
+`leanproxy-mcp server run --http <host:port>` exposes the proxy over the MCP
+Streamable HTTP transport. It follows the transport's security guidance:
+
+- **Exposure.**
+    - Bind a loopback address (`127.0.0.1:8765`).
+    - Any other bind requires a bearer token, or the process refuses to
+      start. `--no-auth` is only accepted on a loopback address.
+    - A non-loopback bind logs a warning: the traffic is plain HTTP, so put
+      a TLS-terminating proxy in front.
+- **Authentication.**
+    - Every request must carry `Authorization: Bearer <token>`. The token is
+      compared in constant time. A missing or wrong token gets `401` with a
+      `WWW-Authenticate: Bearer` challenge, and nothing runs.
+    - The token is the `serve` token: `--http-token`, else
+      `$LEANPROXY_SERVE_TOKEN`, else `~/.config/leanproxy/serve.token`
+      (mode 0600, generated on first start).
+    - Full OAuth 2.1 resource-server support is out of scope (a follow-up).
+- **DNS rebinding and cross-site requests.** Checked before
+  authentication, on every method (GET included), using `pkg/httpsec` like
+  the dashboard and metrics endpoints.
+    - The `Host` header must be the bind host, a loopback name or a
+      `server.http.allowed_hosts` entry.
+    - An `Origin` header, when present, must be the server's own origin or a
+      `server.http.allowed_origins` entry. `Origin: null` is always refused.
+    - Anything else gets `403` and never reaches the handler or an upstream.
+    - Only allowlisted origins get CORS headers.
+- **Sessions.**
+    - `Mcp-Session-Id` carries 256 bits from `crypto/rand`.
+    - A session is bound to the credential that created it: another
+      credential gets `404` for it.
+    - Sessions are capped (`server.http.max_sessions`) and end after
+      `server.http.session_idle_timeout` without activity. A session with a
+      request in flight or an open GET stream never expires.
+    - `DELETE` ends a session at once, with its requests, streams and
+      resource subscriptions.
+    - The session id and the token are never logged.
+- **Resource limits.**
+    - POST bodies are capped at `server.http.max_body_bytes` (`413`), and
+      request headers at 64 KiB.
+    - The header read times out after 10 s, the body read after 60 s, and
+      each write after 30 s.
+    - Idle keep-alive connections close after 120 s.
+    - `server.max_concurrent_requests` caps the requests handled at once,
+      across sessions.
+    - A client that disconnects cancels its request and the upstream call.
+      Its GET stream is released without leaking goroutines, which a test
+      checks.
+- **Same pipeline.** Every message goes through the same middleware chain
+  as the stdio front end: redaction, injection guard, response cache, tool
+  pinning, per-tool policy and telemetry. That includes the
+  server-to-client traffic of #308, which travels on the session's SSE
+  streams. Policy confirmations are asked through elicitation on the
+  response stream of the call that needs them.
+
+`leanproxy-mcp doctor security` reports the front end's exposure:
+
+- the URL of a running instance;
+- whether it is loopback-only and whether it requires the token;
+- its allowlists and limits;
+- the token file's permissions (never the token itself).
+
 ## `serve` listener authentication
+
+`serve`'s line-TCP protocol is **deprecated** in favor of the Streamable
+HTTP front end above, and will be removed in v1.0.
 
 `leanproxy-mcp serve` accepts JSON-RPC over TCP only from clients whose first
 line is `{"jsonrpc":"2.0","method":"auth","params":{"token":"…"}}` with the
@@ -228,12 +295,13 @@ limits.
 ## Which modes are protected
 
 Secret redaction and the prompt-injection guard (together, the **Token
-Firewall**) run as one shared middleware pipeline (`pkg/mcp`) in **both**
-front ends:
+Firewall**) run as one shared middleware pipeline (`pkg/mcp`) in **every**
+front end:
 
 | Mode | Redaction | Injection guard |
 |------|-----------|-----------------|
 | `leanproxy-mcp server run --stdio` (what IDEs run) | Yes, on by default | Yes, when an `injection:` block enables it |
+| `leanproxy-mcp server run --http` (shared gateway, #309) | Yes, on by default | Yes, when an `injection:` block enables it |
 | `leanproxy-mcp serve` | Yes, on by default | Yes, when an `injection:` block enables it |
 
 Pipeline order for every request:

@@ -194,9 +194,10 @@ Tools are registered on-demand, not at startup. This minimizes initial context o
 ### Token Firewall
 
 The firewall is a middleware chain in `pkg/mcp` (`Firewall`, `Redaction`,
-`InjectionGuard`) shared by both front ends: `server run --stdio` installs it
-on the MCP handler with `Handler.Use`, and `serve` wraps its own dispatch with
-the same middlewares via `mcp.Chain`. Order: redact request →
+`InjectionGuard`) shared by every front end: `server run --stdio` and
+`server run --http` (the Streamable HTTP front end of `pkg/streamhttp`,
+#309) install it on the MCP handler with `Handler.Use`, and `serve` wraps its
+own dispatch with the same middlewares via `mcp.Chain`. Order: redact request →
 injection check (request) → dispatch → injection check (response: tool
 results, resources, prompts) → redact response. Later stages (caching,
 metering, ...) plug into the same `Middleware` API. See
@@ -293,8 +294,9 @@ graph TD
 leanproxy-mcp/
 ├── cmd/              # CLI entry points
 │   ├── root.go      # Main command
-│   ├── serve.go     # serve command (HTTP proxy)
-│   ├── server.go    # server command (stdio mode)
+│   ├── serve.go     # serve command (deprecated line-TCP proxy)
+│   ├── server.go    # server command (server run --stdio / --http)
+│   ├── http_frontend.go # server run --http wiring (auth, options, shutdown)
 │   ├── status.go    # status command
 │   └── cache.go     # cache command
 ├── pkg/
@@ -310,6 +312,8 @@ leanproxy-mcp/
 │   │   ├── search_tools.go # search_tools handler
 │   │   ├── toolrefresh.go # Background tool cache refresh (feeds the search index)
 │   │   └── types.go     # MCP types
+│   ├── streamhttp/ # MCP Streamable HTTP front end (sessions, SSE streams, Host/Origin/auth checks)
+│   ├── httpsec/    # Host/Origin validation and bearer-token helpers shared by the HTTP servers
 │   ├── toolsearch/ # Ranked tool index behind search_tools (BM25, optional hybrid)
 │   ├── toolstore/  # Persistent tool cache
 │   │   └── filecache.go  # File-based cache
