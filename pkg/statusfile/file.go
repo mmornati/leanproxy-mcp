@@ -35,6 +35,20 @@ type StatusInfo struct {
 	ListenAddr   string         `json:"listen_addr"`
 	Servers      []ServerStatus `json:"servers"`
 	CostTracking *CostTracking  `json:"cost_tracking,omitempty"`
+	// HTTP describes the exposure of a running Streamable HTTP front end
+	// (`server run --http`, issue #309), for `doctor security`.
+	HTTP *HTTPFrontendStatus `json:"http,omitempty"`
+}
+
+// HTTPFrontendStatus is the exposure of a Streamable HTTP front end. It
+// never holds the token itself.
+type HTTPFrontendStatus struct {
+	URL            string   `json:"url"`
+	Loopback       bool     `json:"loopback"`
+	Auth           bool     `json:"auth"`
+	AllowedHosts   []string `json:"allowed_hosts,omitempty"`
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+	MaxSessions    int      `json:"max_sessions"`
 }
 
 // homeDir is the directory the status file lives under: $HOME when set
@@ -123,6 +137,14 @@ func (s *FileStatusStore) UpdateCostTracking(costTracking *CostTracking) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.info.CostTracking = costTracking
+	s.writeLocked()
+}
+
+// SetHTTPFrontend records the exposure of the Streamable HTTP front end.
+func (s *FileStatusStore) SetHTTPFrontend(h *HTTPFrontendStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.info.HTTP = h
 	s.writeLocked()
 }
 
