@@ -22,10 +22,11 @@ import (
 // This file holds the plumbing: building the binaries, an isolated
 // environment, and a pipelining JSON-RPC client over a child's stdio.
 
-// binaries are the two executables the harness drives.
+// binaries are the executables the harness drives.
 type binaries struct {
-	proxy   string // leanproxy-mcp, built from the repo root
-	catalog string // tests/harness/catalogmcp
+	proxy    string // leanproxy-mcp, built from the repo root
+	catalog  string // tests/harness/catalogmcp
+	codemode string // leanproxy-mcp built with -tags codemode (#325 spike)
 }
 
 // repoRoot is two levels above this package (tests/harness).
@@ -44,14 +45,15 @@ func buildBinaries(t testing.TB, dir string) binaries {
 	if err != nil {
 		t.Fatal("go toolchain not found")
 	}
-	b := binaries{proxy: filepath.Join(dir, "leanproxy-mcp"), catalog: filepath.Join(dir, "catalogmcp")}
-	for _, target := range []struct{ out, pkg string }{
-		{b.proxy, "."},
-		{b.catalog, "./tests/harness/catalogmcp"},
+	b := binaries{proxy: filepath.Join(dir, "leanproxy-mcp"), catalog: filepath.Join(dir, "catalogmcp"), codemode: filepath.Join(dir, "leanproxy-mcp-codemode")}
+	for _, target := range []struct{ out, pkg, tags string }{
+		{b.proxy, ".", ""},
+		{b.catalog, "./tests/harness/catalogmcp", ""},
+		{b.codemode, ".", "codemode"},
 	} {
 		// Same flags as the release build (Makefile LDFLAGS minus the
 		// version stamp), so the reported binary size is the shipped one.
-		cmd := exec.Command(goBin, "build", "-trimpath", "-ldflags=-s -w", "-o", target.out, target.pkg)
+		cmd := exec.Command(goBin, "build", "-trimpath", "-ldflags=-s -w", "-tags="+target.tags, "-o", target.out, target.pkg)
 		cmd.Dir = repoRoot(t)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("go build %s: %v\n%s", target.pkg, err, out)
