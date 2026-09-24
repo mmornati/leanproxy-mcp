@@ -148,6 +148,24 @@
 
 ## Added in v0.11
 
+- **`doctor security`: OWASP-MCP-Top-10-mapped local security report** ([#323](https://github.com/mmornati/leanproxy-mcp/issues/323), audit §2.3 / §6).
+  - **What.** `doctor security` grew, feature by feature, into loosely related sections (tool
+    pinning #310, per-tool policy #314, sandbox #312, HTTP front-end exposure #309), with no
+    single view of how exposed a setup actually is, and several Epic 20/21 features (redaction v2
+    #306, the injection guard v2 #315, marketplace integrity #313, the response governor
+    #319-#321, exposure mode #322) not reported at all.
+  - **Now.** The report is reorganized into one section per **OWASP MCP Top 10** category
+    (MCP01-MCP10), each check showing a status (✅/⚠️/❌), its evidence (names, counts and states
+    only — never a secret value) and, when it is not ✅, a one-line fix. It is local-only and
+    read-only: it reads the config and on-disk state (pin file, quarantine directory, token file
+    permissions) and, when a proxy is running, its live status file — never a network call.
+    `--json` prints the versioned, stable schema `leanproxy.doctor.security/v1` (documented in
+    [`docs/security.md`](docs/security.md#owasp-mcp-top-10-security-report-doctor-security-323));
+    `--markdown` prints a Markdown table per category. The exit code is non-zero when any check
+    is ❌, for a pre-commit hook or a CI job. The previous detailed sections (tool pinning,
+    per-tool policy, HTTP front end, sandbox) are still printed below the OWASP report, unchanged.
+  - See [`doctor security`](docs/commands.md#doctor-security---owasp-mcp-mapped-security-report-323).
+
 - **Exposure modes: work with native tool search** ([#322](https://github.com/mmornati/leanproxy-mcp/issues/322), audit §2 / §3).
   - **What.** Clients such as Claude Code (MCP tool search, on by default), the Anthropic and
     OpenAI APIs (`defer_loading`) and Cursor now handle large tool catalogs themselves; for them
@@ -537,6 +555,15 @@
 
 ## Fixed in v0.11
 
+- **`doctor security` decoded the whole config file as the injection block, so it always showed the default rules** ([#323](https://github.com/mmornati/leanproxy-mcp/issues/323), carried over from #315's PR).
+  It called `injection.LoadConfigFile(cfgPath)` directly on the proxy's own config path
+  (`leanproxy_servers.yaml`) instead of loading that config and reading its `injection:` block;
+  `injection.Config`'s YAML tags have no top-level wrapper, so decoding the whole file left every
+  field at its zero value (`enabled: false`, `threshold: 0`) and the report silently fell back to
+  the built-in default rules — even with a `request_policies` override configured. It now loads
+  the proxy config the same way every other `doctor security` section does and reads
+  `cfg.Injection`, so a configured `injection.request_policies` (or the legacy `policies` /
+  `action`) is reported correctly.
 - **A canceled HTTP/SSE call no longer tears down the upstream connection** ([#308](https://github.com/mmornati/leanproxy-mcp/issues/308)).
   The raw relay treated the error of a request whose caller gave up (a client cancel, a timeout) as a
   transport failure: it marked the server disconnected and reconnected — under every other call in flight

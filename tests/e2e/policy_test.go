@@ -244,8 +244,14 @@ func TestPolicy_Stdio(t *testing.T) {
 	if err != nil || !strings.Contains(string(out), "Listed:      no") || !strings.Contains(string(out), "Decision:    deny (policy.unknown_tools") {
 		t.Fatalf("policy check unknown: %v\n%s", err, out)
 	}
+	// doctor security exits non-zero whenever any OWASP check is ❌ (#323);
+	// this fixture has no injection: block, so MCP06 legitimately fails —
+	// only the detail section and exit code shape are asserted here.
 	out, err = exec.Command(e.proxyBin, "--config", cfg, "doctor", "security").CombinedOutput()
-	if err != nil || !strings.Contains(string(out), "## Per-Tool Policy") || !strings.Contains(string(out), `rules[1] (match "`+e.server+`.delete_*") -> deny`) {
+	if exitErr, ok := err.(*exec.ExitError); err != nil && (!ok || exitErr.ExitCode() != 1) {
+		t.Fatalf("doctor security: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "## Per-Tool Policy") || !strings.Contains(string(out), `rules[1] (match "`+e.server+`.delete_*") -> deny`) {
 		t.Fatalf("doctor security: %v\n%s", err, out)
 	}
 }

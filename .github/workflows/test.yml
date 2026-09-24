@@ -20,7 +20,20 @@ jobs:
           cache: true
 
       - name: Run tests
-        run: go test -v -race -timeout 5m -coverprofile=coverage.out ./...
+        shell: bash
+        run: |
+          set -o pipefail
+          go test -v -race -timeout 5m -coverprofile=coverage.out ./... 2>&1 | tee test-output.log
+
+      # The verbose log is tens of thousands of lines; repeat just the failures
+      # at the end so they are visible without scrolling the whole job log.
+      - name: Summarize test failures
+        if: failure()
+        shell: bash
+        run: |
+          echo "::group::Failed tests and packages"
+          grep -nE -B2 -A40 -e '^--- FAIL' -e '^FAIL' -e '^panic:' -e 'WARNING: DATA RACE' -e '\[(build|setup) failed\]' test-output.log | head -n 1500 || true
+          echo "::endgroup::"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4

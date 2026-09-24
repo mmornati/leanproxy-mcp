@@ -21,6 +21,118 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 | **Path Validation** | Prevents path traversal attacks on configuration files |
 | **Graceful Shutdown** | Ensures all goroutines are properly terminated |
 
+## OWASP MCP Top 10 Security Report (`doctor security`, #323)
+
+`leanproxy-mcp doctor security` is a local-only, read-only report of how
+exposed your MCP setup is, one section per **OWASP MCP Top 10** category.
+It reads only the config file and local on-disk state (pin file,
+quarantine directory, token file permissions) plus, when a proxy is
+running, its live status file; it never makes a network call and never
+prints a secret name's value, only names, counts and states. See
+[`doctor security`](./commands.md#doctor-security-owasp-mcp-mapped-security-report-323)
+for usage, flags (`--json`, `--markdown`) and full sample output.
+
+### OWASP mapping
+
+| Category | What it checks |
+|---|---|
+| MCP01 Secret Exposure | Redaction enabled; custom patterns compile; high-entropy detector; debug file logging |
+| MCP02 Excessive Privilege / Scope | Policy default; destructive-tool rules without `confirm`; `inherit_env: true`; cloud-credential env passthrough |
+| MCP03 Tool Poisoning / Rug Pull | Pinning mode; unapproved drift; description-scanner findings; invisible unicode |
+| MCP04 Supply Chain | Unpinned package versions (`npx -y pkg` with no `@version`); unverified marketplace installs; unsandboxed unverified servers |
+| MCP05 Command Injection | Stdio commands that invoke a shell (`sh -c`, `bash -c`, `cmd /c`, PowerShell `-Command`) |
+| MCP06 Intent-Flow Subversion | The [prompt-injection guard](#prompt-injection-protection)'s request and response risk-band policies |
+| MCP07 Broken AuthN/AuthZ | HTTP front-end exposure (#309); serve token file permissions; dashboard/metrics bind (#316, flag-only, reported when known) |
+| MCP08 Insufficient Audit / Telemetry | OpenTelemetry export configured; the per-tool policy audit log |
+| MCP09 Shadow Servers | MCP servers configured directly in a Claude/Cursor/VS Code/OpenCode config but not routed through LeanProxy, which bypasses every protection above |
+| MCP10 Excessive Context | The [response governor](#response-governor-spill-store-319) on/off; the [exposure mode](#exposure-modes-and-passthrough-322) |
+
+A check that genuinely cannot be evaluated without a running proxy (e.g.
+the `--log-level` flag of a future invocation, or a `serve
+--dashboard-bind` not yet started) is reported `ℹ️` (info), not `❌`: the
+exit code and the fail count only ever reflect a check that could actually
+be evaluated.
+
+### JSON schema (`--json`)
+
+The JSON form is `"schema": "leanproxy.doctor.security/v1"`, versioned —
+a breaking change to the shape below bumps the version suffix:
+
+```json
+{
+  "schema": "leanproxy.doctor.security/v1",
+  "generated_at": "2026-09-24T07:27:20Z",
+  "config_path": "/home/me/.config/leanproxy_servers.yaml",
+  "categories": [
+    {
+      "id": "MCP01",
+      "name": "Secret Exposure",
+      "checks": [
+        {
+          "id": "redaction_enabled",
+          "title": "Response redaction (bouncer)",
+          "status": "ok",
+          "evidence": "bouncer.enabled: true ...",
+          "fix": "..."
+        }
+      ]
+    }
+  ],
+  "summary": { "ok": 12, "warn": 5, "fail": 1, "info": 5 }
+}
+```
+
+`status` is one of `ok`, `warn`, `fail`, `info`. The exit code is non-zero
+when `summary.fail > 0`, for a pre-commit hook or a CI job:
+
+```bash
+leanproxy-mcp doctor security --json > security-report.json || exit 1
+```
+
+### Threat model
+
+**What LeanProxy protects against**, when its MCP servers are routed
+through it (see MCP09 above — a server configured directly in a client is
+not):
+
+- a compromised or malicious upstream MCP server exfiltrating secrets in
+  its tool output (redaction, MCP01);
+- an upstream tool description or a tool result trying to steer the
+  model's next actions (the injection guard and tool pinning's
+  description scanner, MCP03/MCP06);
+- a client (or a compromised extension acting as one) calling a
+  destructive tool without the user's knowledge (per-tool policy, MCP02);
+- an upstream silently changing a previously-reviewed tool's identity or
+  behavior ("rug pull") between calls (tool pinning, MCP03);
+- a browser page on the same machine reaching a local HTTP/dashboard/metrics
+  endpoint via DNS rebinding (Host/Origin validation, MCP07);
+- an unpinned or unsandboxed third-party package (`npx -y ...`) running
+  with the full privileges of the user who started the proxy (sandboxing,
+  MCP04);
+- a very large tool result silently filling the model's context window
+  (the response governor, MCP10).
+
+**What it does not protect against:**
+
+- a server configured directly in an IDE/client config and never imported
+  into LeanProxy (MCP09 flags this, but the traffic itself is never
+  mediated);
+- a compromise of the machine LeanProxy itself runs on (it is a local
+  process with the same privileges as any other tool the user runs);
+- a vulnerability in the upstream MCP server's own implementation that
+  LeanProxy's checks do not model (e.g. an RCE in its dependency, not
+  expressed through tool descriptions or output text);
+- a model that acts on a still-allowed tool's legitimate output in a way
+  the user did not want — LeanProxy shapes what reaches the model and
+  what the model may call, not what the model decides to do with an
+  allowed result.
+
+**Trust boundaries:** LeanProxy's own config file and pin file are trusted
+(anyone who can edit them can already reconfigure the proxy); everything
+read from an upstream MCP server (tool descriptions, tool results,
+resources, prompts) is untrusted; everything a client sends is untrusted
+until the per-tool policy and the injection guard have evaluated it.
+
 ## Least-Privilege Child Environment (#311)
 
 **Breaking change.** Every stdio MCP server used to inherit the proxy's
