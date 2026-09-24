@@ -46,10 +46,10 @@ type Config struct {
 	Tools []string `yaml:"tools"`
 
 	// HonorAnnotations additionally allows tools whose upstream MCP
-	// annotations mark them readOnlyHint:true AND idempotentHint:true.
-	// Tool annotations are not yet plumbed through the protocol (Epic 20);
-	// until that lands this flag is accepted for forward compatibility but
-	// has no effect — only the explicit Tools allowlist above applies.
+	// annotations (as the proxy's tool cache holds them) mark them
+	// readOnlyHint:true AND idempotentHint:true, and not
+	// destructiveHint:true. pkg/mcp's ResponseCache applies it (Allowed
+	// here is the allowlist alone).
 	HonorAnnotations bool `yaml:"honor_annotations"`
 }
 
@@ -79,10 +79,8 @@ func (c *Config) Normalize() error {
 
 // Allowed reports whether identity ("server.tool") may be cached under the
 // explicit allowlist. Entries match exactly or as a path.Match glob (e.g.
-// "github.get_*"). HonorAnnotations is intentionally not consulted here: tool
-// annotations are not yet available (see the field doc), so honoring it would
-// silently cache nothing extra today — callers should not expect it to widen
-// matching until Epic 20 plumbs annotations through.
+// "github.get_*"). HonorAnnotations is not consulted here: this package does
+// not see tool definitions; pkg/mcp's ResponseCache checks the annotations.
 func (c *Config) Allowed(identity string) bool {
 	if c == nil || identity == "" {
 		return false

@@ -146,9 +146,8 @@ func (g *ToolPins) Middleware() Middleware {
 
 // target resolves the upstream server and tool a request would call.
 func (g *ToolPins) target(p *toolpin.Pinner, req *Request) (server, tool string, ok bool) {
-	server, tool, _, isCall := extractToolCall(req)
-	switch {
-	case isCall && server != "":
+	server, tool, _, invoke, ok := callTarget(req, func() []string { return g.serverNames(p) })
+	if ok && invoke {
 		// invoke_tool; it tolerates a repeated server prefix
 		// ("github_create_issue" on server "github").
 		if st, _ := p.Check(server, tool); st == toolpin.StatusUnknown {
@@ -156,24 +155,8 @@ func (g *ToolPins) target(p *toolpin.Pinner, req *Request) (server, tool string,
 				tool = rest
 			}
 		}
-		return server, tool, true
-	case isCall:
-		if GetToolDefinition(tool) != nil {
-			return "", "", false // a gateway tool
-		}
-		s, t, err := SplitToolName(tool, g.serverNames(p))
-		return s, t, err == nil
 	}
-	// serve's namespaced tool methods ("server.tool").
-	switch req.Method {
-	case MethodInitialize, MethodPing, MethodShutdown, "list_tools", "list_servers", "search_tools":
-		return "", "", false
-	}
-	if req.Method == "" || strings.Contains(req.Method, "/") {
-		return "", "", false
-	}
-	s, t, err := SplitToolName(req.Method, g.serverNames(p))
-	return s, t, err == nil
+	return server, tool, ok
 }
 
 // SetToolPins installs the tool pinning state the handler consults (nil:

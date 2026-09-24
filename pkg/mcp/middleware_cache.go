@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strings"
+	"sync/atomic"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/responsecache"
 )
@@ -40,6 +42,17 @@ import (
 type ResponseCache struct {
 	cfg   *responsecache.Config
 	store *responsecache.Cache
+	// tools is the handler whose cached tool annotations honor_annotations
+	// consults (nil: only the allowlist applies).
+	tools atomic.Pointer[Handler]
+}
+
+// SetToolSource gives the cache the handler whose tool lists (and their
+// annotations) response_cache.honor_annotations consults.
+func (rc *ResponseCache) SetToolSource(h *Handler) {
+	if rc != nil {
+		rc.tools.Store(h)
+	}
 }
 
 // NewResponseCache builds a ResponseCache from cfg (the `response_cache:`
@@ -72,8 +85,53 @@ func (rc *ResponseCache) Enabled() bool {
 // idempotent read tools) permits caching the tool identified by identity
 // ("server.tool"). Other caches, e.g. `serve`'s semantic cache, use it so
 // that every cache honors the same policy.
+//
+// With honor_annotations, a tool whose cached definition declares
+// readOnlyHint: true and idempotentHint: true (and not destructiveHint:
+// true) is cacheable too.
 func (rc *ResponseCache) Allows(identity string) bool {
-	return rc.Enabled() && identity != "" && rc.cfg.Allowed(identity)
+	return rc.Enabled() && identity != "" && rc.allowed("", identity)
+}
+
+// allowed applies the cache policy to a call of tool on server (server ""
+// when tool is a namespaced name).
+func (rc *ResponseCache) allowed(server, tool string) bool {
+	if rc.cfg.Allowed(cacheIdentity(server, tool)) {
+		return true
+	}
+	return rc.cfg.HonorAnnotations && rc.annotatedCacheable(server, tool)
+}
+
+// annotatedCacheable reports whether the tool's upstream annotations
+// declare it a read-only, idempotent (and not destructive) tool.
+func (rc *ResponseCache) annotatedCacheable(server, tool string) bool {
+	h := rc.tools.Load()
+	if h == nil {
+		return false
+	}
+	if server == "" {
+		s, t, err := SplitToolName(tool, h.pool.ListServers())
+		if err != nil {
+			return false
+		}
+		server, tool = s, t
+	}
+	t, ok := h.cachedTool(server, tool)
+	if !ok {
+		// invoke_tool tolerates a repeated server prefix.
+		if rest, cut := strings.CutPrefix(tool, server+"_"); cut && rest != "" {
+			t, ok = h.cachedTool(server, rest)
+		}
+	}
+	return ok && cacheableByAnnotations(t)
+}
+
+// cacheableByAnnotations: readOnlyHint and idempotentHint both declared
+// true, destructiveHint not declared true.
+func cacheableByAnnotations(t Tool) bool {
+	a := t.Annotations
+	return a != nil && t.ReadOnly() && a.IdempotentHint != nil && *a.IdempotentHint &&
+		(a.DestructiveHint == nil || !*a.DestructiveHint)
 }
 
 // Stats returns the underlying store's counters, or a zero Stats when the
@@ -99,7 +157,7 @@ func (rc *ResponseCache) Middleware() Middleware {
 				return next(ctx, req)
 			}
 			identity := cacheIdentity(server, tool)
-			if !rc.cfg.Allowed(identity) {
+			if !rc.allowed(server, tool) {
 				return next(ctx, req)
 			}
 

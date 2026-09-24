@@ -101,7 +101,7 @@ func instruments() *instrumentSet {
 		inst.cacheMisses, _ = m.Int64Counter("leanproxy.cache.misses",
 			metric.WithDescription("Response cache misses."))
 		inst.policyDecisions, _ = m.Int64Counter("leanproxy.policy.decisions",
-			metric.WithDescription("Policy engine decisions, by outcome."))
+			metric.WithDescription("Per-tool policy decisions (#314), by outcome (allow, deny, deny_unknown_tool, confirm_approved, confirm_approved_session, confirm_cached, confirm_denied, confirm_unavailable, confirm_timeout) and server."))
 		inst.rateLimitWaits, _ = m.Int64Counter("leanproxy.ratelimit.waits",
 			metric.WithDescription("Requests that waited on a rate limiter."))
 		inst.toolPinEvents, _ = m.Int64Counter("leanproxy.tool_pin.events",
@@ -212,11 +212,13 @@ func RecordCacheMiss(ctx context.Context) {
 	instruments().cacheMisses.Add(ctx, 1)
 }
 
-// RecordPolicyDecision increments the policy-decision counter for outcome
-// (e.g. "allow", "deny").
-func RecordPolicyDecision(ctx context.Context, outcome string) {
+// RecordPolicyDecision increments the policy-decision counter (#314) for
+// outcome (e.g. "allow", "deny", "confirm_approved") and the upstream
+// server. Only the outcome and the server name are recorded, never the
+// tool's arguments.
+func RecordPolicyDecision(ctx context.Context, outcome, server string) {
 	counters.policyDecisions.Add(1)
-	instruments().policyDecisions.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+	instruments().policyDecisions.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome), attrMCPServerName.String(server)))
 }
 
 // RecordRateLimitWait increments the rate-limit-wait counter.

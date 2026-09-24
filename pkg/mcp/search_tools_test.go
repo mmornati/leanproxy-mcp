@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func searchTestHandler(t *testing.T) (*Handler, *mockPool) {
+func searchTestHandler(t testing.TB) (*Handler, *mockPool) {
 	t.Helper()
 	mp := newMockPool()
 	mp.SetServerState("github", pool.StateIdle)

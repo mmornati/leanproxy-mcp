@@ -96,6 +96,9 @@ type Handler struct {
 
 	// pins is the tool pinning state (see toolpins.go); nil: disabled.
 	pins atomic.Pointer[ToolPins]
+
+	// policy is the per-tool policy (see middleware_policy.go); nil: none.
+	policy atomic.Pointer[Policy]
 }
 
 type AggregatedManifest struct {
@@ -541,6 +544,17 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 	}
 	h.toolCache.mu.RUnlock()
 	tools, pinNotice := h.pinView(serverName, tools)
+	// Per-tool policy (#314): denied tools are hidden, the ones that need
+	// confirmation are marked [confirm].
+	tools, confirm, policyHidden := h.policyView(serverName, tools)
+	if policyHidden > 0 {
+		note := policyHiddenNote(policyHidden)
+		if pinNotice != "" {
+			pinNotice += "\n" + note
+		} else {
+			pinNotice = note
+		}
+	}
 
 	if len(tools) == 0 {
 		text := fmt.Sprintf("No tools available on server '%s'. The server may be unavailable or have no tools.", serverName)
@@ -565,7 +579,7 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 
 	formattedTools := make([]string, 0, len(tools))
 	for _, tool := range tools {
-		formatted := formatTool(tool, serverName, maxDescChars)
+		formatted := formatToolMarked(tool, serverName, maxDescChars, confirm[tool.Name])
 		formattedTools = append(formattedTools, formatted)
 	}
 
@@ -579,7 +593,7 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 	if h.sessionFor(ctx).AtLeast(ProtocolVersion20250618) {
 		structured = make([]StructuredTool, 0, len(tools))
 		for _, tool := range tools {
-			structured = append(structured, StructuredTool{Server: serverName, Tool: tool})
+			structured = append(structured, StructuredTool{Server: serverName, Tool: tool, Policy: policyMark(confirm[tool.Name])})
 		}
 	}
 	return toolListingResult(req.ID, text, structured), nil
@@ -592,6 +606,17 @@ func (h *Handler) handleListTools(ctx context.Context, req *Request, params Tool
 type StructuredTool struct {
 	Server string `json:"server"`
 	Tool   Tool   `json:"tool"`
+	// Policy is "confirm" when the per-tool policy (#314) asks the user
+	// before each call to this tool.
+	Policy string `json:"policy,omitempty"`
+}
+
+// policyMark is StructuredTool.Policy for a tool that needs confirmation.
+func policyMark(confirm bool) string {
+	if confirm {
+		return "confirm"
+	}
+	return ""
 }
 
 // toolListingResult is a tools/call result carrying the compact text
@@ -1025,8 +1050,18 @@ func formatToolLine(serverName, toolName, tags, description string, required, op
 }
 
 func formatTool(tool Tool, serverName string, maxDescChars int) string {
+	return formatToolMarked(tool, serverName, maxDescChars, false)
+}
+
+// formatToolMarked is formatTool with the "[confirm]" marker of a tool the
+// per-tool policy (#314) asks the user about before each call.
+func formatToolMarked(tool Tool, serverName string, maxDescChars int, confirm bool) string {
 	required, optional := parseInputSchema(tool.InputSchema)
-	return formatToolLine(serverName, tool.Name, annotationTags(tool), tool.Description, required, optional, maxDescChars)
+	tags := annotationTags(tool)
+	if confirm {
+		tags = strings.TrimSpace(tags + " [confirm]")
+	}
+	return formatToolLine(serverName, tool.Name, tags, tool.Description, required, optional, maxDescChars)
 }
 
 // annotationTags is the compact text form of a tool's behavior hints shown
