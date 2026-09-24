@@ -1,7 +1,7 @@
 # MkDocs configuration for LeanProxy-MCP documentation
 
 site_name: LeanProxy-MCP
-site_description: "LeanProxy-MCP - Lightweight Token Firewall for MCP"
+site_description: "The local token firewall for MCP: cuts the tokens tool schemas and results cost, and redacts, screens and pins every call. One Go binary; nothing leaves your machine."
 site_author: "Massimo Mornati"
 site_url: https://mmornati.github.io/leanproxy-mcp
 
@@ -16,46 +16,87 @@ copyright: "Copyright &copy; 2026 Massimo Mornati"
 # Theme
 theme:
   name: material
+  custom_dir: overrides
+  logo: assets/logo.svg
+  favicon: assets/favicon.svg
   palette:
-    primary: indigo
-    accent: indigo
-  font:
-    static: true
+    - media: "(prefers-color-scheme: light)"
+      scheme: xray
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: xray-dark
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  font: false
   icon:
     repo: fontawesome/brands/github
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - navigation.instant
+    - navigation.instant.progress
+    - navigation.tracking
+    - toc.follow
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+    - content.action.edit
 
 # Navigation
 nav:
   - Home: index.md
-  - Installation: installation.md
-  - Quick Start: quickstart.md
-  - Commands Reference: commands.md
-  - Configuration: configuration.md
-  - Security: security.md
-  - Web Dashboard: dashboard.md
-  - Observability (OpenTelemetry): observability.md
-  - IDE Extensions: extensions.md
-  - Architecture: architecture.md
-  - Benchmark Results: benchmark-results.md
-  - Savings Report: savings-report.md
-  - Design:
+  - Get started:
+      - Why LeanProxy: why-leanproxy.md
+      - Installation: installation.md
+      - Quick Start: quickstart.md
+  - Guides:
+      - Configuration: configuration.md
+      - Security: security.md
+      - Savings Report: savings-report.md
+      - Web Dashboard: dashboard.md
+      - Observability (OpenTelemetry): observability.md
+      - IDE Extensions: extensions.md
+      - Graceful Shutdown: shutdown.md
+  - Reference:
+      - Commands: commands.md
+      - Architecture: architecture.md
+      - Benchmark Results: benchmark-results.md
       - Code Mode (spike): design/code-mode.md
-  - Graceful Shutdown: shutdown.md
-  - Troubleshooting: troubleshooting.md
-  - FAQ: faq.md
+  - Help:
+      - Troubleshooting: troubleshooting.md
+      - FAQ: faq.md
+
+not_in_nav: |
+  audit/*
 
 # Extensions
 markdown_extensions:
   - attr_list
-  - codehilite
   - toc:
       permalink: true
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
-  - pymdownx.highlight
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - tables
+  - md_in_html
+  - def_list
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid
@@ -66,7 +107,6 @@ markdown_extensions:
 plugins:
   - search:
       separator: '[\s\-\.]+'
-  - mermaid2
 
 # Extra
 extra:
@@ -76,3 +116,7 @@ extra:
 
 extra_css:
   - stylesheets/extra.css
+  - stylesheets/home.css
+
+extra_javascript:
+  - javascripts/home.js
