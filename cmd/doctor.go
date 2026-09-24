@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -44,9 +45,18 @@ var doctorEnvCmd = &cobra.Command{
 	},
 }
 
+var doctorSandboxCmd = &cobra.Command{
+	Use:   "sandbox",
+	Short: "Show, per configured stdio server, its sandbox (container isolation) status (#312)",
+	Run: func(cmd *cobra.Command, args []string) {
+		runSandboxDiagnostic()
+	},
+}
+
 func init() {
 	doctorCmd.AddCommand(doctorSecurityCmd)
 	doctorCmd.AddCommand(doctorEnvCmd)
+	doctorCmd.AddCommand(doctorSandboxCmd)
 	doctorCmd.Flags().BoolVar(&securityCheck, "security", false, "Show security diagnostics")
 	RootCmd.AddCommand(doctorCmd)
 }
@@ -126,6 +136,9 @@ func runSecurityDiagnostic() {
 	fmt.Println()
 
 	printPolicyStatus(os.Stdout)
+	fmt.Println()
+
+	printSandboxStatus(os.Stdout)
 }
 
 // runEnvDiagnostic prints, per configured stdio server, the environment
@@ -184,6 +197,90 @@ func runEnvDiagnostic() {
 
 	if !found {
 		fmt.Println("(No stdio servers configured.)")
+	}
+}
+
+// runSandboxDiagnostic prints, per configured stdio server, whether it runs
+// sandboxed (container runtime, image, network) and whether the configured
+// runtime binary is actually available on PATH (#312).
+func runSandboxDiagnostic() {
+	cfgPath := configDir()
+	if cfgPath == "" {
+		fmt.Println("doctor sandbox: cannot determine config path")
+		os.Exit(1)
+	}
+
+	cfg, err := migrate.LoadConfig(context.Background(), cfgPath)
+	if err != nil {
+		fmt.Printf("doctor sandbox: cannot load config %q: %v\n", cfgPath, err)
+		os.Exit(1)
+	}
+
+	fmt.Println("# Sandbox Status (#312)")
+	fmt.Println()
+
+	printSandboxStatusForConfig(os.Stdout, cfg)
+}
+
+// printSandboxStatus is the `doctor security` summary: same content as
+// `doctor sandbox`, folded into the combined diagnostic.
+func printSandboxStatus(w io.Writer) {
+	fmt.Fprintln(w, "## Sandbox Status")
+	fmt.Fprintln(w)
+
+	cfgPath := configDir()
+	if cfgPath == "" {
+		fmt.Fprintln(w, "  (cannot determine config path)")
+		return
+	}
+	cfg, err := migrate.LoadConfig(context.Background(), cfgPath)
+	if err != nil {
+		fmt.Fprintf(w, "  (cannot load config %q: %v)\n", cfgPath, err)
+		return
+	}
+	printSandboxStatusForConfig(w, cfg)
+}
+
+func printSandboxStatusForConfig(w io.Writer, cfg *migrate.Config) {
+	if cfg == nil || len(cfg.Servers) == 0 {
+		fmt.Fprintln(w, "  (no servers configured)")
+		return
+	}
+
+	found := false
+	checked := map[string]error{}
+	for _, server := range cfg.Servers {
+		if server == nil || server.Transport != migrate.TransportStdio || server.Stdio == nil {
+			continue
+		}
+		found = true
+
+		sb := server.Stdio.Sandbox
+		if sb == nil || sb.Runtime == "" || sb.Runtime == "none" {
+			fmt.Fprintf(w, "  %-24s unsandboxed\n", server.Name)
+			continue
+		}
+
+		if _, ok := checked[sb.Runtime]; !ok {
+			checked[sb.Runtime] = pool.CheckSandboxRuntime(sb.Runtime)
+		}
+		status := "available"
+		if err := checked[sb.Runtime]; err != nil {
+			status = "MISSING (" + err.Error() + ")"
+		}
+		image := sb.Image
+		if image == "" {
+			image, _ = migrate.InferSandboxImage(server.Stdio.Command)
+		}
+		network := sb.Network
+		if network == "" {
+			network = "none"
+		}
+		fmt.Fprintf(w, "  %-24s runtime=%s (%s) image=%s network=%s\n", server.Name, sb.Runtime, status, image, network)
+	}
+
+	if !found {
+		fmt.Fprintln(w, "  (no stdio servers configured)")
 	}
 }
 

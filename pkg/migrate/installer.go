@@ -144,6 +144,11 @@ type InstallOptions struct {
 	// previous enabled state instead of using this field, since the
 	// operator already made that call once.
 	Enabled bool
+
+	// Sandbox, when non-nil, is written as the installed stdio server's
+	// stdio.sandbox block (issue #312/#313's `--sandbox` flag). Ignored for
+	// a non-stdio transport.
+	Sandbox *SandboxConfig
 }
 
 // InstallResult captures the outcome of a successful Install call. It is
@@ -226,6 +231,9 @@ func (i *Installer) Install(ctx context.Context, entry CacheEntry, opts InstallO
 	}
 	enabled := opts.Enabled
 	sc.Enabled = &enabled
+	if opts.Sandbox != nil && sc.Stdio != nil {
+		sc.Stdio.Sandbox = opts.Sandbox
+	}
 
 	path := i.ConfigPath
 	if path == "" {
