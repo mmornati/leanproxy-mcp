@@ -512,7 +512,22 @@ What this says, honestly:
 - Calls are cheaper to write in passthrough (38 vs 50 tokens for the same
   `create_issue` call): no `invoke_tool` envelope.
 
-## 11. Known limits and follow-ups
+## 11. Auditable savings report (#324)
+
+`leanproxy-mcp report` (see [`docs/savings-report.md`](savings-report.md) and
+`docs/commands.md`) rebuilds a savings breakdown from the same real,
+running-pipeline counters this harness's own assertions read from — the
+response governor's `GovernorStats` (§7-§9) and the schema/discovery
+telemetry counters (§4, §10) — persisted to an offline JSONL store instead
+of only living in one process's memory. `tests/harness/savings_report_test.go`
+cross-checks `report --export json`'s totals against an independent,
+harness-measured baseline (an ungoverned proxy over the same calls) and
+asserts they agree within 1%, and that the report's mechanism breakdown
+sums to its total. Unlike every number in this document, `report`'s numbers
+are not benchmark averages over a synthetic catalog: they are the exact
+counters of whatever real session(s) produced them.
+
+## 12. Known limits and follow-ups
 
 - **`search_tools`.** The audit prototype estimated about −92% for Full
   Day; the harness measures −65.0%, because 3 of Full Day's 7 queries miss

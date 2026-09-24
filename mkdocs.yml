@@ -37,6 +37,7 @@ nav:
   - IDE Extensions: extensions.md
   - Architecture: architecture.md
   - Benchmark Results: benchmark-results.md
+  - Savings Report: savings-report.md
   - Graceful Shutdown: shutdown.md
   - Troubleshooting: troubleshooting.md
   - FAQ: faq.md

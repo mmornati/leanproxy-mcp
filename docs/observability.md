@@ -157,4 +157,11 @@ section counts them too (`governor_projections_total`,
 `governor_projection_tokens_saved_total`, `governor_dedup_hits_total`,
 `governor_dedup_tokens_saved_total`, `governor_summarizations_total`,
 `governor_summarization_tokens_saved_total`,
-`governor_summarization_fallbacks_total`).
+`governor_summarization_fallbacks_total`). The `telemetry` section also
+carries the schema/discovery counters issue #324's savings report reads:
+`schema_listings_total`, `schema_native_tokens_total`,
+`schema_sent_tokens_total` (router vs. passthrough `tools/list` size) and
+`discovery_calls_total`, `discovery_tokens_total` (`search_tools`/
+`list_tools`/`list_servers` result size). See
+[`docs/savings-report.md`](savings-report.md) for how `leanproxy-mcp
+report` turns these into an auditable savings report.
