@@ -182,6 +182,12 @@ func (s *SandboxConfig) Validate(serverName, command string) error {
 	if s.Runtime == "" || s.Runtime == "none" {
 		return nil
 	}
+	// The image is passed to "<runtime> run" as a positional argument ahead
+	// of the command, so a value starting with "-" would be parsed as a run
+	// option (e.g. --privileged) and break out of the sandbox.
+	if s.Image != "" && (strings.HasPrefix(s.Image, "-") || strings.ContainsAny(s.Image, " \t\r\n")) {
+		return fmt.Errorf("server %s: sandbox.image %q is not a valid image reference", serverName, s.Image)
+	}
 	if s.Image == "" {
 		if _, ok := InferSandboxImage(command); !ok {
 			return fmt.Errorf("server %s: sandbox.image is required (no default image can be inferred for command %q)", serverName, command)
@@ -195,6 +201,15 @@ func (s *SandboxConfig) Validate(serverName, command string) error {
 	for i, m := range s.Mounts {
 		if strings.TrimSpace(m.Host) == "" || strings.TrimSpace(m.Container) == "" {
 			return fmt.Errorf("server %s: sandbox.mounts[%d] requires both host and container", serverName, i)
+		}
+		// Mounts become "-v host:container[:ro]". A ":" or "," in either path
+		// would inject extra volume options (e.g. a writable or propagated
+		// mount), and a relative host path is treated as a named volume
+		// rather than a bind mount, so require clean absolute paths.
+		for _, p := range []struct{ field, path string }{{"host", m.Host}, {"container", m.Container}} {
+			if !strings.HasPrefix(p.path, "/") || strings.ContainsAny(p.path, ":,\n\r") {
+				return fmt.Errorf("server %s: sandbox.mounts[%d].%s %q must be an absolute path without ':' or ','", serverName, i, p.field, p.path)
+			}
 		}
 	}
 	if s.Memory != "" && !sandboxMemoryPattern.MatchString(s.Memory) {

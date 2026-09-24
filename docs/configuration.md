@@ -219,7 +219,7 @@ servers:
 | `servers[].stdio.sandbox.runtime` | string | `none` | `docker`, `podman`, or `none` (unsandboxed). A configured runtime binary that is missing from `PATH` fails that server's start with a clear error; it is never silently run unsandboxed. |
 | `servers[].stdio.sandbox.image` | string | inferred | The container image. Required unless the command is `npx`/`npm`/`node` (defaults to `node:22-alpine`) or `uvx`/`uv`/`python`/`python3` (defaults to `ghcr.io/astral-sh/uv:python3.12-alpine`). |
 | `servers[].stdio.sandbox.network` | string | `none` | `none`, `bridge`, or `host`. |
-| `servers[].stdio.sandbox.mounts` | list | none | Explicit host↔container bind mounts: `host`, `container`, and optional `read_only` (default `false`). No mounts by default — the container gets no host filesystem access beyond its own read-only root and a `/tmp` tmpfs. |
+| `servers[].stdio.sandbox.mounts` | list | none | Explicit host↔container bind mounts: `host`, `container`, and optional `read_only` (default `false`). Both paths must be absolute and must not contain `:` or `,` (they are passed as `-v host:container[:ro]`). No mounts by default — the container gets no host filesystem access beyond its own read-only root and a `/tmp` tmpfs. |
 | `servers[].stdio.sandbox.memory` | string | none (runtime default) | A Docker/Podman memory limit, e.g. `512m`, `1g`. |
 | `servers[].stdio.sandbox.cpus` | string | none (runtime default) | A Docker/Podman CPU limit, e.g. `1`, `0.5`. |
 | `servers[].stdio.sandbox.cache_volume` | bool | `false` | Mounts a named volume for `npx`/`npm`/`node`'s or `uvx`/`uv`'s package cache, so repeated starts do not re-download packages. No effect for other commands. |
