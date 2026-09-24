@@ -79,6 +79,28 @@ func TestCLI_VersionCommand(t *testing.T) {
 	}
 }
 
+// TestCLI_NoCompletionRegistrationNoise is a regression test: every CLI run
+// used to print "completion: failed to register completion for --X: ..."
+// on stderr, because registerCustomCompletions(RootCmd) ran from an init()
+// in completion.go, which (by Go's filename-ordered init() rule) executed
+// before root.go's init() had defined RootCmd's persistent flags, and also
+// registered completions for flags ("socket-path", "registry-url",
+// "token-uri") that no command in this CLI defines at all.
+func TestCLI_NoCompletionRegistrationNoise(t *testing.T) {
+	if !binaryAvailable() {
+		t.Skip("Binary not in tests/e2e/")
+	}
+
+	for _, args := range [][]string{{"--help"}, {"version"}} {
+		_, stderr, _ := runBinary(args...)
+		for _, line := range strings.Split(stderr, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "completion:") {
+				t.Errorf("leanproxy-mcp %v printed unexpected completion noise on stderr: %q", args, line)
+			}
+		}
+	}
+}
+
 func TestCLI_InvalidCommand(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
