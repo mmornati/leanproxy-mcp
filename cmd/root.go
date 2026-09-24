@@ -29,6 +29,14 @@ var GlobalConfigPath string
 var DryRunEnabled bool
 
 func Execute() error {
+	// Registered here rather than in an init() in completion.go: Go runs a
+	// package's init() functions in filename order, and "completion.go"
+	// sorts before "root.go", so registering flag completions from an
+	// init() there ran before the persistent flags below existed on
+	// RootCmd. By the time Execute is called, every package init() (in
+	// this file and every other) has already run, so the flags are
+	// guaranteed to exist.
+	registerCustomCompletions(RootCmd)
 	return RootCmd.Execute()
 }
 

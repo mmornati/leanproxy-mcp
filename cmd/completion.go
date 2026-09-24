@@ -184,6 +184,19 @@ func registerFlagCompletion(cmd *cobra.Command, flag string, fn func(cmd *cobra.
 	}
 }
 
+// registerCustomCompletions wires up completion functions for RootCmd's own
+// persistent flags. It must run only after those flags have been defined
+// (see the call in root.go's Execute, not an init() here): Go runs init()
+// functions across files in a package in filename order, and
+// "completion.go" sorts before "root.go", so calling this from an init()
+// in this file registered completions before the "config"/"log-level"
+// flags existed on RootCmd, which cobra reports as the flag "not existing".
+//
+// completeSocketPath, completeRegistryURL and completeTokenURI are kept as
+// standalone helpers (see completion_test.go) but are intentionally not
+// wired up here: no command in this CLI defines "socket-path",
+// "registry-url" or "token-uri" flags, so registering completions for them
+// would always fail the same way.
 func registerCustomCompletions(cmd *cobra.Command) {
 	registerFlagCompletion(cmd, "config", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeConfigPath(toComplete), cobra.ShellCompDirectiveDefault
@@ -192,20 +205,4 @@ func registerCustomCompletions(cmd *cobra.Command) {
 	registerFlagCompletion(cmd, "log-level", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		return completeLogLevel(toComplete), cobra.ShellCompDirectiveDefault
 	})
-
-	registerFlagCompletion(cmd, "socket-path", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return completeSocketPath(toComplete), cobra.ShellCompDirectiveDefault
-	})
-
-	registerFlagCompletion(cmd, "registry-url", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return completeRegistryURL(toComplete), cobra.ShellCompDirectiveDefault
-	})
-
-	registerFlagCompletion(cmd, "token-uri", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return completeTokenURI(toComplete), cobra.ShellCompDirectiveDefault
-	})
-}
-
-func init() {
-	registerCustomCompletions(RootCmd)
 }

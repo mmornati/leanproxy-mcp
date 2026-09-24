@@ -14,22 +14,29 @@ import (
 // Acceptance: sync writes the index to ~/.leanproxy/registry/index.json
 // and exits 0. Network failure should print retry guidance and preserve the
 // existing cache (covered by the unit tests; this E2E verifies the happy path).
+//
+// This test drives the binary against a local fake "official MCP Registry"
+// (see fakeOfficialRegistry in marketplace_integrity_test.go), never the
+// real network, and points HOME at a temp dir so it never reads or writes
+// an ambient ~/.leanproxy cache.
 
 func TestStory_11_1_MarketplaceSync_WritesCache(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("failed to get home: %v", err)
-	}
+	registry := fakeOfficialRegistry(t)
+	defer registry.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("LEANPROXY_MCP_REGISTRY_URL", registry.URL)
 
 	stdout, stderr, exitCode := runBinary("marketplace", "sync")
 	t.Logf("marketplace sync: exit=%d stdout=%q stderr=%q", exitCode, stdout, stderr)
 
 	if exitCode != 0 {
-		t.Skipf("marketplace sync failed (likely no network in this env): %s", stderr)
+		t.Fatalf("marketplace sync against fake registry failed: %s", stderr)
 	}
 
 	cachePath := filepath.Join(home, ".leanproxy", "registry", "index.json")
@@ -60,6 +67,11 @@ servers: []
 `
 	writeFile(t, configPath, original)
 
+	// Isolate HOME so this never reads an ambient ~/.leanproxy registry
+	// cache left over from a real sync; the registry cache here is
+	// guaranteed empty.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("LEANPROXY_CONFIG", configPath)
 
 	stdout, stderr, exitCode := runBinary("add", "definitely-not-a-real-server-xyz-12345", "--dry-run")
@@ -75,14 +87,11 @@ servers: []
 	}
 
 	combined := strings.ToLower(stdout + stderr)
-	// Either "registry cache is empty" (offline env) or "not found" / "similar"
-	// (online env) is a valid error for an unknown server id.
-	hasRegistryError := strings.Contains(combined, "registry cache is empty")
-	hasUnknownError := strings.Contains(combined, "not found") ||
-		strings.Contains(combined, "similar") ||
-		strings.Contains(combined, "unknown")
-	if !hasRegistryError && !hasUnknownError {
-		t.Errorf("expected registry or unknown-server error, got:\nstdout=%s\nstderr=%s", stdout, stderr)
+	// With HOME isolated to a fresh temp dir, the registry cache is
+	// guaranteed empty, so this always hits the "registry cache is empty"
+	// path for an unknown server id.
+	if !strings.Contains(combined, "registry cache is empty") {
+		t.Errorf("expected registry-cache-empty error, got:\nstdout=%s\nstderr=%s", stdout, stderr)
 	}
 }
 
@@ -97,6 +106,12 @@ func TestStory_11_2_AddDryRun_NoFileMutation(t *testing.T) {
 servers: []
 `
 	writeFile(t, configPath, original)
+
+	// Isolate HOME so this never resolves "github" against an ambient
+	// ~/.leanproxy registry cache (which could in turn reach out to the
+	// real network while resolving the package).
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("LEANPROXY_CONFIG", configPath)
 
 	_, _, _ = runBinary("add", "github", "--dry-run", "--i-understand-the-risks")
@@ -111,24 +126,45 @@ servers: []
 // US: As a developer, I want `leanproxy marketplace search <query>` to display
 // trust score (0-100), last release, open issues, downloads, and estimated
 // tokens/turn so I can pick low-risk servers.
+//
+// This test used to run against whatever registry state happened to be
+// ambient (a real `marketplace sync` from an earlier run, or none at all),
+// which made it flake and behave differently across sandboxes and CI. It's
+// now driven against a local fake "official MCP Registry" (see
+// fakeOfficialRegistry in marketplace_integrity_test.go), with HOME pointed
+// at a temp dir, so the cache is deterministic and the assertions always run.
 
 func TestStory_11_3_MarketplaceSearch_ColumnsPresent(t *testing.T) {
 	if !binaryAvailable() {
 		t.Skip("Binary not in tests/e2e/")
 	}
 
-	stdout, stderr, exitCode := runBinary("marketplace", "search", "github")
-	t.Logf("marketplace search github: exit=%d stdout=%q stderr=%q", exitCode, stdout, stderr)
+	registry := fakeOfficialRegistry(t)
+	defer registry.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("LEANPROXY_MCP_REGISTRY_URL", registry.URL)
+
+	if _, stderr, exitCode := runBinary("marketplace", "sync"); exitCode != 0 {
+		t.Fatalf("marketplace sync against fake registry failed: %s", stderr)
+	}
+
+	stdout, stderr, exitCode := runBinary("marketplace", "search", "weather")
+	t.Logf("marketplace search weather: exit=%d stdout=%q stderr=%q", exitCode, stdout, stderr)
 
 	if exitCode != 0 {
-		t.Skipf("marketplace search failed (likely empty registry or no network in this env): %s", stderr)
+		t.Fatalf("marketplace search failed: %s", stderr)
 	}
 
 	if strings.Contains(stdout, "Registry cache is empty") {
-		t.Skip("registry cache is empty; skipping column-presence assertion")
+		t.Fatalf("expected a populated registry cache after sync, got:\n%s", stdout)
 	}
 
 	low := strings.ToLower(stdout)
+	if !strings.Contains(low, "weather") {
+		t.Errorf("expected the fake registry's entry in search results, got:\n%s", stdout)
+	}
 	for _, col := range []string{"trust", "downloads"} {
 		if !strings.Contains(low, col) {
 			t.Errorf("marketplace search output missing column %q, got:\n%s", col, stdout)
