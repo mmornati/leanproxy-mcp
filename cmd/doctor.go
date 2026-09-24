@@ -21,8 +21,7 @@ var doctorCmd = &cobra.Command{
 	Short: "Run diagnostic checks on the leanproxy installation",
 	Run: func(cmd *cobra.Command, args []string) {
 		if securityCheck {
-			runSecurityDiagnostic()
-			return
+			os.Exit(runSecurityDiagnostic(os.Stdout, doctorSecurityFlags.jsonOut, doctorSecurityFlags.markdownOut))
 		}
 		_ = cmd.Help()
 	},
@@ -30,11 +29,16 @@ var doctorCmd = &cobra.Command{
 
 var securityCheck bool
 
+var doctorSecurityFlags struct {
+	jsonOut     bool
+	markdownOut bool
+}
+
 var doctorSecurityCmd = &cobra.Command{
 	Use:   "security",
-	Short: "Show injection security policy, quarantine, tool pinning and per-tool policy status",
+	Short: "OWASP-MCP-mapped local security report (redaction, injection guard, policy, tool pinning, sandbox, exposure, ...)",
 	Run: func(cmd *cobra.Command, args []string) {
-		runSecurityDiagnostic()
+		os.Exit(runSecurityDiagnostic(os.Stdout, doctorSecurityFlags.jsonOut, doctorSecurityFlags.markdownOut))
 	},
 }
 
@@ -59,6 +63,8 @@ func init() {
 	doctorCmd.AddCommand(doctorEnvCmd)
 	doctorCmd.AddCommand(doctorSandboxCmd)
 	doctorCmd.Flags().BoolVar(&securityCheck, "security", false, "Show security diagnostics")
+	doctorCmd.PersistentFlags().BoolVar(&doctorSecurityFlags.jsonOut, "json", false, "Print the security report as JSON (leanproxy.doctor.security/v1)")
+	doctorCmd.PersistentFlags().BoolVar(&doctorSecurityFlags.markdownOut, "markdown", false, "Print the security report as Markdown")
 	RootCmd.AddCommand(doctorCmd)
 }
 
@@ -76,92 +82,122 @@ func configDir() string {
 	return configPath
 }
 
-func runSecurityDiagnostic() {
+// runSecurityDiagnostic is `doctor security` / `doctor --security` (issue
+// #323): it builds the OWASP-MCP-mapped report (buildSecurityReport) from
+// the local config and, when a proxy is running, the live status file —
+// no network call is ever made — and prints it as human text (default),
+// JSON (--json, the stable leanproxy.doctor.security/v1 schema) or
+// Markdown (--markdown). It returns the process exit code: non-zero when
+// any check failed (❌), so it can be used as a pre-commit or CI gate.
+//
+// Below the OWASP report (human/Markdown output only) it also prints the
+// same detailed, per-feature sections `doctor security` has shown since
+// #310/#311/#312/#314 (tool pinning, per-tool policy, HTTP front end,
+// sandbox), unchanged, so existing tooling that grep's this output keeps
+// working.
+func runSecurityDiagnostic(w io.Writer, jsonOut, markdownOut bool) int {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		slog.Error("doctor: cannot determine home directory", "error", err)
-		os.Exit(1)
+		return 1
 	}
+
+	cfgPath := configDir()
+	cfg, cfgErr := migrate.LoadConfig(context.Background(), cfgPath)
+	if cfgErr != nil {
+		cfg = &migrate.Config{}
+	}
+
+	running, _ := statusfile.ReadCurrentStatus()
+	report := buildSecurityReport(cfg, running, home, cfgPath)
+
+	switch {
+	case jsonOut:
+		if err := writeSecurityReportJSON(w, report); err != nil {
+			slog.Error("doctor security: encode JSON report", "error", err)
+			return 1
+		}
+		return report.ExitCode()
+	case markdownOut:
+		writeSecurityReportMarkdown(w, report)
+	default:
+		writeSecurityReportHuman(w, report)
+	}
+
+	if jsonOut {
+		return report.ExitCode()
+	}
+
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "---")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "# Detail")
+	fmt.Fprintln(w)
+
+	fmt.Fprintln(w, "## Policy Configuration")
+	fmt.Fprintln(w)
+	rules := injectionRequestRules(cfg)
+	if cfg.Injection == nil {
+		fmt.Fprintln(w, "  (No injection: block configured; showing default rules)")
+		fmt.Fprintln(w)
+	}
+	for _, rl := range rules {
+		fmt.Fprintf(w, "  Risk %3d-%3d -> %s\n", rl.MinRisk, rl.MaxRisk, rl.Action)
+	}
+	fmt.Fprintln(w)
 
 	leanproxyDir := filepath.Join(home, ".leanproxy")
 	qDir := filepath.Join(leanproxyDir, "quarantine")
-
-	fmt.Println("# Injection Security Diagnostic")
-	fmt.Println()
-
-	fmt.Println("## Policy Configuration")
-	fmt.Println()
-
-	cfgPath := configDir()
-	var rules []injection.Rule
-
-	if cfgPath != "" {
-		cfg, loadErr := injection.LoadConfigFile(cfgPath)
-		if loadErr == nil && cfg != nil {
-			d := cfg.BuildDispatcher()
-			rules = d.Rules()
-		}
-	}
-
-	if len(rules) == 0 {
-		rules = injection.DefaultRules()
-		fmt.Println("  (No config file loaded; showing default rules)")
-		fmt.Println()
-	}
-
-	for _, r := range rules {
-		fmt.Printf("  Risk %3d-%3d -> %s\n", r.MinRisk, r.MaxRisk, r.Action)
-	}
-	fmt.Println()
-
-	fmt.Println("## Quarantine Status")
-	fmt.Println()
-	qFiles, err := filepath.Glob(filepath.Join(qDir, "*.json"))
-	if err != nil || qFiles == nil {
+	fmt.Fprintln(w, "## Quarantine Status")
+	fmt.Fprintln(w)
+	qFiles, globErr := filepath.Glob(filepath.Join(qDir, "*.json"))
+	if globErr != nil || qFiles == nil {
 		qFiles = []string{}
 	}
 	if len(qFiles) > 0 {
-		fmt.Printf("  Quarantined payloads: %d\n", len(qFiles))
+		fmt.Fprintf(w, "  Quarantined payloads: %d\n", len(qFiles))
 		for _, f := range qFiles {
-			fmt.Printf("    - %s\n", f)
+			fmt.Fprintf(w, "    - %s\n", f)
 		}
 	} else {
-		fmt.Println("  No quarantined payloads found.")
+		fmt.Fprintln(w, "  No quarantined payloads found.")
 	}
-	fmt.Println()
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "Total quarantined payloads: %d\n", len(qFiles))
+	fmt.Fprintln(w)
 
-	fmt.Printf("Total quarantined payloads: %d\n", len(qFiles))
-	fmt.Println()
+	printToolPinningStatus(w)
+	fmt.Fprintln(w)
 
-	printToolPinningStatus(os.Stdout)
-	fmt.Println()
+	printPolicyStatus(w)
+	fmt.Fprintln(w)
 
-	printPolicyStatus(os.Stdout)
-	fmt.Println()
-
-	printHTTPFrontendStatus(os.Stdout)
-	fmt.Println()
-
-	printSandboxStatus(os.Stdout)
-}
-
-// printHTTPFrontendStatus reports the exposure of the Streamable HTTP front
-// end (#309): the configured browser/Host allowlists and limits, the token
-// file, and — when a `server run --http` instance is running — its URL,
-// whether it is loopback-only and whether it requires the token.
-func printHTTPFrontendStatus(w io.Writer) {
-	cfg, err := loadPolicyConfig()
-	if err != nil {
-		fmt.Fprintln(w, "## HTTP Front End (server run --http)")
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  ERROR: %v\n", err)
-		return
-	}
-	running, _ := statusfile.ReadCurrentStatus()
-	home, _ := os.UserHomeDir()
 	printHTTPFrontendStatusFor(w, cfg, running, home)
+	fmt.Fprintln(w)
+
+	printSandboxStatus(w)
+
+	return report.ExitCode()
 }
 
+// injectionRequestRules returns the configured injection.request_policies
+// (or the historical injection.policies / injection.action), falling back
+// to the built-in default rules when injection is not configured. Fixes
+// the carry-over bug where `doctor security` decoded the whole config file
+// as if it were the injection block (reported in #315's PR): it always
+// showed the default rules, never the configured ones, because the
+// top-level "injection:" key was never unwrapped.
+func injectionRequestRules(cfg *migrate.Config) []injection.Rule {
+	if cfg != nil && cfg.Injection != nil {
+		return cfg.Injection.BuildDispatcher().Rules()
+	}
+	return injection.DefaultRules()
+}
+
+// printHTTPFrontendStatusFor reports the exposure of the Streamable HTTP
+// front end (#309): the configured browser/Host allowlists and limits, the
+// token file, and — when a `server run --http` instance is running — its
+// URL, whether it is loopback-only and whether it requires the token.
 func printHTTPFrontendStatusFor(w io.Writer, cfg *migrate.Config, running *statusfile.StatusInfo, home string) {
 	fmt.Fprintln(w, "## HTTP Front End (server run --http)")
 	fmt.Fprintln(w)
