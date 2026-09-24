@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/governor"
+	"github.com/mmornati/leanproxy-mcp/pkg/sidecar"
 )
 
 // Response token governor, part 1 (issue #319): smart truncation of large
@@ -55,12 +57,35 @@ type Governor struct {
 	handler atomic.Pointer[Handler]
 	servers atomic.Pointer[func() []string]
 
+	// In-session dedup (#321): a content hash → stored result map, kept
+	// per session owner (never across sessions: dedupIdx and dedupTurn are
+	// both keyed by the same owner key the spill store uses). See
+	// dedupUnits.
+	dedupMu   sync.Mutex
+	dedupIdx  map[any]map[[32]byte]dedupEntry
+	dedupTurn map[any]int
+
+	// Summarization (#321): the local-LLM client (nil: disabled or
+	// unavailable) and the injection guard its output is scanned with
+	// (nil: not wired, e.g. tests that do not need it — see scanSummary).
+	summarizer     *sidecar.Client
+	injectionGuard atomic.Pointer[InjectionGuard]
+
 	stopJanitor chan struct{}
 	closeOnce   sync.Once
 
 	statsMu sync.Mutex
 	stats   governorCounters
 	byTool  map[string]*GovernorToolStats
+}
+
+// dedupEntry is one in-session dedup record: the stored id of the first
+// occurrence, its estimated size, and the turn (governed call) it was
+// first seen on.
+type dedupEntry struct {
+	ID     string
+	Tokens int
+	Turn   int
 }
 
 // ReadResultToolName is the gateway tool that serves spilled results.
@@ -110,9 +135,31 @@ func NewGovernor(cfg *governor.Config) *Governor {
 		g.store = governor.NewMemoryStore(cfg.TTLValue(), cfg.MaxBytesValue())
 	}
 	g.projections = cfg.CompileProjections()
+	if cfg.DedupEnabled() {
+		g.dedupIdx = make(map[any]map[[32]byte]dedupEntry)
+		g.dedupTurn = make(map[any]int)
+	}
+	if cfg.SummarizeEnabled() {
+		sc := sidecar.Config{Provider: cfg.Summarize.ProviderValue(), Model: cfg.Summarize.Model, URL: cfg.Summarize.URLValue()}
+		client, err := sidecar.NewOllamaClient(sc, slog.Default())
+		if err != nil {
+			slog.Warn("response governor: summarization disabled, could not create sidecar client", "error", err)
+		} else {
+			g.summarizer = client
+		}
+	}
 	g.stopJanitor = make(chan struct{})
 	go g.janitor()
 	return g
+}
+
+// SetInjectionGuard wires the guard summarized output (#321) is scanned
+// with, the same as any other tool output (checkResponse). Without it, a
+// summary is used unscanned; cmd wires this after building the firewall.
+func (g *Governor) SetInjectionGuard(ig *InjectionGuard) {
+	if g != nil && ig != nil {
+		g.injectionGuard.Store(ig)
+	}
 }
 
 // Enabled reports whether the governor is on.
@@ -129,8 +176,8 @@ func (g *Governor) Summary() string {
 	if d := g.store.Dir(); d != "" {
 		where = "disk (" + d + ")"
 	}
-	return fmt.Sprintf("response governor enabled: max_tokens %d, %d tool rules, %d projection rules (default pack %s), spill to %s, ttl %s",
-		g.cfg.GlobalMaxTokens(), len(g.cfg.Tools), g.projections.Len(), onOff(g.projections.Default()), where, g.store.TTL())
+	return fmt.Sprintf("response governor enabled: max_tokens %d, %d tool rules, %d projection rules (default pack %s), dedup %s, summarize %s, spill to %s, ttl %s",
+		g.cfg.GlobalMaxTokens(), len(g.cfg.Tools), g.projections.Len(), onOff(g.projections.Default()), onOff(g.cfg.DedupEnabled()), onOff(g.summarizer != nil), where, g.store.TTL())
 }
 
 // SetServerNames tells the governor which servers exist, to split
@@ -152,15 +199,18 @@ func (h *Handler) SetGovernor(g *Governor) {
 	h.OnSessionClose(g.DropSession)
 }
 
-// DropSession removes every result spilled for s.
+// DropSession removes every result spilled for s, and its dedup index
+// (#321): a session's dedup memory never outlives the session.
 func (g *Governor) DropSession(s *ClientSession) {
 	if g.Enabled() && s != nil {
 		g.store.DropOwner(s)
+		g.dedupDropOwner(s)
 	}
 }
 
-// Close stops the janitor and removes every spilled result (and, with
-// spill.disk, the per-process directory). Called on shutdown.
+// Close stops the janitor, removes every spilled result (and, with
+// spill.disk, the per-process directory) and closes the summarizer client.
+// Called on shutdown.
 func (g *Governor) Close() {
 	if !g.Enabled() {
 		return
@@ -168,6 +218,9 @@ func (g *Governor) Close() {
 	g.closeOnce.Do(func() {
 		close(g.stopJanitor)
 		g.store.Close()
+		if g.summarizer != nil {
+			_ = g.summarizer.Close()
+		}
 	})
 }
 
@@ -269,9 +322,17 @@ func (g *Governor) govern(ctx context.Context, server, tool string, resp *Respon
 	if budget.Limited() {
 		limit = budget.MaxTokens * governor.BytesPerToken
 	}
-	if proj == nil && (limit == 0 || before <= limit) {
-		// Fast path: nothing to project and the whole result fits (or
-		// the tool is not governed); nothing is parsed.
+	overBudget := limit > 0 && before > limit
+	// Dedup (#321) and summarization need to parse the result even when it
+	// already fits the budget: dedup tracks every result over its own
+	// (smaller) threshold, and summarization is keyed off its own
+	// threshold_tokens, not the truncation budget.
+	needsDedup := g.cfg.DedupEnabled() && before >= dedupMinBytes
+	needsSummarize := g.summarizer != nil && overBudget && g.cfg.MatchesSummarizeTool(identity) && before >= g.cfg.ThresholdTokensValue()*governor.BytesPerToken
+	if proj == nil && !overBudget && !needsDedup && !needsSummarize {
+		// Fast path: nothing to project, dedup or summarize, and the
+		// whole result fits (or the tool is not governed); nothing is
+		// parsed.
 		g.account(ctx, server, identity, governedResult{before: before, after: before})
 		return
 	}
@@ -416,6 +477,11 @@ type resultUnit struct {
 	// data (empty: not projected) and its size.
 	projectedID   string
 	projectedFrom int
+
+	// In-session dedup (#321): true once this unit has been replaced by a
+	// dedup marker (data/out already final; never truncated or
+	// summarized).
+	deduped bool
 }
 
 // resourceLinkReserve is the budget kept, per shortened unit, for its
@@ -433,6 +499,18 @@ type governedResult struct {
 	removed   int             // members left out by the projection
 	// Wire bytes of the projected units before and after projection.
 	projBefore, projAfter int
+
+	// In-session dedup (#321): units replaced by a dedup marker, and the
+	// estimated tokens saved.
+	dedupHits        int
+	dedupSavedTokens int
+	// Summarization (#321): units replaced by a local-LLM summary, the
+	// estimated tokens saved, and how many summarization attempts fell
+	// back to truncation (timeout, error, empty output, or blocked by the
+	// injection guard).
+	summarized           int
+	summarizeSavedTokens int
+	summarizeFallbacks   int
 }
 
 // shortenResult projects (proj, may be nil) and then shortens (budget
@@ -516,6 +594,13 @@ func (g *Governor) shortenResult(ctx context.Context, server, tool string, resul
 			return none, err
 		}
 	}
+	// In-session dedup (#321), before the budget and before summarization:
+	// a unit identical to one already seen in this session is replaced by
+	// a short marker, regardless of whether the result would otherwise
+	// have needed truncation.
+	if g.cfg.DedupEnabled() {
+		g.dedupUnits(sess, server, tool, units, &res)
+	}
 
 	sizes := make([]int, len(units))
 	total := 0
@@ -544,31 +629,41 @@ func (g *Governor) shortenResult(ctx context.Context, server, tool string, resul
 		alloc := governor.WaterFill(sizes, max(avail, 0))
 		spilled = make([]*resultUnit, 0, len(units))
 		for i, u := range units {
-			if sizes[i] <= alloc[i] {
+			if u.deduped || sizes[i] <= alloc[i] {
 				continue
 			}
-			meta, err := g.store.Put(owner(sess), governor.Meta{Server: server, Tool: tool, Kind: u.kind}, u.data)
-			if err != nil {
-				// Units spilled before this one just expire with the TTL.
-				if res.projected > 0 {
-					// The projection stands on its own: keep it,
-					// unshortened.
-					slog.Debug("response governor: projected result not shortened", "tool", cacheIdentity(server, tool), "error", err)
-					for _, v := range spilled {
-						v.out, v.id = nil, ""
+			// Dedup (#321) may already have spilled this unit's full data
+			// to learn its hash; reuse that id instead of storing it a
+			// second time.
+			if u.id == "" {
+				meta, err := g.store.Put(owner(sess), governor.Meta{Server: server, Tool: tool, Kind: u.kind}, u.data)
+				if err != nil {
+					// Units spilled before this one just expire with the TTL.
+					if res.projected > 0 {
+						// The projection stands on its own: keep it,
+						// unshortened.
+						slog.Debug("response governor: projected result not shortened", "tool", cacheIdentity(server, tool), "error", err)
+						for _, v := range spilled {
+							v.out, v.id = nil, ""
+						}
+						spilled = nil
+						break
 					}
-					spilled = nil
-					break
+					return none, fmt.Errorf("spill: %w", err)
 				}
-				return none, fmt.Errorf("spill: %w", err)
+				u.id = meta.ID
 			}
-			u.id = meta.ID
 			// From wire bytes back to the unit's own bytes (escaping).
-			u.out = shortenUnit(u, int(int64(alloc[i])*int64(len(u.data))/int64(max(u.wire, 1))))
+			target := int(int64(alloc[i]) * int64(len(u.data)) / int64(max(u.wire, 1)))
+			if out, ok := g.trySummarize(ctx, server, tool, u, &res); ok {
+				u.out = out
+			} else {
+				u.out = shortenUnit(u, target)
+			}
 			spilled = append(spilled, u)
 		}
 	}
-	if len(spilled) == 0 && res.projected == 0 {
+	if len(spilled) == 0 && res.projected == 0 && res.dedupHits == 0 {
 		return none, nil
 	}
 	for _, u := range spilled {
@@ -718,6 +813,212 @@ func (g *Governor) declaresOutputSchema(ctx context.Context, server, tool string
 		return true
 	}
 	return len(t.OutputSchema) > 0 && string(t.OutputSchema) != "null"
+}
+
+// ---------------------------------------------------------- dedup (#321)
+
+// dedupMinBytes is the smallest unit (wire bytes) in-session dedup tracks.
+const dedupMinBytes = governor.DefaultDedupMinTokens * governor.BytesPerToken
+
+// dedupMarker is the stub returned instead of a byte-identical result
+// (issue #321's exact wording).
+func dedupMarker(server, tool, id string) string {
+	return fmt.Sprintf("[LeanProxy: identical to the result of %s returned earlier (result_id=%s). Call read_result to get it again if it is no longer in context.]",
+		cacheIdentity(server, tool), id)
+}
+
+// dedupUnits replaces any unit byte-identical (after projection) to one
+// already seen in this session with a short marker, and remembers every
+// unit over dedupMinBytes for future calls. The hash is per session owner
+// only (see owner): two sessions never learn what the other saw, even when
+// the content is identical.
+func (g *Governor) dedupUnits(sess *ClientSession, server, tool string, units []*resultUnit, res *governedResult) {
+	own := owner(sess)
+	turn := g.dedupNextTurn(own)
+	for _, u := range units {
+		if len(u.data) < dedupMinBytes {
+			continue
+		}
+		hash := sha256.Sum256(u.data)
+		if entry, ok := g.dedupLookup(own, hash); ok {
+			if _, _, err := g.store.Get(own, entry.ID); err == nil {
+				marker := dedupMarker(server, tool, entry.ID)
+				res.dedupHits++
+				res.dedupSavedTokens += governor.Tokens(u.wire) - governor.Tokens(len(marker))
+				u.data = []byte(marker)
+				u.wire = len(marker)
+				u.kind = governor.KindText
+				u.out = u.data
+				u.deduped = true
+				continue
+			}
+			// The first occurrence expired or was evicted: fall through
+			// and re-store this one so later calls can dedup against it.
+		}
+		meta, err := g.store.Put(own, governor.Meta{Server: server, Tool: tool, Kind: u.kind}, u.data)
+		if err != nil {
+			continue // not fatal: this unit is just never deduped
+		}
+		g.dedupRemember(own, hash, dedupEntry{ID: meta.ID, Tokens: governor.Tokens(len(u.data)), Turn: turn})
+		u.id = meta.ID // reused below instead of a second Put, if it also needs truncating
+	}
+}
+
+func (g *Governor) dedupLookup(own any, hash [32]byte) (dedupEntry, bool) {
+	g.dedupMu.Lock()
+	defer g.dedupMu.Unlock()
+	e, ok := g.dedupIdx[own][hash]
+	return e, ok
+}
+
+func (g *Governor) dedupRemember(own any, hash [32]byte, e dedupEntry) {
+	g.dedupMu.Lock()
+	defer g.dedupMu.Unlock()
+	if g.dedupIdx == nil {
+		g.dedupIdx = make(map[any]map[[32]byte]dedupEntry)
+	}
+	m := g.dedupIdx[own]
+	if m == nil {
+		m = make(map[[32]byte]dedupEntry)
+		g.dedupIdx[own] = m
+	}
+	m[hash] = e
+}
+
+func (g *Governor) dedupNextTurn(own any) int {
+	g.dedupMu.Lock()
+	defer g.dedupMu.Unlock()
+	if g.dedupTurn == nil {
+		g.dedupTurn = make(map[any]int)
+	}
+	g.dedupTurn[own]++
+	return g.dedupTurn[own]
+}
+
+// dedupDropOwner forgets everything remembered for own (its session
+// ended): dedup memory never outlives a session.
+func (g *Governor) dedupDropOwner(own any) {
+	if g.dedupIdx == nil {
+		return
+	}
+	g.dedupMu.Lock()
+	defer g.dedupMu.Unlock()
+	delete(g.dedupIdx, own)
+	delete(g.dedupTurn, own)
+}
+
+// ------------------------------------------------------ summarize (#321)
+
+// summarizePromptTemplate is the fixed prompt sent to the local model.
+const summarizePromptTemplate = `Summarize the following tool result for an AI coding agent. Keep identifiers, numbers, paths and errors verbatim. List what was omitted at the end.
+
+%s`
+
+// trySummarize attempts to replace u with a local-LLM summary instead of
+// truncating it: only for a tool listed in response.summarize.tools, only
+// for a unit at least threshold_tokens large, with a strict timeout and
+// size caps on input and output. Its output is treated as untrusted and run
+// back through the injection guard's response scan (#321), exactly like
+// any other tool output. Any failure — not configured, not allowlisted,
+// too small, timeout, error, empty output, or blocked by the injection
+// guard — returns ok=false so the caller falls back to truncation (#319).
+func (g *Governor) trySummarize(ctx context.Context, server, tool string, u *resultUnit, res *governedResult) ([]byte, bool) {
+	if g.summarizer == nil || !g.cfg.SummarizeEnabled() {
+		return nil, false
+	}
+	identity := cacheIdentity(server, tool)
+	if !g.cfg.MatchesSummarizeTool(identity) {
+		return nil, false
+	}
+	thresholdBytes := g.cfg.ThresholdTokensValue() * governor.BytesPerToken
+	if u.wire < thresholdBytes {
+		return nil, false
+	}
+	sctx, cancel := context.WithTimeout(ctx, g.cfg.SummarizeTimeoutValue())
+	defer cancel()
+	input := capBytes(string(u.data), governor.MaxSummarizeInputBytes())
+	summary, err := g.summarizer.Generate(sctx, fmt.Sprintf(summarizePromptTemplate, input))
+	if err != nil || strings.TrimSpace(summary) == "" {
+		slog.Warn("response governor: summarization failed, falling back to truncation", "tool", identity, "error", err)
+		res.summarizeFallbacks++
+		return nil, false
+	}
+	summary = capBytes(summary, g.cfg.MaxSummaryTokensValue()*governor.BytesPerToken)
+	// The summarizer's own output is untrusted (it echoes the redacted
+	// tool result back through a local model): scan it exactly like any
+	// other tool output before it is ever returned to the model.
+	scanned, blocked := g.scanSummary(ctx, summary)
+	if blocked {
+		slog.Warn("response governor: summary blocked by the injection guard, falling back to truncation", "tool", identity)
+		res.summarizeFallbacks++
+		return nil, false
+	}
+	text := fmt.Sprintf("[LeanProxy: summary of %s (%s → %s estimated tokens); full result kept as result_id=%s, call read_result to read it in full.]\n\n%s",
+		identity, groupDigits(governor.Tokens(u.wire)), groupDigits(governor.Tokens(len(scanned))), u.id, scanned)
+	res.summarized++
+	res.summarizeSavedTokens += governor.Tokens(u.wire) - governor.Tokens(len(text))
+	return []byte(text), true
+}
+
+// scanSummary runs text through the wired injection guard's response scan
+// (#315/#321), the same policy a tool result would get. ok is true when the
+// guard blocked it (never return summarized content the guard would have
+// refused); the (possibly annotated or redacted) text is returned
+// otherwise. Without a wired guard, text is returned unchanged: cmd wires
+// SetInjectionGuard after building the firewall, so this only applies when
+// the summarizer runs before that wiring (e.g. a bespoke embedding).
+func (g *Governor) scanSummary(ctx context.Context, text string) (string, bool) {
+	ig := g.injectionGuard.Load()
+	if ig == nil || !ig.ScansResponses() {
+		return text, false
+	}
+	result, err := governor.MarshalNoEscape(map[string]any{
+		"content": []map[string]string{{"type": "text", "text": text}},
+	})
+	if err != nil {
+		return text, false
+	}
+	req := &Request{JSONRPC: JSONRPCVersion, Method: MethodToolsCall,
+		Params: json.RawMessage(`{"name":"invoke_tool","arguments":{}}`)}
+	resp := &Response{JSONRPC: JSONRPCVersion, Result: result}
+	out := ig.CheckResponse(ctx, req, resp)
+	if out == nil || len(out.Result) == 0 {
+		return text, false
+	}
+	var body struct {
+		Content []ContentBlock `json:"content"`
+		IsError bool           `json:"isError"`
+	}
+	if json.Unmarshal(out.Result, &body) != nil {
+		return text, false
+	}
+	if body.IsError {
+		return "", true
+	}
+	if len(body.Content) == 0 {
+		return text, false
+	}
+	var b strings.Builder
+	for i, c := range body.Content {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(c.Text)
+	}
+	return b.String(), false
+}
+
+// capBytes cuts s to at most n bytes, never inside a UTF-8 rune, appending
+// a marker when it cut.
+func capBytes(s string, n int) string {
+	if n <= 0 || len(s) <= n {
+		return s
+	}
+	cut := n
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "\n[…truncated for summarization…]"
 }
 
 // maxNotePaths caps the paths quoted in the projection note (bytes).
@@ -1194,6 +1495,10 @@ type governorCounters struct {
 	results, truncated, spilled, reads int64
 	originalTokens, returnedTokens     int64
 	projected, projectionSaved         int64
+	// In-session dedup (#321).
+	dedupHits, dedupSaved int64
+	// Summarization (#321).
+	summarized, summarizeSaved, summarizeFallbacks int64
 }
 
 // GovernorToolStats is the per-tool accounting (for the savings report,
@@ -1208,6 +1513,16 @@ type GovernorToolStats struct {
 	// tokens the projection removed (before truncation).
 	Projected             int64 `json:"projected,omitempty"`
 	ProjectionSavedTokens int64 `json:"projection_saved_tokens,omitempty"`
+	// In-session dedup (#321): results replaced by a dedup marker, and the
+	// estimated tokens saved.
+	DedupHits        int64 `json:"dedup_hits,omitempty"`
+	DedupSavedTokens int64 `json:"dedup_saved_tokens,omitempty"`
+	// Summarization (#321): results replaced by a local-LLM summary, the
+	// estimated tokens saved, and summarization attempts that fell back to
+	// truncation.
+	Summarized           int64 `json:"summarized,omitempty"`
+	SummarizeSavedTokens int64 `json:"summarize_saved_tokens,omitempty"`
+	SummarizeFallbacks   int64 `json:"summarize_fallbacks,omitempty"`
 }
 
 // GovernorStats is the governor's accounting, as exposed on /metrics.
@@ -1224,12 +1539,25 @@ type GovernorStats struct {
 	SavedTokens    int64 `json:"saved_tokens"`
 	// Field projection (#320): results projected and the estimated
 	// tokens it removed (part of SavedTokens).
-	Projected             int64               `json:"projected"`
-	ProjectionSavedTokens int64               `json:"projection_saved_tokens"`
-	ProjectionRules       int                 `json:"projection_rules"`
-	DefaultProjections    bool                `json:"default_projections"`
-	Store                 governor.StoreStats `json:"store"`
-	ByTool                []GovernorToolStats `json:"by_tool,omitempty"`
+	Projected             int64 `json:"projected"`
+	ProjectionSavedTokens int64 `json:"projection_saved_tokens"`
+	ProjectionRules       int   `json:"projection_rules"`
+	DefaultProjections    bool  `json:"default_projections"`
+	// In-session dedup (#321): results replaced by a dedup marker
+	// (never across sessions) and the estimated tokens it saved (part of
+	// SavedTokens).
+	DedupEnabled     bool  `json:"dedup_enabled"`
+	DedupHits        int64 `json:"dedup_hits"`
+	DedupSavedTokens int64 `json:"dedup_saved_tokens"`
+	// Summarization (#321): results replaced by a local-LLM summary, the
+	// estimated tokens it saved (part of SavedTokens), and how many
+	// summarization attempts fell back to truncation.
+	SummarizeEnabled     bool                `json:"summarize_enabled"`
+	Summarized           int64               `json:"summarized"`
+	SummarizeSavedTokens int64               `json:"summarize_saved_tokens"`
+	SummarizeFallbacks   int64               `json:"summarize_fallbacks"`
+	Store                governor.StoreStats `json:"store"`
+	ByTool               []GovernorToolStats `json:"by_tool,omitempty"`
 }
 
 // Stats returns a snapshot of the accounting.
@@ -1260,8 +1588,18 @@ func (g *Governor) Stats() GovernorStats {
 		ProjectionSavedTokens: c.projectionSaved,
 		ProjectionRules:       g.projections.Len(),
 		DefaultProjections:    g.projections.Default(),
-		Store:                 g.store.Stats(),
-		ByTool:                byTool,
+
+		DedupEnabled:     g.cfg.DedupEnabled(),
+		DedupHits:        c.dedupHits,
+		DedupSavedTokens: c.dedupSaved,
+
+		SummarizeEnabled:     g.summarizer != nil,
+		Summarized:           c.summarized,
+		SummarizeSavedTokens: c.summarizeSaved,
+		SummarizeFallbacks:   c.summarizeFallbacks,
+
+		Store:  g.store.Stats(),
+		ByTool: byTool,
 	}
 }
 
@@ -1281,6 +1619,11 @@ func (g *Governor) account(ctx context.Context, server, identity string, r gover
 		g.stats.projected++
 		g.stats.projectionSaved += projSaved
 	}
+	g.stats.dedupHits += int64(r.dedupHits)
+	g.stats.dedupSaved += int64(r.dedupSavedTokens)
+	g.stats.summarized += int64(r.summarized)
+	g.stats.summarizeSaved += int64(r.summarizeSavedTokens)
+	g.stats.summarizeFallbacks += int64(r.summarizeFallbacks)
 	t, ok := g.byTool[identity]
 	if !ok {
 		key := identity
@@ -1300,10 +1643,21 @@ func (g *Governor) account(ctx context.Context, server, identity string, r gover
 		t.Projected++
 		t.ProjectionSavedTokens += projSaved
 	}
+	t.DedupHits += int64(r.dedupHits)
+	t.DedupSavedTokens += int64(r.dedupSavedTokens)
+	t.Summarized += int64(r.summarized)
+	t.SummarizeSavedTokens += int64(r.summarizeSavedTokens)
+	t.SummarizeFallbacks += int64(r.summarizeFallbacks)
 	g.statsMu.Unlock()
 	RecordGovernedResult(ctx, server, orig, ret, r.truncated > 0)
 	if r.projected > 0 {
 		RecordProjection(ctx, server, int64(governor.Tokens(r.projBefore)), int64(governor.Tokens(r.projAfter)))
+	}
+	if r.dedupHits > 0 {
+		RecordDedup(ctx, server, int64(r.dedupHits), int64(r.dedupSavedTokens))
+	}
+	if r.summarized > 0 || r.summarizeFallbacks > 0 {
+		RecordSummarization(ctx, server, int64(r.summarized), int64(r.summarizeSavedTokens), int64(r.summarizeFallbacks))
 	}
 }
 

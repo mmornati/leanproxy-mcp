@@ -421,7 +421,41 @@ within noise of truncation only (for example `github.list_issues`: 15.9 ms
 truncation only, 19.1 ms projection then truncation, 22.0 ms projection
 only, which returns a 164 KB line).
 
-## 9. Known limits and follow-ups
+## 9. In-session dedup (repeated reads)
+
+In-session dedup (#321, `response.dedup: on`, off by default) replaces a
+result byte-identical to one already returned earlier in the same session
+with a short stub. The harness simulates the common "re-read the same file
+after a failed edit" pattern: `github.get_file_contents` read once, then
+re-read three more times in the same session, with `response.dedup: on` on
+top of the `max_tokens: 4000` truncation baseline (§7).
+
+| Read | Dedup off (truncation only, §7) | Dedup on | Savings |
+|---|---:|---:|---:|
+| First (not yet seen this session) | 3,445 | 3,445 | −0.0% |
+| Repeat (already seen this session) | 3,445 | 65 | −98.1% |
+| **Whole session (1 read + 3 repeats)** | **13,780** | **3,640** | **−73.6%** |
+
+- The first read is unaffected (there is nothing to dedup against yet); a
+  repeat read is a two-line stub naming the earlier result's id, a **98.1%**
+  reduction over truncation alone.
+- Cross-session isolation is checked by the e2e suite, not the harness: two
+  Streamable HTTP sessions read the same (byte-identical, from the fake
+  upstream) content, and the second session never receives a dedup marker
+  for content only the first session saw
+  (`TestResponseGovernorDedup_CrossSessionHTTP_NotDeduped`).
+
+Summarization (#321, `response.summarize`, off by default, no default
+allowlist) is not part of the harness's token-savings table: it needs a
+local Ollama model to measure honestly, which the harness's fixed-catalog,
+no-network design deliberately avoids (the same reasoning as the embedding
+hybrid search of #305). It is covered instead by unit and e2e tests with a
+fake Ollama server (`httptest`): replacing an over-threshold result with a
+summary and a `read_result` pointer, falling back to truncation on a
+timeout or an error, and the summary being run back through the injection
+guard's response scan before being returned.
+
+## 10. Known limits and follow-ups
 
 - **`search_tools`.** The audit prototype estimated about −92% for Full
   Day; the harness measures −65.0%, because 3 of Full Day's 7 queries miss

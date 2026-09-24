@@ -601,6 +601,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	pol := newPolicy(cfg, firewall)
 	handler.SetPolicy(pol)
 	slog.Info(pol.Summary())
+	gov.SetInjectionGuard(firewall.Injection)
 	handler.SetGovernor(gov)
 	slog.Info(gov.Summary())
 	handler.Use(tracedMiddlewares(respCache, firewall, pins, pol, gov)...)
