@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
+	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolpin"
 )
 
@@ -55,11 +55,6 @@ func TestListenAndServeInvalidAddr(t *testing.T) {
 }
 
 func TestDashboardIndexRenders(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
-	reporter.TrackCost("test-tool", "test-server", 500)
-
 	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0"}, slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
@@ -84,14 +79,7 @@ func TestDashboardIndexRenders(t *testing.T) {
 	}
 }
 
-func TestDashboardJSONEndpoint(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
-	reporter.TrackCost("tool-a", "server-1", 100)
-	reporter.TrackCost("tool-b", "server-1", 200)
-	reporter.TrackCost("tool-c", "server-2", 50)
-
+func TestDashboardCardsEndpoint(t *testing.T) {
 	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0"}, slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
@@ -116,87 +104,107 @@ func TestDashboardJSONEndpoint(t *testing.T) {
 	}
 }
 
-func TestDashboardAPI(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
+// fixtureSummary is two servers' worth of today / week-to-date usage.
+func fixtureSummary() *metrics.UsageSummary {
+	sum := &metrics.UsageSummary{Estimator: "chars/4"}
+	sum.Today = metrics.UsageWindow{Sessions: 1, OriginalTokens: 12000, SavedTokens: 6000, SavedPercent: 50}
+	sum.Today.SetTools([]metrics.UsageTool{
+		{Server: "server-1", Tool: "tool-a", Calls: 2, OriginalTokens: 1000, ReturnedTokens: 1000},
+		{Server: "server-1", Tool: "tool-b", Calls: 1, OriginalTokens: 2000, ReturnedTokens: 500, SavedTokens: 1500},
+		{Server: "server-2", Tool: "tool-c", Calls: 4, OriginalTokens: 9000, ReturnedTokens: 4500, SavedTokens: 4500},
+	})
+	sum.Week = metrics.UsageWindow{Sessions: 2, OriginalTokens: 50000, SavedTokens: 20000, SavedPercent: 40}
+	sum.Week.SetTools([]metrics.UsageTool{
+		{Server: "server-1", Tool: "tool-a", Calls: 20, OriginalTokens: 30000, ReturnedTokens: 20000, SavedTokens: 10000},
+	})
+	return sum
+}
 
-	reporter.TrackCost("tool-a", "server-1", 100)
-	reporter.TrackCost("tool-b", "server-1", 200)
-	reporter.TrackCost("tool-c", "server-2", 50)
+func fixtureServer() *server {
+	sum := fixtureSummary()
+	return &server{usage: func() *metrics.UsageSummary { return sum }}
+}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/dashboard", DashboardJSON)
-	mux.HandleFunc("GET /{$}", handleDashboardIndex)
+func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec
+}
 
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/dashboard")
-	if err != nil {
-		t.Fatalf("GET /api/dashboard failed: %v", err)
+func TestDashboardJSONServesUsageSummary(t *testing.T) {
+	rec := get(t, fixtureServer().routes(), "/api/dashboard/json")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
+	var sum metrics.UsageSummary
+	if err := json.NewDecoder(rec.Body).Decode(&sum); err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-
-	var data map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		t.Fatalf("failed to decode JSON: %v", err)
+	if sum.Today.SavedTokens != 6000 || sum.Week.SavedTokens != 20000 {
+		t.Errorf("today/week saved = %d/%d, want 6000/20000 (week is not today's value)", sum.Today.SavedTokens, sum.Week.SavedTokens)
 	}
-
-	if v, ok := data["today_spend"].(float64); !ok || v != 350 {
-		t.Errorf("today_spend = %v, want 350", data["today_spend"])
+	if sum.Today.TopServer != "server-2" || sum.Today.TopTool != "server-2.tool-c" {
+		t.Errorf("top = %q / %q", sum.Today.TopServer, sum.Today.TopTool)
 	}
-	if v, ok := data["wtd_spend"].(float64); !ok || v != 350 {
-		t.Errorf("wtd_spend = %v, want 350", data["wtd_spend"])
-	}
-	if v, ok := data["top_server"].(string); !ok || v != "server-1" {
-		t.Errorf("top_server = %v, want server-1", data["top_server"])
-	}
-	if v, ok := data["top_tool"].(string); !ok || v != "tool-b" {
-		t.Errorf("top_tool = %v, want tool-b", data["top_tool"])
+	if len(sum.Today.ByServer) != 2 || len(sum.Today.ByTool) != 3 {
+		t.Errorf("by_server/by_tool = %d/%d, want 2/3", len(sum.Today.ByServer), len(sum.Today.ByTool))
 	}
 }
 
-func TestDashboardAPIEmptyData(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/dashboard", DashboardJSON)
-
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/dashboard")
-	if err != nil {
-		t.Fatalf("GET /api/dashboard failed: %v", err)
+// Without a usage source the JSON endpoint says so instead of serving
+// zeros, and the page shows an unavailable state.
+func TestDashboardWithoutUsageSource(t *testing.T) {
+	h := (&server{}).routes()
+	if rec := get(t, h, "/api/dashboard/json"); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("JSON status = %d, want 503", rec.Code)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
+	rec := get(t, h, "/")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Usage data unavailable") {
+		t.Errorf("index = %d %s", rec.Code, rec.Body.String())
 	}
+}
 
-	var data map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		t.Fatalf("failed to decode JSON: %v", err)
+func TestDashboardIndexRendersCardsAndServers(t *testing.T) {
+	rec := get(t, fixtureServer().routes(), "/")
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
 	}
+	// The index includes the cards and server-table partials (it used to
+	// fail mid-render: they were parsed into a separate template set).
+	for _, want := range []string{"Saved today", "6.0K", "Saved this week", "20.0K", "40.0%", "server-2.tool-c", "server-1", "</html>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("index missing %q", want)
+		}
+	}
+	for _, dead := range []string{"Spend", "Prompt Hashes"} {
+		if strings.Contains(body, dead) {
+			t.Errorf("index still shows %q", dead)
+		}
+	}
+}
 
-	if v, ok := data["today_spend"].(float64); !ok || v != 0 {
-		t.Errorf("today_spend = %v, want 0", data["today_spend"])
+func TestDashboardCardsPartial(t *testing.T) {
+	rec := get(t, fixtureServer().routes(), "/api/dashboard")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Top tool today") {
+		t.Fatalf("cards = %d %s", rec.Code, rec.Body.String())
 	}
-	if v, ok := data["top_server"].(string); !ok || v != "" {
-		t.Errorf("top_server = %v, want empty", data["top_server"])
+}
+
+// With no per-tool data (the governor is off by default), the server
+// table explains where the figures come from.
+func TestDashboardServerTableEmptyExplainsGovernor(t *testing.T) {
+	sum := &metrics.UsageSummary{}
+	sum.Today.SetTools(nil)
+	h := (&server{usage: func() *metrics.UsageSummary { return sum }}).routes()
+	rec := get(t, h, "/api/dashboard/servers")
+	if !strings.Contains(rec.Body.String(), "response.enabled: true") {
+		t.Fatalf("server table = %s", rec.Body.String())
 	}
 }
 
 func TestDashboardJSONMethodNotAllowed(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0"}, slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
@@ -222,11 +230,8 @@ func TestDashboardJSONMethodNotAllowed(t *testing.T) {
 }
 
 func TestDashboardAuthRequiredNonLoopback(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", handleDashboardIndex)
+	mux.HandleFunc("GET /{$}", (&server{}).handleIndex)
 	handler := requireBearerToken("mytoken", slog.Default())(mux)
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -242,11 +247,8 @@ func TestDashboardAuthRequiredNonLoopback(t *testing.T) {
 // TestDashboardAuthLoopbackRequiresTokenToo covers issue #316: a configured
 // token is required from every client, including loopback ones.
 func TestDashboardAuthLoopbackRequiresTokenToo(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", handleDashboardIndex)
+	mux.HandleFunc("GET /{$}", (&server{}).handleIndex)
 	handler := requireBearerToken("mytoken", slog.Default())(mux)
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -260,11 +262,8 @@ func TestDashboardAuthLoopbackRequiresTokenToo(t *testing.T) {
 }
 
 func TestDashboardAuthValidToken(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", handleDashboardIndex)
+	mux.HandleFunc("GET /{$}", (&server{}).handleIndex)
 	handler := requireBearerToken("mytoken", slog.Default())(mux)
 
 	req := httptest.NewRequest("GET", "/", nil)
@@ -279,13 +278,9 @@ func TestDashboardAuthValidToken(t *testing.T) {
 }
 
 func TestDashboardHTMLContent(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
-	reporter.TrackCost("test-tool", "test-server", 1000)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", handleDashboardIndex)
+	mux.HandleFunc("GET /{$}", (&server{}).handleIndex)
 
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
@@ -330,129 +325,52 @@ func TestFormatTokens(t *testing.T) {
 }
 
 func TestDashboardServerTableEndpoint(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
-	reporter.TrackCost("tool-a", "server-1", 100)
-	reporter.TrackCost("tool-b", "server-1", 200)
-	reporter.TrackCost("tool-c", "server-2", 50)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/dashboard/servers", handleServerTable)
-
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/dashboard/servers")
-	if err != nil {
-		t.Fatalf("GET /api/dashboard/servers failed: %v", err)
+	rec := get(t, fixtureServer().routes(), "/api/dashboard/servers")
+	if rec.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rec.Code)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
-	}
-
-	ct := resp.Header.Get("Content-Type")
-	if !strings.HasPrefix(ct, "text/html") {
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
 		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-get="/api/dashboard/servers/server-2"`) || !strings.Contains(body, "9.0K") {
+		t.Errorf("server table = %s", body)
 	}
 }
 
 func TestDashboardServerDrilldownEndpoint(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
-	reporter.TrackCost("tool-a", "server-1", 100)
-	reporter.TrackCost("tool-b", "server-1", 200)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/dashboard/servers/{server}", handleServerDrilldown)
-
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/dashboard/servers/server-1")
-	if err != nil {
-		t.Fatalf("GET /api/dashboard/servers/server-1 failed: %v", err)
+	rec := get(t, fixtureServer().routes(), "/api/dashboard/servers/server-1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
+	body := rec.Body.String()
+	for _, want := range []string{"Server: server-1", "tool-a", "tool-b", "3.0K response tokens today", "500.0"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("drilldown missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "tool-c") {
+		t.Error("drilldown shows another server's tool")
 	}
 }
 
-func TestDashboardServerDrilldownEndpointInvalid(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/dashboard/servers/{server}", handleServerDrilldown)
-
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/dashboard/servers/")
-	if err != nil {
-		t.Fatalf("GET failed: %v", err)
+// Server names are escaped in the drill-down link and decoded back.
+func TestDashboardServerDrilldownEscapedName(t *testing.T) {
+	sum := &metrics.UsageSummary{}
+	sum.Today.SetTools([]metrics.UsageTool{{Server: "my server", Tool: "t", Calls: 1, OriginalTokens: 10}})
+	h := (&server{usage: func() *metrics.UsageSummary { return sum }}).routes()
+	if body := get(t, h, "/api/dashboard/servers").Body.String(); !strings.Contains(body, "/api/dashboard/servers/my%20server") {
+		t.Fatalf("link not escaped: %s", body)
 	}
-	defer resp.Body.Close()
-}
-
-func TestDashboardToolPromptsEndpoint(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
-	reporter.TrackCostFromStrings("tool-a", "server-1", `{"q":"hi"}`, `{"a":"there"}`)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/dashboard/servers/{server}/tools/{tool}/prompts", handleToolPrompts)
-
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/dashboard/servers/server-1/tools/tool-a/prompts")
-	if err != nil {
-		t.Fatalf("GET /prompts failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("status = %d, want 200", resp.StatusCode)
+	if body := get(t, h, "/api/dashboard/servers/my%20server").Body.String(); !strings.Contains(body, "Server: my server") || !strings.Contains(body, ">t<") {
+		t.Fatalf("drilldown = %s", body)
 	}
 }
 
-func TestDashboardPerServerPerTool(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
-	reporter.TrackCost("tool-a", "server-1", 100)
-	reporter.TrackCost("tool-b", "server-2", 200)
-	reporter.TrackCost("tool-c", "server-1", 300)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/dashboard", DashboardJSON)
-
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	resp, err := http.Get(ts.URL + "/api/dashboard")
-	if err != nil {
-		t.Fatalf("GET /api/dashboard failed: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var data map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-
-	perServer, ok := data["per_server"].([]interface{})
-	if !ok || len(perServer) != 2 {
-		t.Fatalf("per_server = %v, want 2 entries", data["per_server"])
-	}
-
-	perTool, ok := data["per_tool"].([]interface{})
-	if !ok || len(perTool) != 3 {
-		t.Fatalf("per_tool = %v, want 3 entries", data["per_tool"])
+func TestDashboardPromptHashRouteRemoved(t *testing.T) {
+	rec := get(t, fixtureServer().routes(), "/api/dashboard/servers/server-1/tools/tool-a/prompts")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404 (the usage store never records prompt hashes)", rec.Code)
 	}
 }
 
@@ -485,9 +403,6 @@ func TestListenAndServeNonLoopbackBindStartsWithToken(t *testing.T) {
 }
 
 func TestDashboardRejectsUnknownHostHeader(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0"}, slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
@@ -514,9 +429,6 @@ func TestDashboardRejectsUnknownHostHeader(t *testing.T) {
 }
 
 func TestDashboardAllowsConfiguredHostHeader(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0"}, slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
@@ -538,9 +450,6 @@ func TestDashboardAllowsConfiguredHostHeader(t *testing.T) {
 }
 
 func TestDashboardSecurityHeaders(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0"}, slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
@@ -572,9 +481,6 @@ func TestDashboardSecurityHeaders(t *testing.T) {
 }
 
 func TestDashboardLoginCookieFlow(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	srv, err := ListenAndServe(Config{Bind: "127.0.0.1:0", Token: "mytoken"}, slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)

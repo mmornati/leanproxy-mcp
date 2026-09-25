@@ -441,9 +441,10 @@ custom client. The IDE extensions (`extensions/vscode`,
 `serve`, so they need no change.
 
 !!! note
-    A few features still exist only under `serve`: the web dashboard, the
-    `/metrics` endpoint, the semantic cache and the sidecar LLM redactor.
-    `server run` does not have them.
+    A few features still exist only under `serve`: the semantic cache and
+    the sidecar LLM redactor. The web dashboard and the `/metrics` endpoint
+    are available on `server run` too, with `--dashboard-bind` and
+    `--metrics-bind` (off by default there).
 
 ## Common Workflows
 
@@ -555,12 +556,19 @@ Use the server id shown by `marketplace search`.
 
 ### Web Dashboard, Metrics and IDE Extensions
 
-The web dashboard, the `/metrics` endpoint and the VS Code / JetBrains
-extensions depend on the deprecated `serve` command, and their token and
-cost figures are currently not populated. Read
-[Web Dashboard](dashboard.md) and [IDE Extensions](extensions.md) before
-you rely on them. For monitoring `server run`, use
-[OpenTelemetry](observability.md).
+The web dashboard and the `/metrics` endpoint show the tokens saved today
+and this week, per server and per tool, across every proxy process on the
+machine. Start them on one process, for example your shared gateway:
+
+```bash
+leanproxy-mcp server run --http 127.0.0.1:8765 \
+  --dashboard-bind 127.0.0.1:9090 --metrics-bind 127.0.0.1:9091
+```
+
+The VS Code / JetBrains extensions read `http://127.0.0.1:9091/metrics` by
+default. See [Web Dashboard](dashboard.md) and
+[IDE Extensions](extensions.md). For traces and live metrics in your own
+backend, use [OpenTelemetry](observability.md).
 
 ## Next Steps
 

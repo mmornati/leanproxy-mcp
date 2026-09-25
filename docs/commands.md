@@ -195,6 +195,12 @@ leanproxy-mcp server run --http 127.0.0.1:8765 [flags]
 | `--http-allowed-hosts` | strings | (none) | Extra `Host` header values accepted, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]`. Added to `server.http.allowed_hosts` |
 | `--http-allowed-origins` | strings | (none) | Browser origins (`https://app.example`) allowed to call the endpoint. Added to `server.http.allowed_origins` |
 | `--exposure` | string | `""` | Force how the upstream tools are exposed to every client: `router`, `passthrough` or `hybrid`. Default: per client, from its `clientInfo.name` (see [`exposure`](configuration.md#exposure-modes-exposure)) |
+| `--dashboard-bind` | string | `""` (off) | Serve the [web dashboard](dashboard.md) on this address, e.g. `127.0.0.1:9090`. Off by default here (an MCP client may start several `server run --stdio` processes, which cannot share a port). A non-loopback bind without `--dashboard-token` refuses to start |
+| `--dashboard-token` | string | `""` | Bearer token for the dashboard, same rules as `serve`'s |
+| `--dashboard-allowed-hosts` | strings | (none) | Extra `Host` header values the dashboard accepts |
+| `--metrics-bind` | string | `""` (off) | Serve the [`/metrics` JSON endpoint](dashboard.md#metrics-endpoint) on this address, e.g. `127.0.0.1:9091` (the IDE extensions' default). A non-loopback bind without `--metrics-token` refuses to start |
+| `--metrics-token` | string | `""` | Bearer token for the metrics endpoint |
+| `--metrics-allowed-hosts` | strings | (none) | Extra `Host` header values the metrics endpoint accepts |
 | `--config` | string | `""` | Config file. Empty: `$LEANPROXY_CONFIG`, else `~/.config/leanproxy_servers.yaml` |
 | `--log-file` | string | `""` | Append logs to this file instead of stderr |
 | `--log-level` | string | `info` | `debug`, `info`, `warn` or `error` |
@@ -213,10 +219,9 @@ Some features exist in one front end only:
 
 | Only in `server run` (both front ends) | Only in the deprecated `serve` |
 |----------------------------------------|--------------------------------|
-| `--exposure` flag (the `exposure:` config block works in both) | Web dashboard (`--dashboard-bind`) |
-| `tool_search:` config block (`serve` always uses plain BM25) | JSON metrics endpoint (`--metrics-bind`) |
-| `code_mode:` (with `-tags codemode`) | Semantic cache (`--embed-provider`, `cache.vector_store`) |
-| | Sidecar LLM redaction (`--sidecar-*`) |
+| `--exposure` flag (the `exposure:` config block works in both) | Semantic cache (`--embed-provider`, `cache.vector_store`) |
+| `tool_search:` config block (`serve` always uses plain BM25) | Sidecar LLM redaction (`--sidecar-*`) |
+| `code_mode:` (with `-tags codemode`) | |
 | | Anthropic cache breakpoints (`--cache-strategy`), provider detection (`--providers-config`) |
 | | `SIGHUP` reload of the redaction patterns and provider config |
 | | Hourly registry index refresh |
@@ -274,7 +279,15 @@ leanproxy-mcp server run --http 127.0.0.1:8765
 
 # Let a browser app call it
 leanproxy-mcp server run --http 127.0.0.1:8765 --http-allowed-origins https://app.example
+
+# Shared gateway with the dashboard and the metrics endpoint the IDE extensions read
+leanproxy-mcp server run --http 127.0.0.1:8765 \
+  --dashboard-bind 127.0.0.1:9090 --metrics-bind 127.0.0.1:9091
 ```
+
+Both front ends have the web dashboard and the JSON `/metrics` endpoint.
+They are off by default in `server run` and share `serve`'s flags and
+security rules.
 
 #### OpenCode Configuration
 
@@ -546,9 +559,10 @@ over a raw TCP socket (not HTTP), with an auth handshake on the first line.
     gateway. `--http` uses the same token file; see
     [Migrating from `serve`](quickstart.md#migrating-from-serve).
 
-`serve` is still the only front end with the web dashboard, the metrics
-endpoint, the semantic cache, sidecar redaction and the other features
-listed under [`server run`](#server-run-run-the-mcp-front-end).
+`serve` is still the only front end with the semantic cache, sidecar
+redaction and the other features listed under
+[`server run`](#server-run-run-the-mcp-front-end). The web dashboard and the
+metrics endpoint are also available on `server run` (off by default there).
 
 ### Usage
 
@@ -662,7 +676,7 @@ leanproxy-mcp serve --no-auth
 # Without the dashboard
 leanproxy-mcp serve --dashboard-bind off
 
-# With the JSON metrics endpoint
+# With the JSON metrics endpoint (the IDE extensions' default address)
 leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 
 # Semantic cache with Ollama embeddings

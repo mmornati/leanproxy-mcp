@@ -355,6 +355,7 @@ var runFlags struct {
 	httpAllowedOrigins []string
 	noAuth             bool
 	exposure           string
+	endpoints          endpointFlags
 }
 
 func init() {
@@ -368,6 +369,7 @@ func init() {
 	runCmd.Flags().StringSliceVar(&runFlags.httpAllowedHosts, "http-allowed-hosts", nil, "Extra Host header values accepted by the HTTP front end, beyond the bind host and loopback names (adds to server.http.allowed_hosts)")
 	runCmd.Flags().StringSliceVar(&runFlags.httpAllowedOrigins, "http-allowed-origins", nil, "Browser origins (https://app.example) allowed to call the HTTP front end (adds to server.http.allowed_origins)")
 	runCmd.Flags().BoolVar(&runFlags.noAuth, "no-auth", false, "Serve --http without a bearer token (only allowed on a loopback address)")
+	runFlags.endpoints.register(runCmd, "")
 	runCmd.Flags().StringVar(&runFlags.exposure, "exposure", "", "Force how the upstream tools are exposed to every client: router, passthrough or hybrid (default: per client, see exposure: in the config)")
 	serverCmd.AddCommand(runCmd)
 
@@ -646,6 +648,23 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		return toMetricsResponseCache(respCache)
 	})
 	metrics.SetResponseGovernorProvider(gov.Stats)
+
+	// Dashboard and /metrics (off unless --dashboard-bind/--metrics-bind),
+	// fed from the usage store like `serve`'s.
+	metricsSrv, dashboardSrv, err := runFlags.endpoints.startEndpoints()
+	if err != nil {
+		closePools()
+		return err
+	}
+	stopEndpoints := func() {
+		if metricsSrv != nil {
+			metricsSrv.Close()
+		}
+		if dashboardSrv != nil {
+			dashboardSrv.Close()
+		}
+	}
+	defer stopEndpoints()
 
 	if httpOpts != nil {
 		return handleHTTP(handler, *httpOpts, sigChan, closePools, statusStore)

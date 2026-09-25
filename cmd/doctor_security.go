@@ -569,7 +569,7 @@ func addMCP07AuthNAuthZ(r *SecurityReport, cfg *migrate.Config, running *statusf
 	}
 
 	r.add(id, name, SecurityCheck{ID: "dashboard_metrics_exposure", Title: "Dashboard and metrics endpoint exposure",
-		Status: StatusInfo, Evidence: "Bind address and token are `serve --dashboard-bind`/`--metrics-bind` flags, not persisted in the config; not available without a running proxy. Both refuse to start on a non-loopback bind without a token (#316)."})
+		Status: StatusInfo, Evidence: "Bind address and token are `--dashboard-bind`/`--metrics-bind` flags of `serve` and `server run`, not persisted in the config; not available without a running proxy. Both refuse to start on a non-loopback bind without a token (#316)."})
 }
 
 // ---- MCP08: audit / telemetry ----------------------------------------------

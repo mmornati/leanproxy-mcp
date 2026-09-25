@@ -1,36 +1,65 @@
 # Web Dashboard and `/metrics`
 
-LeanProxy-MCP has a small web dashboard and a JSON `/metrics` endpoint.
+LeanProxy-MCP has a small web dashboard and a JSON `/metrics` endpoint. They
+show how many tokens the proxy handled and saved today and this week, per
+upstream server and per tool. Both front ends have them: `server run`
+(`--stdio` and `--http`) and the deprecated `serve`.
 
-!!! warning "Only available under the deprecated `serve` command"
-    The dashboard and `/metrics` are started only by `leanproxy-mcp serve`,
-    the line-TCP front end that is deprecated and scheduled for removal in
-    v1.0. No MCP client speaks the `serve` protocol, and the front ends that
-    clients do use, `server run --stdio` and `server run --http`, start
-    neither the dashboard nor `/metrics`.
+## Where the numbers come from
 
-    For savings and usage numbers from any front end, use
-    [`leanproxy-mcp report`](./savings-report.md). For live metrics, use
-    [OpenTelemetry](./observability.md).
+Both read the **usage store** (`~/.leanproxy/usage/`, see
+[Savings Report](savings-report.md#where-the-numbers-come-from)). Every
+front end (`server run --stdio`, `server run --http`, `serve`) appends a
+snapshot of its real counters to it every 5 seconds, and
+`leanproxy-mcp report` reads the same store. As a result:
 
-!!! warning "Token and spend figures always read zero"
-    Every token and spend figure on the dashboard (today's spend, WTD spend,
-    top server, top tool, the server table, the per-tool drill-down and the
-    prompt hashes) and the `by_tool`, `by_server`, `total_spend` and
-    `top_5_expensive_tools` fields of `/metrics` come from an in-process cost
-    tracker that nothing in the proxy currently feeds. They are always `0`,
-    `-` or empty, however much traffic goes through the proxy.
+- the dashboard covers **every proxy process on this machine**, not just
+  the one serving it: a dashboard on a `server run --http` gateway also
+  shows the `server run --stdio` sessions your IDEs started;
+- the numbers survive restarts, and a new process starts with the day's
+  and week's totals so far;
+- every figure is measured, counted with the same `chars/4` estimator
+  `report` uses. Nothing is modeled or priced.
 
-    What does work: the **tool pinning** panel of the dashboard, and the
-    `telemetry`, `response_cache` and `response_governor` blocks of
-    `/metrics` (see [Metrics output](#metrics-output)).
+Two windows are shown:
+
+| Window | Starts at |
+|--------|-----------|
+| **Today** | 00:00 UTC of the current day |
+| **Week to date** | 00:00 UTC of the current ISO week's Monday |
+
+Each process's snapshots are cumulative, so a window counts, per process,
+only what it recorded **inside** the window (its latest snapshot minus its
+last snapshot before the window started). A proxy running since yesterday
+contributes to today only what it did today, and the week-to-date figure
+is genuinely larger than today's from the second day of the week on.
+
+The totals (`original_tokens`, `saved_tokens`, `saved_percent`) are the
+same as `report`'s `total_original_tokens` / `total_saved_tokens` /
+`total_saved_percent`: schema savings plus the response governor's.
+Discovery (`search_tools`, `list_tools`, `list_servers`) is reported
+separately as a cost.
+
+!!! note "Per-server and per-tool figures need the response governor"
+    The per-server and per-tool rows (and so the top server and top tool)
+    come from the response governor's per-tool accounting, the same data
+    as `report --by tool|server`. The governor is off by default, so those
+    rows stay empty until you set `response.enabled: true` (see
+    [Configuration](configuration.md#response-token-governor-response)).
+    The totals still include schema savings without it.
 
 ## Enabling the Dashboard
 
-The dashboard starts with `serve` by default, on `127.0.0.1:9090`:
+`serve` starts the dashboard on `127.0.0.1:9090` by default. `server run`
+has the same flags, off by default, since an MCP client may start several
+`server run --stdio` processes and they cannot all bind the same port.
+Enable it on one process, typically a shared `server run --http` gateway:
 
 ```bash
-# Default: dashboard on 127.0.0.1:9090
+# server run (the recommended front end)
+leanproxy-mcp server run --http 127.0.0.1:8765 --dashboard-bind 127.0.0.1:9090
+
+# serve (deprecated line-TCP front end): on by default
 leanproxy-mcp serve
 
 # Another address
@@ -40,31 +69,31 @@ leanproxy-mcp serve --dashboard-bind 127.0.0.1:9095
 leanproxy-mcp serve --dashboard-bind off
 ```
 
-!!! note "Port 9090 is taken by default"
-    Because the dashboard binds `127.0.0.1:9090` by default, any other
+!!! note "Port 9090 is taken by default under `serve`"
+    Because `serve`'s dashboard binds `127.0.0.1:9090` by default, any other
     listener you give `serve` on that address (`--listen` or
     `--metrics-bind`) fails to start. Pick another port, or move the
     dashboard.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--dashboard-bind` | `127.0.0.1:9090` | Bind address. `off` or empty disables the dashboard. |
+| `--dashboard-bind` | `serve`: `127.0.0.1:9090`; `server run`: off | Bind address. `off` or empty disables the dashboard. |
 | `--dashboard-token` | none | Bearer token. Required on a non-loopback bind. |
 | `--dashboard-allowed-hosts` | none | Extra `Host` header values to accept. |
 
 ### Authentication
 
 A non-loopback `--dashboard-bind` (anything but `127.0.0.1`, `localhost` or
-`::1`) **requires** `--dashboard-token`. Without one, `serve` refuses to
+`::1`) **requires** `--dashboard-token`. Without one, the proxy refuses to
 start rather than expose the dashboard unauthenticated:
 
 ```bash
-leanproxy-mcp serve --dashboard-bind 0.0.0.0:9090 --dashboard-token my-secret-token
+leanproxy-mcp server run --http 127.0.0.1:8765 --dashboard-bind 0.0.0.0:9090 --dashboard-token my-secret-token
 ```
 
-A loopback bind (the default) works without a token. Once a token **is**
-configured, every client must send it, loopback included. There is no bypass
-for local processes.
+A loopback bind works without a token. Once a token **is** configured,
+every client must send it, loopback included. There is no bypass for local
+processes.
 
 Send the token on every request:
 
@@ -103,12 +132,12 @@ response also carries a same-origin `Content-Security-Policy`,
 The dashboard is an HTMX page at `http://127.0.0.1:9090/` that refreshes
 every 5 seconds.
 
-| Section | Content | Status |
-|---------|---------|--------|
-| Summary cards | Today's spend, WTD spend, top server, top tool | Always `0` / `-`. WTD is the same number as today. |
-| Server table | Per-server token counts | Always empty |
-| Drill-down | Per-tool counts of a server, then prompt hashes of a tool | Always empty |
-| Tool pinning | The latest tool pinning events of the `serve` process, newest first, refreshed every 10 seconds | **Works** |
+| Section | Content |
+|---------|---------|
+| Summary cards | Tokens saved today and this week (with the original tokens and the percentage saved), and today's top server and top tool by response size. If the usage store cannot be read, the cards say so instead of showing zeros. |
+| Server table | Today's servers, largest first: tools, calls, response tokens (before the governor), tokens returned to the client, and tokens saved. With the governor off, it explains how to enable it. |
+| Drill-down | Click a server to see its tools today: calls, response, returned and saved tokens, and the average response size per call. The usage store never records payloads or prompt hashes, so there is no per-prompt drill-down. |
+| Tool pinning | The latest tool pinning events of the process serving the dashboard, newest first, refreshed every 10 seconds. |
 
 The tool pinning panel lists servers pinned on first use, tools added,
 changed or removed, server identity changes, scanner findings and cross-server
@@ -122,47 +151,67 @@ name collisions, with server, tool and severity. Review and approve them with
 |----------|--------|---------|
 | `/` | GET | Dashboard HTML page |
 | `/api/dashboard` | GET | HTML fragment with the summary cards |
-| `/api/dashboard/json` | GET | Summary as JSON (see below) |
-| `/api/dashboard/servers` | GET | HTML rows of the server table |
-| `/api/dashboard/servers/{server}` | GET | HTML drill-down for one server |
-| `/api/dashboard/servers/{server}/tools/{tool}/prompts` | GET | HTML list of prompt hashes for one tool |
+| `/api/dashboard/json` | GET | The usage summary as JSON (below); `503` when the usage store cannot be read |
+| `/api/dashboard/servers` | GET | HTML table of today's servers |
+| `/api/dashboard/servers/{server}` | GET | HTML drill-down: today's tools for one server |
 | `/api/dashboard/tool-pins` | GET | HTML table of the latest 50 tool pinning events |
 | `/static/...` | GET | Static assets (`htmx.min.js`) |
 | `/login?token=…` | GET | Exchanges a valid token for a session cookie |
 
-`/api/dashboard/json` returns:
+### JSON Response Format
+
+`/api/dashboard/json` returns the usage summary. `/metrics` serves the
+same object under `usage`:
 
 ```json
 {
-  "today_spend": 0,
-  "wtd_spend": 0,
-  "top_server": "",
-  "top_tool": "",
-  "server_count": 0,
-  "tool_count": 0,
-  "per_server": [
-    {"server": "github", "tokens": 0}
-  ],
-  "per_tool": [
-    {"tool": "create_issue", "tokens": 0}
-  ]
+  "estimator": "chars/4",
+  "today": {
+    "since": "2026-09-23T00:00:00Z",
+    "sessions": 2,
+    "original_tokens": 13500,
+    "saved_tokens": 10850,
+    "saved_percent": 80.4,
+    "discovery_calls": 3,
+    "discovery_tokens": 420,
+    "tool_calls": 4,
+    "top_server": "fs",
+    "top_tool": "fs.read_file",
+    "by_server": [
+      {"server": "fs", "tools": 1, "calls": 2, "original_tokens": 10000, "returned_tokens": 2000, "saved_tokens": 8000},
+      {"server": "github", "tools": 1, "calls": 2, "original_tokens": 2000, "returned_tokens": 500, "saved_tokens": 1500}
+    ],
+    "by_tool": [
+      {"server": "fs", "tool": "read_file", "calls": 2, "original_tokens": 10000, "returned_tokens": 2000, "saved_tokens": 8000},
+      {"server": "github", "tool": "search", "calls": 2, "original_tokens": 2000, "returned_tokens": 500, "saved_tokens": 1500}
+    ]
+  },
+  "week": { "since": "2026-09-21T00:00:00Z", "...": "same fields, week to date" }
 }
 ```
 
-With the tracker unfed, `per_server` and `per_tool` are empty arrays.
+The numbers above are illustrative. `by_server` and `by_tool` are empty
+lists (never `null`) when the governor is off, and `top_server` /
+`top_tool` are then omitted. A tool the governor could not attribute to a
+server has `"server": ""`.
 
 ## Metrics Endpoint
 
 `/metrics` returns a **JSON** snapshot. It is not in the Prometheus text
-format. It is off by default:
+format. It is the endpoint the [IDE extensions](extensions.md) read,
+available on both front ends and off by default:
 
 ```bash
+leanproxy-mcp server run --http 127.0.0.1:8765 --metrics-bind 127.0.0.1:9091
 leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 ```
 
+`127.0.0.1:9091` is the extensions' default address. `9090` is the
+dashboard's, and it has no `/metrics` route.
+
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--metrics-bind` | empty (disabled) | Bind address. `off` or empty disables it. Do not use `127.0.0.1:9090` while the dashboard is on its default address. |
+| `--metrics-bind` | empty (disabled) | Bind address. `off` or empty disables it. Under `serve`, do not use `127.0.0.1:9090` while the dashboard is on its default address. |
 | `--metrics-token` | none | Bearer token (`Authorization: Bearer <token>`). Required on a non-loopback bind. There is no cookie login. |
 | `--metrics-allowed-hosts` | none | Extra `Host` header values to accept. |
 
@@ -174,10 +223,6 @@ sends `Accept: application/json`.
 
 ```json
 {
-  "by_tool": [],
-  "by_server": [],
-  "total_spend": 0,
-  "top_5_expensive_tools": [],
   "response_cache": {
     "enabled": true,
     "hits": 12,
@@ -238,6 +283,11 @@ sends `Accept: application/json`.
     "schema_sent_tokens_total": 1630,
     "discovery_calls_total": 11,
     "discovery_tokens_total": 5120
+  },
+  "usage": {
+    "estimator": "chars/4",
+    "today": {"...": "see JSON Response Format above"},
+    "week": {"...": "..."}
   }
 }
 ```
@@ -246,15 +296,21 @@ The numbers above are illustrative.
 
 | Field | Source | Notes |
 |-------|--------|-------|
-| `by_tool` (`[{tool_name, token_count}]`), `by_server` (`[{server_name, token_count}]`), `total_spend`, `top_5_expensive_tools` (`[{tool_name, token_count}]`) | Cost tracker | Always empty or `0` (see the warning at the top). |
-| `response_cache` | [Response cache](./configuration.md#response-cache) | Always present under `serve`, with `enabled: false` when the cache is off. |
-| `response_governor` | [Response governor](./configuration.md#response-token-governor-response) | Omitted while the governor is off. Per-tool entries also carry `projected`, `dedup_hits` and similar fields when non-zero. |
-| `telemetry` | Pipeline counters | Always present. Counted whether or not an OTLP exporter is configured. |
+| `response_cache` | [Response cache](./configuration.md#response-cache) | This process. Present once the front end has set up the cache, with `enabled: false` when the cache is off. |
+| `response_governor` | [Response governor](./configuration.md#response-token-governor-response) | This process. Omitted while the governor is off. Per-tool entries also carry `projected`, `dedup_hits` and similar fields when non-zero. |
+| `telemetry` | Pipeline counters | This process, since it started. Always present. Counted whether or not an OTLP exporter is configured. |
+| `usage` | [Usage store](#where-the-numbers-come-from) | Today and week to date, across every process on the machine (see [JSON Response Format](#json-response-format)). Omitted when the usage store cannot be read. |
+
+The endpoint used to carry `total_spend`, `by_tool`, `by_server` and
+`top_5_expensive_tools`, fed by a cost tracker nothing in the pipeline
+called; they were always zero or empty and have been removed. Read
+`usage.today` / `usage.week` instead.
 
 ## Exporting data
 
-The dashboard has no export. `leanproxy-mcp report` reads the usage records
-that every front end writes, and can export them:
+The dashboard has no export. For a full, auditable breakdown by mechanism
+over any period, `leanproxy-mcp report` reads the same usage store and can
+export it:
 
 ```bash
 leanproxy-mcp report --export csv --output usage.csv
@@ -266,6 +322,7 @@ See [Savings Report](./savings-report.md).
 
 ## Next Steps
 
-- [Savings Report](./savings-report.md) — measured savings for every front end
+- [Savings Report](./savings-report.md) — how every number is measured
+- [IDE Extensions](./extensions.md) — the same numbers in VS Code and JetBrains
 - [Observability](./observability.md) — OpenTelemetry traces and metrics
 - [Commands Reference](./commands.md) — Full CLI documentation

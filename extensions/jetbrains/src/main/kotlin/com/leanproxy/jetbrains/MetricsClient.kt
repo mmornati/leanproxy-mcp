@@ -12,16 +12,22 @@ class MetricsClient(private val gson: Gson = Gson()) {
         .connectTimeout(Duration.ofSeconds(5))
         .build()
 
-    fun fetch(endpoint: String): Result<MetricsSnapshot> {
+    /**
+     * GETs the metrics endpoint, sending "Authorization: Bearer <token>" when
+     * a token (the proxy's --metrics-token) is set.
+     */
+    fun fetch(endpoint: String, token: String? = null): Result<MetricsSnapshot> {
         return try {
-            val request = HttpRequest.newBuilder()
+            val builder = HttpRequest.newBuilder()
                 .uri(URI.create(endpoint))
                 .header("Accept", "application/json")
                 .timeout(Duration.ofSeconds(5))
                 .GET()
-                .build()
+            if (!token.isNullOrEmpty()) {
+                builder.header("Authorization", "Bearer $token")
+            }
 
-            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+            val response = httpClient.send(builder.build(), HttpResponse.BodyHandlers.ofString())
 
             if (response.statusCode() != 200) {
                 return Result.failure(MetricsHttpException(response.statusCode()))
@@ -38,5 +44,13 @@ class MetricsClient(private val gson: Gson = Gson()) {
 }
 
 open class MetricsException(message: String, cause: Throwable? = null) : Exception(message, cause)
-class MetricsHttpException(val statusCode: Int) : MetricsException("HTTP $statusCode")
+class MetricsHttpException(val statusCode: Int) : MetricsException(describeStatus(statusCode))
 class MetricsConnectionException(message: String, cause: Throwable?) : MetricsException(message, cause)
+
+/** A human explanation of an HTTP error from the metrics endpoint. */
+fun describeStatus(statusCode: Int): String = when (statusCode) {
+    401 -> "HTTP 401: the metrics endpoint needs a token (Settings > Tools > LeanProxy Cost Monitor)"
+    403 -> "HTTP 403: Host not allowed; use 127.0.0.1/localhost or add it with --metrics-allowed-hosts"
+    404 -> "HTTP 404: no /metrics here; point the endpoint at --metrics-bind, not the dashboard port"
+    else -> "HTTP $statusCode"
+}

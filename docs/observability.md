@@ -204,9 +204,10 @@ either.
 ## The `/metrics` JSON endpoint
 
 The same counters are also kept in memory, whether or not an exporter is
-configured. They are served as JSON on `/metrics`, but **only by the
-deprecated `serve` command** with `--metrics-bind` (off by default).
-`server run --stdio` and `server run --http` have no `/metrics` endpoint. See
+configured. They are served as JSON on `/metrics` by `server run` and
+`serve` with `--metrics-bind` (off by default), together with a `usage`
+section: today's and week-to-date totals from the usage store, across every
+proxy process on the machine. See
 [Dashboard › Metrics Endpoint](dashboard.md#metrics-endpoint) for the schema.
 
 With any front end, the counters are also written to the local usage store,

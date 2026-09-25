@@ -2,52 +2,52 @@
 
 The repository contains two small IDE extensions, both named
 **LeanProxy Cost Monitor**: one for VS Code (`extensions/vscode`) and one for
-JetBrains IDEs (`extensions/jetbrains`). They poll the JSON `/metrics`
-endpoint and show an estimated cost in the status bar, plus a panel with a
-per-tool and per-server breakdown.
-
-!!! warning "Read this before installing"
-    - **They only work with the deprecated `serve` command.** The `/metrics`
-      endpoint they read exists only under `serve --metrics-bind`. The
-      `server run --stdio` and `server run --http` front ends that MCP clients
-      actually use have no `/metrics` endpoint. See
-      [Dashboard](./dashboard.md#metrics-endpoint).
-    - **The figures they show are always zero.** They read `total_spend`,
-      `by_tool`, `by_server` and `top_5_expensive_tools`. Nothing in the
-      proxy currently feeds the tracker behind those fields, so the status bar
-      shows a cost of `0.0000` and the breakdown is empty.
-    - **The default endpoint points at the dashboard port.** Both extensions
-      default to `http://127.0.0.1:9090/metrics`. Port 9090 is the default
-      *dashboard* port of `serve`, and the dashboard has no `/metrics` route.
-      With the defaults you get a 404, shown as "disconnected". Start the
-      metrics endpoint on another port and change the setting (see
-      [Setup](#setup)).
-    - **No token support.** The extensions send no `Authorization` header, so
-      they cannot reach an endpoint started with `--metrics-token`. Keep the
-      metrics endpoint on a loopback address without a token.
-
-    To see real savings, use [`leanproxy-mcp report`](./savings-report.md),
-    which works with every front end.
+JetBrains IDEs (`extensions/jetbrains`). They show the proxy's token savings
+(today and week to date) in the status bar, plus a panel with a per-server
+and per-tool breakdown. They read the `usage` section of the
+[`/metrics` endpoint](dashboard.md#metrics-endpoint): the same measured
+numbers as the dashboard and `leanproxy-mcp report`, across every proxy
+process on the machine.
 
 ## Setup
 
-Start `serve` with the metrics endpoint on a free loopback port:
+Both extensions need the metrics endpoint. It is off by default, so enable
+it on one proxy process at the address the extensions expect by default,
+`127.0.0.1:9091`:
 
 ```bash
+# A shared Streamable HTTP gateway (recommended)
+leanproxy-mcp server run --http 127.0.0.1:8765 --metrics-bind 127.0.0.1:9091
+
+# Or the deprecated serve front end
 leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 ```
 
-`serve` also starts the dashboard on `127.0.0.1:9090` by default. Then set the
-extension's metrics endpoint to `http://127.0.0.1:9091/metrics`.
+Don't point the extensions at `9090`: that is the dashboard's port, and it
+has no `/metrics` route, so you would get `404`.
+
+Enable it on **one** process only, since two processes cannot bind the same
+port. Because the numbers come from the shared usage store, that one
+endpoint also covers the `server run --stdio` sessions your IDEs start.
+
+Per-server and per-tool rows need the response governor
+(`response.enabled: true`). Without it the extensions still show the
+totals, which include schema savings.
+
+If you set `--metrics-token`, give the extension the same token (see
+below). A non-loopback `--metrics-bind` requires one.
 
 ## VS Code Extension
 
 ### Features
 
-- **Status bar item**: estimated cost, computed as
-  `total_spend / 1000 × tokenCostPer1000`. Click it to open the panel.
-- **Cost breakdown panel** (webview): total, per-tool and per-server token
-  counts, and the top 5 tools. The panel polls every second.
+- **Status bar item**: tokens saved today (`12.3K saved`), or an estimated
+  cost saved when you set a price. The tooltip adds the percentage and the
+  week-to-date figure. Click it to open the panel.
+- **Usage panel** (webview): today and week-to-date totals, discovery cost,
+  sessions, and today's per-server and top per-tool breakdown.
+- **Token support**: the metrics token is kept in VS Code's SecretStorage,
+  never in `settings.json`.
 
 ### Installation
 
@@ -65,17 +65,20 @@ code --install-extension leanproxy-cost-0.1.0.vsix
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `leanproxy.metricsEndpoint` | `http://127.0.0.1:9090/metrics` | Metrics endpoint URL. Change it (see the warning above). |
-| `leanproxy.pollInterval` | `1000` | Status bar polling interval in ms (minimum 500). Read at start; reload the window after changing it. |
-| `leanproxy.currencySymbol` | `$` | Currency symbol shown in the status bar |
-| `leanproxy.tokenCostPer1000` | `0.002` | Price per 1,000 tokens used for the estimate |
+| `leanproxy.metricsEndpoint` | `http://127.0.0.1:9091/metrics` | The `--metrics-bind` address plus `/metrics` |
+| `leanproxy.pollInterval` | `5000` | Polling interval in ms (minimum `1000`), used by both the status bar and the panel. The proxy records a new snapshot every 5 seconds, so polling faster only repeats it |
+| `leanproxy.currencySymbol` | `$` | Currency symbol for the estimated cost saved |
+| `leanproxy.tokenCostPer1000` | `0` | Your price per 1,000 tokens. `0` shows tokens only, because LeanProxy has no built-in price table |
+
+Changes apply immediately, with no reload needed.
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `LeanProxy: Open Cost Panel` | Open the cost breakdown panel |
+| `LeanProxy: Open Cost Panel` | Open the usage panel |
 | `LeanProxy: Refresh Status Bar` | Poll the endpoint now |
+| `LeanProxy: Set Metrics Token` | Store the `--metrics-token` value in SecretStorage (leave empty to clear it) |
 
 ## JetBrains Plugin
 
@@ -83,9 +86,10 @@ For IntelliJ-based IDEs, build 241 to 251.* (2024.1 to 2025.1).
 
 ### Features
 
-- **Status bar widget**: the same cost estimate as the VS Code extension.
-- **LeanProxy tool window** (right side): per-tool and per-server breakdown
-  and the top 5 tools.
+- **Status bar widget**: tokens saved today, or an estimated cost saved at
+  your price.
+- **LeanProxy tool window** (right side): today and week-to-date totals and
+  today's per-server and top per-tool breakdown.
 - **Actions**: `LeanProxy: Open Cost Panel` and
   `LeanProxy: Refresh Status Bar`.
 
@@ -104,18 +108,27 @@ Install the ZIP with **Settings › Plugins › ⚙ › Install Plugin from Disk
 
 ### Settings
 
-Open **Settings › Tools › LeanProxy Cost Monitor**. The page has two fields:
+Open **Settings › Tools › LeanProxy Cost Monitor**:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Metrics endpoint | `http://127.0.0.1:9090/metrics` | Metrics endpoint URL. Change it (see the warning above). |
-| Poll interval (ms) | `1000` | Polling interval |
+| Metrics endpoint | `http://127.0.0.1:9091/metrics` | The `--metrics-bind` address plus `/metrics` |
+| Metrics token | (none) | The `--metrics-token` value, stored in the IDE's password safe (not in `leanproxy-settings.xml`) |
+| Poll interval (ms) | `5000` | Polling interval (minimum `1000`); a change applies at the next poll |
+| Currency symbol | `$` | Currency symbol for the estimated cost saved |
+| Price per 1000 tokens | `0` | Your price; `0` shows tokens only |
 
-The currency symbol (`$`) and price per 1,000 tokens (`0.002`) are also
-stored, in `leanproxy-settings.xml` in the IDE's options directory, but have
-no field on the settings page.
+## Troubleshooting
+
+| Symptom | Cause |
+|---------|-------|
+| `HTTP 404` | The endpoint is not a metrics endpoint. Usually it's the dashboard's `9090`; use the `--metrics-bind` address |
+| `HTTP 401` | The endpoint has a `--metrics-token`; set the same token in the extension |
+| `HTTP 403` | The `Host` you connect with is not allowed; use `127.0.0.1`/`localhost` or add it with `--metrics-allowed-hosts` |
+| "no usage data" | The proxy is running but could not read `~/.leanproxy/usage` (see its log) |
+| Totals but no servers/tools | The response governor is off (`response.enabled: true`) |
 
 ## Next Steps
 
-- [Web Dashboard](./dashboard.md) — the `serve` dashboard and `/metrics` schema
-- [Savings Report](./savings-report.md) — measured savings for every front end
+- [Web Dashboard](./dashboard.md) — the dashboard and the `/metrics` schema
+- [Savings Report](./savings-report.md) — how every number is measured

@@ -8,7 +8,7 @@ LeanProxy-MCP includes multiple security hardening features to protect your data
 |---------|-------------|
 | **Least-Privilege Child Environment** | Stdio MCP servers get a minimal environment by default instead of the proxy's full environment (#311) |
 | **Streamable HTTP Front End** | `server run --http`: loopback by default, bearer token (no unauthenticated non-loopback bind), Host/Origin validation, unguessable per-credential session ids, body/session/concurrency limits (#309) |
-| **Dashboard & Metrics Hardening** | Deprecated `serve` only: Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
+| **Dashboard & Metrics Hardening** | `server run` and `serve`: Host/Origin validation (DNS-rebinding defense), no unauthenticated non-loopback bind, no loopback token bypass, CSP and other security headers (#316) |
 | **First-Party Servers Hardening** | Postgres: real read-only transaction, not just a text prefix check. Redis: pool that can't deadlock, bounded RESP allocations, per-command deadlines (#318) |
 | **In-Memory Redaction** | Pre-configured patterns redact secrets before they reach LLM providers |
 | **Prompt Injection Protection** | Classifies the decoded text of requests and tool outputs (indirect injection) with risk scoring and per-direction actions |
@@ -48,8 +48,8 @@ for usage, flags (`--json`, `--markdown`) and full sample output.
 | MCP10 Excessive Context | The [response governor](#response-governor-spill-store-319) on/off; the [exposure mode](#exposure-modes-and-passthrough-322) |
 
 A check that genuinely cannot be evaluated without a running proxy (e.g.
-the `--log-level` flag of a future invocation, or a `serve
---dashboard-bind` not yet started) is reported `ℹ️` (info), not `❌`: the
+the `--log-level` flag of a future invocation, or a `--dashboard-bind`
+not yet started) is reported `ℹ️` (info), not `❌`: the
 exit code and the fail count only ever reflect a check that could actually
 be evaluated.
 
@@ -258,8 +258,8 @@ docker run --rm -i --init --name leanproxy-<server>-<gen> \
 
 ## Dashboard & metrics hardening (#316)
 
-`leanproxy-mcp serve`'s dashboard (`--dashboard-bind`) and metrics
-(`--metrics-bind`) endpoints:
+The dashboard (`--dashboard-bind`) and metrics (`--metrics-bind`)
+endpoints of `leanproxy-mcp server run` and `serve`:
 
 - **Refuse to start** on a non-loopback bind with no token configured
   (`--dashboard-token` / `--metrics-token`), instead of only logging a

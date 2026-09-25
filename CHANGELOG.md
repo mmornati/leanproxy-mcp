@@ -2,6 +2,31 @@
 
 ## Breaking in v0.11
 
+- **The dashboard and `/metrics` read the usage store; their always-empty cost-tracker fields are gone.**
+  - **What.** Both read token and spend figures from `reporter.GlobalCostTracker`, which nothing
+    in the live pipeline feeds: `total_spend`, `by_tool`, `by_server`, `top_5_expensive_tools`,
+    the dashboard's today/WTD spend, top server/tool, per-server/per-tool figures and prompt
+    hashes were always zero or empty, and "WTD" was just today's value. Both endpoints existed
+    only under the deprecated `serve`.
+  - **Now.** They are fed from the usage store (`pkg/usage`, the same one `report` reads),
+    across every proxy process on the machine: `/metrics` gains a `usage` section with `today`
+    (since 00:00 UTC) and `week` (since Monday 00:00 UTC) windows, each counting only what was
+    recorded inside it, with totals equal to `report`'s and per-server/per-tool rows from the
+    response governor. `/api/dashboard/json` returns that same object. The prompt-hash
+    drill-down (`/api/dashboard/servers/{server}/tools/{tool}/prompts`) is removed; the usage
+    store never records payload hashes. `server run` now takes `--dashboard-bind`,
+    `--metrics-bind` and their token/allowed-hosts flags (off by default). The VS Code and
+    JetBrains extensions default to `http://127.0.0.1:9091/metrics` (was `9090`, the
+    dashboard's port, which returned `404`), can send a `--metrics-token`, and poll at the
+    configured interval (default 5 s). The JetBrains settings now expose currency and price.
+  - **Migration.** A consumer of `/metrics`'s `total_spend`/`by_tool`/`by_server`/
+    `top_5_expensive_tools` or `/api/dashboard/json`'s `today_spend`/`wtd_spend`/`per_server`/
+    `per_tool` should read `usage.today` / `usage.week` instead (see
+    [`docs/dashboard.md`](docs/dashboard.md#json-response-format)). If an extension setting is
+    still `http://127.0.0.1:9090/metrics`, change it and start the proxy with
+    `--metrics-bind 127.0.0.1:9091`. `leanproxy.tokenCostPer1000` now defaults to `0`, which
+    shows tokens only; set your own price to see a cost.
+
 - **`report --export csv|json` now exports the auditable savings mechanism breakdown, not raw per-call cost rows** ([#324](https://github.com/mmornati/leanproxy-mcp/issues/324)).
   - **What.** `--export csv`/`--export json` used to export `reporter.CallLogEntry` rows (one
     per tracked tool call: timestamp, server, tool, tokens, estimated cost) — but nothing in the

@@ -5,17 +5,17 @@
     <vendor email="support@leanproxy.dev" url="https://github.com/mmornati/leanproxy-mcp">LeanProxy</vendor>
     <description><![CDATA[
         <h2>LeanProxy Cost Monitor</h2>
-        <p>Real-time AI cost monitoring for LeanProxy in your JetBrains IDE status bar and tool window.</p>
+        <p>Token savings from LeanProxy (today and week-to-date) in your JetBrains IDE status bar and tool window.</p>
         <p>Features:</p>
         <ul>
-            <li>Status bar widget showing estimated session cost</li>
-            <li>Tool window with per-tool and per-server token breakdown</li>
-            <li>Configurable polling interval and metrics endpoint</li>
-            <li>Top 5 most expensive tools view</li>
+            <li>Status bar widget showing tokens saved today (or an estimated cost saved at your own price)</li>
+            <li>Tool window with today and week-to-date totals and a per-server and per-tool breakdown</li>
+            <li>Configurable metrics endpoint, bearer token (kept in the IDE password safe), polling interval, currency and price</li>
         </ul>
     ]]></description>
     <change-notes><![CDATA[
         <ul>
+            <li>Unreleased: reads the /metrics "usage" section (today / week-to-date from the usage store); default endpoint 127.0.0.1:9091; metrics token, currency and price settings</li>
             <li>0.1.0: Initial release - parity with VS Code extension</li>
         </ul>
     ]]></change-notes>

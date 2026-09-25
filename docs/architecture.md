@@ -42,7 +42,7 @@ graph LR
 |-----------|---------|------|-------|
 | stdio | `server run --stdio` | `cmd/stdio_frontend.go` | One client per process. Newline-delimited JSON-RPC on stdin/stdout. Requests are handled concurrently (`server.max_concurrent_requests`). |
 | Streamable HTTP | `server run --http <addr>` | `pkg/streamhttp`, `cmd/http_frontend.go` | One shared local gateway at `/mcp` for many clients. Bearer token, Host/Origin checks, per-client sessions. |
-| Line-TCP (deprecated) | `serve` | `cmd/serve.go`, `cmd/serve_listener.go` | Not an MCP transport; no MCP client speaks it. Scheduled for removal in v1.0. It is the only front end with the web dashboard, the `/metrics` endpoint, the semantic cache and the sidecar redactor. |
+| Line-TCP (deprecated) | `serve` | `cmd/serve.go`, `cmd/serve_listener.go` | Not an MCP transport; no MCP client speaks it. Scheduled for removal in v1.0. It is the only front end with the semantic cache and the sidecar redactor (the web dashboard and `/metrics` are on `server run` too). |
 
 All three build the same `mcp.Handler` and the same middleware stages
 (`tracedMiddlewares` in `cmd/telemetry.go`). `server run` installs them with
@@ -230,8 +230,8 @@ leanproxy-mcp/
 │   ├── codemode/        # execute_code sandbox (build tag codemode)
 │   ├── telemetry/       # OpenTelemetry OTLP/HTTP exporters
 │   ├── usage/           # Usage store behind `report` (~/.leanproxy/usage)
-│   ├── metrics/         # JSON /metrics endpoint (serve only)
-│   ├── dashboard/       # Web dashboard (serve only)
+│   ├── metrics/         # JSON /metrics endpoint (server run and serve)
+│   ├── dashboard/       # Web dashboard (server run and serve)
 │   ├── reporter/        # Token estimator and cost tracker
 │   ├── cache/           # Semantic cache, embedders, vector stores (serve only;
 │   │                    # the embedders are also used by hybrid tool search)

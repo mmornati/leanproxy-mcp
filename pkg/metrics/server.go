@@ -25,6 +25,20 @@ type Config struct {
 	// AllowedHosts lists extra Host header values (--metrics-allowed-hosts)
 	// accepted in addition to the bind host, localhost, 127.0.0.1 and ::1.
 	AllowedHosts []string
+
+	// Usage, when set, supplies the "usage" section (today / week-to-date
+	// from the usage store, see UsageSummary). A nil func, or one that
+	// returns nil (e.g. the store could not be read), omits the section.
+	Usage func() *UsageSummary
+}
+
+// endpointSnapshot is the /metrics response: this process's live counters
+// plus, when available, the usage store's windows. Usage is kept out of
+// MetricsSnapshot itself because that struct is what the usage store
+// records.
+type endpointSnapshot struct {
+	MetricsSnapshot
+	Usage *UsageSummary `json:"usage,omitempty"`
 }
 
 // ListenAndServe starts the metrics endpoint from a bind address alone,
@@ -73,7 +87,7 @@ func ListenAndServeConfig(cfg Config, logger *slog.Logger) (*http.Server, error)
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/metrics", handleMetrics(cfg.Token))
+	mux.HandleFunc("/metrics", handleMetrics(cfg.Token, cfg.Usage))
 
 	allowedHosts := httpsec.AllowedHosts(host, actualPort, cfg.AllowedHosts)
 	handler := httpsec.ValidateHost(allowedHosts)(mux)
@@ -97,7 +111,7 @@ func ListenAndServeConfig(cfg Config, logger *slog.Logger) (*http.Server, error)
 // handleMetrics returns the /metrics handler, requiring token (via the
 // "Authorization: Bearer <token>" header) when one is configured. An empty
 // token allows every request, matching the dashboard's requireBearerToken.
-func handleMetrics(token string) http.HandlerFunc {
+func handleMetrics(token string, usage func() *UsageSummary) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -110,7 +124,10 @@ func handleMetrics(token string) http.HandlerFunc {
 			return
 		}
 
-		snapshot := Snapshot()
+		snapshot := endpointSnapshot{MetricsSnapshot: Snapshot()}
+		if usage != nil {
+			snapshot.Usage = usage()
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		enc := json.NewEncoder(w)

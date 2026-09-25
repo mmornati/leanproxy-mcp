@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
+import { fetchMetrics } from './metrics';
+import { affectsLeanProxy, promptForToken, readSettings, readToken } from './settings';
 import { StatusBarManager } from './statusBar';
 
 let statusBarManager: StatusBarManager | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-  statusBarManager = new StatusBarManager();
+  statusBarManager = new StatusBarManager(context.secrets);
   statusBarManager.start();
 
   context.subscriptions.push(
@@ -19,6 +21,14 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('leanproxy.setMetricsToken', async () => {
+      if (await promptForToken(context.secrets)) {
+        statusBarManager?.refresh();
+      }
+    })
+  );
+
   context.subscriptions.push(statusBarManager);
 }
 
@@ -30,7 +40,7 @@ export function deactivate() {
 function openCostPanel(context: vscode.ExtensionContext) {
   const panel = vscode.window.createWebviewPanel(
     'leanproxyCostPanel',
-    'LeanProxy Cost Breakdown',
+    'LeanProxy Token Usage',
     vscode.ViewColumn.Beside,
     {
       enableScripts: true,
@@ -38,23 +48,27 @@ function openCostPanel(context: vscode.ExtensionContext) {
     }
   );
 
-  const config = vscode.workspace.getConfiguration('leanproxy');
-  const endpoint = config.get<string>('metricsEndpoint', 'http://127.0.0.1:9090/metrics');
-
   let pollTimer: ReturnType<typeof setInterval> | undefined;
 
-  function sendMetrics() {
-    fetch(endpoint)
-      .then((res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return res.json();
-      })
-      .then((data) => {
-        panel.webview.postMessage({ type: 'metrics', payload: data });
-      })
-      .catch(() => {
-        panel.webview.postMessage({ type: 'error', payload: 'proxy offline' });
+  async function sendMetrics() {
+    const settings = readSettings();
+    try {
+      const data = await fetchMetrics(settings.endpoint, await readToken(context.secrets));
+      panel.webview.postMessage({
+        type: 'metrics',
+        payload: data,
+        display: { currencySymbol: settings.currencySymbol, tokenCostPer1000: settings.tokenCostPer1000 },
       });
+    } catch (err) {
+      panel.webview.postMessage({ type: 'error', payload: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  // (Re)starts polling at the configured leanproxy.pollInterval.
+  function startPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    sendMetrics();
+    pollTimer = setInterval(sendMetrics, readSettings().pollIntervalMs);
   }
 
   const htmlPath = vscode.Uri.joinPath(context.extensionUri, 'out', 'webview', 'index.html');
@@ -66,12 +80,18 @@ function openCostPanel(context: vscode.ExtensionContext) {
     }
   });
 
-  panel.onDidDispose(() => {
-    if (pollTimer) clearInterval(pollTimer);
+  const configListener = vscode.workspace.onDidChangeConfiguration((e) => {
+    if (affectsLeanProxy(e)) {
+      startPolling();
+    }
   });
 
-  sendMetrics();
-  pollTimer = setInterval(sendMetrics, 1000);
+  panel.onDidDispose(() => {
+    if (pollTimer) clearInterval(pollTimer);
+    configListener.dispose();
+  });
+
+  startPolling();
 }
 
 function getWebviewContent(webview: vscode.Webview, htmlPath: vscode.Uri): string {
@@ -83,7 +103,7 @@ function getWebviewContent(webview: vscode.Webview, htmlPath: vscode.Uri): strin
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LeanProxy Cost Breakdown</title>
+  <title>LeanProxy Token Usage</title>
   <style>
     body { font-family: var(--vscode-font-family); padding: 16px; color: var(--vscode-foreground); }
     h1 { font-size: 1.2em; margin: 0 0 12px; font-weight: 600; }
@@ -94,6 +114,7 @@ function getWebviewContent(webview: vscode.Webview, htmlPath: vscode.Uri): strin
     .value { font-weight: 600; font-size: 0.95em; }
     .total { font-size: 1.4em; font-weight: 700; color: var(--vscode-editorWarning-foreground); }
     .section-title { font-size: 0.95em; font-weight: 600; margin: 16px 0 8px; }
+    .note { font-size: 0.8em; color: var(--vscode-descriptionForeground); margin: 4px 0 0; }
     .empty-state { text-align: center; padding: 40px 16px; color: var(--vscode-descriptionForeground); }
     .empty-state h2 { font-size: 1.1em; margin: 0 0 8px; }
     .error-state { text-align: center; padding: 40px 16px; color: var(--vscode-errorForeground); }

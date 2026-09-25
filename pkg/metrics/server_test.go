@@ -5,11 +5,10 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mmornati/leanproxy-mcp/pkg/reporter"
 )
 
 func TestListenAndServeDisabled(t *testing.T) {
@@ -31,12 +30,12 @@ func TestListenAndServeDisabled(t *testing.T) {
 }
 
 func TestListenAndServeMetricsEndpoint(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
+	usage := &UsageSummary{Estimator: "chars/4"}
+	usage.Today.SavedTokens = 500
+	usage.Today.SetTools([]UsageTool{{Server: "test-server", Tool: "test-tool", Calls: 1, OriginalTokens: 800, ReturnedTokens: 300, SavedTokens: 500}})
+	usage.Week = usage.Today
 
-	reporter.TrackCost("test-tool", "test-server", 500)
-
-	srv, err := ListenAndServe("127.0.0.1:0", slog.Default())
+	srv, err := ListenAndServeConfig(Config{Bind: "127.0.0.1:0", Usage: func() *UsageSummary { return usage }}, slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
 	}
@@ -63,26 +62,55 @@ func TestListenAndServeMetricsEndpoint(t *testing.T) {
 		t.Fatalf("read body: %v", err)
 	}
 
-	var snap MetricsSnapshot
+	var snap endpointSnapshot
 	if err := json.Unmarshal(body, &snap); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
 
-	if snap.TotalSpend != 500 {
-		t.Errorf("TotalSpend = %d, want 500", snap.TotalSpend)
+	if snap.Usage == nil {
+		t.Fatalf("usage section missing: %s", body)
 	}
-	if len(snap.ByServer) != 1 || snap.ByServer[0].ServerName != "test-server" {
-		t.Errorf("ByServer: %+v", snap.ByServer)
+	if snap.Usage.Today.SavedTokens != 500 {
+		t.Errorf("usage.today.saved_tokens = %d, want 500", snap.Usage.Today.SavedTokens)
 	}
-	if len(snap.ByTool) != 1 || snap.ByTool[0].ToolName != "test-tool" {
-		t.Errorf("ByTool: %+v", snap.ByTool)
+	if snap.Usage.Today.TopServer != "test-server" || snap.Usage.Today.TopTool != "test-server.test-tool" {
+		t.Errorf("top server/tool = %q/%q", snap.Usage.Today.TopServer, snap.Usage.Today.TopTool)
+	}
+	if len(snap.Usage.Week.ByServer) != 1 || snap.Usage.Week.ByServer[0].Server != "test-server" {
+		t.Errorf("usage.week.by_server: %+v", snap.Usage.Week.ByServer)
+	}
+	// The tracker-fed fields that were always empty are gone.
+	for _, dead := range []string{"total_spend", "top_5_expensive_tools", `"by_tool":null`} {
+		if strings.Contains(string(body), dead) {
+			t.Errorf("response still carries %s: %s", dead, body)
+		}
+	}
+}
+
+// Without a usage provider (or when it returns nil) the section is
+// omitted; the live counters are still served.
+func TestMetricsEndpointOmitsUsageWithoutProvider(t *testing.T) {
+	for name, usage := range map[string]func() *UsageSummary{
+		"no provider":  nil,
+		"nil provider": func() *UsageSummary { return nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			handleMetrics("", usage)(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), `"usage"`) {
+				t.Fatalf("usage section present: %s", rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), `"telemetry"`) {
+				t.Fatalf("telemetry section missing: %s", rec.Body.String())
+			}
+		})
 	}
 }
 
 func TestMetricsEndpointMethodNotAllowed(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	srv, err := ListenAndServe("127.0.0.1:0", slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
@@ -110,11 +138,6 @@ func TestListenAndServeInvalidAddr(t *testing.T) {
 }
 
 func TestServeConcurrentRequests(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
-	reporter.TrackCost("tool-x", "server-x", 999)
-
 	srv, err := ListenAndServe("127.0.0.1:0", slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
@@ -178,9 +201,6 @@ func TestListenAndServeConfigNonLoopbackBindStartsWithToken(t *testing.T) {
 }
 
 func TestMetricsRejectsUnknownHostHeader(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	srv, err := ListenAndServe("127.0.0.1:0", slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServe failed: %v", err)
@@ -205,9 +225,6 @@ func TestMetricsRejectsUnknownHostHeader(t *testing.T) {
 }
 
 func TestMetricsRequiresConfiguredToken(t *testing.T) {
-	reporter.GlobalCostTracker().Reset()
-	defer reporter.GlobalCostTracker().Reset()
-
 	srv, err := ListenAndServeConfig(Config{Bind: "127.0.0.1:0", Token: "mytoken"}, slog.Default())
 	if err != nil {
 		t.Fatalf("ListenAndServeConfig failed: %v", err)

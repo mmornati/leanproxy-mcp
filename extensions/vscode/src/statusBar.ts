@@ -1,44 +1,36 @@
 import * as vscode from 'vscode';
-
-interface MetricsSnapshot {
-  by_tool: ToolMetric[];
-  by_server: ServerMetric[];
-  total_spend: number;
-  top_5_expensive_tools: ToolMetric[];
-}
-
-interface ToolMetric {
-  tool_name: string;
-  token_count: number;
-}
-
-interface ServerMetric {
-  server_name: string;
-  token_count: number;
-}
+import { estimatedCost, fetchMetrics, formatTokens, MetricsError } from './metrics';
+import { affectsLeanProxy, readSettings, readToken } from './settings';
 
 export class StatusBarManager implements vscode.Disposable {
   private statusBarItem: vscode.StatusBarItem;
   private pollTimer: ReturnType<typeof setInterval> | undefined;
-  private lastTotal: number = 0;
-  private connected: boolean = false;
+  private disposables: vscode.Disposable[] = [];
 
-  constructor() {
+  constructor(private readonly secrets: vscode.SecretStorage) {
     this.statusBarItem = vscode.window.createStatusBarItem(
       vscode.StatusBarAlignment.Right,
       100
     );
     this.statusBarItem.command = 'leanproxy.openCostPanel';
-    this.statusBarItem.tooltip = 'LeanProxy AI Cost — Click for details';
+    this.statusBarItem.tooltip = 'LeanProxy token savings — Click for details';
     this.statusBarItem.text = '$(sync~spin) LeanProxy...';
     this.statusBarItem.show();
+
+    // Pick up a new endpoint, interval or price without a reload.
+    this.disposables.push(
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (affectsLeanProxy(e)) {
+          this.start();
+        }
+      })
+    );
   }
 
   start(): void {
+    if (this.pollTimer) clearInterval(this.pollTimer);
     this.poll();
-    const config = vscode.workspace.getConfiguration('leanproxy');
-    const interval = config.get<number>('pollInterval', 1000);
-    this.pollTimer = setInterval(() => this.poll(), interval);
+    this.pollTimer = setInterval(() => this.poll(), readSettings().pollIntervalMs);
   }
 
   refresh(): void {
@@ -47,39 +39,33 @@ export class StatusBarManager implements vscode.Disposable {
 
   dispose(): void {
     if (this.pollTimer) clearInterval(this.pollTimer);
+    this.disposables.forEach((d) => d.dispose());
     this.statusBarItem.dispose();
   }
 
   private async poll(): Promise<void> {
-    const config = vscode.workspace.getConfiguration('leanproxy');
-    const endpoint = config.get<string>('metricsEndpoint', 'http://127.0.0.1:9090/metrics');
-
+    const settings = readSettings();
     try {
-      const res = await fetch(endpoint);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as MetricsSnapshot;
-
-      this.connected = true;
-      this.lastTotal = data.total_spend;
-      this.updateStatusBar(data.total_spend);
-      this.statusBarItem.tooltip = 'LeanProxy AI Cost — Click for details';
-    } catch {
-      this.connected = false;
-      this.statusBarItem.text = '$(circle-slash) LeanProxy';
-      this.statusBarItem.tooltip = 'LeanProxy disconnected — proxy offline';
-    }
-  }
-
-  private updateStatusBar(totalSpend: number): void {
-    const config = vscode.workspace.getConfiguration('leanproxy');
-    const symbol = config.get<string>('currencySymbol', '$');
-    const costPer1000 = config.get<number>('tokenCostPer1000', 0.002);
-    const estimatedCost = (totalSpend / 1000) * costPer1000;
-
-    if (!isFinite(estimatedCost)) {
-      this.statusBarItem.text = `$(coin) N/A`;
-    } else {
-      this.statusBarItem.text = `$(coin) ${symbol}${estimatedCost.toFixed(4)}`;
+      const data = await fetchMetrics(settings.endpoint, await readToken(this.secrets));
+      const usage = data.usage;
+      if (!usage) {
+        this.statusBarItem.text = '$(info) LeanProxy';
+        this.statusBarItem.tooltip = 'LeanProxy is running but has no usage data (its usage store could not be read)';
+        return;
+      }
+      const { today, week } = usage;
+      const cost = estimatedCost(today.saved_tokens, settings.tokenCostPer1000);
+      this.statusBarItem.text =
+        cost === undefined
+          ? `$(graph) ${formatTokens(today.saved_tokens)} saved`
+          : `$(coin) ${settings.currencySymbol}${cost.toFixed(4)} saved`;
+      this.statusBarItem.tooltip =
+        `LeanProxy: ${today.saved_tokens.toLocaleString()} tokens saved today (${today.saved_percent.toFixed(1)}%), ` +
+        `${week.saved_tokens.toLocaleString()} this week — Click for details`;
+    } catch (err) {
+      const status = err instanceof MetricsError ? err.status : undefined;
+      this.statusBarItem.text = status === 401 ? '$(lock) LeanProxy' : '$(circle-slash) LeanProxy';
+      this.statusBarItem.tooltip = `LeanProxy disconnected — ${err instanceof Error ? err.message : String(err)}`;
     }
   }
 }

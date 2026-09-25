@@ -1862,10 +1862,10 @@ attribute slices, calling into the OTel metrics API — only runs once
 telemetry is actually enabled; see `BenchmarkPipeline_TelemetryDisabled` in
 `pkg/mcp` for the benchmark this claim is checked against.
 
-### Metrics: `/metrics` (`serve` only)
+### Metrics: `/metrics`
 
-The JSON `/metrics` endpoint exists only in the deprecated `serve`, and only
-with `--metrics-bind` (off by default; see
+The JSON `/metrics` endpoint is served by `server run` and `serve` with
+`--metrics-bind` (off by default; see
 [Dashboard and Metrics](#dashboard-and-metrics)). Its `telemetry` object is
 fed by the same counters OpenTelemetry records:
 requests, errors, redactions, injection detections, cache hits/misses,
@@ -2014,12 +2014,17 @@ config loaded at start.
 
 ### Dashboard and Metrics
 
-`serve` starts a web dashboard and, when asked, a JSON `/metrics` endpoint.
-Both are set with flags:
+The web dashboard and the JSON `/metrics` endpoint show the tokens saved
+today and this week, per server and per tool, read from the usage store
+(see [Dashboard](dashboard.md)). Both front ends have them, set with the
+same flags. `serve` starts the dashboard by default; `server run` starts
+neither unless asked, since an MCP client may start several
+`server run --stdio` processes and they cannot share a port. The defaults
+below are `serve`'s:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--dashboard-bind` | `127.0.0.1:9090` | Dashboard address. `off` disables it. A non-loopback bind refuses to start without `--dashboard-token` |
+| `--dashboard-bind` | `127.0.0.1:9090` (`server run`: off) | Dashboard address. `off` disables it. A non-loopback bind refuses to start without `--dashboard-token` |
 | `--dashboard-token` | `""` | Bearer token. Once set, it is required from **every** client, loopback included. A browser exchanges it for an `HttpOnly`, `SameSite=Strict` cookie via `GET /login?token=…` (also `Secure` over TLS) |
 | `--dashboard-allowed-hosts` | (none) | Extra `Host` header values accepted beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` |
 | `--metrics-bind` | `""` (off) | `/metrics` address. A non-loopback bind refuses to start without `--metrics-token` |
@@ -2027,10 +2032,12 @@ Both are set with flags:
 | `--metrics-allowed-hosts` | (none) | Extra `Host` header values accepted |
 
 ```bash
+leanproxy-mcp server run --http 127.0.0.1:8765 --metrics-bind 127.0.0.1:9091
 leanproxy-mcp serve --metrics-bind 127.0.0.1:9091
 ```
 
-`--listen` defaults to `127.0.0.1:8080`. Do not set it to the dashboard's
+`127.0.0.1:9091` is the address the [IDE extensions](extensions.md) use by
+default. For `serve`, `--listen` defaults to `127.0.0.1:8080`. Do not set it to the dashboard's
 port (9090), or `serve` fails to start. See [Dashboard](dashboard.md) for
 what the pages show.
 
