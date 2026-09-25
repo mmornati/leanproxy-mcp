@@ -307,7 +307,7 @@ func stripComments(data []byte) []byte {
 			return out, i
 		case data[i] == '/' && i+1 < len(data) && data[i+1] == '*':
 			i += 2
-			for i+1 < len(data) && !(data[i] == '*' && data[i+1] == '/') {
+			for i+1 < len(data) && (data[i] != '*' || data[i+1] != '/') {
 				i++
 			}
 			return out, i + 1
