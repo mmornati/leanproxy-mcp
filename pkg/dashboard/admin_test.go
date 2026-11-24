@@ -361,12 +361,50 @@ func TestLoginCodeWorksOnce(t *testing.T) {
 		t.Fatalf("mint = %d %q", mint.Code, code)
 	}
 
-	login := handleLogin("the-long-lived-token", codes)
+	sessions := newBrowserSessions()
+	login := handleLogin("the-long-lived-token", codes, sessions)
 	first := httptest.NewRecorder()
 	login(first, httptest.NewRequest("GET", "/login?code="+code, nil))
 	cookies := first.Result().Cookies()
-	if first.Code != http.StatusOK || len(cookies) != 1 || cookies[0].Value != "the-long-lived-token" {
+	if first.Code != http.StatusOK || len(cookies) != 1 {
 		t.Fatalf("first use = %d, cookies %v", first.Code, cookies)
+	}
+	// The cookie is a session id with a lifetime, never the token.
+	cookie := cookies[0]
+	if cookie.Value == "the-long-lived-token" || len(cookie.Value) < 32 || cookie.MaxAge <= 0 {
+		t.Fatalf("cookie = %q (MaxAge %d): want a random session id that expires", cookie.Value, cookie.MaxAge)
+	}
+	reached := false
+	guarded := requireBearerToken("the-long-lived-token", slog.New(slog.DiscardHandler), sessions)(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	withCookie := func(value string) int {
+		reached = false
+		req := httptest.NewRequest("GET", "/", nil)
+		req.AddCookie(&http.Cookie{Name: dashboardCookieName, Value: value})
+		rec := httptest.NewRecorder()
+		guarded.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if withCookie(cookie.Value) != http.StatusOK || !reached {
+		t.Fatal("the session cookie must sign the browser in")
+	}
+	// Neither the token as a cookie nor the session id as a bearer works.
+	if withCookie("the-long-lived-token") != http.StatusUnauthorized || reached {
+		t.Fatal("the token must not be accepted as a cookie")
+	}
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+cookie.Value)
+	rec := httptest.NewRecorder()
+	guarded.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatal("a session id must not work as a bearer token")
+	}
+	// An expired session is refused.
+	sessions.mu.Lock()
+	sessions.ids[cookie.Value] = time.Now().Add(-time.Second)
+	sessions.mu.Unlock()
+	if withCookie(cookie.Value) != http.StatusUnauthorized {
+		t.Fatal("an expired session was accepted")
 	}
 	second := httptest.NewRecorder()
 	login(second, httptest.NewRequest("GET", "/login?code="+code, nil))

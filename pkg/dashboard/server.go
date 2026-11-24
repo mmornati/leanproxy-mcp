@@ -210,8 +210,9 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 	// Mints a one-time sign-in code; behind the token like everything else.
 	protected.HandleFunc("POST /login/code", handleLoginCode(codes))
 	topMux := http.NewServeMux()
-	topMux.HandleFunc("GET /login", handleLogin(cfg.Token, codes))
-	topMux.Handle("/", requireBearerToken(cfg.Token, logger)(protected))
+	sessions := newBrowserSessions()
+	topMux.HandleFunc("GET /login", handleLogin(cfg.Token, codes, sessions))
+	topMux.Handle("/", requireBearerToken(cfg.Token, logger, sessions)(protected))
 
 	allowedHosts := httpsec.AllowedHosts(host, actualPort, cfg.AllowedHosts)
 	handler := httpsec.SecurityHeaders()(httpsec.ValidateHost(allowedHosts)(topMux))

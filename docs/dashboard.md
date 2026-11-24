@@ -112,7 +112,9 @@ A browser is then redirected to the dashboard (anything else gets a plain
 `200`). `GET /login?code=<code>` does the same with a one-time code
 obtained from an authenticated `POST /login/code` (valid once, for one
 minute): `leanproxy-mcp daemon open` uses it so the token itself never
-reaches a command line or the browser history. This sets an `HttpOnly`, `SameSite=Strict` cookie (also `Secure` when served
+reaches a command line or the browser history. The cookie holds a random session id kept by the proxy, valid 12 hours
+(a proxy restart signs every browser out), never the token itself. It is
+an `HttpOnly`, `SameSite=Strict` cookie (also `Secure` when served
 over TLS), so later page loads need no header. Without a configured token,
 `/login` returns 404.
 
