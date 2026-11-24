@@ -127,10 +127,10 @@ h2 { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
 .errbox strong { color: var(--red-ink); }
 .errbox pre, .stderr pre {
   margin: 0.3rem 0 0; padding: 0.6rem 0.75rem; border-radius: 8px;
-  background: var(--ground-2); border-left: 3px solid var(--rule);
+  background: var(--ground-2); border: 1px solid var(--rule);
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow: auto;
 }
-.errbox pre { border-left-color: var(--red); }
+.errbox pre { border-color: color-mix(in srgb, var(--red) 45%, var(--rule)); }
 
 /* Buttons and the add form. */
 .actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
