@@ -37,6 +37,8 @@ type SSEServer struct {
 	// pool; issue #308). mcp-go's legacy SSE transport cannot receive
 	// server-to-client requests, so none are declared to the server.
 	messages *messageHub
+	// conn records connection outcomes for Snapshot.
+	conn connStatus
 }
 
 func NewSSEServer(name string, config *migrate.ServerConfig, logger *slog.Logger) *SSEServer {
@@ -84,6 +86,7 @@ func (s *SSEServer) buildClient() (*client.Client, error) {
 	// comment for why this is always installed.
 	httpClient := &http.Client{
 		Transport: telemetry.WrapTransport(&http.Transport{
+			Proxy:       http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{Timeout: 15 * time.Second}).DialContext,
 		}),
 	}
@@ -122,7 +125,7 @@ func (s *SSEServer) closeClient() {
 	}
 }
 
-func (s *SSEServer) ensureConnected(ctx context.Context) (*client.Client, error) {
+func (s *SSEServer) connect(ctx context.Context) (*client.Client, error) {
 	s.reconnectMu.Lock()
 	defer s.reconnectMu.Unlock()
 

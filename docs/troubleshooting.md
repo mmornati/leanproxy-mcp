@@ -327,7 +327,7 @@ instances.
 
 1. Check if the status file exists:
 ```bash
-cat ~/.config/leanproxy/status/current.json
+cat ~/.config/leanproxy/status/proxy-<pid>.json
 ```
 
 2. Check that the running instance wrote it recently:

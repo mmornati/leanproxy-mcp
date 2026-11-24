@@ -20,6 +20,14 @@ type ServerStatus struct {
 	Uptime       string    `json:"uptime"`
 	ToolCount    int       `json:"tool_count"`
 	LastActivity time.Time `json:"last_activity"`
+	// Added with the per-server snapshot (see pool.ServerSnapshot).
+	Transport    string  `json:"transport,omitempty"`
+	State        string  `json:"state,omitempty"`
+	Summary      string  `json:"summary,omitempty"`
+	LastError    string  `json:"last_error,omitempty"`
+	AvgLatencyMs float64 `json:"avg_latency_ms,omitempty"`
+	InFlight     int     `json:"in_flight,omitempty"`
+	PID          int     `json:"pid,omitempty"`
 }
 
 type CostTracking struct {
@@ -38,6 +46,10 @@ type StatusInfo struct {
 	// HTTP describes the exposure of a running Streamable HTTP front end
 	// (`server run --http`, issue #309), for `doctor security`.
 	HTTP *HTTPFrontendStatus `json:"http,omitempty"`
+	// Clients is how many MCP clients are connected to this process.
+	Clients int `json:"clients"`
+	// Dashboard is the URL of this process's dashboard, when it has one.
+	Dashboard string `json:"dashboard,omitempty"`
 }
 
 // HTTPFrontendStatus is the exposure of a Streamable HTTP front end. It
@@ -89,7 +101,8 @@ func NewFileStatusStore(listenAddr string, logger *slog.Logger) (*FileStatusStor
 	}
 
 	store := &FileStatusStore{
-		statusFile: filepath.Join(statusDir, "current.json"),
+		// One file per process (see instances.go).
+		statusFile: filepath.Join(statusDir, instanceFileName(os.Getpid())),
 		logger:     logger,
 		info: StatusInfo{
 			PID:        os.Getpid(),
@@ -174,27 +187,15 @@ func (s *FileStatusStore) writeLocked() {
 	}
 }
 
+// ReadCurrentStatus returns the status of the running proxy: the shared
+// HTTP gateway when there is one, else the most recently started process.
+// It returns nil when none is running. See ReadAllStatus for all of them.
 func ReadCurrentStatus() (*StatusInfo, error) {
-	home, err := homeDir()
-	if err != nil {
+	all, err := ReadAllStatus()
+	if err != nil || len(all) == 0 {
 		return nil, err
 	}
-
-	statusFile := filepath.Join(home, ".config", "leanproxy", "status", "current.json")
-	data, err := os.ReadFile(statusFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("statusfile: read status file: %w", err)
-	}
-
-	var info StatusInfo
-	if err := json.Unmarshal(data, &info); err != nil {
-		return nil, fmt.Errorf("statusfile: unmarshal status: %w", err)
-	}
-
-	return &info, nil
+	return &all[0], nil
 }
 
 func ReadCurrentStatusFromConfigDir(configDir string) (*StatusInfo, error) {
@@ -337,4 +338,19 @@ func readCurrentStatusFromFile(filePath string) (*StatusInfo, error) {
 	}
 
 	return &info, nil
+}
+
+// SetClients records how many MCP clients are connected.
+func (s *FileStatusStore) SetClients(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.info.Clients = n
+}
+
+// SetDashboard records the dashboard URL.
+func (s *FileStatusStore) SetDashboard(url string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.info.Dashboard = url
+	s.writeLocked()
 }

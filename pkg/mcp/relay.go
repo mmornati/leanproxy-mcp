@@ -345,12 +345,37 @@ func (h *Handler) pickSessionRoute(ctx context.Context, server, capability strin
 	calls := append([]*upstreamCall(nil), h.relay.calls[server]...)
 	h.relay.mu.Unlock()
 	if len(calls) > 0 {
+		// The request carries nothing that says which call raised it. With
+		// calls from one client only, it is that client's. With calls
+		// from several clients in flight (a shared gateway), guessing
+		// "the most recent" would show one user's elicitation, or send
+		// one user's sampling prompt, to another: refuse instead. The
+		// upstream gets an error and its call fails visibly.
+		var picked *upstreamCall
 		for i := len(calls) - 1; i >= 0; i-- {
-			if can(calls[i].session) {
-				return calls[i].session, calls[i].route
+			if picked == nil {
+				if can(calls[i].session) {
+					picked = calls[i]
+				}
+				continue
+			}
+			if calls[i].session != picked.session {
+				h.logger.Warn("relay: server request refused, calls from several clients are in flight",
+					"server", server, "capability", capability)
+				return nil, nil
 			}
 		}
-		return nil, nil
+		if picked == nil {
+			return nil, nil
+		}
+		// Calls of other, incapable clients before the first capable one
+		// make it ambiguous too.
+		for i := len(calls) - 1; i >= 0 && calls[i] != picked; i-- {
+			if calls[i].session != picked.session {
+				return nil, nil
+			}
+		}
+		return picked.session, picked.route
 	}
 
 	h.sessionsMu.Lock()

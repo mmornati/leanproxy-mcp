@@ -36,7 +36,7 @@ func TestEndpointFlagsOnBothFrontEnds(t *testing.T) {
 
 func TestStartEndpointsRefusesNonLoopbackWithoutToken(t *testing.T) {
 	f := endpointFlags{metricsBind: "127.0.0.1:0", dashboardBind: "0.0.0.0:0"}
-	m, d, err := f.startEndpoints()
+	m, d, err := f.startEndpoints(nil)
 	if err == nil {
 		t.Fatal("expected an error for a non-loopback dashboard bind without a token")
 	}
@@ -66,7 +66,7 @@ func TestStartEndpointsServesUsageFromStore(t *testing.T) {
 	}
 
 	f := endpointFlags{metricsBind: "127.0.0.1:0"}
-	m, d, err := f.startEndpoints()
+	m, d, err := f.startEndpoints(nil)
 	if err != nil {
 		t.Fatal(err)
 	}

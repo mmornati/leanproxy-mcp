@@ -283,7 +283,7 @@ openai`) also send data to OpenAI.
 |---|---|
 | `~/.config/leanproxy_servers.yaml` | Configuration |
 | `~/.config/leanproxy/toolcache/` | Cached tool definitions |
-| `~/.config/leanproxy/status/current.json` | Status of running instances |
+| `~/.config/leanproxy/status/proxy-<pid>.json` | Status of running instances |
 | `~/.config/leanproxy/pins.json` | Tool pins |
 | `~/.config/leanproxy/serve.token` | Token for `server run --http` and `serve` |
 | `~/.leanproxy/usage/` | Usage counters for `report` (kept 90 days) |

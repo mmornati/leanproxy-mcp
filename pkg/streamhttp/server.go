@@ -60,7 +60,7 @@ const (
 const (
 	DefaultEndpoint           = "/mcp"
 	DefaultMaxBodyBytes       = 64 << 20
-	DefaultMaxSessions        = 64
+	DefaultMaxSessions        = 256
 	DefaultSessionIdleTimeout = 30 * time.Minute
 	DefaultMaxConcurrent      = 64
 	DefaultReadHeaderTimeout  = 10 * time.Second
@@ -97,8 +97,9 @@ type Options struct {
 	AllowedOrigins []string
 	// MaxBodyBytes caps one POST body.
 	MaxBodyBytes int64
-	// MaxSessions caps the sessions open at once; initialize beyond it
-	// gets 503 until one ends or expires.
+	// MaxSessions caps the sessions open at once. An initialize beyond it
+	// ends the least recently active session that has nothing in flight;
+	// it gets 503 only when every session is in use.
 	MaxSessions int
 	// SessionIdleTimeout ends a session with no request in flight and no
 	// GET stream open for this long.
@@ -336,7 +337,41 @@ func (s *Server) expireIdle(now time.Time) int {
 	return len(expired)
 }
 
-// errTooManySessions is returned when MaxSessions sessions are open.
+// evictLeastRecentlyActive ends the session that has been idle the longest
+// (no request in flight, no GET stream open) to make room for a new one. It
+// reports false when every session is in use.
+//
+// Many clients never send DELETE: without this, their abandoned sessions
+// would hold the cap until they expire and lock new clients out meanwhile.
+// A client whose session is evicted gets 404 on its next request and, as
+// the transport spec says, starts a new session.
+func (s *Server) evictLeastRecentlyActive() bool {
+	s.mu.Lock()
+	var victim *session
+	var oldest time.Time
+	for _, sess := range s.sessions {
+		sess.mu.Lock()
+		idle, last := sess.active == 0, sess.lastActive
+		sess.mu.Unlock()
+		if idle && (victim == nil || last.Before(oldest)) {
+			victim, oldest = sess, last
+		}
+	}
+	if victim != nil {
+		delete(s.sessions, victim.id)
+	}
+	s.mu.Unlock()
+	if victim == nil {
+		return false
+	}
+	s.logger.Info("streamable HTTP session evicted to make room for a new one",
+		"max_sessions", s.opts.MaxSessions, "idle_for", time.Since(oldest).Round(time.Second))
+	victim.shutdown()
+	return true
+}
+
+// errTooManySessions is returned when MaxSessions sessions are open and
+// every one of them is in use.
 var errTooManySessions = errors.New("too many open sessions")
 
 // newSession opens a session for principal.
@@ -345,8 +380,9 @@ func (s *Server) newSession(principal [32]byte) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !s.hasRoom() && s.expireIdle(time.Now()) == 0 {
-		// Room is made from idle sessions only before refusing.
+	if !s.hasRoom() && s.expireIdle(time.Now()) == 0 && !s.evictLeastRecentlyActive() {
+		// Room is made from sessions not in use: the expired ones, else
+		// the least recently active one.
 		return nil, errTooManySessions
 	}
 	sess := &session{

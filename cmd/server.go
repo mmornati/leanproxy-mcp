@@ -8,14 +8,15 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/cache/embedder"
+	"github.com/mmornati/leanproxy-mcp/pkg/dashboard"
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp"
 	"github.com/mmornati/leanproxy-mcp/pkg/metrics"
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
@@ -50,40 +51,69 @@ func userConfigPath() string {
 }
 
 var addCmd = &cobra.Command{
-	Use:   "add <name> <command> [args...]",
+	Use:   "add <name> [command] [args...]",
 	Short: "Add a new MCP server",
-	Args:  cobra.MinimumNArgs(2),
-	RunE:  runServerAdd,
+	Long: `Add an MCP server to the config file.
+
+A stdio server is a command LeanProxy runs:
+  leanproxy-mcp server add files npx -y @modelcontextprotocol/server-filesystem ~/notes
+
+A remote server is a URL (--url implies --transport http):
+  leanproxy-mcp server add github --url https://api.githubcopilot.com/mcp/ --header "Authorization: Bearer $TOKEN"
+
+A running "server run" picks the new server up within a few seconds; no
+restart is needed.`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: runServerAdd,
 }
 
 var addFlags struct {
 	env       []string
 	cwd       string
 	transport string
+	url       string
+	headers   []string
 }
 
 func init() {
 	addCmd.Flags().StringArrayVar(&addFlags.env, "env", []string{}, "Environment variables (KEY=value)")
 	addCmd.Flags().StringVar(&addFlags.cwd, "cwd", "", "Working directory for the command")
 	addCmd.Flags().StringVar(&addFlags.transport, "transport", "stdio", "Transport type (stdio, http, sse)")
+	addCmd.Flags().StringVar(&addFlags.url, "url", "", "URL of a remote server (http or sse transport)")
+	addCmd.Flags().StringArrayVar(&addFlags.headers, "header", nil, "HTTP header sent to a remote server (\"Name: value\", repeatable)")
 	serverCmd.AddCommand(addCmd)
 }
 
 func runServerAdd(cmd *cobra.Command, args []string) error {
-	name := args[0]
-	command := args[1]
-	commandArgs := args[2:]
-
-	_, err := exec.LookPath(command)
-	if err != nil {
-		return fmt.Errorf("command not found in PATH: %s", command)
+	spec := dashboard.ServerSpec{
+		Name:      args[0],
+		Transport: addFlags.transport,
+		Env:       addFlags.env,
+		CWD:       addFlags.cwd,
+		URL:       addFlags.url,
 	}
-
-	transport := registry.TransportType(addFlags.transport)
-	switch transport {
-	case registry.TransportStdio, registry.TransportHTTP, registry.TransportSSE:
-	default:
-		return fmt.Errorf("invalid transport type: %s (must be stdio, http, or sse)", addFlags.transport)
+	if spec.URL != "" && !cmd.Flags().Changed("transport") {
+		spec.Transport = string(registry.TransportHTTP)
+	}
+	if len(args) > 1 {
+		spec.Command, spec.Args = args[1], args[2:]
+	}
+	if spec.URL != "" && spec.Command != "" {
+		return errors.New("give either a command (stdio) or --url (http, sse), not both")
+	}
+	for _, h := range addFlags.headers {
+		k, v, ok := strings.Cut(h, ":")
+		if !ok || strings.TrimSpace(k) == "" {
+			return fmt.Errorf("--header %q is not \"Name: value\"", h)
+		}
+		if spec.Headers == nil {
+			spec.Headers = make(map[string]string)
+		}
+		spec.Headers[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	newServer, err := serverConfigFromSpec(spec)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := migrate.LoadConfig(context.Background(), userConfigPath())
@@ -99,44 +129,15 @@ func runServerAdd(cmd *cobra.Command, args []string) error {
 			Servers: []*migrate.ServerConfig{},
 		}
 	}
-
-	for _, srv := range cfg.Servers {
-		if srv.Name == name {
-			return fmt.Errorf("server %q already exists", name)
-		}
+	if err := appendServer(cfg, newServer); err != nil {
+		return err
 	}
-
-	stdio := &migrate.StdioConfig{
-		Command: command,
-		Args:    commandArgs,
-		CWD:     addFlags.cwd,
-		Env:     addFlags.env,
-	}
-	if stdio.CWD == "" {
-		stdio.CWD = filepath.Dir(command)
-	}
-
-	enabled := true
-	newServer := &migrate.ServerConfig{
-		Name:           name,
-		Transport:      transport,
-		Stdio:          stdio,
-		Enabled:        &enabled,
-		Timeout:        "30s",
-		ConnectTimeout: "10s",
-	}
-
-	if transport != registry.TransportStdio {
-		newServer.Stdio = nil
-	}
-
-	cfg.Servers = append(cfg.Servers, newServer)
 
 	if err := saveConfig(userConfigPath(), cfg); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Printf("Server %q added successfully\n", name)
+	fmt.Printf("Server %q added successfully\n", spec.Name)
 	return nil
 }
 
@@ -407,7 +408,15 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		cfg = nil
 	}
 	if cfg == nil || len(cfg.Servers) == 0 {
-		return fmt.Errorf("no servers configured in %s", configPath)
+		// A shared HTTP gateway may start empty: servers are added later,
+		// from the dashboard or with `server add`, and picked up by the
+		// config watcher. A stdio proxy with nothing to proxy is a mistake.
+		if runFlags.http == "" {
+			return fmt.Errorf("no servers configured in %s", configPath)
+		}
+		if cfg == nil {
+			cfg = &migrate.Config{Version: "1.0"}
+		}
 	}
 
 	// Exposure modes (#322): resolved (and the flag validated) before
@@ -460,38 +469,10 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		StableWindow:       reconnect.StableWindow,
 	})
 
-	startedCount := 0
-	for _, srv := range cfg.Servers {
-		if srv.Enabled != nil && !*srv.Enabled {
-			slog.Debug("server disabled, skipping", "name", srv.Name)
-			continue
-		}
-		switch srv.Transport {
-		case registry.TransportStdio:
-			if err := stdioPool.StartServer(ctx, srv); err != nil {
-				slog.Warn("failed to start stdio server", "name", srv.Name, "error", err)
-			} else {
-				startedCount++
-				slog.Info("stdio server started", "name", srv.Name)
-			}
-		case registry.TransportHTTP:
-			if err := httpPool.StartServer(ctx, srv); err != nil {
-				slog.Warn("failed to start HTTP server", "name", srv.Name, "error", err)
-			} else {
-				startedCount++
-				slog.Info("HTTP server started", "name", srv.Name)
-			}
-		case registry.TransportSSE:
-			if err := ssePool.StartServer(ctx, srv); err != nil {
-				slog.Warn("failed to start SSE server", "name", srv.Name, "error", err)
-			} else {
-				startedCount++
-				slog.Info("SSE server started", "name", srv.Name)
-			}
-		}
-	}
-
-	if startedCount == 0 {
+	// The server manager applies the config's server list to the pools,
+	// now and again whenever the file changes.
+	manager := newServerManager(configPath, unifiedPool, slog.Default())
+	if manager.start(ctx, cfg) == 0 {
 		slog.Warn("no servers started")
 	}
 
@@ -584,10 +565,6 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		}()
 	}
 
-	if statusStore != nil {
-		go updateServerStatus(statusStore, unifiedPool, stdioPool)
-	}
-
 	handler := mcp.NewHandlerWithToolStore(unifiedPool, slog.Default(), cache)
 	handler.SetExposure(exposureResolver)
 	for _, srv := range cfg.Servers {
@@ -602,7 +579,8 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 
 	// Tool pinning (#310): every refresh below is compared with the pins
 	// before its tools reach the cache.
-	pins := mcp.NewToolPins(newToolPinner(cfg))
+	pinner := newToolPinner(cfg)
+	pins := mcp.NewToolPins(pinner)
 	handler.SetToolPins(pins)
 	slog.Info(pins.Summary())
 
@@ -630,7 +608,10 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	gov.SetInjectionGuard(firewall.Injection)
 	handler.SetGovernor(gov)
 	slog.Info(gov.Summary())
-	handler.Use(tracedMiddlewares(handler, respCache, firewall, pins, pol, gov)...)
+	// Call log: the last tool calls (who, what, how long, how it ended),
+	// for the dashboard. In memory only, never arguments or results.
+	callLog := mcp.NewCallLog(0)
+	handler.Use(tracedMiddlewares(handler, respCache, firewall, pins, pol, gov, handler.CallLogMiddleware(callLog))...)
 	// Code mode (#325, experimental, -tags codemode only): innermost, so
 	// execute_code itself and every tool call its program makes pass
 	// every stage above.
@@ -651,7 +632,19 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 
 	// Dashboard and /metrics (off unless --dashboard-bind/--metrics-bind),
 	// fed from the usage store like `serve`'s.
-	metricsSrv, dashboardSrv, err := runFlags.endpoints.startEndpoints()
+	manager.attach(handler, callLog, pinner, statusListen)
+	// Hot reload of the server list: on a change of the config file and,
+	// for the long-lived HTTP gateway, on SIGHUP. A stdio proxy keeps the
+	// default SIGHUP behavior (exit when its terminal goes away).
+	go manager.watch(refreshCtx)
+	if httpOpts != nil {
+		go reloadOnSignal(refreshCtx, manager)
+	}
+	if statusStore != nil {
+		go manager.publishStatus(refreshCtx, statusStore)
+	}
+
+	metricsSrv, dashboardSrv, err := runFlags.endpoints.startEndpoints(manager)
 	if err != nil {
 		closePools()
 		return err
@@ -665,6 +658,9 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 	defer stopEndpoints()
+	if dashboardSrv != nil && statusStore != nil {
+		statusStore.SetDashboard("http://" + dashboardSrv.Addr)
+	}
 
 	if httpOpts != nil {
 		return handleHTTP(handler, *httpOpts, sigChan, closePools, statusStore)
@@ -774,53 +770,6 @@ func updateStdioServerStatusOnce(statusStore *statusfile.FileStatusStore, stdioP
 	}
 
 	statusStore.UpdateServers(statuses)
-}
-
-func updateServerStatus(statusStore *statusfile.FileStatusStore, unifiedPool pool.ServerSource, stdioPool *pool.StdioPool) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		if statusStore == nil || unifiedPool == nil {
-			continue
-		}
-
-		servers := unifiedPool.ListServers()
-		statuses := make([]statusfile.ServerStatus, 0, len(servers))
-
-		for _, name := range servers {
-			state, _ := unifiedPool.GetServerState(name)
-
-			stats := pool.ServerStats{}
-			stdioStats, err := stdioPool.GetServerStats(name)
-			if err == nil {
-				stats = stdioStats
-			}
-
-			status := statusfile.ServerStatus{
-				Name:         name,
-				RequestCount: stats.RequestCount,
-				ErrorCount:   stats.ErrorCount,
-				RestartCount: stats.RestartCount,
-			}
-
-			switch state {
-			case pool.StateIdle, pool.StateRunning, pool.StateBusy:
-				status.Status = "running"
-			case pool.StateError:
-				status.Status = "error"
-			case pool.StateStopped, pool.StateStopping:
-				status.Status = "stopped"
-			default:
-				status.Status = "unknown"
-			}
-
-			statuses = append(statuses, status)
-		}
-
-		statusStore.UpdateServers(statuses)
-		flushUsageSnapshot()
-	}
 }
 
 func runServerDisable(cmd *cobra.Command, args []string) error {

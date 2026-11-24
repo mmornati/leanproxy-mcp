@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/mcp/exposure"
 )
@@ -86,6 +87,14 @@ type NotifyFunc func(method string, params json.RawMessage)
 // one session for its lifetime; `serve` opens one per TCP connection.
 type ClientSession struct {
 	notify NotifyFunc
+
+	// id is a short random label for the admin views and the call log. It
+	// is not a credential (the HTTP front end's session id is a separate,
+	// secret value).
+	id         string
+	openedAt   time.Time
+	lastActive atomic.Int64 // unix nanoseconds of the last tool call
+	calls      atomic.Int64
 
 	mu              sync.RWMutex
 	initialized     bool
@@ -251,7 +260,7 @@ func ResponseRouteFrom(ctx context.Context) any {
 // it (call it when the client disconnects). Requests must carry the
 // session in their context (WithClientSession).
 func (h *Handler) OpenSession(notify NotifyFunc) (*ClientSession, func()) {
-	s := &ClientSession{notify: notify}
+	s := &ClientSession{notify: notify, id: newSessionLabel(), openedAt: time.Now()}
 	h.sessionsMu.Lock()
 	if h.sessions == nil {
 		h.sessions = make(map[*ClientSession]struct{})

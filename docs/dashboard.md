@@ -78,7 +78,8 @@ leanproxy-mcp serve --dashboard-bind off
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--dashboard-bind` | `serve`: `127.0.0.1:9090`; `server run`: off | Bind address. `off` or empty disables the dashboard. |
-| `--dashboard-token` | none | Bearer token. Required on a non-loopback bind. |
+| `--dashboard-token` | none | Bearer token. Required on a non-loopback bind, and for the admin write actions. |
+| `--dashboard-token-file` | none | Read the token from this file instead (created with a random token if missing), so it does not appear in a process listing. |
 | `--dashboard-allowed-hosts` | none | Extra `Host` header values to accept. |
 
 ### Authentication
@@ -107,7 +108,8 @@ Or, from a browser, exchange it once for a cookie:
 GET /login?token=my-secret-token
 ```
 
-This sets an `HttpOnly`, `SameSite=Strict` cookie (also `Secure` when served
+A browser is then redirected to the dashboard (anything else gets a plain
+`200`). This sets an `HttpOnly`, `SameSite=Strict` cookie (also `Secure` when served
 over TLS), so later page loads need no header. Without a configured token,
 `/login` returns 404.
 
@@ -130,7 +132,12 @@ response also carries a same-origin `Content-Security-Policy`,
 ## Dashboard UI
 
 The dashboard is an HTMX page at `http://127.0.0.1:9090/` that refreshes
-every 5 seconds.
+itself every few seconds. Under `server run` it opens with the admin
+views: the upstream servers and their state, the connected clients and the
+recent tool calls, with actions to restart, enable, disable, add and
+remove servers when the dashboard has a token. They are described in
+[Shared Gateway and Admin Dashboard](shared-gateway.md#the-admin-dashboard).
+The usage sections below follow them.
 
 | Section | Content |
 |---------|---------|
@@ -155,7 +162,10 @@ name collisions, with server, tool and severity. Review and approve them with
 | `/api/dashboard/servers` | GET | HTML table of today's servers |
 | `/api/dashboard/servers/{server}` | GET | HTML drill-down: today's tools for one server |
 | `/api/dashboard/tool-pins` | GET | HTML table of the latest 50 tool pinning events |
-| `/static/...` | GET | Static assets (`htmx.min.js`) |
+| `/admin/servers`, `/admin/sessions`, `/admin/calls` | GET | HTML fragments of the admin views |
+| `/api/admin/overview`, `/servers`, `/sessions`, `/calls` | GET | The admin views as JSON (see [Admin API](shared-gateway.md#admin-api)) |
+| `/admin/servers`, `/admin/reload`, `/admin/servers/{server}/restart\|enable\|disable\|remove` | POST | Write actions; token required (see [Managing servers](shared-gateway.md#managing-servers-from-the-dashboard)) |
+| `/static/...` | GET | Static assets (`htmx.min.js`, `app.css`, `app.js`) |
 | `/login?token=…` | GET | Exchanges a valid token for a session cookie |
 
 ### JSON Response Format

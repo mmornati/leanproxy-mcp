@@ -112,7 +112,7 @@ func TestPrintHTTPFrontendStatus(t *testing.T) {
 	var b bytes.Buffer
 	printHTTPFrontendStatusFor(&b, cfg, nil, home)
 	out := b.String()
-	for _, want := range []string{"## HTTP Front End", "Not running", "Max sessions: 64", "not created yet"} {
+	for _, want := range []string{"## HTTP Front End", "Not running", "Max sessions: 256", "not created yet"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("idle report lacks %q:\n%s", want, out)
 		}

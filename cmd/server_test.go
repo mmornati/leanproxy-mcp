@@ -336,19 +336,6 @@ func TestUpdateStdioServerStatusOnce_NilInputs(t *testing.T) {
 	updateStdioServerStatusOnce(nil, &pool.StdioPool{})
 }
 
-func TestUpdateServerStatus_NilInputs(t *testing.T) {
-	done := make(chan struct{})
-	go func() {
-		updateServerStatus(nil, nil, nil)
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(100 * time.Millisecond):
-	}
-}
-
 func TestCalculateErrorRate(t *testing.T) {
 	tests := []struct {
 		name     string

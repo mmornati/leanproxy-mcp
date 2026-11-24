@@ -41,6 +41,12 @@ type HTTPClientServer struct {
 	// connection.
 	inbound   atomic.Pointer[inboundRequests]
 	oauthOpts []transport.StreamableHTTPCOption
+	// authHeader is the Authorization value of `auth.type: bearer`. It is
+	// merged into the configured headers: mcp-go's WithHTTPHeaders replaces
+	// the whole map, so a second option would drop every custom header.
+	authHeader string
+	// conn records connection outcomes for Snapshot.
+	conn connStatus
 }
 
 func NewHTTPClientServer(name string, config *migrate.ServerConfig, logger *slog.Logger) *HTTPClientServer {
@@ -49,6 +55,7 @@ func NewHTTPClientServer(name string, config *migrate.ServerConfig, logger *slog
 	}
 
 	var oauthOpts []transport.StreamableHTTPCOption
+	var authHeader string
 	if config.HTTP != nil && config.HTTP.Auth != nil {
 		authCfg := config.HTTP.Auth
 		authType := strings.ToLower(strings.TrimSpace(authCfg.Type))
@@ -59,9 +66,7 @@ func NewHTTPClientServer(name string, config *migrate.ServerConfig, logger *slog
 				logger.Warn("http_pool: bearer auth configured but client_secret is empty", "server", name)
 				break
 			}
-			oauthOpts = append(oauthOpts, transport.WithHTTPHeaders(map[string]string{
-				"Authorization": "Bearer " + authCfg.ClientSecret,
-			}))
+			authHeader = "Bearer " + authCfg.ClientSecret
 		case "oauth2":
 			if authCfg.ClientID == "" || authCfg.ClientSecret == "" {
 				logger.Warn("http_pool: oauth2 auth configured but client_id or client_secret is empty", "server", name)
@@ -81,11 +86,12 @@ func NewHTTPClientServer(name string, config *migrate.ServerConfig, logger *slog
 	}
 
 	return &HTTPClientServer{
-		name:      name,
-		config:    config,
-		state:     StateStarting,
-		logger:    logger,
-		oauthOpts: oauthOpts,
+		name:       name,
+		config:     config,
+		state:      StateStarting,
+		logger:     logger,
+		oauthOpts:  oauthOpts,
+		authHeader: authHeader,
 	}
 }
 
@@ -110,6 +116,9 @@ func (s *HTTPClientServer) buildClient() (*client.Client, error) {
 		for k, v := range s.config.HTTP.Headers {
 			headers[k] = v
 		}
+	}
+	if s.authHeader != "" {
+		headers["Authorization"] = s.authHeader
 	}
 
 	// A basic http.Client whose Transport injects the W3C `traceparent`
@@ -149,7 +158,7 @@ func (s *HTTPClientServer) closeClient() {
 	}
 }
 
-func (s *HTTPClientServer) ensureConnected(ctx context.Context) (*client.Client, error) {
+func (s *HTTPClientServer) connect(ctx context.Context) (*client.Client, error) {
 	s.reconnectMu.Lock()
 	defer s.reconnectMu.Unlock()
 
@@ -595,6 +604,9 @@ type UnifiedPool struct {
 	httpPool  *HTTPClientPool
 	ssePool   *SSEPool
 	logger    *slog.Logger
+	// calls counts the requests sent to the remote (HTTP/SSE) servers,
+	// for Snapshot; the stdio pool keeps its own counters.
+	calls callRecorder
 }
 
 func NewUnifiedPool(stdio *StdioPool, http *HTTPClientPool, sse *SSEPool, logger *slog.Logger) *UnifiedPool {
@@ -693,13 +705,17 @@ func (p *UnifiedPool) SendRequestToServer(ctx context.Context, name string, meth
 		}
 		return resp, nil
 	case transportHTTP:
+		done := p.calls.begin(name)
 		resp, err := p.httpPool.SendRequestToServer(ctx, name, method, params, timeout)
+		done(resp, err)
 		if err != nil {
 			return nil, fmt.Errorf("unified_pool: %w", err)
 		}
 		return resp, nil
 	case transportSSE:
+		done := p.calls.begin(name)
 		resp, err := p.ssePool.SendRequestToServer(ctx, name, method, params, timeout)
+		done(resp, err)
 		if err != nil {
 			return nil, fmt.Errorf("unified_pool: %w", err)
 		}
@@ -773,13 +789,17 @@ func (p *UnifiedPool) SendRequestToServerWithID(ctx context.Context, name string
 		}
 		return resp, nil
 	case transportHTTP:
+		done := p.calls.begin(name)
 		resp, err := p.httpPool.SendRequestToServerWithID(ctx, name, method, params, timeout, id)
+		done(resp, err)
 		if err != nil {
 			return nil, fmt.Errorf("unified_pool: %w", err)
 		}
 		return resp, nil
 	case transportSSE:
+		done := p.calls.begin(name)
 		resp, err := p.ssePool.SendRequestToServerWithID(ctx, name, method, params, timeout, id)
+		done(resp, err)
 		if err != nil {
 			return nil, fmt.Errorf("unified_pool: %w", err)
 		}

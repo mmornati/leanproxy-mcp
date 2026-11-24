@@ -106,6 +106,13 @@ func handleLogin(token string) http.HandlerFunc {
 			SameSite: http.SameSiteStrictMode,
 		})
 
+		// A browser lands on the dashboard; the token leaves the address
+		// bar. Anything else (curl, a test) still reads a 200 "logged in"
+		// unless it follows the redirect.
+		if strings.Contains(r.Header.Get("Accept"), "text/html") {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("logged in"))

@@ -3,6 +3,7 @@ package pool
 import (
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -49,7 +50,11 @@ type healthCheck struct {
 	lastLatencyMs       float64
 	lastError           string
 	consecutiveFailures int
-	mu                  sync.Mutex
+	// prevRequests and prevErrors are the server's cumulative counters as of
+	// the previous check; the error rate is computed on the delta.
+	prevRequests int64
+	prevErrors   int64
+	mu           sync.Mutex
 }
 
 func NewHealthChecker(pool *StdioPool, logger *slog.Logger) *HealthChecker {
@@ -257,12 +262,9 @@ func (hc *HealthChecker) CheckServer(ctx context.Context, name string) HealthChe
 	result.Status = HealthHealthy
 	result.LatencyMs = stats.AvgLatencyMs
 
-	if stats.ErrorCount > 0 {
-		errorRate := float64(stats.ErrorCount) / float64(stats.RequestCount+stats.ErrorCount)
-		if errorRate > 0.1 {
-			result.Status = HealthDegraded
-			result.Error = "high error rate"
-		}
+	if hc.recentErrorRate(name, stats) > 0.1 {
+		result.Status = HealthDegraded
+		result.Error = "high error rate"
 	}
 
 	server, err := hc.pool.GetServer(name)
@@ -286,10 +288,12 @@ func (hc *HealthChecker) CheckServer(ctx context.Context, name string) HealthChe
 		return result
 	}
 
-	// Liveness probe: a process can be alive yet unresponsive. Ping healthy
+	// Liveness probe: a process can be alive yet unresponsive. Ping
 	// idle/running servers to detect wedged processes. Skip busy servers to
-	// avoid interfering with in-flight tool calls.
-	if result.Status == HealthHealthy && (state == StateIdle || state == StateRunning) {
+	// avoid interfering with in-flight tool calls. A degraded server is
+	// pinged too: failing tool calls say nothing about liveness, and a
+	// degraded server that wedges must still be detected and restarted.
+	if (result.Status == HealthHealthy || result.Status == HealthDegraded) && (state == StateIdle || state == StateRunning) {
 		ok, latency := hc.performPingCheck(ctx, server)
 		if ok {
 			result.LatencyMs = latency
@@ -304,6 +308,34 @@ func (hc *HealthChecker) CheckServer(ctx context.Context, name string) HealthChe
 	}
 
 	return result
+}
+
+// recentErrorRate returns the server's error ratio (errors / requests) over
+// the requests completed since the previous check of that server, and moves
+// the window forward. A lifetime ratio would leave a server "degraded" for
+// good after one bad burst. The first check covers everything so far.
+func (hc *HealthChecker) recentErrorRate(name string, stats ServerStats) float64 {
+	hc.mu.Lock()
+	check, exists := hc.checks[name]
+	if !exists {
+		check = &healthCheck{serverName: name}
+		hc.checks[name] = check
+	}
+	hc.mu.Unlock()
+
+	check.mu.Lock()
+	defer check.mu.Unlock()
+	requests := stats.RequestCount - check.prevRequests
+	failures := stats.ErrorCount - check.prevErrors
+	check.prevRequests = stats.RequestCount
+	check.prevErrors = stats.ErrorCount
+	// RequestCount already includes the failed requests. No request in the
+	// window means no rate (a crash bumps ErrorCount alone; crash recovery
+	// owns that).
+	if requests <= 0 || failures <= 0 {
+		return 0
+	}
+	return float64(failures) / float64(requests)
 }
 
 func (hc *HealthChecker) GetServerHealth(name string) (HealthStatus, error) {
@@ -357,6 +389,16 @@ type PingResponse struct {
 	Error   *errors.JSONRPCError `json:"error,omitempty"`
 }
 
+// performPingCheck sends an MCP ping and reports whether the server
+// answered, with the round-trip latency. Any well-formed JSON-RPC reply
+// proves liveness, an error reply included: servers that do not implement
+// ping answer "Method not found", and counting that as a failure would
+// restart a live server over and over. Only a transport failure or a
+// timeout is a failure.
+//
+// The ping goes through probeRequest, not PutRequest: it must not reset
+// the idle clock (idle_timeout would never fire) nor be counted in the
+// server's stats.
 func (hc *HealthChecker) performPingCheck(ctx context.Context, server *StdioServerV2) (bool, float64) {
 	req := Request{
 		Method:  "ping",
@@ -367,18 +409,17 @@ func (hc *HealthChecker) performPingCheck(ctx context.Context, server *StdioServ
 
 	start := time.Now()
 
-	done := make(chan *Response, 1)
-	req.ResultCh = done
-
-	err := hc.pool.PutRequest(server.config.Name, req)
-	if err != nil {
-		return false, 0
-	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := server.probeRequest(ctx, req)
+		done <- err
+	}()
 
 	select {
-	case resp := <-done:
+	case err := <-done:
 		latency := time.Since(start).Seconds() * 1000
-		if resp.Error != nil {
+		var rpcErr *errors.JSONRPCError
+		if err != nil && !stderrors.As(err, &rpcErr) {
 			return false, latency
 		}
 		return true, latency

@@ -516,12 +516,14 @@ leanproxy-mcp cache --search sleep
 Check whether a LeanProxy process is running:
 
 ```bash
-leanproxy-mcp status --running
+leanproxy-mcp status
 ```
 
-This reads the status file written by running instances
-(`~/.config/leanproxy/status/current.json`). Without `--running`, `status`
-starts every enabled server itself to check it.
+This reads the status files written by the running proxies
+(`~/.config/leanproxy/status/proxy-<pid>.json`) and starts nothing. Only
+when no proxy is running does `status` start every enabled server itself
+to check it. To run a single proxy for all your clients, with a dashboard,
+see [Shared Gateway and Admin Dashboard](shared-gateway.md).
 
 ### Enable/Disable Servers
 

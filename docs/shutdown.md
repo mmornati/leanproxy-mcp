@@ -114,7 +114,7 @@ health checks.
 
 | Item | Location | On shutdown |
 |------|----------|-------------|
-| Status file | `~/.config/leanproxy/status/current.json` | Removed. `status --running` then reports no running proxy |
+| Status file | `~/.config/leanproxy/status/proxy-<pid>.json` | Removed. `status --running` then reports no running proxy |
 | Spilled tool results (`response.spill`) | Memory, or `~/.leanproxy/results/<pid>-<id>/` with `spill.disk: true` | Deleted. If the process was killed, the directory is deleted by the next start once it is older than `spill.ttl` |
 | Usage data for `report` | `~/.leanproxy/usage/` | Flushed to disk, kept |
 | Tool cache, pins, quarantine | `~/.config/leanproxy/`, `~/.leanproxy/quarantine/` | Kept |

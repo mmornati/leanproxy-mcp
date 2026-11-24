@@ -64,11 +64,16 @@ func initTelemetry(ctx context.Context, cfg *migrate.Config) *telemetry.Provider
 // redacted and injection-scanned, the cache keeps the full (redacted)
 // response, and read_result is answered from the governor's spill store
 // (see mcp.Governor for the full rationale).
-func tracedMiddlewares(h *mcp.Handler, respCache *mcp.ResponseCache, firewall *mcp.Firewall, pins *mcp.ToolPins, pol *mcp.Policy, gov *mcp.Governor) []mcp.Middleware {
+//
+// afterExposure are installed right after the exposure stage: they see the
+// real server and tool names, and responses that already passed every
+// later stage (so already redacted). `server run` puts its call log there.
+func tracedMiddlewares(h *mcp.Handler, respCache *mcp.ResponseCache, firewall *mcp.Firewall, pins *mcp.ToolPins, pol *mcp.Policy, gov *mcp.Governor, afterExposure ...mcp.Middleware) []mcp.Middleware {
 	var mws []mcp.Middleware
 	if h != nil {
 		mws = append(mws, h.ExposureMiddleware())
 	}
+	mws = append(mws, afterExposure...)
 	mws = append(mws, mcp.TelemetryMiddleware())
 	if gov.Enabled() {
 		mws = append(mws, mcp.Traced("governor", gov.Middleware()))

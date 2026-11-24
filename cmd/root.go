@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"github.com/mmornati/leanproxy-mcp/internal/logx"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -78,7 +79,9 @@ func initLogger(cmd *cobra.Command) {
 		if err := os.MkdirAll(dir, 0750); err != nil {
 			slog.Warn("failed to create log directory", "path", dir, "error", err)
 		}
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600) // #nosec G304 -- log file path from CLI flag
+		// Rotated at 20 MiB (one ".1" backup): a long-running proxy must
+		// not fill the disk with its own log.
+		f, err := logx.OpenRotating(logFile, 0)
 		if err != nil {
 			slog.Warn("failed to open log file", "path", logFile, "error", err)
 			handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})

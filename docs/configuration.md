@@ -143,7 +143,7 @@ server:
     allowed_hosts: []
     allowed_origins: []
     max_body_bytes: 67108864
-    max_sessions: 64
+    max_sessions: 256
     session_idle_timeout: 30m
 
 exposure:
@@ -706,7 +706,7 @@ server:
     allowed_hosts: [gateway.lan]     # extra Host header values
     allowed_origins: ["https://app.example"]  # browser origins allowed to call
     max_body_bytes: 67108864         # one POST body, default 64 MiB
-    max_sessions: 64                 # open sessions, default 64
+    max_sessions: 256                # open sessions, default 256
     session_idle_timeout: 30m        # default 30m
 ```
 
@@ -715,7 +715,7 @@ server:
 | `server.http.allowed_hosts` | list | (none) | `Host` header values accepted beyond the bind host and `localhost`/`127.0.0.1`/`[::1]` (`host` or `host:port`). Any other `Host` gets `403`, which blocks DNS rebinding. `--http-allowed-hosts` adds to it |
 | `server.http.allowed_origins` | list | (none) | Browser origins (`scheme://host[:port]`, no path or wildcard) allowed to call the endpoint. They get CORS headers. A request carrying any other `Origin` gets `403`, except the server's own origin. Requests without `Origin` (every non-browser MCP client) are not affected. `--http-allowed-origins` adds to it |
 | `server.http.max_body_bytes` | int | `67108864` (64 MiB) | Largest POST body. A larger one gets `413` |
-| `server.http.max_sessions` | int | `64` | Sessions open at once. Beyond it, `initialize` first ends idle sessions, then gets `503` with `Retry-After` |
+| `server.http.max_sessions` | int | `256` | Sessions open at once. Beyond it, `initialize` first ends expired sessions, then the session idle for the longest (clients often never close theirs); it gets `503` with `Retry-After` only when every session has a request in flight |
 | `server.http.session_idle_timeout` | duration | `30m` | A session with no request in flight and no GET stream open is ended after this long. Its next request gets `404` and the client initializes again |
 | `server.max_concurrent_requests` | int | `64` | Client requests handled at once across all HTTP sessions. More wait for a slot and are never rejected. A client's answer to an elicitation never waits for a slot |
 
@@ -1532,6 +1532,7 @@ The mode is decided once per client session, at `initialize`. The default:
 |--------|---------------------------|------|-----|
 | Claude Code | `claude-code` | `passthrough` | MCP tool search is on by default: tool definitions are deferred and discovered on demand |
 | Claude Desktop, claude.ai connectors | `claude-ai` | `passthrough` | Per-tool permissions and UI need the real tools |
+| Claude desktop app, agent mode | `local-agent-mode-<server name>` (matched as `local-agent-mode-*`) | `passthrough` | Defers tool definitions and loads them on demand, like Claude Code |
 | Cursor | `cursor-vscode` (matched as `cursor*`) | `passthrough` | Dynamic context discovery of MCP tools |
 | VS Code (GitHub Copilot) | `Visual Studio Code`, `Visual Studio Code - Insiders` (matched as `visual studio code*`) | `passthrough` | Per-tool picker; groups large tool sets itself |
 | Anything else (OpenCode, Zed, custom agents, ...) | — | `router` (`exposure.mode`) | Unknown clients are assumed to load every tool: the router keeps today's behavior |
@@ -2172,7 +2173,7 @@ the server's `stdio.env` or `stdio.env_passthrough`.
 |------|-----------|---------|
 | `~/.config/leanproxy_servers.yaml` | you, `server add`, `add`, `migrate`, `marketplace update` | This config (mode `0600`) |
 | `~/.config/leanproxy/toolcache/` | every front end | Cached `tools/list` of each server (`$LEANPROXY_TOOLCACHE_DIR`) |
-| `~/.config/leanproxy/status/current.json` | every front end | Live status for `status --running`, `server health` and `doctor security`. Removed on shutdown |
+| `~/.config/leanproxy/status/proxy-<pid>.json` | every front end | Live status for `status --running`, `server health` and `doctor security`. Removed on shutdown |
 | `~/.config/leanproxy/pins.json` | every front end, `tools pins` | Tool pins (`security.tool_pinning.path`, `$LEANPROXY_PINS_FILE`) |
 | `~/.config/leanproxy/serve.token` | `server run --http`, `serve` | Client token, created with mode `0600` on first start |
 | `~/.leanproxy/usage/` | every front end | Per-tool usage for `report`, pruned after 90 days |

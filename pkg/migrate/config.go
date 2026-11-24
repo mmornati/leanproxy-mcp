@@ -533,7 +533,7 @@ const (
 	// DefaultHTTPMaxBodyBytes caps one POST body: 64 MiB.
 	DefaultHTTPMaxBodyBytes = 64 << 20
 	// DefaultHTTPMaxSessions caps the Streamable HTTP sessions open at once.
-	DefaultHTTPMaxSessions = 64
+	DefaultHTTPMaxSessions = 256
 	// DefaultHTTPSessionIdleTimeout ends a session idle for this long.
 	DefaultHTTPSessionIdleTimeout = 30 * time.Minute
 )

@@ -1118,7 +1118,7 @@ There is no `max_batch_size` setting. What bounds a client's input:
 | Front end | Limits |
 |-----------|--------|
 | `server run --stdio` | One message per line, at most `server.max_line_bytes` (64 MiB). At most `server.max_concurrent_requests` (64) requests run at once; more wait. A JSON-RPC batch (a JSON array) is answered with a parse error |
-| `server run --http` | A POST body of at most `server.http.max_body_bytes` (64 MiB), at most `server.http.max_sessions` (64) sessions and `server.max_concurrent_requests` (64) requests at once. A batch is accepted only for sessions on an MCP revision before 2025-06-18; newer sessions get `400` |
+| `server run --http` | A POST body of at most `server.http.max_body_bytes` (64 MiB), at most `server.http.max_sessions` (256) sessions and `server.max_concurrent_requests` (64) requests at once. A batch is accepted only for sessions on an MCP revision before 2025-06-18; newer sessions get `400` |
 | `serve` (deprecated) | `server.max_line_bytes`, `server.max_connections` (32), `server.max_concurrent_requests` per connection. A batch of more than 100 requests (fixed) gets a parse error |
 
 Towards upstream servers, `max_in_flight`, `max_response_bytes` and the
@@ -1208,7 +1208,7 @@ On `SIGINT` or `SIGTERM`, and when the client closes stdin, LeanProxy:
   `SIGKILL` after 5 seconds, so no child or grandchild is left running;
 - removes sandbox containers (`docker rm -f`, bounded to 5 seconds);
 - deletes spilled tool results (`response.spill`), in memory and on disk;
-- removes the status file `~/.config/leanproxy/status/current.json`.
+- removes the status file `~/.config/leanproxy/status/proxy-<pid>.json`.
 
 A client-initiated shutdown (stdin EOF or the `shutdown` request) gives
 in-flight requests up to 5 seconds to finish. See

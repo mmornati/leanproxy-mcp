@@ -85,6 +85,9 @@ type ClientRule struct {
 //
 //   - claude-code: Claude Code (MCP tool search, on by default);
 //   - claude-ai: Claude Desktop and claude.ai connectors;
+//   - local-agent-mode-*: the Claude desktop app's agent mode
+//     ("local-agent-mode-<server name>"; deferred tool loading, like Claude
+//     Code);
 //   - cursor*: Cursor ("cursor-vscode"; dynamic context discovery);
 //   - visual studio code*: VS Code / GitHub Copilot ("Visual Studio Code",
 //     "Visual Studio Code - Insiders"; per-tool picker and virtual tools).
@@ -93,6 +96,7 @@ type ClientRule struct {
 var BuiltinClients = []ClientRule{
 	{Match: "claude-code", Mode: ModePassthrough},
 	{Match: "claude-ai", Mode: ModePassthrough},
+	{Match: "local-agent-mode-*", Mode: ModePassthrough},
 	{Match: "cursor*", Mode: ModePassthrough},
 	{Match: "visual studio code*", Mode: ModePassthrough},
 }
