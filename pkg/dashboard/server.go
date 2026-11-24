@@ -160,6 +160,9 @@ type server struct {
 	// writable is true when the dashboard has a token: only then are the
 	// admin write actions offered and accepted.
 	writable bool
+	// detailed is true when the dashboard has a token: only then do the
+	// admin views carry raw error text and stderr lines.
+	detailed bool
 }
 
 func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
@@ -202,9 +205,13 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 		actualPort = port
 	}
 
+	codes := newLoginCodes()
+	protected := newServer(cfg).routes()
+	// Mints a one-time sign-in code; behind the token like everything else.
+	protected.HandleFunc("POST /login/code", handleLoginCode(codes))
 	topMux := http.NewServeMux()
-	topMux.HandleFunc("GET /login", handleLogin(cfg.Token))
-	topMux.Handle("/", requireBearerToken(cfg.Token, logger)(newServer(cfg).routes()))
+	topMux.HandleFunc("GET /login", handleLogin(cfg.Token, codes))
+	topMux.Handle("/", requireBearerToken(cfg.Token, logger)(protected))
 
 	allowedHosts := httpsec.AllowedHosts(host, actualPort, cfg.AllowedHosts)
 	handler := httpsec.SecurityHeaders()(httpsec.ValidateHost(allowedHosts)(topMux))
@@ -242,7 +249,7 @@ func (s *server) routes() *http.ServeMux {
 }
 
 func newServer(cfg Config) *server {
-	return &server{usage: cfg.Usage, admin: cfg.Admin, writable: cfg.Admin != nil && cfg.Token != ""}
+	return &server{usage: cfg.Usage, admin: cfg.Admin, writable: cfg.Admin != nil && cfg.Token != "", detailed: cfg.Token != ""}
 }
 
 func (s *server) summary() *metrics.UsageSummary {

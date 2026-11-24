@@ -66,6 +66,9 @@ type ServerStatus struct {
 	Health  string `json:"health"`
 	// Summary is one short line saying what Health means here.
 	Summary string `json:"summary"`
+	// SummaryIsError is true when Summary quotes the server's error text
+	// rather than a fixed sentence (see withoutDetails).
+	SummaryIsError bool `json:"-"`
 
 	Tools      int  `json:"tools"`
 	ToolsKnown bool `json:"tools_known"`
@@ -166,13 +169,51 @@ type adminPage struct {
 	Up, Down int
 }
 
+// detailsHidden is what replaces error text on a dashboard without a token.
+const detailsHidden = "Failed (error details are shown when the dashboard has a token)"
+
+// servers returns the servers to show. A dashboard without a token is
+// readable by every local user and process, so it shows each server's
+// state, counters and fixed-sentence diagnosis but not the raw error text
+// or stderr lines, which may quote paths, hosts or upstream messages.
+func (s *server) servers() []ServerStatus {
+	servers := s.admin.Servers()
+	if s.detailed {
+		return servers
+	}
+	out := make([]ServerStatus, len(servers))
+	for i, sv := range servers {
+		if sv.SummaryIsError {
+			sv.Summary = detailsHidden
+		}
+		sv.LastError, sv.RecentStderr = "", ""
+		out[i] = sv
+	}
+	return out
+}
+
+// calls returns the tool calls to show; without a token, without their
+// error text (see servers).
+func (s *server) calls(limit int, server string) []Call {
+	calls := s.admin.Calls(limit, server)
+	if s.detailed {
+		return calls
+	}
+	out := make([]Call, len(calls))
+	for i, c := range calls {
+		c.Error = ""
+		out[i] = c
+	}
+	return out
+}
+
 func (s *server) adminData(notice, failure string) adminPage {
 	p := adminPage{Writable: s.writable, Notice: notice, Failure: failure, Now: time.Now()}
 	if s.admin == nil {
 		return p
 	}
 	p.Overview = s.admin.Overview()
-	p.Servers = s.admin.Servers()
+	p.Servers = s.servers()
 	for _, sv := range p.Servers {
 		switch sv.Health {
 		case HealthOK, HealthWarn, HealthIdle:
@@ -190,10 +231,10 @@ func (s *server) adminRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/calls", s.handleAdminCalls)
 
 	mux.HandleFunc("GET /api/admin/overview", s.adminJSON(func(*http.Request) any { return s.admin.Overview() }))
-	mux.HandleFunc("GET /api/admin/servers", s.adminJSON(func(*http.Request) any { return s.admin.Servers() }))
+	mux.HandleFunc("GET /api/admin/servers", s.adminJSON(func(*http.Request) any { return s.servers() }))
 	mux.HandleFunc("GET /api/admin/sessions", s.adminJSON(func(*http.Request) any { return s.admin.Sessions() }))
 	mux.HandleFunc("GET /api/admin/calls", s.adminJSON(func(r *http.Request) any {
-		return s.admin.Calls(callLimit(r), r.URL.Query().Get("server"))
+		return s.calls(callLimit(r), r.URL.Query().Get("server"))
 	}))
 
 	mux.HandleFunc("POST /admin/servers", s.adminWrite(s.actionAdd))
@@ -241,7 +282,7 @@ func (s *server) handleAdminSessions(w http.ResponseWriter, r *http.Request) {
 func (s *server) handleAdminCalls(w http.ResponseWriter, r *http.Request) {
 	p := adminPage{Now: time.Now()}
 	if s.admin != nil {
-		p.Calls = s.admin.Calls(callLimit(r), r.URL.Query().Get("server"))
+		p.Calls = s.calls(callLimit(r), r.URL.Query().Get("server"))
 	}
 	s.render(w, "adminCalls", p)
 }

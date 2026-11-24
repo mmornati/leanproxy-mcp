@@ -29,7 +29,7 @@ runs:
 
 ```
 leanproxy-mcp server run --http 127.0.0.1:8765 \
-  --dashboard-bind 127.0.0.1:9090 --dashboard-token-file ~/.config/leanproxy/serve.token \
+  --dashboard-bind 127.0.0.1:9090 --dashboard-token-file ~/.config/leanproxy/dashboard.token \
   --log-file ~/.leanproxy/logs/daemon.log
 ```
 
@@ -45,10 +45,13 @@ commands of your stdio servers (`npx`, `uvx`, `docker`, ...) resolve the
 way they do for you. Run `daemon install` again after changing your `PATH`
 or upgrading LeanProxy to a different location.
 
-Both endpoints require the bearer token in
-`~/.config/leanproxy/serve.token` (created on first start, mode `0600`).
-The token is passed to the service as a file path, never on its command
-line.
+Each endpoint has its own bearer token, in a file created on first start
+with mode `0600`: `~/.config/leanproxy/serve.token` for the MCP endpoint
+(the one your clients carry in their configuration) and
+`~/.config/leanproxy/dashboard.token` for the dashboard. They are
+separate on purpose: the dashboard can add servers, which runs commands,
+so a client's token must not open it. Neither token appears on the
+service's command line.
 
 Other subcommands:
 
@@ -56,7 +59,7 @@ Other subcommands:
 |---------|--------------|
 | `daemon status` | Is the gateway running, its URLs, clients and servers. Also says when separate `--stdio` proxies are still running. |
 | `daemon clients` | The snippet to paste into each MCP client. `--show-token` prints the real token. |
-| `daemon open` | Opens the dashboard in the browser, already signed in. |
+| `daemon open` | Opens the dashboard in the browser, already signed in. The link carries a code that works once, for one minute, not the token. |
 | `daemon restart` | Restarts the service. |
 | `daemon uninstall` | Stops and removes it. |
 
@@ -128,7 +131,13 @@ the flags and the usage figures).
 The call log never records a call's arguments or its result, and the error
 text it shows has already been through redaction. A server's target is its
 command without arguments, or its URL without credentials and query
-string. Header values and environment variables are never displayed.
+string; URLs quoted in error messages are stripped the same way. Header
+values and environment variables are never displayed.
+
+A dashboard **without a token** can be read by any process on the machine,
+so it shows less: states, counters and the fixed diagnoses ("Up",
+"Authentication refused", ...), but no raw error text, no stderr lines and
+no call error messages. Those need a token.
 
 ### Managing servers from the dashboard
 

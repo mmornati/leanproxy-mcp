@@ -1,12 +1,16 @@
 package dashboard
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 )
 
 // dashboardCookieName is the HttpOnly cookie requireBearerToken accepts as
@@ -83,7 +87,12 @@ func isLoopback(r *http.Request) bool {
 // A wrong or missing token gets 401 and no cookie. The cookie is
 // SameSite=Strict (never sent cross-site) and Secure when the request
 // arrived over TLS.
-func handleLogin(token string) http.HandlerFunc {
+//
+// GET /login?code=... does the same with a one-time code minted by an
+// authenticated POST /login/code (see loginCodes): that is what `daemon
+// open` puts in the URL it hands to the browser, so the long-lived token
+// never appears in a process listing or in the browser's history.
+func handleLogin(token string, codes *loginCodes) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if token == "" {
 			http.Error(w, "dashboard token authentication is not configured", http.StatusNotFound)
@@ -91,11 +100,13 @@ func handleLogin(token string) http.HandlerFunc {
 		}
 
 		provided := r.URL.Query().Get("token")
-		if provided == "" || subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+		byToken := provided != "" && subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
+		if !byToken && !codes.redeem(r.URL.Query().Get("code")) {
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf("Bearer realm=%q", "dashboard"))
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
+		provided = token
 
 		http.SetCookie(w, &http.Cookie{ // #nosec G124 -- HttpOnly and SameSite=Strict are set; Secure is conditional on r.TLS by design (issue #316 requires Secure only when served over TLS, so the cookie still works on a plain-HTTP loopback bind)
 			Name:     dashboardCookieName,
@@ -116,5 +127,65 @@ func handleLogin(token string) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("logged in"))
+	}
+}
+
+// loginCodeTTL is how long a one-time sign-in code can be redeemed.
+const loginCodeTTL = time.Minute
+
+// loginCodes are one-time sign-in codes: each is random, valid for
+// loginCodeTTL and redeemable once.
+type loginCodes struct {
+	mu    sync.Mutex
+	codes map[string]time.Time
+}
+
+func newLoginCodes() *loginCodes {
+	return &loginCodes{codes: make(map[string]time.Time)}
+}
+
+// mint returns a new code.
+func (l *loginCodes) mint() (string, error) {
+	var b [24]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	code := hex.EncodeToString(b[:])
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for c, exp := range l.codes {
+		if now.After(exp) {
+			delete(l.codes, c)
+		}
+	}
+	l.codes[code] = now.Add(loginCodeTTL)
+	return code, nil
+}
+
+// redeem consumes code and reports whether it was valid.
+func (l *loginCodes) redeem(code string) bool {
+	if l == nil || code == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	exp, ok := l.codes[code]
+	delete(l.codes, code)
+	return ok && time.Now().Before(exp)
+}
+
+// handleLoginCode answers an authenticated request with a new one-time
+// sign-in code, as plain text.
+func handleLoginCode(codes *loginCodes) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		code, err := codes.mint()
+		if err != nil {
+			http.Error(w, "cannot create a sign-in code", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(code))
 	}
 }

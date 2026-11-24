@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -138,5 +139,25 @@ func TestUnifiedPoolStartServerRejectsBadConfig(t *testing.T) {
 	}
 	if err := p.StartServer(ctx, &migrate.ServerConfig{Name: "x", Transport: registry.TransportStdio}); err == nil {
 		t.Fatal("stdio server without a stdio block accepted")
+	}
+}
+
+func TestScrubURLs(t *testing.T) {
+	cases := map[string]string{
+		`Post "https://user:pw@api.example.com/mcp?key=SECRET#frag": dial tcp: refused`: `Post "https://api.example.com/mcp": dial tcp: refused`,
+		"failed at https://example.com/mcp?token=abc.":                                  "failed at https://example.com/mcp.",
+		"no secret in https://example.com/mcp here":                                     "no secret in https://example.com/mcp here",
+		"two: http://a.test/x?k=1 and http://b.test/y?k=2":                              "two: http://a.test/x and http://b.test/y",
+		"plain error, no url": "plain error, no url",
+	}
+	for in, want := range cases {
+		if got := ScrubURLs(in); got != want {
+			t.Errorf("ScrubURLs(%q)\n got %q\nwant %q", in, got, want)
+		}
+	}
+	var c connStatus
+	c.note(errors.New(`Get "https://h.test/sse?api_key=SECRET": EOF`), 0)
+	if msg, _, _ := c.snapshot(); strings.Contains(msg, "SECRET") {
+		t.Fatalf("a connection error kept the query string: %q", msg)
 	}
 }

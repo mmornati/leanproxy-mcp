@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -71,7 +74,7 @@ func (c *connStatus) note(err error, gen uint64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err != nil {
-		c.lastErr = err.Error()
+		c.lastErr = ScrubURLs(err.Error())
 		c.lastErrAt = time.Now()
 		return
 	}
@@ -137,11 +140,11 @@ func (r *callRecorder) begin(name string) func(resp *Response, err error) {
 		switch {
 		case err != nil:
 			st.errors++
-			st.lastErr = err.Error()
+			st.lastErr = ScrubURLs(err.Error())
 			st.lastErrAt = st.lastRequestAt
 		case resp != nil && resp.Error != nil:
 			st.errors++
-			st.lastErr = resp.Error.Message
+			st.lastErr = ScrubURLs(resp.Error.Message)
 			st.lastErrAt = st.lastRequestAt
 		}
 	}
@@ -421,4 +424,27 @@ func (s *SSEServer) ensureConnected(ctx context.Context) (c *client.Client, err 
 	c, err = s.connect(ctx)
 	s.conn.note(err, s.generation.Load())
 	return c, err
+}
+
+var urlInText = regexp.MustCompile(`https?://[^\s"'<>]+`)
+
+// ScrubURLs removes the credentials, query string and fragment of every
+// http(s) URL in s. Transport errors quote the URL they failed on, and a
+// configured URL may carry a key in its query or a password in its
+// userinfo: the error is kept for display, so those parts must not be.
+func ScrubURLs(s string) string {
+	return urlInText.ReplaceAllStringFunc(s, func(raw string) string {
+		// Trailing punctuation belongs to the sentence, not the URL.
+		trimmed := strings.TrimRight(raw, ".,;:)]}")
+		tail := raw[len(trimmed):]
+		u, err := url.Parse(trimmed)
+		if err != nil {
+			return "[url]" + tail
+		}
+		if u.User == nil && u.RawQuery == "" && u.Fragment == "" {
+			return raw
+		}
+		u.User, u.RawQuery, u.Fragment = nil, "", ""
+		return u.String() + tail
+	})
 }

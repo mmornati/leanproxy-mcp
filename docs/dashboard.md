@@ -109,7 +109,10 @@ GET /login?token=my-secret-token
 ```
 
 A browser is then redirected to the dashboard (anything else gets a plain
-`200`). This sets an `HttpOnly`, `SameSite=Strict` cookie (also `Secure` when served
+`200`). `GET /login?code=<code>` does the same with a one-time code
+obtained from an authenticated `POST /login/code` (valid once, for one
+minute): `leanproxy-mcp daemon open` uses it so the token itself never
+reaches a command line or the browser history. This sets an `HttpOnly`, `SameSite=Strict` cookie (also `Secure` when served
 over TLS), so later page loads need no header. Without a configured token,
 `/login` returns 404.
 

@@ -8,14 +8,15 @@ import (
 
 func sampleDaemonSpec() daemonSpec {
 	return daemonSpec{
-		Executable: "/opt/lean proxy/bin/leanproxy-mcp",
-		HTTPAddr:   "127.0.0.1:8765",
-		DashAddr:   "127.0.0.1:9090",
-		TokenFile:  "/home/u/.config/leanproxy/serve.token",
-		LogFile:    "/home/u/.leanproxy/logs/daemon.log",
-		LogLevel:   "info",
-		Path:       "/usr/bin:/opt/a&b/bin",
-		Home:       "/home/u",
+		Executable:    "/opt/lean proxy/bin/leanproxy-mcp",
+		HTTPAddr:      "127.0.0.1:8765",
+		DashAddr:      "127.0.0.1:9090",
+		TokenFile:     "/home/u/.config/leanproxy/serve.token",
+		DashTokenFile: "/home/u/.config/leanproxy/dashboard.token",
+		LogFile:       "/home/u/.leanproxy/logs/daemon.log",
+		LogLevel:      "info",
+		Path:          "/usr/bin:/opt/a&b/bin",
+		Home:          "/home/u",
 	}
 }
 
@@ -23,9 +24,13 @@ func TestDaemonArgs(t *testing.T) {
 	d := sampleDaemonSpec()
 	got := strings.Join(d.args(), " ")
 	want := "server run --http 127.0.0.1:8765 --log-file /home/u/.leanproxy/logs/daemon.log --log-level info" +
-		" --dashboard-bind 127.0.0.1:9090 --dashboard-token-file /home/u/.config/leanproxy/serve.token"
+		" --dashboard-bind 127.0.0.1:9090 --dashboard-token-file /home/u/.config/leanproxy/dashboard.token"
 	if got != want {
 		t.Fatalf("args =\n%s\nwant\n%s", got, want)
+	}
+	// The dashboard has its own token, not the one MCP clients carry.
+	if d.DashTokenFile == d.TokenFile {
+		t.Fatal("the dashboard reuses the MCP token")
 	}
 	// The token itself never appears on the command line.
 	if strings.Contains(got, "--dashboard-token ") || strings.Contains(got, "--http-token") {

@@ -287,7 +287,7 @@ func TestTemplateHelpers(t *testing.T) {
 }
 
 func TestLoginRedirectsABrowser(t *testing.T) {
-	h := handleLogin("tok")
+	h := handleLogin("tok", nil)
 	req := httptest.NewRequest("GET", "/login?token=tok", nil)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml")
 	rec := httptest.NewRecorder()
@@ -316,5 +316,77 @@ func TestStaticAssetsAreServed(t *testing.T) {
 	}
 	if rec := doRequest(h, "GET", "/static/nope.css", nil, nil); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown asset = %d, want 404", rec.Code)
+	}
+}
+
+// Without a token the dashboard is readable by any local process: it keeps
+// states and counters but not raw error text, stderr or call errors.
+func TestAdminDetailsNeedAToken(t *testing.T) {
+	admin := sampleAdmin()
+	admin.servers = append(admin.servers, ServerStatus{Name: "crashy", Transport: "stdio", Enabled: true, State: "error",
+		Health: HealthDown, Summary: "open /Users/someone/private.db: permission denied", SummaryIsError: true,
+		LastError: "open /Users/someone/private.db: permission denied", RecentStderr: "Traceback: /Users/someone/app.py"})
+
+	open := adminHandler(admin, "")
+	for _, path := range []string{"/", "/admin/servers", "/api/admin/servers", "/admin/calls", "/api/admin/calls"} {
+		body := doRequest(open, "GET", path, nil, nil).Body.String()
+		for _, leak := range []string{"private.db", "Traceback", "authorization required"} {
+			if strings.Contains(body, leak) {
+				t.Errorf("%s without a token shows %q", path, leak)
+			}
+		}
+	}
+	body := doRequest(open, "GET", "/admin/servers", nil, nil).Body.String()
+	// The fixed-sentence diagnosis and the state stay.
+	if !strings.Contains(body, "Authentication refused") || !strings.Contains(body, "error details are shown when the dashboard has a token") {
+		t.Errorf("token-less servers fragment: %s", body)
+	}
+
+	withToken := adminHandler(admin, "tok")
+	body = doRequest(withToken, "GET", "/admin/servers", nil, nil).Body.String()
+	if !strings.Contains(body, "private.db") || !strings.Contains(body, "Traceback") {
+		t.Error("with a token the details must be shown")
+	}
+	if calls := doRequest(withToken, "GET", "/api/admin/calls", nil, nil).Body.String(); !strings.Contains(calls, "authorization required") {
+		t.Error("with a token call errors must be shown")
+	}
+}
+
+func TestLoginCodeWorksOnce(t *testing.T) {
+	codes := newLoginCodes()
+	mint := httptest.NewRecorder()
+	handleLoginCode(codes)(mint, httptest.NewRequest("POST", "/login/code", nil))
+	code := strings.TrimSpace(mint.Body.String())
+	if mint.Code != http.StatusOK || len(code) < 32 {
+		t.Fatalf("mint = %d %q", mint.Code, code)
+	}
+
+	login := handleLogin("the-long-lived-token", codes)
+	first := httptest.NewRecorder()
+	login(first, httptest.NewRequest("GET", "/login?code="+code, nil))
+	cookies := first.Result().Cookies()
+	if first.Code != http.StatusOK || len(cookies) != 1 || cookies[0].Value != "the-long-lived-token" {
+		t.Fatalf("first use = %d, cookies %v", first.Code, cookies)
+	}
+	second := httptest.NewRecorder()
+	login(second, httptest.NewRequest("GET", "/login?code="+code, nil))
+	if second.Code != http.StatusUnauthorized || len(second.Result().Cookies()) != 0 {
+		t.Fatalf("second use of a code = %d, want 401", second.Code)
+	}
+	for _, bad := range []string{"", "nope"} {
+		rec := httptest.NewRecorder()
+		login(rec, httptest.NewRequest("GET", "/login?code="+bad, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("code %q = %d, want 401", bad, rec.Code)
+		}
+	}
+
+	// An expired code is refused.
+	stale, _ := codes.mint()
+	codes.mu.Lock()
+	codes.codes[stale] = time.Now().Add(-time.Second)
+	codes.mu.Unlock()
+	if codes.redeem(stale) {
+		t.Fatal("an expired code was accepted")
 	}
 }

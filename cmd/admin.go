@@ -455,7 +455,7 @@ func (m *serverManager) Servers() []dashboard.ServerStatus {
 			rs := m.handler.ToolRefreshStatus(srv.Name)
 			st.RefreshFailures, st.NextRetryAt = rs.Failures, rs.NextRetryAt
 			if rs.Failures > 0 && rs.LastErrorAt.After(st.LastErrorAt) {
-				st.LastError, st.LastErrorAt = rs.LastError, rs.LastErrorAt
+				st.LastError, st.LastErrorAt = pool.ScrubURLs(rs.LastError), rs.LastErrorAt
 			}
 		}
 		if m.pinner != nil {
@@ -513,6 +513,7 @@ func classifyServer(st *dashboard.ServerStatus) {
 		st.Health, st.Summary = dashboard.HealthDown, "Authentication refused: check this server's token"
 	case state == pool.StateError:
 		st.Health, st.Summary = dashboard.HealthDown, firstLine(orText(st.LastError, "Failed, no error recorded"))
+		st.SummaryIsError = st.LastError != ""
 	case state == pool.StateDisconnected:
 		st.Health, st.Summary = dashboard.HealthWarn, "Disconnected, reconnects on the next call"
 	case state == pool.StateStopped || state == pool.StateStopping:
@@ -604,6 +605,7 @@ func (m *serverManager) writeStatus(store *statusfile.FileStatusStore) {
 			Transport:    sv.Transport,
 			State:        sv.State,
 			Summary:      sv.Summary,
+			// The status file is 0600 in a 0700 directory: the owner only.
 			LastError:    firstLine(sv.LastError),
 			AvgLatencyMs: sv.AvgLatencyMs,
 			InFlight:     sv.InFlight,

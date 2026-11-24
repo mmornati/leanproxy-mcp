@@ -13,8 +13,9 @@
   one-line diagnosis, tools, calls, errors, latency, last error, recent stderr), the connected
   clients (name, exposure mode, protocol, calls) and the last 500 tool calls (client, server,
   tool, duration, outcome; never arguments or results). With a dashboard token it can restart,
-  enable, disable, add and remove servers. Without one it is read-only. JSON under
-  `/api/admin/*`. New `--dashboard-token-file`.
+  enable, disable, add and remove servers. Without one it is read-only and shows no raw error
+  text. JSON under `/api/admin/*`. New `--dashboard-token-file`, and one-time sign-in codes
+  (`POST /login/code`, `GET /login?code=`).
 - **Hot reload of the server list.** A running `server run` applies changes to `servers:` in
   the config file within seconds (and on `SIGHUP` for the HTTP gateway): new entries start,
   removed or disabled ones stop, changed ones restart, clients get `tools/list_changed`.

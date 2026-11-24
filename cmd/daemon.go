@@ -4,7 +4,9 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -94,9 +96,13 @@ type daemonSpec struct {
 	HTTPAddr   string
 	DashAddr   string // "" when the dashboard is off
 	TokenFile  string
-	LogFile    string
-	LogLevel   string
-	ConfigPath string // "" for the default
+	// DashTokenFile holds the dashboard's own token: the dashboard can
+	// add servers, so its credential is not the one MCP clients carry in
+	// their configuration.
+	DashTokenFile string
+	LogFile       string
+	LogLevel      string
+	ConfigPath    string // "" for the default
 	// Path is the PATH the service runs with: the installer's own, so the
 	// commands of stdio servers (npx, uvx, docker, ...) resolve the same
 	// way they do in the user's shell. Service managers start with a
@@ -110,9 +116,9 @@ func (d daemonSpec) args() []string {
 	args := []string{"server", "run", "--http", d.HTTPAddr,
 		"--log-file", d.LogFile, "--log-level", d.LogLevel}
 	if d.DashAddr != "" {
-		// The dashboard shares the gateway's token file, so its write
-		// actions are available and the token never appears in `ps`.
-		args = append(args, "--dashboard-bind", d.DashAddr, "--dashboard-token-file", d.TokenFile)
+		// A token file: the write actions are available, and the token
+		// never appears in `ps`.
+		args = append(args, "--dashboard-bind", d.DashAddr, "--dashboard-token-file", d.DashTokenFile)
 	}
 	if d.ConfigPath != "" {
 		args = append(args, "--config", d.ConfigPath)
@@ -197,6 +203,11 @@ WantedBy=default.target
 `
 }
 
+// dashboardTokenPath is the token file of the daemon's dashboard.
+func dashboardTokenPath(home string) string {
+	return filepath.Join(home, ".config", "leanproxy", "dashboard.token")
+}
+
 func daemonLogFile(home string) string {
 	return filepath.Join(home, ".leanproxy", "logs", "daemon.log")
 }
@@ -255,15 +266,16 @@ func buildDaemonSpec() (daemonSpec, error) {
 		}
 	}
 	return daemonSpec{
-		Executable: exe,
-		HTTPAddr:   daemonFlags.http,
-		DashAddr:   dash,
-		TokenFile:  serveTokenPath(home),
-		LogFile:    daemonLogFile(home),
-		LogLevel:   daemonFlags.logLevel,
-		ConfigPath: configPath,
-		Path:       os.Getenv("PATH"),
-		Home:       home,
+		Executable:    exe,
+		HTTPAddr:      daemonFlags.http,
+		DashAddr:      dash,
+		TokenFile:     serveTokenPath(home),
+		DashTokenFile: dashboardTokenPath(home),
+		LogFile:       daemonLogFile(home),
+		LogLevel:      daemonFlags.logLevel,
+		ConfigPath:    configPath,
+		Path:          os.Getenv("PATH"),
+		Home:          home,
 	}, nil
 }
 
@@ -286,6 +298,11 @@ func runDaemonInstall(cmd *cobra.Command, args []string) error {
 	}
 	if _, err := loadOrCreateServeToken(spec.TokenFile); err != nil {
 		return err
+	}
+	if spec.DashAddr != "" {
+		if _, err := loadOrCreateServeToken(spec.DashTokenFile); err != nil {
+			return err
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(spec.LogFile), 0o700); err != nil {
 		return err
@@ -461,6 +478,30 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// dashboardLoginCode asks the dashboard at base for a one-time sign-in
+// code, authenticating with its token.
+func dashboardLoginCode(base, token string) (string, error) {
+	req, err := http.NewRequest(http.MethodPost, base+"/login/code", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("the dashboard answered %s", resp.Status)
+	}
+	return strings.TrimSpace(string(body)), nil
+}
+
 func runDaemonOpen(cmd *cobra.Command, args []string) error {
 	info := gatewayStatus()
 	if info == nil || info.Dashboard == "" {
@@ -470,11 +511,18 @@ func runDaemonOpen(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	token, err := loadOrCreateServeToken(serveTokenPath(home))
+	token, err := loadOrCreateServeToken(dashboardTokenPath(home))
 	if err != nil {
 		return err
 	}
-	login := info.Dashboard + "/login?token=" + url.QueryEscape(token)
+	// The browser gets a code that works once, for one minute: the
+	// dashboard token itself never reaches a command line, the browser's
+	// history or its address bar.
+	code, err := dashboardLoginCode(info.Dashboard, token)
+	if err != nil {
+		return fmt.Errorf("cannot sign in to the dashboard at %s: %w", info.Dashboard, err)
+	}
+	login := info.Dashboard + "/login?code=" + url.QueryEscape(code)
 	var opener string
 	switch runtime.GOOS {
 	case "darwin":
@@ -483,14 +531,12 @@ func runDaemonOpen(cmd *cobra.Command, args []string) error {
 		opener = "xdg-open"
 	}
 	if opener != "" {
-		if err := exec.Command(opener, login).Start(); err == nil { // #nosec G204 -- fixed opener, URL built from the local status file and token
+		if err := exec.Command(opener, login).Start(); err == nil { // #nosec G204 -- fixed opener; the URL is the local dashboard with a one-time code
 			fmt.Printf("Opened %s\n", info.Dashboard)
 			return nil
 		}
 	}
-	// No browser to hand it to: the sign-in link carries the token, so it
-	// is only printed when asked for this way.
-	fmt.Println("Open this link (it signs the browser in, keep it private):")
+	fmt.Println("Open this link within a minute (it works once):")
 	fmt.Println("  " + login)
 	return nil
 }
