@@ -135,3 +135,53 @@ func TestConnectToken(t *testing.T) {
 		t.Fatalf("--url ignored: %s", got)
 	}
 }
+
+// A binary reached through a symlink (how Homebrew exposes a versioned
+// install) is recorded by that symlink, which survives upgrades.
+func TestStableExecutable(t *testing.T) {
+	dir := t.TempDir()
+	cellar := filepath.Join(dir, "Cellar", "leanproxy-mcp", "1.1", "bin")
+	if err := os.MkdirAll(cellar, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(cellar, "leanproxy-mcp")
+	if err := os.WriteFile(real, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(bin, "leanproxy-mcp")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	other := filepath.Join(bin, "other")
+	if err := os.WriteFile(other, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	otherLink := filepath.Join(bin, "other-link")
+	if err := os.Symlink(other, otherLink); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := stableExecutable(real, link); got != link {
+		t.Errorf("invoked through the symlink: got %s, want the symlink %s", got, link)
+	}
+	if got := stableExecutable(real, real); got != real {
+		t.Errorf("invoked directly: got %s, want %s", got, real)
+	}
+	// A symlink to some other binary, or a name that cannot be found, is
+	// never used.
+	if got := stableExecutable(real, otherLink); got != real {
+		t.Errorf("a symlink to another binary was used: %s", got)
+	}
+	if got := stableExecutable(real, "leanproxy-no-such-command-xyz"); got != real {
+		t.Errorf("an unknown name was used: %s", got)
+	}
+	// A bare name is resolved through PATH.
+	t.Setenv("PATH", bin)
+	if got := stableExecutable(real, "leanproxy-mcp"); got != link {
+		t.Errorf("bare name: got %s, want %s", got, link)
+	}
+}
