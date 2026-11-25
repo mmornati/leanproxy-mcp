@@ -1152,3 +1152,95 @@
 .lp-code--hero pre {
   padding-right: 1rem;
 }
+
+/* ---------- News strip (under the hero) ---------- */
+.lp-news {
+  background: var(--xr-ground);
+  border-block: 1px solid var(--xr-rule);
+}
+.lp-news__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.25rem;
+  padding-block: 0.9rem;
+}
+.lp-news__tag {
+  font-family: var(--md-code-font-family);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--xr-paper);
+  background: var(--xr-teal-ink);
+  padding: 0.15em 0.6em;
+  border-radius: 4px;
+}
+.lp-news__text {
+  flex: 1 1 28rem;
+  margin: 0;
+  font-size: 0.98rem;
+  color: var(--xr-ink-2);
+}
+.lp-news__text b {
+  color: var(--xr-ink);
+}
+.lp-news__links {
+  display: flex;
+  gap: 1.25rem;
+  margin: 0;
+  font-weight: 700;
+  font-size: 0.95rem;
+  white-space: nowrap;
+}
+
+/* ---------- Shared gateway ---------- */
+.lp-gateway__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(1.25rem, 3vw, 2.5rem);
+  align-items: start;
+}
+@media (max-width: 60rem) {
+  .lp-gateway__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.lp-gateway__video {
+  container-type: inline-size;
+  border: 1px solid var(--xr-rule);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0a0f20;
+}
+.lp-gateway__video iframe {
+  display: block;
+  width: 100%;
+  /* 16:9 stage plus the player's 40px control bar */
+  height: calc(56.25cqw + 40px);
+  border: 0;
+}
+.lp-gateway__shot {
+  margin: 0;
+}
+.lp-gateway__shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--xr-rule);
+  border-radius: 10px;
+}
+.lp-gateway__shot figcaption {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  color: var(--xr-ink-3);
+}
+.lp-only-dark {
+  display: none !important;
+}
+[data-md-color-scheme="xray-dark"] .lp-only-light {
+  display: none !important;
+}
+[data-md-color-scheme="xray-dark"] .lp-only-dark {
+  display: block !important;
+}

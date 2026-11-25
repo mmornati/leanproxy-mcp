@@ -1,0 +1,6 @@
+{
+  "_doc": "Pronunciation fixes, applied to the spoken text only (subtitles keep the original). Keys are whole words, case-sensitive. A [[…]] value is raw IPA (Kokoro, Azure). Checked with the narration-lexicon skill: 'Copilot' comes back from Whisper as 'Co-Pilot', a spelling difference only, so it has no entry.",
+  "en": {
+    "LeanProxy": "Lean Proxy"
+  }
+}

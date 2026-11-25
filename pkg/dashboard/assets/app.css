@@ -180,7 +180,7 @@ h2 { font-size: 1.2rem; font-weight: 800; letter-spacing: -0.02em; margin: 0; }
 .grid tr:last-child td, .server-table tr:last-child td, .drilldown-table tr:last-child td { border-bottom: 0; }
 .nowrap { white-space: nowrap; }
 .grid td { overflow-wrap: normal; }
-.grid td.cell-tool { overflow-wrap: anywhere; min-width: 9rem; }
+.grid td.cell-tool { overflow-wrap: anywhere; min-width: 14rem; }
 .call-error { display: block; margin-top: 0.2rem; font-size: 0.78rem; overflow-wrap: anywhere; max-width: 34rem; }
 .num, th.num { text-align: right; font-family: var(--mono); white-space: nowrap; }
 .cell-server { font-weight: 600; }

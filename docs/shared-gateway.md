@@ -9,6 +9,12 @@ its own state, and nothing shows them together.
 The shared gateway is the other way to run it: **one** `server run --http`
 process that every client reaches by URL.
 
+<div class="lp-video">
+<iframe src="../videos/shared-gateway/?embed=1&lang=en" title="LeanProxy: one shared gateway (70 second video)" loading="lazy" allow="fullscreen; autoplay" allowfullscreen></iframe>
+</div>
+
+*The 70-second tour, with subtitles (press `c`). The dashboard shown uses demo servers.*
+
 | | One proxy per session (`--stdio`) | Shared gateway (`daemon`) |
 |---|---|---|
 | Proxy processes | One per client session | One |
@@ -120,6 +126,9 @@ proxy (`daemon restart`) after changing those.
 `--dashboard-bind 127.0.0.1:9090` (see [Web Dashboard](dashboard.md) for
 the flags and the usage figures).
 
+![The Servers section: five servers with a status dot, a one-line diagnosis, tool, call and error counts and average latency. The row of a server whose authentication was refused is open and shows its last error with Reconnect, Disable and Remove buttons.](assets/screenshots/admin-servers-light.png#only-light){ loading=lazy }
+![The Servers section: five servers with a status dot, a one-line diagnosis, tool, call and error counts and average latency. The row of a server whose authentication was refused is open and shows its last error with Reconnect, Disable and Remove buttons.](assets/screenshots/admin-servers-dark.png#only-dark){ loading=lazy }
+
 | Section | What it shows |
 |---------|---------------|
 | **Servers** | Every configured server: a status dot, one line saying what is going on ("Up", "Authentication refused: check this server's token", "Stopped while idle, starts on the next call"), its tool count, calls, errors and average latency. Open a row for the state, target, protocol version, capabilities, process id, uptime, the last error, the recent stderr lines (stdio) and the tool-list refresh status. |
@@ -127,6 +136,8 @@ the flags and the usage figures).
 | **Recent tool calls** | The last 500 tool calls: client, server, tool, duration, response size, and how it ended (ok, tool error, or the error message). |
 | **Token usage** | Tokens handled and saved, today and this week. |
 | **Tool pinning** | The latest pinning events. |
+
+![The Clients table (four clients with their exposure mode, protocol revision and call count) above the Recent tool calls table, where one call refused by policy is marked as an error.](assets/screenshots/admin-activity-light.png){ loading=lazy }
 
 The call log never records a call's arguments or its result, and the error
 text it shows has already been through redaction. A server's target is its
@@ -147,6 +158,8 @@ With a token configured, each server row has **Restart** (or
 arguments and environment for stdio, a URL and headers for HTTP or SSE)
 and **Reload config file**. Enable, disable, add and remove edit the
 config file, then apply it like any other change.
+
+![The Add a server form: name, transport, command, arguments and environment, with the Add server and Reload config file buttons.](assets/screenshots/admin-add-server-light.png){ loading=lazy }
 
 !!! warning "Write actions need a token"
     Adding a stdio server makes the proxy run a command as you. A dashboard

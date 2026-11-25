@@ -69,6 +69,29 @@ None of this calls out to a third-party service: the proxy, the classifier, the 
 
 ---
 
+## One Gateway for Every Session
+
+By default each client session starts its own proxy, and each proxy its own
+copy of every MCP server. Run LeanProxy once instead:
+
+```bash
+leanproxy-mcp daemon install    # one background service (launchd / systemd --user)
+leanproxy-mcp daemon clients    # the snippet for Claude Code, Codex, Copilot, Cursor, OpenCode
+leanproxy-mcp daemon open       # the admin dashboard
+```
+
+Every client connects to the same gateway by URL and shares one set of
+servers. The dashboard shows each server with a one-line diagnosis, the
+connected clients and the latest tool calls, and can restart, add, disable
+or remove a server; `server add` from a terminal is picked up in seconds,
+with no restart.
+
+![The LeanProxy admin dashboard: servers with their state, a server whose authentication was refused, and its actions](docs/assets/screenshots/admin-servers-light.png)
+
+Guide and a 70-second video: [Shared Gateway and Admin Dashboard](https://mmornati.github.io/leanproxy-mcp/shared-gateway/).
+
+---
+
 ## The MCP Schema Tax is Killing Your AI Budget
 
 Every MCP server you connect injects **thousands of tokens** into every LLM request — even when you never use it. This is the "Schema Tax":

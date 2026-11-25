@@ -1,0 +1,28 @@
+{
+  "langs": ["en"],
+  "engine": "kokoro",
+  "scenes": [
+    {"id": "problem", "min": 9, "lead": 0.7, "chapter": {"en": "One proxy per session"},
+     "en": ["Every agent session starts its own proxy.",
+            "And every proxy starts its own copy of each MCP server.",
+            "Ten sessions and five servers make fifty server processes, and nothing shows them together."]},
+    {"id": "gateway", "min": 8, "chapter": {"en": "One shared gateway"},
+     "en": ["LeanProxy can now run as one shared gateway.",
+            "One command installs it as a background service, started at login."]},
+    {"id": "clients", "min": 9, "chapter": {"en": "Clients connect by URL"},
+     "en": ["Each client connects by URL: Claude Code, Codex, Copilot, Cursor or OpenCode.",
+            "All sessions share one set of servers, and each keeps its own exposure mode."]},
+    {"id": "dashboard", "min": 10, "chapter": {"en": "The admin dashboard"},
+     "en": ["The admin dashboard lists every server, with a one line diagnosis.",
+            "Here, a token expired: authentication refused.",
+            "You can restart, disable or remove a server from the page."]},
+    {"id": "activity", "min": 9, "chapter": {"en": "Clients and tool calls"},
+     "en": ["It also shows the connected clients and the latest tool calls: who called what, and how long it took.",
+            "Arguments and results are never recorded."]},
+    {"id": "reload", "min": 8, "chapter": {"en": "Hot reload"},
+     "en": ["Add a server from the page or from the command line.",
+            "The gateway picks it up within seconds, with no restart."]},
+    {"id": "close", "min": 6, "tail": 1.4, "chapter": {"en": "Try it"},
+     "en": ["One process, one set of servers, one place to look."]}
+  ]
+}
