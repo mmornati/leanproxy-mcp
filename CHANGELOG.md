@@ -1,8 +1,6 @@
 # Changelog
 
-## Unreleased
-
-### Added
+## Added in v1.1
 
 - **Shared gateway as a background service: `leanproxy-mcp daemon install`.** One `server run
   --http` process for every MCP client, kept running by launchd (macOS) or `systemd --user`
@@ -33,7 +31,7 @@
   passthrough exposure like Claude Code.
 - Log files (`--log-file`) are rotated at 20 MiB with one backup.
 
-### Changed
+## Changed in v1.1
 
 - **`status` reports the running proxies instead of starting your servers.** It lists every
   running proxy with its servers and starts nothing. It probes (starts every configured server)
@@ -52,7 +50,7 @@
   these clear the 17 advisories `govulncheck` reported (15 in the Go 1.25 standard library,
   GO-2026-6974 in OpenTelemetry, GO-2026-6911 in mcp-go).
 
-### Fixed
+## Fixed in v1.1
 
 - The dashboard's static assets answered `404`, so htmx never loaded and the page never
   refreshed; its inline styles were also blocked by its own Content-Security-Policy.
