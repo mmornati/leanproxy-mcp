@@ -20,7 +20,7 @@ surface.
 
 !!! note "Not included in release archives"
     The release archives contain only the `leanproxy-mcp` binary. Build the
-    servers from a clone of the repository (Go 1.25 or later):
+    servers from a clone of the repository (Go 1.26 or later):
 
     ```bash
     git clone https://github.com/mmornati/leanproxy-mcp.git

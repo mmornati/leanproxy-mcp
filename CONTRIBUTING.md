@@ -38,7 +38,7 @@ We welcome contributions via Pull Requests. Here's how to submit a PR:
 
 ### Prerequisites
 
-- **Go 1.25 or later**: Download from [golang.org](https://golang.org/dl/)
+- **Go 1.26 or later**: Download from [golang.org](https://golang.org/dl/)
 - **Git**: For version control
 
 ### Initial Setup

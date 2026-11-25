@@ -57,7 +57,7 @@ See [Installation](installation.md) for the install script and Homebrew.
 
 ### Do I need Go to build from source?
 
-Yes, Go 1.25.5 or later:
+Yes, Go 1.26 or later:
 
 ```bash
 git clone https://github.com/mmornati/leanproxy-mcp.git

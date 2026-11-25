@@ -44,6 +44,11 @@
   request (elicitation, sampling, roots) from that server is refused instead of being sent to
   the most recent caller.
 
+- **Go 1.26 is now required to build** (was 1.25.5), and CI builds with it. `mark3labs/mcp-go`
+  goes from v0.50.0 to v1.6.0 and the OpenTelemetry modules from v1.45.0 to v1.47.0. Together
+  these clear the 17 advisories `govulncheck` reported (15 in the Go 1.25 standard library,
+  GO-2026-6974 in OpenTelemetry, GO-2026-6911 in mcp-go).
+
 ### Fixed
 
 - The dashboard's static assets answered `404`, so htmx never loaded and the page never
