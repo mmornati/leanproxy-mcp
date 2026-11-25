@@ -165,7 +165,9 @@ func (m *serverManager) apply(ctx context.Context, servers []*migrate.ServerConf
 		m.running[name] = serverFingerprint(srv)
 		m.mu.Unlock()
 		started++
-		m.logger.Info("server started", "name", name, "transport", srv.Transport)
+		// The message names the transport, as it always has ("stdio server
+		// started"): log readers and the e2e suite count these lines.
+		m.logger.Info(transportLabel(srv.Transport)+" server started", "name", name)
 		if m.handler != nil {
 			m.handler.SetTimeout(name, srv.TimeoutValue)
 			m.handler.ConfigureRelay([]*migrate.ServerConfig{srv})
@@ -173,6 +175,18 @@ func (m *serverManager) apply(ctx context.Context, servers []*migrate.ServerConf
 		}
 	}
 	return started, stopped
+}
+
+// transportLabel is how log messages name a transport.
+func transportLabel(t registry.TransportType) string {
+	switch t {
+	case registry.TransportHTTP:
+		return "HTTP"
+	case registry.TransportSSE:
+		return "SSE"
+	default:
+		return "stdio"
+	}
 }
 
 func stopReason(stillConfigured bool) string {

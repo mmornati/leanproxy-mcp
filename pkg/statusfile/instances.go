@@ -50,7 +50,7 @@ func readAllStatusIn(dir string) ([]StatusInfo, error) {
 		}
 		return nil, fmt.Errorf("statusfile: read status dir: %w", err)
 	}
-	var out []StatusInfo
+	out := make([]StatusInfo, 0, len(entries))
 	seen := make(map[int]bool)
 	for _, entry := range entries {
 		name := entry.Name()
@@ -80,6 +80,9 @@ func readAllStatusIn(dir string) ([]StatusInfo, error) {
 		}
 		seen[info.PID] = true
 		out = append(out, info)
+	}
+	if len(out) == 0 {
+		return nil, nil
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if (out[i].HTTP != nil) != (out[j].HTTP != nil) {

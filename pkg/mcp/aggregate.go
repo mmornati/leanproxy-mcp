@@ -188,7 +188,7 @@ collect:
 			break collect
 		}
 	}
-	if unknown && !(out.resources && out.prompts) {
+	if unknown && (!out.resources || !out.prompts) {
 		out.resources, out.prompts = true, true
 		return out, true
 	}

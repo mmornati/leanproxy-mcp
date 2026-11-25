@@ -2,11 +2,11 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/mmornati/leanproxy-mcp/internal/logx"
 	"log/slog"
 	"os"
 	"path/filepath"
 
+	"github.com/mmornati/leanproxy-mcp/internal/logx"
 	"github.com/spf13/cobra"
 )
 
