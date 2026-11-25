@@ -1,6 +1,6 @@
 # Changelog
 
-## Fixed after v1.1
+## Fixed in v1.1.1
 
 - `daemon install` recorded the versioned install directory of the binary (Homebrew's
   `Cellar/leanproxy-mcp/<version>/...`) in the service definition, so the service could no
