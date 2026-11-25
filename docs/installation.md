@@ -9,7 +9,7 @@ Linux, on amd64 (x86_64) and arm64.
 - **An MCP client**: Claude Code, Claude Desktop, Cursor, VS Code (GitHub
   Copilot), OpenCode, or any other client that can start a stdio MCP server
   or connect to a Streamable HTTP one.
-- **Go 1.25.5 or later**, only if you build from source.
+- **Go 1.26 or later**, only if you build from source.
 
 ## Supported platforms
 

@@ -252,8 +252,8 @@ func TestStdioPool_RelaysServerRequestsToTheHandler(t *testing.T) {
 // TestHTTPPool_RelaysServerRequestsAndProgress drives a real mcp-go
 // Streamable HTTP server whose tool asks the client for input (elicitation)
 // and reports progress mid-call. mcp-go sends both on the GET stream, which
-// the pool opens: the request reaches the handler (without the values of
-// the call that happened to connect), its answer reaches the server, and
+// the pool opens: the request reaches the handler (never with the values
+// of another call), its answer reaches the server, and
 // the progress notification reaches the handler.
 func TestHTTPPool_RelaysServerRequestsAndProgress(t *testing.T) {
 	srv := server.NewMCPServer("up", "1", server.WithElicitation())
@@ -277,10 +277,13 @@ func TestHTTPPool_RelaysServerRequestsAndProgress(t *testing.T) {
 	t.Cleanup(func() { _ = p.Close() })
 	type ctxKey struct{}
 	h := &recordingHandler{answer: func(ctx context.Context, _ string, _ json.RawMessage) (json.RawMessage, *errs.JSONRPCError) {
-		// mcp-go servers send their requests on the GET stream, which
-		// must never carry the values of the call that connected first.
-		if ctx.Value(ctxKey{}) != nil {
-			return nil, &errs.JSONRPCError{Code: -32603, Message: "leaked caller context"}
+		// A request the server sends on the response stream of the call
+		// that raised it carries that call's context (mcp-go 1.x servers
+		// do this): it is how the relay knows whose request it is. One
+		// that arrives on the GET stream carries none. Either way it must
+		// never be another call's context.
+		if v := ctx.Value(ctxKey{}); v != nil && v != "caller" {
+			return nil, &errs.JSONRPCError{Code: -32603, Message: "another caller's context"}
 		}
 		return json.RawMessage(`{"action":"accept","content":{"name":"Ada"}}`), nil
 	}}

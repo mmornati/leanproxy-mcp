@@ -56,6 +56,7 @@ type Handler struct {
 	logger         *slog.Logger
 	timeout        time.Duration
 	timeouts       map[string]time.Duration
+	timeoutsMu     sync.RWMutex
 	toolCache      *ToolCache
 	toolStore      toolstore.Cache
 	manifest       *AggregatedManifest
@@ -66,6 +67,7 @@ type Handler struct {
 	refreshMu      sync.Mutex
 	refreshing     map[string]*refreshCall
 	refreshErrs    map[string]error
+	refreshStatus  map[string]*refreshState
 	bgCtx          context.Context
 	retryInterval  time.Duration
 	toolsListeners []func(server string, tools []Tool)
@@ -92,6 +94,9 @@ type Handler struct {
 	// (e.g. from a resource_link) can still be routed (see aggregate.go).
 	ownersMu       sync.RWMutex
 	resourceOwners map[string]string
+	// capsGuessed is set once an initialize advertised resources and
+	// prompts for upstreams whose capabilities were not known yet.
+	capsGuessed atomic.Bool
 
 	// relay routes what the upstreams initiate (server-to-client requests,
 	// progress, resource updates) to the right client (see relay.go).
@@ -149,6 +154,9 @@ func NewHandlerWithToolStore(p pool.ServerSource, logger *slog.Logger, store too
 // to its default timeout (30s unless changed via SetDefaultTimeout) for any
 // server that has no explicit entry. A zero duration clears the entry.
 func (h *Handler) SetTimeout(serverName string, timeout time.Duration) {
+	// Guarded: a config reload sets timeouts while requests read them.
+	h.timeoutsMu.Lock()
+	defer h.timeoutsMu.Unlock()
 	if h.timeouts == nil {
 		h.timeouts = make(map[string]time.Duration)
 	}
@@ -197,7 +205,10 @@ func (h *Handler) sendUpstream(ctx context.Context, serverName, method string, p
 }
 
 func (h *Handler) timeoutFor(serverName string) time.Duration {
-	if d, ok := h.timeouts[serverName]; ok && d > 0 {
+	h.timeoutsMu.RLock()
+	d, ok := h.timeouts[serverName]
+	h.timeoutsMu.RUnlock()
+	if ok && d > 0 {
 		return d
 	}
 	return h.timeout
@@ -282,7 +293,12 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 	}
 
 	negotiated := NegotiateProtocolVersion(params.ProtocolVersion)
-	upstream := h.upstreamFeatures(ctx)
+	upstream, guessed := h.upstreamFeatures(ctx)
+	if guessed {
+		// A first session of a slow upstream then tells the clients to
+		// list again (see handleServerEvent).
+		h.capsGuessed.Store(true)
+	}
 	// Exposure mode (#322): passthrough and hybrid list the upstream tools,
 	// whose list changes with the upstreams (and the pins), hence
 	// listChanged; router's discovery tools never change.
@@ -297,10 +313,12 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 			Name:    "leanproxy-mcp",
 			Version: version.Get().Version,
 		},
+		Instructions: proxyInstructions(mode, h.pool.ListServers()),
 	}
 	// Resources and prompts are only advertised when an upstream serves
-	// them; the aggregated lists change with the upstreams, hence
-	// listChanged.
+	// them, or may (it has not finished its handshake: see
+	// upstreamFeatures); the aggregated lists change with the upstreams,
+	// hence listChanged.
 	if upstream.resources {
 		// subscribe: resources/subscribe is routed to the owning server
 		// and its notifications/resources/updated relayed (#308).
@@ -328,13 +346,72 @@ func (h *Handler) handleInitialize(ctx context.Context, req *Request) (*Response
 	h.logger.Info("initialized leanproxy-mcp", "client", params.ClientInfo.Name, "version", params.ClientInfo.Version,
 		"requested_protocol", params.ProtocolVersion, "protocol", negotiated,
 		"exposure", string(mode), "exposure_decided_by", decidedBy,
-		"resources", upstream.resources, "prompts", upstream.prompts)
+		"resources", upstream.resources, "prompts", upstream.prompts, "capabilities_guessed", guessed)
 
 	return &Response{
 		JSONRPC: JSONRPCVersion,
 		Result:  resultBytes,
 		ID:      req.ID,
 	}, nil
+}
+
+// maxInstructionsServerChars bounds the server-name list of the initialize
+// instructions, which keeps the whole text under 600 characters: clients put
+// it in the model's context for the whole session.
+const maxInstructionsServerChars = 320
+
+// proxyInstructions is the `instructions` of the initialize result: what
+// this server is, which upstreams it aggregates and how their tools are
+// reached in mode. It is written by the proxy from the configured server
+// names only. The upstreams' own instructions are deliberately left out:
+// they are untrusted text, which would reach the model with the authority of
+// LeanProxy's instructions.
+func proxyInstructions(mode exposure.Mode, servers []string) string {
+	servers = append([]string(nil), servers...)
+	sort.Strings(servers)
+
+	var b strings.Builder
+	switch len(servers) {
+	case 0:
+		b.WriteString("This is LeanProxy, an MCP proxy with no upstream MCP server configured.")
+	case 1:
+		b.WriteString("This is LeanProxy, an MCP proxy aggregating 1 MCP server: ")
+	default:
+		fmt.Fprintf(&b, "This is LeanProxy, an MCP proxy aggregating %d MCP servers: ", len(servers))
+	}
+	if len(servers) > 0 {
+		listed, used := 0, 0
+		for _, name := range servers {
+			if used+len(name)+2 > maxInstructionsServerChars {
+				break
+			}
+			if listed > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(name)
+			used += len(name) + 2
+			listed++
+		}
+		switch rest := len(servers) - listed; {
+		case rest > 0 && listed > 0:
+			fmt.Fprintf(&b, " and %d more.", rest)
+		case rest > 0:
+			// Not even the first name fits.
+			fmt.Fprintf(&b, "%d more.", rest)
+		default:
+			b.WriteString(".")
+		}
+	}
+
+	switch mode {
+	case exposure.ModePassthrough:
+		b.WriteString(" Their tools are listed as <server>__<tool>.")
+	case exposure.ModeHybrid:
+		b.WriteString(" Their tools are listed as <server>__<tool>; search_tools finds one by keyword.")
+	default:
+		b.WriteString(" Their tools are not listed: find one with search_tools, then call it with invoke_tool (server, tool, arguments).")
+	}
+	return b.String()
 }
 
 func (h *Handler) handleToolsList(ctx context.Context, req *Request) (*Response, error) {
@@ -441,11 +518,7 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 
 	// The pool performs the MCP handshake with the server (once per
 	// process generation / connection); the handler just sends requests.
-	newParams := ToolsCallParams{
-		Name:      toolName,
-		Arguments: params.Arguments,
-	}
-	paramsBytes, _ := json.Marshal(newParams)
+	paramsBytes := upstreamCallParams(req.Params, toolName, params.Arguments)
 	// Progress token and client routing of the upstream's own requests
 	// (#308).
 	paramsBytes, endCall := h.BeginUpstreamCall(ctx, serverName, req.Params, paramsBytes)
@@ -474,6 +547,34 @@ func (h *Handler) handleToolsCall(ctx context.Context, req *Request) (*Response,
 		Result:  resp.Result,
 		ID:      req.ID,
 	}, nil
+}
+
+// upstreamCallParams builds the params of the tools/call sent upstream: the
+// client's own params with name and arguments replaced. Every other member
+// (_meta, task, members of a newer MCP revision) is kept as sent, since the
+// upstream, not the proxy, is the one that understands them. The client's
+// _meta.progressToken is still there: BeginUpstreamCall replaces it with the
+// proxy's own token and keeps the other _meta members.
+func upstreamCallParams(clientParams json.RawMessage, name string, arguments json.RawMessage) json.RawMessage {
+	members := map[string]json.RawMessage{}
+	if len(clientParams) > 0 {
+		// Not an object: the caller already decoded it as one, so this
+		// cannot happen; the call is then built from name and arguments.
+		if json.Unmarshal(clientParams, &members) != nil || members == nil {
+			members = map[string]json.RawMessage{}
+		}
+	}
+	members["name"], _ = json.Marshal(name)
+	if len(arguments) > 0 {
+		members["arguments"] = arguments
+	} else {
+		delete(members, "arguments")
+	}
+	out, err := json.Marshal(members)
+	if err != nil {
+		out, _ = json.Marshal(ToolsCallParams{Name: name, Arguments: arguments})
+	}
+	return out
 }
 
 func (h *Handler) handleLeanproxyTool(ctx context.Context, req *Request, params ToolsCallParams) (*Response, error) {
@@ -866,13 +967,9 @@ func (h *Handler) handleInvokeTool(ctx context.Context, req *Request, params Too
 	// No handler-level restart or handshake: the pool restarts an
 	// unhealthy stdio server on use (and its crash-restart loop runs in the
 	// background) and performs the MCP handshake before the call.
-	newParams := ToolsCallParams{
-		Name:      toolName,
-		Arguments: arguments,
-	}
-	paramsBytes, _ := json.Marshal(newParams)
-	// The gateway call's own _meta.progressToken is forwarded (remapped)
-	// to the upstream tool call (#308).
+	// The gateway call's own _meta (and other params members) travel with
+	// the upstream tool call; its _meta.progressToken is remapped (#308).
+	paramsBytes := upstreamCallParams(req.Params, toolName, arguments)
 	paramsBytes, endCall := h.BeginUpstreamCall(ctx, serverName, req.Params, paramsBytes)
 	defer endCall()
 

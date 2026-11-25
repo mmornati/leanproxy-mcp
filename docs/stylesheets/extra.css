@@ -347,3 +347,27 @@ html {
     scroll-behavior: auto !important;
   }
 }
+
+/* Embedded canvas videos (docs/videos): a 16:9 stage plus the player's
+   40px control bar. */
+.lp-video {
+  container-type: inline-size;
+  margin: 1.2em 0 0.4em;
+  border: 1px solid var(--xr-rule);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0a0f20;
+}
+.lp-video iframe {
+  display: block;
+  width: 100%;
+  height: calc(56.25cqw + 40px);
+  border: 0;
+}
+
+/* Images for one colour scheme only: Material's #only-light / #only-dark
+   suffixes know the default and slate schemes, not the site's own. */
+[data-md-color-scheme="xray"] img[src$="#only-dark"],
+[data-md-color-scheme="xray-dark"] img[src$="#only-light"] {
+  display: none;
+}

@@ -620,6 +620,12 @@ func TestSessionCapAndIdleExpiry(t *testing.T) {
 	})
 	a := ts.initialize("2025-11-25", `{}`)
 	b := ts.initialize("2025-11-25", `{}`)
+	// Both sessions keep a GET stream open: in use, neither can be evicted
+	// for a third one.
+	getA := ts.request(http.MethodGet, a, "", nil)
+	eventsA := sseEvents(getA.Body)
+	get := ts.request(http.MethodGet, b, "", nil)
+	events := sseEvents(get.Body)
 	init := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}`
 	resp := ts.request(http.MethodPost, "", init, nil)
 	expectStatus(t, resp, http.StatusServiceUnavailable)
@@ -627,9 +633,11 @@ func TestSessionCapAndIdleExpiry(t *testing.T) {
 		t.Fatal("503 without Retry-After")
 	}
 
-	// b keeps a GET stream open: in use, it never expires. a does.
-	get := ts.request(http.MethodGet, b, "", nil)
-	events := sseEvents(get.Body)
+	// b keeps its GET stream open: in use, it never expires. a does once
+	// its stream is closed.
+	_ = getA.Body.Close()
+	for range eventsA {
+	}
 	deadline := time.Now().Add(testWait)
 	for ts.srv.SessionCount() != 1 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
@@ -639,6 +647,44 @@ func TestSessionCapAndIdleExpiry(t *testing.T) {
 	expectStatus(t, ts.request(http.MethodPost, b, `{"jsonrpc":"2.0","id":2,"method":"ping"}`, nil), http.StatusOK)
 	// Room again for a new session.
 	ts.initialize("2025-11-25", `{}`)
+	_ = get.Body.Close()
+	for range events {
+	}
+}
+
+// TestSessionCapEvictsLeastRecentlyActive: at the cap, a new session takes
+// the place of the one idle the longest instead of being refused (clients
+// that never send DELETE would otherwise lock everyone out).
+func TestSessionCapEvictsLeastRecentlyActive(t *testing.T) {
+	ts := startServer(t, func(o *Options) {
+		o.MaxSessions = 2
+		o.SessionIdleTimeout = time.Hour
+	})
+	ping := `{"jsonrpc":"2.0","id":2,"method":"ping"}`
+	a := ts.initialize("2025-11-25", `{}`)
+	b := ts.initialize("2025-11-25", `{}`)
+	// a is used after b was: b is now the least recently active.
+	time.Sleep(5 * time.Millisecond)
+	expectStatus(t, ts.request(http.MethodPost, a, ping, nil), http.StatusOK)
+
+	c := ts.initialize("2025-11-25", `{}`)
+	if n := ts.srv.SessionCount(); n != 2 {
+		t.Fatalf("%d sessions open, want 2", n)
+	}
+	expectStatus(t, ts.request(http.MethodPost, b, ping, nil), http.StatusNotFound)
+	expectStatus(t, ts.request(http.MethodPost, a, ping, nil), http.StatusOK)
+	expectStatus(t, ts.request(http.MethodPost, c, ping, nil), http.StatusOK)
+
+	// A session with a GET stream open is never the one evicted, however
+	// long ago it was last used: a holds one, so c goes.
+	get := ts.request(http.MethodGet, a, "", nil)
+	events := sseEvents(get.Body)
+	time.Sleep(5 * time.Millisecond)
+	expectStatus(t, ts.request(http.MethodPost, c, ping, nil), http.StatusOK)
+	d := ts.initialize("2025-11-25", `{}`)
+	expectStatus(t, ts.request(http.MethodPost, c, ping, nil), http.StatusNotFound)
+	expectStatus(t, ts.request(http.MethodPost, a, ping, nil), http.StatusOK)
+	expectStatus(t, ts.request(http.MethodPost, d, ping, nil), http.StatusOK)
 	_ = get.Body.Close()
 	for range events {
 	}

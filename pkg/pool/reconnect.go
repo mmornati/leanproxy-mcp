@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
@@ -32,6 +33,16 @@ func isTransportError(err error) bool {
 
 	// Server closed the connection mid-stream.
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+
+	// Streamable HTTP: the server answered 404 to a request carrying our
+	// session id, i.e. the session expired or the server restarted. mcp-go
+	// drops the session id but keeps the client "initialized", so every later
+	// call would go out sessionless; only a reconnect re-initializes. (A 401
+	// surfaces as transport.ErrAuthorizationRequired and is deliberately not
+	// matched: reconnecting cannot fix missing credentials.)
+	if errors.Is(err, transport.ErrSessionTerminated) {
 		return true
 	}
 

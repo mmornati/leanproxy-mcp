@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"time"
 
@@ -12,7 +13,125 @@ import (
 
 // DefaultToolRefreshRetryInterval is how often the background refresh
 // retries servers whose tool list is unknown or whose last refresh failed.
+// A server that keeps failing is retried less and less often, see
+// MaxToolRefreshRetryInterval.
 const DefaultToolRefreshRetryInterval = 30 * time.Second
+
+// MaxToolRefreshRetryInterval caps the per-server backoff of the periodic
+// retry: the delay doubles after every failure (30s, 1m, 2m, ...) up to
+// this. A server that needs an authorization nobody gives it would
+// otherwise be asked, and its failure logged, every 30 seconds forever.
+const MaxToolRefreshRetryInterval = 10 * time.Minute
+
+// ToolRefreshStatus is the outcome of a server's tool refreshes so far.
+type ToolRefreshStatus struct {
+	// LastError and LastErrorAt describe the most recent failed refresh.
+	// They are kept after a later success: Failures tells whether the
+	// server is failing now.
+	LastError   string
+	LastErrorAt time.Time
+	// Failures counts the refreshes that failed since the last success.
+	Failures int
+	// LastSuccessAt is when the tool list was last fetched.
+	LastSuccessAt time.Time
+	// NextRetryAt is the earliest time of the next periodic retry; zero
+	// when none is pending. An explicit refresh (a server event, a caller)
+	// does not wait for it.
+	NextRetryAt time.Time
+}
+
+// refreshState is a server's ToolRefreshStatus plus its backoff position.
+// It is guarded by Handler.refreshMu.
+type refreshState struct {
+	ToolRefreshStatus
+	// backoffStep is the number of failures since the last success or
+	// explicit refresh; it selects the delay before the next periodic retry.
+	backoffStep int
+}
+
+// ToolRefreshStatus returns the outcome of server's tool refreshes: the zero
+// value when it was never refreshed.
+func (h *Handler) ToolRefreshStatus(server string) ToolRefreshStatus {
+	h.refreshMu.Lock()
+	defer h.refreshMu.Unlock()
+	if st := h.refreshStatus[server]; st != nil {
+		return st.ToolRefreshStatus
+	}
+	return ToolRefreshStatus{}
+}
+
+// refreshBackoff is the delay before the periodic retry that follows the
+// step-th consecutive failure (step >= 1): base, doubled for every earlier
+// failure, capped at MaxToolRefreshRetryInterval (or at base, when that is
+// longer).
+func refreshBackoff(base time.Duration, step int) time.Duration {
+	limit := max(base, MaxToolRefreshRetryInterval)
+	d := base
+	for i := 1; i < step && d < limit; i++ {
+		d *= 2
+	}
+	return min(d, limit)
+}
+
+// refreshStateLocked returns name's state, creating it. refreshMu must be
+// held.
+func (h *Handler) refreshStateLocked(name string) *refreshState {
+	if h.refreshStatus == nil {
+		h.refreshStatus = make(map[string]*refreshState)
+	}
+	st := h.refreshStatus[name]
+	if st == nil {
+		st = &refreshState{}
+		h.refreshStatus[name] = st
+	}
+	return st
+}
+
+// recordRefreshLocked stores the outcome of a refresh of name. refreshMu
+// must be held; the returned func, to call without it, logs a failure: at
+// WARN the first time and whenever the error changes, at DEBUG while the
+// same error repeats.
+func (h *Handler) recordRefreshLocked(name string, err error) func() {
+	now := time.Now()
+	st := h.refreshStateLocked(name)
+	if err == nil {
+		st.Failures, st.backoffStep = 0, 0
+		st.LastSuccessAt = now
+		st.NextRetryAt = time.Time{}
+		return func() {}
+	}
+	interval := h.retryInterval
+	if interval <= 0 {
+		interval = DefaultToolRefreshRetryInterval
+	}
+	msg := err.Error()
+	repeated := st.Failures > 0 && st.LastError == msg
+	st.Failures++
+	st.backoffStep++
+	st.LastError, st.LastErrorAt = msg, now
+	st.NextRetryAt = now.Add(refreshBackoff(interval, st.backoffStep))
+	failures, next := st.Failures, st.NextRetryAt
+
+	level := slog.LevelWarn
+	if repeated {
+		level = slog.LevelDebug
+	}
+	return func() {
+		h.logger.Log(context.Background(), level, "failed to refresh tools", "server", name, "error", err,
+			"failures", failures, "next_retry", next.Format(time.RFC3339))
+	}
+}
+
+// retryDue reports whether the periodic retry of name may run now. The
+// tolerance keeps a retry planned for "one interval from now" on the next
+// tick instead of the one after: the tick comes one interval after the
+// previous tick, slightly before one interval after the failure it caused.
+func (h *Handler) retryDue(name string, now time.Time, interval time.Duration) bool {
+	h.refreshMu.Lock()
+	defer h.refreshMu.Unlock()
+	st := h.refreshStatus[name]
+	return st == nil || !now.Before(st.NextRetryAt.Add(-interval/2))
+}
 
 // refreshCall is one in-progress tools/list refresh of a server. Every
 // caller that asks for a refresh while it runs shares it (singleflight).
@@ -91,7 +210,9 @@ func (h *Handler) StartBackgroundRefresh(ctx context.Context) {
 // fetched on demand, so the clients are only told to fetch them again
 // (notifications/resources/list_changed, notifications/prompts/list_changed).
 // A restarted or reconnected server may serve different lists, so a new
-// session after the first one notifies too.
+// session after the first one notifies too; so does a first session, once
+// a client was answered initialize before every upstream was known (it may
+// have listed without this server).
 func (h *Handler) handleServerEvent(ev pool.ServerEvent) {
 	if h.backgroundContext().Err() != nil {
 		return
@@ -106,7 +227,7 @@ func (h *Handler) handleServerEvent(ev pool.ServerEvent) {
 		h.notifySessions(NotificationPromptsListChanged)
 		return
 	case pool.EventSessionStarted:
-		if ev.Generation > 1 {
+		if ev.Generation > 1 || h.capsGuessed.Load() {
 			h.notifyListChangedFor(ev.Server)
 		}
 	}
@@ -114,10 +235,11 @@ func (h *Handler) handleServerEvent(ev pool.ServerEvent) {
 	h.startRefresh(ev.Server, true)
 }
 
-// retryLoop periodically refreshes servers without a known tool list. A
-// stdio server in the error state is skipped: its restart (by the pool's
-// reconnect logic) reports a new session, which triggers the refresh, and
-// a request here would restart it outside that backoff.
+// retryLoop periodically refreshes servers without a known tool list, each
+// with its own backoff (see refreshBackoff). A stdio server in the error
+// state is skipped: its restart (by the pool's reconnect logic) reports a
+// new session, which triggers the refresh, and a request here would restart
+// it outside that backoff.
 func (h *Handler) retryLoop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -127,8 +249,9 @@ func (h *Handler) retryLoop(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticker.C:
 		}
+		now := time.Now()
 		for _, name := range h.pool.ListServers() {
-			if !h.needsRetry(name) {
+			if !h.needsRetry(name) || !h.retryDue(name, now, interval) {
 				continue
 			}
 			transport, _ := h.pool.GetServerTransport(name)
@@ -136,7 +259,7 @@ func (h *Handler) retryLoop(ctx context.Context, interval time.Duration) {
 			if transport == "stdio" && healthLabel(state) != "healthy" {
 				continue
 			}
-			h.startRefresh(name, false)
+			h.startRefreshWith(name, false, false)
 		}
 	}
 }
@@ -214,10 +337,23 @@ func (h *Handler) PopulateToolCache(ctx context.Context) {
 
 // startRefresh starts a refresh of name, or joins the one in progress. With
 // force, a refresh in progress runs once more before finishing (its answer
-// may predate the change that triggered this call).
+// may predate the change that triggered this call). The refresh is an
+// explicit one (a server event, a caller): it restarts the backoff of the
+// periodic retry.
 func (h *Handler) startRefresh(name string, force bool) *refreshCall {
+	return h.startRefreshWith(name, force, true)
+}
+
+// startRefreshWith is startRefresh; explicit is false for the periodic
+// retry, which keeps its backoff.
+func (h *Handler) startRefreshWith(name string, force, explicit bool) *refreshCall {
 	h.refreshMu.Lock()
 	defer h.refreshMu.Unlock()
+	if explicit {
+		if st := h.refreshStatus[name]; st != nil {
+			st.backoffStep = 0
+		}
+	}
 	if call, ok := h.refreshing[name]; ok {
 		if force {
 			call.again = true
@@ -242,8 +378,14 @@ func (h *Handler) runRefresh(name string, call *refreshCall) {
 		if call.again && h.bgContextLocked().Err() == nil {
 			call.again = false
 			h.refreshMu.Unlock()
+			if err != nil {
+				h.logger.Debug("failed to refresh tools, refreshing again", "server", name, "error", err)
+			}
 			continue
 		}
+		// Recorded before the call is released, so whoever waited for it
+		// reads a status that includes it.
+		logFailure := h.recordRefreshLocked(name, err)
 		delete(h.refreshing, name)
 		call.err = err
 		if err != nil {
@@ -252,6 +394,7 @@ func (h *Handler) runRefresh(name string, call *refreshCall) {
 			delete(h.refreshErrs, name)
 		}
 		h.refreshMu.Unlock()
+		logFailure()
 		close(call.done)
 		return
 	}
@@ -277,8 +420,8 @@ func (h *Handler) fetchServerTools(name string) error {
 		}
 	}
 	if err != nil {
+		// Logged by recordRefresh, which knows whether the error is new.
 		h.cacheFailures.Add(1)
-		h.logger.Warn("failed to refresh tools", "server", name, "error", err)
 		return err
 	}
 

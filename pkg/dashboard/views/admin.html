@@ -1,0 +1,115 @@
+{{define "adminServers"}}
+{{if or .Notice .Failure}}
+<div id="flash" hx-swap-oob="true" role="status" aria-live="polite">
+  {{if .Failure}}<div class="flash bad">{{.Failure}}</div>{{else}}<div class="flash good">{{.Notice}}</div>{{end}}
+</div>
+{{end}}
+{{if .Overview.LastReloadError}}
+<div class="flash bad">The config file could not be reloaded, the previous server list is still running: {{.Overview.LastReloadError}}</div>
+{{end}}
+{{if .Servers}}
+<p class="tally">
+  <span class="pill ok">{{.Up}} up</span>
+  {{if .Down}}<span class="pill down">{{.Down}} down</span>{{end}}
+  <span class="tally-note">config read {{ago .Now .Overview.LastReloadAt}}</span>
+</p>
+<div class="servers">
+{{$now := .Now}}{{$writable := .Writable}}
+{{range .Servers}}
+<details class="server h-{{.Health}}" id="srv-{{domID .Name}}">
+  <summary>
+    <span class="dot" aria-hidden="true"></span>
+    <span class="s-name">{{.Name}}<span class="s-transport">{{.Transport}}</span></span>
+    <span class="s-summary">{{.Summary}}</span>
+    <span class="s-num" title="Tools">{{if .ToolsKnown}}{{.Tools}}{{else}}-{{end}}<small>tools</small></span>
+    <span class="s-num" title="Requests since the proxy started">{{.Requests}}<small>calls</small></span>
+    <span class="s-num{{if .Errors}} has-errors{{end}}" title="Failed requests">{{.Errors}}<small>errors</small></span>
+    <span class="s-num" title="Average latency">{{millis .AvgLatencyMs}}<small>avg</small></span>
+  </summary>
+  <div class="server-body">
+    <dl class="facts">
+      <div><dt>State</dt><dd>{{.State}}{{if .InFlight}} · {{.InFlight}} in flight{{end}}</dd></div>
+      {{if .Target}}<div><dt>Target</dt><dd class="mono">{{.Target}}</dd></div>{{end}}
+      {{if .ServerName}}<div><dt>Reports as</dt><dd>{{.ServerName}} {{.ServerVersion}}</dd></div>{{end}}
+      {{if .ProtocolVersion}}<div><dt>Protocol</dt><dd class="mono">{{.ProtocolVersion}}</dd></div>{{end}}
+      {{if .Capabilities}}<div><dt>Capabilities</dt><dd>{{range $i, $c := .Capabilities}}{{if $i}}, {{end}}{{$c}}{{end}}</dd></div>{{end}}
+      {{if .PID}}<div><dt>Process</dt><dd class="mono">pid {{.PID}}</dd></div>{{end}}
+      {{if not .Since.IsZero}}<div><dt>Up for</dt><dd>{{span $now .Since}}</dd></div>{{end}}
+      {{if .Restarts}}<div><dt>Starts</dt><dd>{{.Restarts}}</dd></div>{{end}}
+      <div><dt>Last call</dt><dd>{{if .LastRequestAt.IsZero}}none yet{{else}}{{ago $now .LastRequestAt}}{{end}}</dd></div>
+      {{if .PendingPins}}<div><dt>Tool pinning</dt><dd>{{.PendingPins}} awaiting approval: <code>leanproxy-mcp tools pins diff {{.Name}}</code></dd></div>{{end}}
+      {{if .RefreshFailures}}<div><dt>Tool list</dt><dd>{{.RefreshFailures}} failed refreshes{{with until $now .NextRetryAt}}, next try in {{.}}{{end}}</dd></div>{{end}}
+    </dl>
+    {{if .LastError}}
+    <div class="errbox"><strong>Last error{{if not .LastErrorAt.IsZero}} ({{ago $now .LastErrorAt}}){{end}}</strong><pre>{{.LastError}}</pre></div>
+    {{end}}
+    {{if .RecentStderr}}
+    <div class="stderr"><strong>Recent stderr</strong><pre>{{.RecentStderr}}</pre></div>
+    {{end}}
+    {{if $writable}}
+    <div class="actions">
+      {{if .Enabled}}
+      <button class="btn" hx-post="/admin/servers/{{.Name}}/restart" hx-target="#servers" hx-swap="innerHTML" hx-indicator="closest .server">{{if eq .Transport "stdio"}}Restart{{else}}Reconnect{{end}}</button>
+      <button class="btn" hx-post="/admin/servers/{{.Name}}/disable" hx-target="#servers" hx-swap="innerHTML">Disable</button>
+      {{else}}
+      <button class="btn primary" hx-post="/admin/servers/{{.Name}}/enable" hx-target="#servers" hx-swap="innerHTML">Enable</button>
+      {{end}}
+      <button class="btn danger" hx-post="/admin/servers/{{.Name}}/remove" hx-target="#servers" hx-swap="innerHTML" hx-confirm="Remove {{.Name}} from the config file? Its entry is deleted, not just disabled.">Remove</button>
+    </div>
+    {{end}}
+  </div>
+</details>
+{{end}}
+</div>
+{{else}}
+<div class="empty-state">No servers configured yet.{{if .Writable}} Add one below.{{else}} Add one with <code>leanproxy-mcp server add</code>.{{end}}</div>
+{{end}}
+{{end}}
+
+{{define "adminSessions"}}
+{{if .Sessions}}
+{{$now := .Now}}
+<table class="grid">
+  <thead><tr><th>Client</th><th>Session</th><th>Mode</th><th>Protocol</th><th>Connected</th><th>Last call</th><th class="num">Calls</th></tr></thead>
+  <tbody>
+  {{range .Sessions}}
+  <tr>
+    <td><strong>{{if .Client}}{{.Client}}{{else}}(not initialized){{end}}</strong> <span class="dim">{{.ClientVersion}}</span></td>
+    <td class="mono dim">{{.ID}}</td>
+    <td>{{.Exposure}}</td>
+    <td class="mono dim">{{.ProtocolVersion}}</td>
+    <td>{{ago $now .OpenedAt}}</td>
+    <td>{{if .LastCallAt.IsZero}}-{{else}}{{ago $now .LastCallAt}}{{end}}</td>
+    <td class="num">{{.Calls}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty-state">No client connected.</div>
+{{end}}
+{{end}}
+
+{{define "adminCalls"}}
+{{if .Calls}}
+{{$now := .Now}}
+<table class="grid">
+  <thead><tr><th>When</th><th>Client</th><th>Server</th><th>Tool</th><th class="num">Duration</th><th class="num">Size</th><th>Result</th></tr></thead>
+  <tbody>
+  {{range .Calls}}
+  <tr class="c-{{.Status}}">
+    <td class="nowrap" title="{{.Time.Format "2006-01-02 15:04:05"}}">{{ago $now .Time}}</td>
+    <td class="nowrap">{{.Client}} <span class="mono dim">{{.SessionID}}</span></td>
+    <td class="cell-server nowrap">{{.Server}}</td>
+    <td class="cell-tool">{{.Tool}}</td>
+    <td class="num">{{millis .DurationMs}}</td>
+    <td class="num">{{if .ResponseBytes}}{{bytesShort .ResponseBytes}}{{else}}-{{end}}</td>
+    <td>{{if eq .Status "ok"}}<span class="pill ok">ok</span>{{else if eq .Status "tool_error"}}<span class="pill warn">tool error</span>{{else}}<span class="pill down">error</span> <span class="dim call-error">{{.Error}}</span>{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="empty-state">No tool call yet.</div>
+{{end}}
+{{end}}

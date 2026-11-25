@@ -98,9 +98,17 @@ security:
 
 func (e *pinEnv) env() []string { return []string{"LEANPROXY_PINS_FILE=" + e.pins} }
 
+// stdioEnv is env plus a home directory of the test's own for the stdio
+// proxy: the persistent tool cache, the usage store and the status files
+// live under $HOME, and a cache left by an earlier run would let
+// list_tools answer before the first comparison with the pins.
+func (e *pinEnv) stdioEnv() []string {
+	return append(e.env(), "HOME="+filepath.Join(e.dir, "home"))
+}
+
 func (e *pinEnv) start(mode string) *stdioSession {
 	e.t.Helper()
-	s := startStdioProxyEnv(e.t, e.proxyBin, e.config(mode), e.env())
+	s := startStdioProxyEnv(e.t, e.proxyBin, e.config(mode), e.stdioEnv())
 	initResp := s.call(1, "initialize", map[string]interface{}{
 		"protocolVersion": "2025-06-18", "capabilities": map[string]interface{}{},
 		"clientInfo": map[string]string{"name": "e2e", "version": "1"},

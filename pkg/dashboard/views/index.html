@@ -1,0 +1,149 @@
+{{define "index"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LeanProxy</title>
+<!-- htmx would otherwise inject an inline <style>, which the CSP refuses. -->
+<meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body hx-headers='{"X-LeanProxy-Admin": "1"}'>
+<header class="top">
+  <div class="brand">LeanProxy <span class="brand-sub">admin</span></div>
+  <nav class="tabs" aria-label="Sections">
+    {{if .HasAdmin}}<a href="#servers-section">Servers</a>
+    <a href="#activity-section">Activity</a>{{end}}
+    <a href="#usage-section">Usage</a>
+    <a href="#pins-section">Tool pinning</a>
+  </nav>
+</header>
+<main class="container">
+{{if .HasAdmin}}
+  <section id="servers-section">
+    <div class="section-head">
+      <h2>Servers</h2>
+      <p class="meta">
+        <span title="Proxy process id">pid {{.Admin.Overview.PID}}</span>
+        <span>{{.Admin.Overview.Frontend}}</span>
+        <span>{{.Admin.Overview.Version}}</span>
+        <span title="{{.Admin.Overview.ConfigPath}}">config: {{.Admin.Overview.ConfigPath}}</span>
+      </p>
+    </div>
+    <div id="flash" role="status" aria-live="polite"></div>
+    <div id="servers" hx-get="/admin/servers" hx-trigger="every 3s" hx-swap="innerHTML">
+      {{template "adminServers" .Admin}}
+    </div>
+    {{if .Admin.Writable}}
+    <details class="add-server">
+      <summary>Add a server</summary>
+      <form hx-post="/admin/servers" hx-target="#servers" hx-swap="innerHTML" class="form" autocomplete="off">
+        <div class="field">
+          <label for="f-name">Name</label>
+          <input id="f-name" name="name" required pattern="[A-Za-z0-9._-]+" placeholder="github">
+        </div>
+        <div class="field">
+          <label for="f-transport">Transport</label>
+          <select id="f-transport" name="transport" data-transport-select>
+            <option value="stdio">stdio (local command)</option>
+            <option value="http">http (Streamable HTTP)</option>
+            <option value="sse">sse (legacy)</option>
+          </select>
+        </div>
+        <div class="field wide" data-for-transport="stdio">
+          <label for="f-command">Command</label>
+          <input id="f-command" name="command" placeholder="npx">
+        </div>
+        <div class="field wide" data-for-transport="stdio">
+          <label for="f-args">Arguments</label>
+          <input id="f-args" name="args" placeholder='-y @modelcontextprotocol/server-filesystem "/path with spaces"'>
+        </div>
+        <div class="field wide" data-for-transport="stdio">
+          <label for="f-env">Environment <span class="hint">one KEY=value per line</span></label>
+          <textarea id="f-env" name="env" rows="2" spellcheck="false"></textarea>
+        </div>
+        <div class="field wide" data-for-transport="http sse" hidden>
+          <label for="f-url">URL</label>
+          <input id="f-url" name="url" type="url" placeholder="https://example.com/mcp">
+        </div>
+        <div class="field wide" data-for-transport="http sse" hidden>
+          <label for="f-headers">Headers <span class="hint">one Name: value per line; stored in the config file</span></label>
+          <textarea id="f-headers" name="headers" rows="2" spellcheck="false" placeholder="Authorization: Bearer ..."></textarea>
+        </div>
+        <div class="actions">
+          <button type="submit" class="btn primary">Add server</button>
+          <button type="button" class="btn" hx-post="/admin/reload" hx-target="#servers" hx-swap="innerHTML">Reload config file</button>
+        </div>
+      </form>
+    </details>
+    {{else}}
+    <p class="hint-line">Read-only: this dashboard has no token. Start the proxy with <code>--dashboard-token</code>, or use <code>leanproxy-mcp daemon install</code>, to restart, add or disable servers from here.</p>
+    {{end}}
+  </section>
+
+  <section id="activity-section">
+    <div class="section-head"><h2>Clients</h2></div>
+    <div id="sessions" hx-get="/admin/sessions" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+    <div class="section-head"><h2>Recent tool calls</h2><p class="meta"><span>arguments and results are never recorded</span></p></div>
+    <div id="calls" hx-get="/admin/calls" hx-trigger="load, every 3s" hx-swap="innerHTML"></div>
+  </section>
+{{end}}
+
+  <section id="usage-section">
+    <div class="section-head">
+      <h2>Token usage</h2>
+      <p class="meta"><span>Measured by the proxy ({{or .Estimator "chars/4"}}), from the usage store every front end on this machine writes to.
+        Today is since 00:00 UTC; the week starts Monday 00:00 UTC.</span></p>
+    </div>
+    <div id="dashboard-cards" hx-get="/api/dashboard" hx-trigger="every 5s" hx-swap="innerHTML">
+      {{template "cards" .}}
+    </div>
+    <p class="meta">
+      <span>{{.ServerCount}} servers today</span>
+      <span>{{.ToolCount}} tools today</span>
+    </p>
+    <div id="server-table" hx-get="/api/dashboard/servers" hx-trigger="every 5s" hx-swap="innerHTML">
+      {{template "serverRows" .}}
+    </div>
+    <div id="drilldown-content"></div>
+  </section>
+
+  <section id="pins-section">
+    <div class="section-head"><h2>Tool pinning</h2></div>
+    <div id="tool-pins" hx-get="/api/dashboard/tool-pins" hx-trigger="load, every 10s" hx-swap="innerHTML"></div>
+  </section>
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "cards"}}
+{{if .Available}}
+<div class="cards">
+  <div class="card">
+    <div class="label">Saved today</div>
+    <div class="value token">{{.TodaySaved}}</div>
+    <div class="detail">of {{.TodayOriginal}} tokens ({{.TodayPercent}})</div>
+  </div>
+  <div class="card">
+    <div class="label">Saved this week</div>
+    <div class="value token">{{.WeekSaved}}</div>
+    <div class="detail">of {{.WeekOriginal}} tokens ({{.WeekPercent}})</div>
+  </div>
+  <div class="card">
+    <div class="label">Top server today</div>
+    <div class="value server">{{.TopServer}}</div>
+    <div class="detail">by response size</div>
+  </div>
+  <div class="card">
+    <div class="label">Top tool today</div>
+    <div class="value tool">{{.TopTool}}</div>
+    <div class="detail">by response size</div>
+  </div>
+</div>
+{{else}}
+<div class="error-card"><div class="value">Usage data unavailable: the usage store (~/.leanproxy/usage) could not be read. See the proxy's log.</div></div>
+{{end}}
+{{end}}

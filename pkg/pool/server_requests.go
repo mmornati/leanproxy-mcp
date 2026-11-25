@@ -260,7 +260,7 @@ func UpstreamClientCapabilities(cfg *migrate.ServerConfig, acceptsRequests bool)
 	}{ListChanged: cfg == nil || len(cfg.Roots) == 0}
 	caps.Elicitation = &mcp.ElicitationCapability{Form: &struct{}{}, URL: &struct{}{}}
 	if cfg != nil && cfg.AllowSampling {
-		caps.Sampling = &struct{}{}
+		caps.Sampling = &mcp.SamplingCapability{}
 	}
 	return caps
 }

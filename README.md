@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go" alt="Go">
+  <img src="https://img.shields.io/badge/Go-1.26+-00ADD8?logo=go" alt="Go">
   <img src="https://img.shields.io/github/v/release/mmornati/leanproxy-mcp?include_prereleases&label=Release" alt="Release">
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
   <img src="https://github.com/mmornati/leanproxy-mcp/actions/workflows/test.yml/badge.svg" alt="Test">
@@ -66,6 +66,29 @@ MCP servers run arbitrary, third-party code with your credentials and your files
 - **One command tells you where you stand:** `leanproxy-mcp doctor security` — a local-only, read-only report mapped to the [OWASP MCP Top 10](docs/security.md#owasp-mcp-top-10-security-report-doctor-security-323), with a `--json` form for CI. See [docs/security.md](docs/security.md) for the full threat model — what this protects against and what it does not.
 
 None of this calls out to a third-party service: the proxy, the classifier, the redaction patterns and the report all run on your machine, against your own config. LeanProxy only contacts other services for features you turn on: OpenAI embeddings for hybrid tool search, OpenTelemetry export, and `marketplace sync` (see the [FAQ](https://mmornati.github.io/leanproxy-mcp/faq/#is-my-data-sent-anywhere)).
+
+---
+
+## One Gateway for Every Session
+
+By default each client session starts its own proxy, and each proxy its own
+copy of every MCP server. Run LeanProxy once instead:
+
+```bash
+leanproxy-mcp daemon install    # one background service (launchd / systemd --user)
+leanproxy-mcp daemon clients    # the snippet for Claude Code, Codex, Copilot, Cursor, OpenCode
+leanproxy-mcp daemon open       # the admin dashboard
+```
+
+Every client connects to the same gateway by URL and shares one set of
+servers. The dashboard shows each server with a one-line diagnosis, the
+connected clients and the latest tool calls, and can restart, add, disable
+or remove a server; `server add` from a terminal is picked up in seconds,
+with no restart.
+
+![The LeanProxy admin dashboard: servers with their state, a server whose authentication was refused, and its actions](docs/assets/screenshots/admin-servers-light.png)
+
+Guide and a 70-second video: [Shared Gateway and Admin Dashboard](https://mmornati.github.io/leanproxy-mcp/shared-gateway/).
 
 ---
 

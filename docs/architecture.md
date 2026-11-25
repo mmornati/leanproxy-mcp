@@ -268,7 +268,7 @@ or usage data are `0600`.
 |------|----------|
 | `~/.config/leanproxy_servers.yaml` | Configuration (default location) |
 | `~/.config/leanproxy/toolcache/` | Persistent tool cache (`LEANPROXY_TOOLCACHE_DIR` overrides) |
-| `~/.config/leanproxy/status/current.json` | Status of running instances |
+| `~/.config/leanproxy/status/proxy-<pid>.json` | Status of running instances |
 | `~/.config/leanproxy/pins.json` | Tool pins (`LEANPROXY_PINS_FILE` overrides) |
 | `~/.config/leanproxy/serve.token` | Bearer token for `server run --http` and `serve` |
 | `~/.leanproxy/registry/index.json` | Marketplace registry cache |

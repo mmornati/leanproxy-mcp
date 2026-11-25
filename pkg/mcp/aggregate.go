@@ -37,10 +37,10 @@ const (
 	maxListPages = 20
 
 	// initializeCapabilityWait bounds how long initialize waits for
-	// upstream sessions whose capabilities are not known yet. A server
-	// slower than that is not reflected in the advertised capabilities
-	// (they cannot change after initialize), but initialize never waits
-	// for a hung server.
+	// upstream sessions whose capabilities are not known yet: initialize
+	// never waits for a hung server. The advertised capabilities cannot
+	// change after initialize, so a server slower than that is assumed to
+	// serve resources and prompts (see upstreamFeatures).
 	initializeCapabilityWait = time.Second
 
 	// ErrCodeResourceNotFound is the MCP error code for an unknown resource.
@@ -111,60 +111,88 @@ func parseServerCaps(raw json.RawMessage) serverCaps {
 // bounded by ctx and the server's timeout. A stdio server that is down is
 // not restarted just to learn its capabilities.
 func (h *Handler) upstreamCaps(ctx context.Context, name string) serverCaps {
+	caps, _ := h.upstreamCapsKnown(ctx, name)
+	return caps
+}
+
+// upstreamCapsKnown is upstreamCaps; known is false when the server has not
+// completed its handshake (down, failing, or slower than ctx), so that the
+// empty capabilities returned say nothing about what it will serve.
+func (h *Handler) upstreamCapsKnown(ctx context.Context, name string) (caps serverCaps, known bool) {
 	if res := h.serverInitializeResult(name); res != nil {
-		return parseServerCaps(res.Capabilities)
+		return parseServerCaps(res.Capabilities), true
 	}
 	if state, err := h.pool.GetServerState(name); err == nil && (state == pool.StateError || state == pool.StateStopped) {
-		return serverCaps{}
+		return serverCaps{}, false
 	}
 	timeout := h.timeoutFor(name)
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	resp, err := h.pool.SendRequestToServer(pctx, name, MethodInitialize, nil, timeout)
 	if err != nil || resp == nil || resp.Error != nil {
-		return serverCaps{}
+		return serverCaps{}, false
 	}
 	if res := h.serverInitializeResult(name); res != nil {
-		return parseServerCaps(res.Capabilities)
+		return parseServerCaps(res.Capabilities), true
 	}
 	var r struct {
 		Capabilities json.RawMessage `json:"capabilities"`
 	}
 	if json.Unmarshal(resp.Result, &r) != nil {
-		return serverCaps{}
+		return serverCaps{}, false
 	}
-	return parseServerCaps(r.Capabilities)
+	return parseServerCaps(r.Capabilities), true
 }
 
 // upstreamFeatures reports whether at least one upstream serves resources
 // and prompts, waiting at most initializeCapabilityWait for sessions not
 // established yet (and returning as soon as both are found).
-func (h *Handler) upstreamFeatures(ctx context.Context) serverCaps {
-	var out serverCaps
+//
+// It is optimistic: when an upstream has not completed its handshake by
+// then, both are reported (guessed is then true). The client could never
+// learn of them later, while advertising a feature no upstream ends up
+// serving only costs it an empty list: the aggregated handlers skip the
+// servers without the capability. subscribe is never guessed.
+func (h *Handler) upstreamFeatures(ctx context.Context) (out serverCaps, guessed bool) {
 	servers := h.pool.ListServers()
 	if len(servers) == 0 {
-		return out
+		return out, false
 	}
 	wctx, cancel := context.WithTimeout(ctx, initializeCapabilityWait)
 	defer cancel()
-	results := make(chan serverCaps, len(servers))
-	for _, name := range servers {
-		go func(name string) { results <- h.upstreamCaps(wctx, name) }(name)
+	type result struct {
+		caps  serverCaps
+		known bool
 	}
+	results := make(chan result, len(servers))
+	for _, name := range servers {
+		go func(name string) {
+			caps, known := h.upstreamCapsKnown(wctx, name)
+			results <- result{caps, known}
+		}(name)
+	}
+	unknown := false
+collect:
 	for range servers {
 		select {
-		case c := <-results:
-			out.resources = out.resources || c.resources
-			out.prompts = out.prompts || c.prompts
-			out.subscribe = out.subscribe || c.subscribe
+		case r := <-results:
+			unknown = unknown || !r.known
+			out.resources = out.resources || r.caps.resources
+			out.prompts = out.prompts || r.caps.prompts
+			out.subscribe = out.subscribe || r.caps.subscribe
 			if out.resources && out.prompts && out.subscribe {
-				return out
+				return out, false
 			}
 		case <-wctx.Done():
-			return out
+			unknown = true
+			break collect
 		}
 	}
-	return out
+	if unknown && (!out.resources || !out.prompts) {
+		out.resources, out.prompts = true, true
+		return out, true
+	}
+	return out, false
 }
 
 // listUpstream fetches every page of an upstream list (method answering

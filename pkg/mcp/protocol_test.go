@@ -335,14 +335,19 @@ func TestInitialize_AdvertisesUpstreamCapabilities(t *testing.T) {
 		res := initialize(t, h, nil, "2025-06-18")
 		assert.Less(t, time.Since(start), initializeCapabilityWait+time.Second)
 		assert.NotNil(t, res.Capabilities.Resources)
-		assert.Nil(t, res.Capabilities.Prompts)
+		// The hung upstream may serve prompts once it answers, and the
+		// capabilities cannot change after initialize: they are advertised.
+		assert.NotNil(t, res.Capabilities.Prompts)
 	})
 	t.Run("a crashed stdio upstream is not restarted to probe it", func(t *testing.T) {
 		fp := newFakeUpstreamPool(map[string]*fakeUpstream{"down": {caps: `{"resources":{}}`}})
 		fp.stateOver["down"] = pool.StateError
 		h := NewHandler(fp, quietLogger())
 		res := initialize(t, h, nil, "2025-06-18")
-		assert.Nil(t, res.Capabilities.Resources)
+		// Unknown capabilities are advertised optimistically, without
+		// probing the server.
+		assert.NotNil(t, res.Capabilities.Resources)
+		assert.NotNil(t, res.Capabilities.Prompts)
 		assert.Empty(t, fp.requestsFor("down", MethodInitialize))
 	})
 }

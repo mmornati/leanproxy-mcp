@@ -19,6 +19,12 @@ import (
 func startMCPTestHTTPServer(t *testing.T, handler http.Handler, addr string) (string, func()) {
 	t.Helper()
 
+	// Loopback, by name: mcp-go's servers refuse a request whose Host is
+	// not a loopback name when it arrives on a loopback connection (DNS
+	// rebinding protection), which is what "[::]:port" would be.
+	if addr == "" {
+		addr = "127.0.0.1:0"
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

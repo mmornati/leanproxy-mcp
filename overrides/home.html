@@ -61,6 +61,22 @@
     </figure>
   </section>
 
+  <!-- ============ NEWS: the latest arrival ============ -->
+  <aside class="lp-news" aria-label="What is new">
+    <div class="lp-wrap lp-news__row">
+      <span class="lp-news__tag">New</span>
+      <p class="lp-news__text">
+        <b>One shared gateway, with an admin dashboard.</b>
+        Run LeanProxy once as a background service for every client, session
+        and sub-agent, and follow servers, clients and tool calls in one place.
+      </p>
+      <p class="lp-news__links">
+        <a href="{{ 'shared-gateway/' | url }}">Read the guide</a>
+        <a href="https://github.com/mmornati/leanproxy-mcp/blob/main/CHANGELOG.md">Changelog</a>
+      </p>
+    </div>
+  </aside>
+
   <!-- ============ LEGEND: what the scanner looks for ============ -->
   <section class="lp-sec lp-legend" aria-labelledby="lp-legend-h">
     <div class="lp-wrap">
@@ -200,6 +216,34 @@
     </div>
   </section>
 
+  <!-- ============ SHARED GATEWAY ============ -->
+  <section class="lp-sec lp-gateway" aria-labelledby="lp-gateway-h">
+    <div class="lp-wrap">
+      <h2 id="lp-gateway-h" class="lp-h2">One gateway for every session</h2>
+      <p class="lp-intro">
+        By default each client session starts its own proxy, and each proxy
+        its own copy of every MCP server. <code>leanproxy-mcp daemon install</code>
+        runs one gateway instead: every client connects to it by URL, all
+        sessions share one set of servers, and a dashboard shows what each
+        server, client and tool call is doing.
+      </p>
+      <div class="lp-gateway__grid">
+        <div class="lp-gateway__video">
+          <iframe src="{{ 'videos/shared-gateway/?embed=1&lang=en' | url }}" title="LeanProxy: one shared gateway (70 second video)"
+                  loading="lazy" allow="fullscreen; autoplay" allowfullscreen></iframe>
+        </div>
+        <figure class="lp-gateway__shot">
+          <img class="lp-only-light" src="{{ 'assets/screenshots/admin-servers-light.png' | url }}" width="1280" height="760" loading="lazy"
+               alt="The admin dashboard: five servers up or down with a one-line diagnosis, and the expanded row of a server whose authentication was refused, with Reconnect, Disable and Remove actions.">
+          <img class="lp-only-dark" src="{{ 'assets/screenshots/admin-servers-dark.png' | url }}" width="1280" height="760" loading="lazy"
+               alt="The admin dashboard: five servers up or down with a one-line diagnosis, and the expanded row of a server whose authentication was refused, with Reconnect, Disable and Remove actions.">
+          <figcaption>The admin dashboard, on demo servers.</figcaption>
+        </figure>
+      </div>
+      <p class="lp-more"><a href="{{ 'shared-gateway/' | url }}">Shared gateway and admin dashboard</a></p>
+    </div>
+  </section>
+
   <!-- ============ SETUP ============ -->
   <section class="lp-sec lp-steps" aria-labelledby="lp-steps-h">
     <div class="lp-wrap">
@@ -268,6 +312,7 @@ claude mcp add leanproxy -- \
         {% set gates = [
           ("why-leanproxy/", "Why LeanProxy", "The economics of MCP, with the math"),
           ("quickstart/", "Quick Start", "Configure servers, pick a mode, connect a client"),
+          ("shared-gateway/", "Shared gateway", "One background service, an admin dashboard, hot reload"),
           ("configuration/", "Configuration", "Every key in leanproxy_servers.yaml"),
           ("security/", "Security", "Threat model, redaction, injection, pinning, policy, sandbox"),
           ("commands/", "Commands", "The full CLI reference"),

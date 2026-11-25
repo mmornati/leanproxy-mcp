@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/mmornati/leanproxy-mcp/pkg/migrate"
@@ -23,8 +25,14 @@ import (
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Display real-time status of MCP servers",
-	Long:  `Display real-time status of all active proxied servers including health, uptime, and request metrics.`,
-	Run:   runStatus,
+	Long: `Display the status of the running LeanProxy processes and of their
+upstream servers: state, tools, calls, errors, latency and the last error.
+
+Each running proxy (the shared "server run --http" gateway, and every
+"server run --stdio" an MCP client started) is listed with its own servers.
+When no proxy is running, or with --probe, status starts the configured
+servers itself to check that they answer.`,
+	Run: runStatus,
 }
 
 var statusFlags struct {
@@ -35,6 +43,7 @@ var statusFlags struct {
 	interval    time.Duration
 	config      string
 	runningOnly bool
+	probe       bool
 }
 
 func init() {
@@ -44,12 +53,27 @@ func init() {
 	statusCmd.Flags().BoolVar(&statusFlags.jsonOut, "json", false, "Output in JSON format")
 	statusCmd.Flags().DurationVar(&statusFlags.interval, "interval", 1*time.Second, "Watch mode refresh interval")
 	statusCmd.Flags().StringVar(&statusFlags.config, "config", "", "Path to leanproxy_servers.yaml config file")
-	statusCmd.Flags().BoolVar(&statusFlags.runningOnly, "running", false, "Only show running instances from status file (not from config)")
+	statusCmd.Flags().BoolVar(&statusFlags.runningOnly, "running", false, "Never probe: only report running instances")
+	statusCmd.Flags().BoolVar(&statusFlags.probe, "probe", false, "Ignore running instances: start every configured server in this process and report whether it answers")
 	RootCmd.AddCommand(statusCmd)
 }
 
 func runStatus(cmd *cobra.Command, args []string) {
 	initLogger(cmd)
+	// Running proxies describe themselves in their status files: read
+	// those. Only when none is running (or with --probe) does status start
+	// the configured servers itself to see whether they answer.
+	if !statusFlags.probe {
+		if shown := runStatusInstances(); shown {
+			return
+		}
+		if statusFlags.runningOnly {
+			fmt.Println("No running leanproxy instance found")
+			return
+		}
+		fmt.Println("No running leanproxy instance found: starting the configured servers to probe them.")
+		fmt.Println()
+	}
 	if statusFlags.watch {
 		runStatusWatch()
 	} else {
@@ -333,5 +357,83 @@ func filterByServer(statusList proxy.ServerStatusList, serverName string) proxy.
 	return proxy.ServerStatusList{
 		Timestamp: statusList.Timestamp,
 		Servers:   filtered,
+	}
+}
+
+// runStatusInstances prints the status of every running proxy process,
+// once or (with --watch) repeatedly. It returns false when none is
+// running and nothing was printed.
+func runStatusInstances() bool {
+	all, err := statusfile.ReadAllStatus()
+	if err != nil {
+		fmt.Printf("Error reading running status: %v\n", err)
+		return false
+	}
+	if len(all) == 0 {
+		return false
+	}
+	if !statusFlags.watch {
+		printInstances(all)
+		return true
+	}
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	ticker := time.NewTicker(statusFlags.interval)
+	defer ticker.Stop()
+	for {
+		printInstances(all)
+		fmt.Println()
+		select {
+		case <-sigChan:
+			return true
+		case <-ticker.C:
+			all, _ = statusfile.ReadAllStatus()
+		}
+	}
+}
+
+func printInstances(all []statusfile.StatusInfo) {
+	if statusFlags.jsonOut {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(all)
+		return
+	}
+	if len(all) > 1 {
+		fmt.Printf("%d leanproxy processes are running, each with its own upstream servers.\n", len(all))
+		fmt.Println("Run one shared gateway instead: leanproxy-mcp daemon install")
+		fmt.Println()
+	}
+	for i, info := range all {
+		if i > 0 {
+			fmt.Println()
+		}
+		fmt.Printf("leanproxy-mcp pid %d  %s  up %s  %d client(s)\n", info.PID, info.ListenAddr,
+			time.Since(info.StartedAt).Round(time.Second), info.Clients)
+		if info.Dashboard != "" {
+			fmt.Printf("dashboard: %s\n", info.Dashboard)
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "  SERVER\tTRANSPORT\tSTATE\tTOOLS\tCALLS\tERRORS\tAVG\tDETAIL")
+		for _, sv := range info.Servers {
+			if statusFlags.server != "" && sv.Name != statusFlags.server {
+				continue
+			}
+			state := sv.State
+			if state == "" {
+				state = sv.Status
+			}
+			avg := "-"
+			if sv.AvgLatencyMs > 0 {
+				avg = fmt.Sprintf("%.0fms", sv.AvgLatencyMs)
+			}
+			detail := sv.Summary
+			if statusFlags.verbose && sv.LastError != "" {
+				detail += " [" + sv.LastError + "]"
+			}
+			fmt.Fprintf(tw, "  %s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n", sv.Name, sv.Transport, state,
+				sv.ToolCount, sv.RequestCount, sv.ErrorCount, avg, detail)
+		}
+		_ = tw.Flush()
 	}
 }

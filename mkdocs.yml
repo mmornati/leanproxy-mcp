@@ -60,7 +60,8 @@ nav:
       - Configuration: configuration.md
       - Security: security.md
       - Savings Report: savings-report.md
-      - Web Dashboard (serve): dashboard.md
+      - Shared Gateway and Admin: shared-gateway.md
+      - Web Dashboard: dashboard.md
       - Observability (OpenTelemetry): observability.md
       - IDE Extensions: extensions.md
       - First-party Servers: servers.md

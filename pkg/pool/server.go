@@ -80,14 +80,25 @@ type ServerHandle struct {
 }
 
 type ServerStats struct {
-	RequestCount   int64
-	ErrorCount     int64
-	AvgLatencyMs   float64
+	RequestCount int64
+	ErrorCount   int64
+	AvgLatencyMs float64
+	// LastRequestAt is when the last real request started or completed.
+	// Health pings are not requests: they leave it (and the counters above)
+	// untouched.
 	LastRequestAt  time.Time
 	RestartCount   int
 	CurrentBackoff time.Duration
 	LastError      string
 	LastErrorAt    time.Time
+	// InFlight is the number of requests currently holding an in-flight
+	// slot.
+	InFlight int
+	// PID is the current process generation's pid, 0 when not running.
+	PID int
+	// StartedAt is when the current process generation was spawned, zero
+	// when not running.
+	StartedAt time.Time
 }
 
 // stderrRing captures the most recent stderr lines for diagnostics.
@@ -981,8 +992,15 @@ func (s *StdioServerV2) failedSinceSpawn() bool {
 
 func (s *StdioServerV2) getStats() ServerStats {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	stats := s.stats
-	s.mu.Unlock()
+	stats.InFlight = s.inFlight
+	// s.process and s.lastSpawnAt outlive the generation they describe, so
+	// only report them while that generation is supposed to be alive.
+	if s.isHealthy() && s.process != nil && s.process.Process != nil {
+		stats.PID = s.process.Process.Pid
+		stats.StartedAt = s.lastSpawnAt
+	}
 	return stats
 }
 
@@ -1041,11 +1059,28 @@ func (s *StdioServerV2) runIdleLoop(ctx context.Context, stopCh chan struct{}) {
 // the request fail, if any. An upstream JSON-RPC error is returned both as
 // resp.Error (code, message and data preserved) and as err.
 func (s *StdioServerV2) processRequest(ctx context.Context, req Request) (*Response, error) {
+	return s.execRequest(ctx, req, true)
+}
+
+// probeRequest executes req like processRequest but leaves no trace of it:
+// the idle clock is not reset and nothing is counted in ServerStats. It is
+// the health checker's path, so that a periodic ping neither keeps an idle
+// server alive past its idle_timeout nor skews its request statistics.
+func (s *StdioServerV2) probeRequest(ctx context.Context, req Request) (*Response, error) {
+	return s.execRequest(ctx, req, false)
+}
+
+// execRequest is the shared body of processRequest (tracked) and
+// probeRequest (untracked).
+func (s *StdioServerV2) execRequest(ctx context.Context, req Request, tracked bool) (*Response, error) {
 	startTime := time.Now()
 
-	s.mu.Lock()
-	s.lastRequestAt = startTime
-	s.mu.Unlock()
+	if tracked {
+		s.mu.Lock()
+		s.lastRequestAt = startTime
+		s.stats.LastRequestAt = startTime
+		s.mu.Unlock()
+	}
 
 	resp := &Response{ID: req.ID}
 
@@ -1067,10 +1102,15 @@ func (s *StdioServerV2) processRequest(ctx context.Context, req Request) (*Respo
 		resp.Result = result
 	}
 
+	if !tracked {
+		return resp, sendErr
+	}
+
 	now := time.Now()
 	latency := now.Sub(startTime).Seconds() * 1000
 	s.mu.Lock()
 	s.lastRequestAt = now
+	s.stats.LastRequestAt = now
 	if sendErr != nil {
 		s.stats.ErrorCount++
 		s.stats.LastError = sendErr.Error()

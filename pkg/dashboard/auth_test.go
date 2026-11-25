@@ -105,7 +105,7 @@ func TestRequireBearerTokenWrongCookie(t *testing.T) {
 }
 
 func TestHandleLoginSetsCookie(t *testing.T) {
-	handler := handleLogin("secret")
+	handler := handleLogin("secret", nil)
 
 	req := httptest.NewRequest("GET", "/login?token=secret", nil)
 	w := httptest.NewRecorder()
@@ -140,7 +140,7 @@ func TestHandleLoginSetsCookie(t *testing.T) {
 }
 
 func TestHandleLoginWrongToken(t *testing.T) {
-	handler := handleLogin("secret")
+	handler := handleLogin("secret", nil)
 
 	req := httptest.NewRequest("GET", "/login?token=wrong", nil)
 	w := httptest.NewRecorder()
@@ -155,7 +155,7 @@ func TestHandleLoginWrongToken(t *testing.T) {
 }
 
 func TestHandleLoginNoTokenConfigured(t *testing.T) {
-	handler := handleLogin("")
+	handler := handleLogin("", nil)
 
 	req := httptest.NewRequest("GET", "/login?token=anything", nil)
 	w := httptest.NewRecorder()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -23,6 +24,16 @@ var assetsFS embed.FS
 //go:embed views/*
 var viewsFS embed.FS
 
+// staticFS is assets/ served at /static/. The embedded paths start with
+// "assets/": serving assetsFS itself would answer 404 for every file.
+var staticFS = func() fs.FS {
+	sub, err := fs.Sub(assetsFS, "assets")
+	if err != nil {
+		panic(err)
+	}
+	return sub
+}()
+
 type Config struct {
 	Bind  string
 	Token string
@@ -37,6 +48,11 @@ type Config struct {
 	// store (pkg/usage.Live). A nil func, or one returning nil (the store
 	// could not be read), renders an "unavailable" state instead of zeros.
 	Usage func() *metrics.UsageSummary
+
+	// Admin supplies the servers, clients and calls views and their write
+	// actions. Nil: the dashboard shows usage only. The write actions are
+	// available only when Token is set.
+	Admin Admin
 }
 
 // DashboardData is what the index and summary cards render: the usage
@@ -61,6 +77,10 @@ type DashboardData struct {
 	// the response governor being off (the default) looks like.
 	NoToolData bool
 	Servers    []ServerRow
+
+	// HasAdmin and Admin carry the admin views of the index page.
+	HasAdmin bool
+	Admin    adminPage
 }
 
 // ServerRow is one row of the server table (today's window).
@@ -85,152 +105,18 @@ type ServerDrillDown struct {
 	Tools          []metrics.UsageTool
 }
 
-// pages holds every HTML template (the index, the cards partial and
-// views/drilldown.html) in one set, so the index can include the partials
-// the htmx endpoints also render on their own.
-var pages = func() *template.Template {
-	t := template.Must(template.New("index").Parse(indexHTML))
-	template.Must(t.New("cards").Parse(cardsHTML))
-	return template.Must(t.ParseFS(viewsFS, "views/drilldown.html"))
-}()
-
-const indexHTML = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LeanProxy Dashboard</title>
-<script src="/static/htmx.min.js"></script>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex;
-    flex-direction: column; align-items: center; padding: 2rem 1rem;
-  }
-  .container { max-width: 900px; width: 100%; }
-  h1 {
-    font-size: 1.75rem; font-weight: 700; margin-bottom: 0.5rem;
-    text-align: center; color: #38bdf8;
-  }
-  .subtitle { text-align: center; font-size: 0.8rem; color: #64748b; margin-bottom: 2rem; }
-  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
-  .card {
-    background: #1e293b; border-radius: 0.75rem; padding: 1.25rem;
-    border: 1px solid #334155; text-align: center; min-width: 0;
-  }
-  .card .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 0.5rem; }
-  .card .value { font-size: 1.5rem; font-weight: 700; color: #f1f5f9; overflow-wrap: anywhere; }
-  .card .value.token { color: #a78bfa; }
-  .card .value.server { color: #34d399; }
-  .card .value.tool { color: #f472b6; font-size: 1.1rem; }
-  .card .detail { font-size: 0.75rem; color: #64748b; margin-top: 0.35rem; }
-  .meta { text-align: center; font-size: 0.875rem; color: #64748b; margin-top: 1.5rem; }
-  .meta span { margin: 0 0.75rem; }
-  .error-card {
-    background: #1e293b; border-radius: 0.75rem; padding: 2rem;
-    border: 1px solid #ef4444; text-align: center; margin-bottom: 1.5rem;
-  }
-  .error-card .value { font-size: 1rem; color: #fca5a5; }
-  .section-title {
-    font-size: 1.1rem; font-weight: 600; color: #e2e8f0;
-    margin: 1.5rem 0 0.75rem;
-  }
-  .server-table, .drilldown-table {
-    width: 100%; border-collapse: collapse; margin-bottom: 1rem;
-    background: #1e293b; border-radius: 0.75rem; overflow: hidden;
-  }
-  .server-table th, .drilldown-table th {
-    text-align: left; padding: 0.75rem 1rem;
-    font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em;
-    color: #94a3b8; border-bottom: 1px solid #334155;
-  }
-  .server-table td, .drilldown-table td {
-    padding: 0.75rem 1rem; border-bottom: 1px solid #1e293b;
-    font-size: 0.875rem;
-  }
-  .server-table tbody tr.server-row:hover {
-    background: #334155; cursor: pointer;
-  }
-  .cell-server { color: #34d399; font-weight: 600; }
-  .cell-tool { color: #f472b6; font-weight: 600; }
-  .cell-tokens { color: #a78bfa; font-family: monospace; }
-  .cell-count { color: #e2e8f0; font-family: monospace; }
-  .cell-avg { color: #94a3b8; font-family: monospace; }
-  .cell-time { color: #64748b; font-family: monospace; font-size: 0.75rem; }
-  .cell-arrow { color: #475569; text-align: right; font-size: 1.1rem; }
-  .drilldown-panel {
-    background: #1e293b; border-radius: 0.75rem; padding: 1.25rem;
-    border: 1px solid #334155; margin-bottom: 1rem;
-  }
-  .drilldown-header {
-    display: flex; justify-content: space-between; align-items: center;
-    margin-bottom: 1rem;
-  }
-  .drilldown-header h2 { font-size: 1.1rem; color: #38bdf8; }
-  .drilldown-total { font-size: 0.85rem; color: #a78bfa; font-family: monospace; }
-  .empty-state { color: #64748b; text-align: center; padding: 2rem; font-style: italic; }
-  .empty-state code { font-style: normal; color: #94a3b8; }
-  @media (max-width: 600px) {
-    .cards { grid-template-columns: repeat(2, 1fr); }
-  }
-</style>
-</head>
-<body>
-<div class="container">
-  <h1>LeanProxy Dashboard</h1>
-  <p class="subtitle">Tokens measured by the proxy ({{or .Estimator "chars/4"}}), read from the usage store every front end on this machine writes to.
-    Today is since 00:00 UTC; the week starts Monday 00:00 UTC.</p>
-  <div id="dashboard-cards" hx-get="/api/dashboard" hx-trigger="every 5s" hx-swap="innerHTML">
-    {{template "cards" .}}
-  </div>
-  <div class="meta">
-    <span>Auto-refresh every 5s</span>
-    <span>&middot;</span>
-    <span>{{.ServerCount}} servers today</span>
-    <span>&middot;</span>
-    <span>{{.ToolCount}} tools today</span>
-  </div>
-  <div class="section-title">Servers today</div>
-  <div id="server-table" hx-get="/api/dashboard/servers" hx-trigger="every 5s" hx-swap="innerHTML">
-    {{template "serverRows" .}}
-  </div>
-  <div id="drilldown-content"></div>
-  <div class="section-title">Tool pinning</div>
-  <div id="tool-pins" hx-get="/api/dashboard/tool-pins" hx-trigger="load, every 10s" hx-swap="innerHTML"></div>
-</div>
-</body>
-</html>
-`
-
-const cardsHTML = `
-{{if .Available}}
-<div class="cards">
-  <div class="card">
-    <div class="label">Saved today</div>
-    <div class="value token">{{.TodaySaved}}</div>
-    <div class="detail">of {{.TodayOriginal}} tokens ({{.TodayPercent}})</div>
-  </div>
-  <div class="card">
-    <div class="label">Saved this week</div>
-    <div class="value token">{{.WeekSaved}}</div>
-    <div class="detail">of {{.WeekOriginal}} tokens ({{.WeekPercent}})</div>
-  </div>
-  <div class="card">
-    <div class="label">Top server today</div>
-    <div class="value server">{{.TopServer}}</div>
-    <div class="detail">by response size</div>
-  </div>
-  <div class="card">
-    <div class="label">Top tool today</div>
-    <div class="value tool">{{.TopTool}}</div>
-    <div class="detail">by response size</div>
-  </div>
-</div>
-{{else}}
-<div class="error-card"><div class="value">Usage data unavailable: the usage store (~/.leanproxy/usage) could not be read. See the proxy's log.</div></div>
-{{end}}
-`
+// pages holds every HTML template (views/*.html) in one set, so the index
+// can include the partials the htmx endpoints also render on their own.
+// Styles and scripts are static assets: the dashboard's CSP (httpsec) allows
+// neither inline <style> nor inline <script>.
+var pages = template.Must(template.New("pages").Funcs(template.FuncMap{
+	"ago":        ago,
+	"span":       span,
+	"until":      until,
+	"millis":     millis,
+	"bytesShort": bytesShort,
+	"domID":      domID,
+}).ParseFS(viewsFS, "views/*.html"))
 
 // toolPinTemplate renders this process's latest tool pinning events
 // (#310): drift, identity changes, scanner findings, collisions.
@@ -270,6 +156,13 @@ func handleToolPins(w http.ResponseWriter, r *http.Request) {
 // server holds the dashboard's data source; its methods are the handlers.
 type server struct {
 	usage func() *metrics.UsageSummary
+	admin Admin
+	// writable is true when the dashboard has a token: only then are the
+	// admin write actions offered and accepted.
+	writable bool
+	// detailed is true when the dashboard has a token: only then do the
+	// admin views carry raw error text and stderr lines.
+	detailed bool
 }
 
 func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
@@ -312,9 +205,14 @@ func ListenAndServe(cfg Config, logger *slog.Logger) (*http.Server, error) {
 		actualPort = port
 	}
 
+	codes := newLoginCodes()
+	protected := newServer(cfg).routes()
+	// Mints a one-time sign-in code; behind the token like everything else.
+	protected.HandleFunc("POST /login/code", handleLoginCode(codes))
 	topMux := http.NewServeMux()
-	topMux.HandleFunc("GET /login", handleLogin(cfg.Token))
-	topMux.Handle("/", requireBearerToken(cfg.Token, logger)((&server{usage: cfg.Usage}).routes()))
+	sessions := newBrowserSessions()
+	topMux.HandleFunc("GET /login", handleLogin(cfg.Token, codes, sessions))
+	topMux.Handle("/", requireBearerToken(cfg.Token, logger, sessions)(protected))
 
 	allowedHosts := httpsec.AllowedHosts(host, actualPort, cfg.AllowedHosts)
 	handler := httpsec.SecurityHeaders()(httpsec.ValidateHost(allowedHosts)(topMux))
@@ -345,9 +243,14 @@ func (s *server) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/dashboard/servers", s.handleServerTable)
 	mux.HandleFunc("GET /api/dashboard/tool-pins", handleToolPins)
 	mux.HandleFunc("GET /api/dashboard/servers/{server}", s.handleServerDrilldown)
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(assetsFS))))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("GET /{$}", s.handleIndex)
+	s.adminRoutes(mux)
 	return mux
+}
+
+func newServer(cfg Config) *server {
+	return &server{usage: cfg.Usage, admin: cfg.Admin, writable: cfg.Admin != nil && cfg.Token != "", detailed: cfg.Token != ""}
 }
 
 func (s *server) summary() *metrics.UsageSummary {
@@ -419,7 +322,12 @@ func (s *server) render(w http.ResponseWriter, name string, data any) {
 }
 
 func (s *server) handleIndex(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "index", collectDashboardData(s.summary()))
+	data := collectDashboardData(s.summary())
+	if s.admin != nil {
+		data.HasAdmin = true
+		data.Admin = s.adminData("", "")
+	}
+	s.render(w, "index", data)
 }
 
 func (s *server) handleCards(w http.ResponseWriter, r *http.Request) {

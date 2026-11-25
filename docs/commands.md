@@ -18,12 +18,14 @@ wrote, or works offline on files.
 | [`server run --stdio`](#server-run-run-the-mcp-front-end) | Run the proxy as an MCP server on stdin/stdout, for one IDE | **Is** the stdio front end |
 | [`server run --http <addr>`](#streamable-http-front-end-http) | Run the proxy as an MCP Streamable HTTP gateway at `/mcp`, for many clients | **Is** the HTTP front end |
 | [`serve`](#serve-start-proxy-server) | Deprecated line-delimited JSON-RPC over TCP. Not an MCP transport | **Is** the deprecated line-TCP front end |
-| [`server add` / `remove` / `list` / `enable` / `disable`](#server-manage-mcp-servers) | Edit the servers in `leanproxy_servers.yaml` | Offline; running proxies do not reload the file |
+| [`daemon install` / `status` / `clients` / `open` / `restart` / `uninstall`](shared-gateway.md) | Run one shared `server run --http` gateway as a background service | Manages the HTTP front end |
+| [`connect`](shared-gateway.md#clients-that-can-only-start-a-command) | Bridge a stdio-only client (Claude Desktop) to the shared gateway | A thin relay to the HTTP front end; starts no upstream server |
+| [`server add` / `remove` / `list` / `enable` / `disable`](#server-manage-mcp-servers) | Edit the servers in `leanproxy_servers.yaml` | Offline; a running `server run` applies the change within seconds |
 | [`server health <name>`](#server-health-health-check) | Ping one server | Reads the status file; otherwise spawns its own temporary copy of the server |
 | [`add` (alias `install`)](#add-install-server-from-registry) | Install a server from the registry cache | Offline (config only) |
 | [`marketplace sync` / `search` / `outdated` / `update`](#marketplace-mcp-registry-marketplace) | Fetch, search and update from the MCP Registry | `sync` needs the network; the rest are offline |
 | [`migrate`](#migrate-import-configurations) | Import MCP servers from other tools' configs | Offline |
-| [`status`](#status-server-status) | Show server status | `--running` reads the status file; without it, **spawns every enabled server** |
+| [`status`](#status-server-status) | Show every running proxy and its servers | Reads the status files; starts the servers itself only when no proxy is running, or with `--probe` |
 | [`cache`](#cache-tool-cache-inspector) | Inspect or clear the persistent tool cache | Reads files any front end wrote |
 | [`cache stats`](#cache-stats-cache-hit-rate) | Anthropic prompt-cache hit rate | Always empty from the CLI (see its section) |
 | [`bouncer list-patterns` / `validate-patterns`](#bouncer-redaction-settings) | List built-in redaction patterns; validate custom ones | Offline |
@@ -309,7 +311,18 @@ To use with OpenCode, add to `~/.config/opencode/opencode.json`:
 
 ### `server add` - Add Server
 
-Add a **stdio** MCP server to the config, enabled, with `timeout: 30s`.
+Add an MCP server to the config, enabled, with `timeout: 30s`: a **stdio**
+server from a command, or a remote one with `--url` (which implies
+`--transport http`; pass `--transport sse` for a legacy SSE server) and
+`--header "Name: value"` (repeatable):
+
+```bash
+leanproxy-mcp server add github --url https://api.githubcopilot.com/mcp/ \
+  --header "Authorization: Bearer $GITHUB_TOKEN"
+```
+
+A running `server run` starts the new server within a few seconds (see
+[Hot reload](shared-gateway.md#hot-reload-of-the-server-list)).
 
 #### Usage
 
@@ -455,7 +468,7 @@ leanproxy-mcp server health <server_name> [flags]
 #### How it works
 
 1. **Running proxy.** If the status file
-   (`~/.config/leanproxy/status/current.json`) lists the server as
+   (`~/.config/leanproxy/status/proxy-<pid>.json`) lists the server as
    `running`, `health` reports it healthy from that file alone. It sends no
    request.
 2. **Otherwise**, it loads the config and fails if the server is missing
@@ -1082,17 +1095,22 @@ To add servers manually, use: leanproxy-mcp server add
 
 ## `status` - Server Status
 
-Show the status of the configured servers, either from a running proxy
-(`--running`) or by starting them.
+Show every running LeanProxy process and its upstream servers: state,
+tools, calls, errors, average latency and one line of detail (for example
+`Authentication refused: check this server's token`).
 
-!!! warning "Without `--running`, `status` starts every enabled server"
-    Plain `status` does not look at a running proxy. It loads the config,
-    **spawns every enabled stdio server and connects to every HTTP/SSE
-    server**, reports the pool state right after the spawn, then stops
-    them. It does no MCP handshake, so a server that crashes on startup can
-    still show as `running`. With `--watch` it does this again at every
-    interval. Use `status --running` to see what a running proxy is doing
-    without starting anything.
+`status` reads what the running proxies report about themselves and starts
+nothing. Each proxy (the shared `server run --http` gateway, and every
+`server run --stdio` an MCP client started) is listed with its own
+servers; with more than one, `status` points at
+[`daemon install`](shared-gateway.md).
+
+!!! warning "With no proxy running, or with `--probe`, `status` starts every enabled server"
+    It then loads the config, **spawns every enabled stdio server and
+    connects to every HTTP/SSE server**, reports the pool state right after
+    the spawn, then stops them. It does no MCP handshake, so a server that
+    crashes on startup can still show as `running`. `--running` never does
+    this.
 
 ### Usage
 
@@ -1104,20 +1122,23 @@ leanproxy-mcp status [flags]
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--running` | bool | false | Read the status file of a running proxy instead of starting the servers |
-| `--config` | string | `""` | Config file (ignored with `--running`). Empty: `$LEANPROXY_CONFIG`, else `~/.config/leanproxy_servers.yaml` |
+| `--probe` | bool | false | Ignore running proxies: start every configured server in this process and report whether it starts |
+| `--running` | bool | false | Never probe: report running proxies only |
+| `--config` | string | `""` | Config file, for a probe. Empty: `$LEANPROXY_CONFIG`, else `~/.config/leanproxy_servers.yaml` |
 | `--server` | string | `""` | Show only this server |
-| `--json` | bool | false | Output JSON |
-| `--verbose` | bool | false | One block per server with more fields. No `-v` shorthand |
+| `--json` | bool | false | Output JSON (for running proxies: the list of their status files' content) |
+| `--verbose` | bool | false | Add each server's last error. No `-v` shorthand |
 | `--watch` | bool | false | Refresh until `Ctrl+C` |
 | `--interval` | duration | `1s` | Refresh interval for `--watch` |
 
-`status` always exits 0, even when it cannot read the status file or the
+`status` always exits 0, even when it cannot read the status files or the
 config.
 
-`--running` reads `~/.config/leanproxy/status/current.json`, written by
-`server run --stdio`, `server run --http` and `serve` while they run (see
-[Status File](#status-file) below for its format).
+Each proxy writes `~/.config/leanproxy/status/proxy-<pid>.json` while it
+runs (see [Status File](#status-file) below for its format) and removes it
+when it stops; the file of a process that died without cleaning up is
+ignored and removed. Versions before this one all wrote the same
+`current.json`, which is still read when its process is alive.
 
 ### Examples
 
@@ -1125,8 +1146,11 @@ config.
 # What is the running proxy doing? (starts nothing)
 leanproxy-mcp status --running
 
-# Start each enabled server once and report
+# Every running proxy and its servers (starts nothing while one is running)
 leanproxy-mcp status
+
+# Start each enabled server once and report, ignoring running proxies
+leanproxy-mcp status --probe
 
 # One server, as JSON
 leanproxy-mcp status --running --server filesystem --json
@@ -2585,12 +2609,12 @@ While `server run` (either front end) or `serve` is running, it writes a
 status file to:
 
 ```
-~/.config/leanproxy/status/current.json
+~/.config/leanproxy/status/proxy-<pid>.json
 ```
 
-`status --running`, `server health` and `doctor security` read it. There is
-one file per user, not per process: a second proxy started later overwrites
-it, and the first one to shut down removes it.
+`status`, `server health` and `doctor security` read it. There is one file
+per proxy process (before, every process wrote the same `current.json` and
+the last writer won); a proxy removes its own file when it stops.
 
 **Status file contents** (from a `server run --stdio` instance):
 

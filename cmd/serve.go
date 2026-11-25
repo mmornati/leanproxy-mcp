@@ -490,7 +490,7 @@ func runServe(cmd *cobra.Command, args []string) {
 	// failure for both endpoints, not a warning — otherwise the server
 	// names, tool names and token counts they expose would be served to
 	// anyone who can reach the bound interface.
-	metricsServer, dashboardServer, err = serveFlags.endpoints.startEndpoints()
+	metricsServer, dashboardServer, err = serveFlags.endpoints.startEndpoints(nil)
 	if err != nil {
 		logError("%v", err)
 	}
@@ -568,6 +568,9 @@ func runServe(cmd *cobra.Command, args []string) {
 					sc.Stop()
 				}
 				serveGovernor.Close()
+				// Let a pin comparison in progress reach the pin file and
+				// the log before the process exits.
+				servePins.Pinner().Wait(pinFlushTimeout)
 				if stdioPool != nil {
 					stdioPool.Close()
 				}

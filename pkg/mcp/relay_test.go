@@ -338,12 +338,16 @@ func TestRelay_PickSession(t *testing.T) {
 	other := newFakeClient(t, h, `{"elicitation":{}}`)
 	assert.Nil(t, h.pickSession(ctx, "alpha", capabilityElicitation))
 
-	// The most recent capable call wins.
+	// Calls from two clients in flight: nothing says whose call raised
+	// the request, so nobody gets it (never "the most recent").
 	_, end1 := h.BeginUpstreamCall(WithClientSession(ctx, capable.session), "alpha", nil, nil)
 	_, end2 := h.BeginUpstreamCall(WithClientSession(ctx, other.session), "alpha", nil, nil)
-	assert.Equal(t, other.session, h.pickSession(ctx, "alpha", capabilityElicitation))
+	assert.Nil(t, h.pickSession(ctx, "alpha", capabilityElicitation))
 	end2()
+	// One client's calls only (even several): it is that client's.
+	_, end3 := h.BeginUpstreamCall(WithClientSession(ctx, capable.session), "alpha", nil, nil)
 	assert.Equal(t, capable.session, h.pickSession(ctx, "alpha", capabilityElicitation))
+	end3()
 	end1()
 	end1() // idempotent
 
