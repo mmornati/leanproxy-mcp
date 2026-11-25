@@ -403,10 +403,10 @@ func (b *Bridge) listen(ctx context.Context, session string) {
 		b.setHeaders(req, true)
 		resp, err := b.client.Do(req)
 		if err == nil {
-			switch {
-			case resp.StatusCode == http.StatusOK:
+			switch resp.StatusCode {
+			case http.StatusOK:
 				_ = readSSE(resp.Body, b.write)
-			case resp.StatusCode == http.StatusMethodNotAllowed, resp.StatusCode == http.StatusNotFound:
+			case http.StatusMethodNotAllowed, http.StatusNotFound:
 				// No such stream, or the session is gone (the next request
 				// re-initializes and starts a new listener).
 				resp.Body.Close()
