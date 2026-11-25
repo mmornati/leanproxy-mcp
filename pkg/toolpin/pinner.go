@@ -49,6 +49,9 @@ type Pinner struct {
 	// observed holds the servers this process has compared at least once.
 	observed sync.Map
 
+	// inflight counts the Observe calls in progress (see Wait).
+	inflight atomic.Int64
+
 	idx atomic.Pointer[pinIndex]
 }
 
@@ -152,6 +155,8 @@ func (p *Pinner) Observe(server string, info *ServerInfo, defs []Definition) []E
 	if p == nil || p.mode == ModeOff || server == "" {
 		return nil
 	}
+	p.inflight.Add(1)
+	defer p.inflight.Add(-1)
 	now := p.now().UTC()
 	observed := make(map[string]observedTool, len(defs))
 	order := make([]string, 0, len(defs))
@@ -201,6 +206,30 @@ func (p *Pinner) Observe(server string, info *ServerInfo, defs []Definition) []E
 	}
 	p.announcePending(server, events)
 	return events
+}
+
+// Wait blocks until no Observe call is in progress, or until timeout, and
+// reports whether it got there. A proxy calls it before it exits.
+//
+// Observe publishes the new pins in memory before it writes the file and
+// logs its events, and it usually runs on a background refresh. So a
+// client can already see a change (a warning in list_tools, a hidden
+// tool) while the write is still under way; a proxy that exits at that
+// moment would lose the pin file update and the log line that explains
+// it. Observe only does local work (a file write, logging), so the wait
+// is short.
+func (p *Pinner) Wait(timeout time.Duration) bool {
+	if p == nil {
+		return true
+	}
+	deadline := time.Now().Add(timeout)
+	for p.inflight.Load() > 0 {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return true
 }
 
 // upToDate reports, from the current pins and without touching the file,

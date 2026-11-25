@@ -24,6 +24,7 @@ import (
 	"github.com/mmornati/leanproxy-mcp/pkg/registry"
 	"github.com/mmornati/leanproxy-mcp/pkg/statusfile"
 	"github.com/mmornati/leanproxy-mcp/pkg/streamhttp"
+	"github.com/mmornati/leanproxy-mcp/pkg/toolpin"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolsearch"
 	"github.com/mmornati/leanproxy-mcp/pkg/toolstore"
 	"github.com/spf13/cobra"
@@ -385,6 +386,10 @@ func init() {
 	serverCmd.AddCommand(healthCmd)
 }
 
+// pinFlushTimeout bounds how long shutdown waits for a pin comparison in
+// progress to write the pin file and log its events.
+const pinFlushTimeout = 2 * time.Second
+
 func runServerRun(cmd *cobra.Command, args []string) error {
 	initLogger(cmd)
 
@@ -529,8 +534,15 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	// after the stdio front end returns (EOF / shutdown).
 	refreshCtx, stopRefresh := context.WithCancel(ctx)
 	var closeOnce sync.Once
+	// pinner is set once the handler is built, further down.
+	var pinner *toolpin.Pinner
 	closePools := func() {
 		closeOnce.Do(func() {
+			// A pin comparison in progress has already shown its result
+			// to the client: let it reach the pin file and the log.
+			if !pinner.Wait(pinFlushTimeout) {
+				slog.Warn("tool pinning: a pin file update was still in progress at shutdown")
+			}
 			stopRefresh()
 			if healthCancel != nil {
 				healthCancel()
@@ -579,7 +591,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 
 	// Tool pinning (#310): every refresh below is compared with the pins
 	// before its tools reach the cache.
-	pinner := newToolPinner(cfg)
+	pinner = newToolPinner(cfg)
 	pins := mcp.NewToolPins(pinner)
 	handler.SetToolPins(pins)
 	slog.Info(pins.Summary())

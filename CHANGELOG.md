@@ -68,6 +68,10 @@
 - `resources` and `prompts` were not advertised to a client that connected before a slow
   upstream finished its handshake, for the whole session.
 - The SSE client ignored `HTTPS_PROXY` / `HTTP_PROXY`.
+- A proxy could exit while a tool pinning comparison was still writing the pin file and logging
+  its events, after the client had already been shown the result (a warning, a hidden tool):
+  the pins of a first use or the "tool definition changed" log line could be lost. Shutdown now
+  waits for the comparison in progress (at most 2 s).
 
 ## Breaking in v0.11
 

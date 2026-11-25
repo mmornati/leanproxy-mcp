@@ -568,6 +568,9 @@ func runServe(cmd *cobra.Command, args []string) {
 					sc.Stop()
 				}
 				serveGovernor.Close()
+				// Let a pin comparison in progress reach the pin file and
+				// the log before the process exits.
+				servePins.Pinner().Wait(pinFlushTimeout)
 				if stdioPool != nil {
 					stdioPool.Close()
 				}
