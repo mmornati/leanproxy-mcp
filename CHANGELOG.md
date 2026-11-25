@@ -1,5 +1,13 @@
 # Changelog
 
+## Fixed after v1.1
+
+- `daemon install` recorded the versioned install directory of the binary (Homebrew's
+  `Cellar/leanproxy-mcp/<version>/...`) in the service definition, so the service could no
+  longer start after `brew upgrade`. It now records the symlink the command was run through
+  (`/opt/homebrew/bin/leanproxy-mcp`), which survives upgrades. If you installed the service
+  with v1.1 from Homebrew, run `leanproxy-mcp daemon install` again after upgrading.
+
 ## Added in v1.1
 
 - **Shared gateway as a background service: `leanproxy-mcp daemon install`.** One `server run

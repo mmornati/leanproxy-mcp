@@ -235,6 +235,44 @@ func checkLoopbackAddr(flag, addr string) error {
 	return nil
 }
 
+// stableExecutable picks the path the service should run. exe is where
+// the running binary really is; invoked is how it was called.
+//
+// A package manager installs the binary in a versioned directory and
+// exposes it through a symlink that survives upgrades (Homebrew:
+// /opt/homebrew/bin/leanproxy-mcp -> ../Cellar/leanproxy-mcp/1.1/bin/...).
+// The service must run the symlink: the versioned path disappears at the
+// next upgrade and the service would no longer start. So when the command
+// was found through a symlink that leads to this same binary, that
+// symlink is what is recorded.
+func stableExecutable(exe, invoked string) string {
+	candidate := invoked
+	if !filepath.IsAbs(candidate) {
+		found, err := exec.LookPath(candidate)
+		if err != nil {
+			return exe
+		}
+		candidate = found
+	}
+	candidate, err := filepath.Abs(candidate)
+	if err != nil {
+		return exe
+	}
+	info, err := os.Lstat(candidate)
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return exe
+	}
+	target, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return exe
+	}
+	real, err := filepath.EvalSymlinks(exe)
+	if err != nil || target != real {
+		return exe
+	}
+	return candidate
+}
+
 func buildDaemonSpec() (daemonSpec, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -244,9 +282,7 @@ func buildDaemonSpec() (daemonSpec, error) {
 	if err != nil {
 		return daemonSpec{}, fmt.Errorf("cannot locate the leanproxy-mcp executable: %w", err)
 	}
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
-	}
+	exe = stableExecutable(exe, os.Args[0])
 	if err := checkLoopbackAddr("http", daemonFlags.http); err != nil {
 		return daemonSpec{}, err
 	}
