@@ -202,7 +202,9 @@ func (s *SSEServer) sessionMethod(ctx context.Context, c *client.Client, method 
 	case methodInitialize:
 		return initializeResultJSON(s.initResult.Load()), true, nil
 	case "ping":
-		if err := c.Ping(ctx); err != nil {
+		// Ping is deprecated for protocol 2026-07-28 (no ping RPC there);
+		// on the revisions the proxy negotiates it is a real request.
+		if err := c.Ping(ctx); err != nil { //nolint:staticcheck // SA1019: see above
 			return nil, true, fmt.Errorf("sse_pool: ping: %w", err)
 		}
 		return json.RawMessage(`{}`), true, nil

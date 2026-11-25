@@ -134,7 +134,13 @@ func (s *HTTPClientServer) buildClient() (*client.Client, error) {
 		// requests and notifications there rather than on the response
 		// stream of the call that triggered them (#308). A server without
 		// one answers 405 and the client stops asking.
-		transport.WithContinuousListening(),
+		//
+		// Deprecated in mcp-go for protocol 2026-07-28, which replaces the
+		// GET stream with subscriptions/listen. The proxy speaks the
+		// revisions up to 2025-11-25 to its upstreams, where the GET
+		// stream is the only way to receive those messages; moving to
+		// Client.Listen goes with supporting the newer revision.
+		transport.WithContinuousListening(), //nolint:staticcheck // SA1019: see above
 	}
 	opts = append(opts, s.oauthOpts...)
 
@@ -240,7 +246,9 @@ func (s *HTTPClientServer) sessionMethod(ctx context.Context, c *client.Client, 
 	case methodInitialize:
 		return initializeResultJSON(s.initResult.Load()), true, nil
 	case "ping":
-		if err := c.Ping(ctx); err != nil {
+		// Ping is deprecated for protocol 2026-07-28 (no ping RPC there);
+		// on the revisions the proxy negotiates it is a real request.
+		if err := c.Ping(ctx); err != nil { //nolint:staticcheck // SA1019: see above
 			return nil, true, fmt.Errorf("http_pool: ping: %w", err)
 		}
 		return json.RawMessage(`{}`), true, nil
