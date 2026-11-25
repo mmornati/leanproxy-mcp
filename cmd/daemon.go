@@ -327,6 +327,48 @@ func runServiceCommand(name string, args ...string) error {
 
 func launchdDomain() string { return fmt.Sprintf("gui/%d", os.Getuid()) }
 
+const (
+	// launchdUnloadTimeout bounds the wait for a booted-out service to
+	// leave launchd (the gateway stops its upstream servers first).
+	launchdUnloadTimeout = 20 * time.Second
+	// launchdBootstrapAttempts is how many times bootstrap is tried, one
+	// second apart.
+	launchdBootstrapAttempts = 5
+)
+
+// launchdLoaded reports whether launchd still knows the gateway service.
+func launchdLoaded() bool {
+	return exec.Command("launchctl", "print", launchdDomain()+"/"+daemonLabel).Run() == nil // #nosec G204 -- fixed command, the argument is the numeric uid and a constant label
+}
+
+// waitUntil polls cond every interval until it is true or timeout passes,
+// and reports whether it became true.
+func waitUntil(timeout, interval time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(interval)
+	}
+	return true
+}
+
+// retry runs fn up to attempts times, pausing between failures, and
+// returns the last error.
+func retry(attempts int, pause time.Duration, fn func() error) error {
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if i < attempts-1 {
+			time.Sleep(pause)
+		}
+	}
+	return err
+}
+
 func runDaemonInstall(cmd *cobra.Command, args []string) error {
 	spec, err := buildDaemonSpec()
 	if err != nil {
@@ -352,10 +394,16 @@ func runDaemonInstall(cmd *cobra.Command, args []string) error {
 		}
 		// Replace a previous install: bootout fails when none is loaded.
 		_ = exec.Command("launchctl", "bootout", launchdDomain()+"/"+daemonLabel).Run() // #nosec G204 -- fixed command, the argument is the numeric uid and a constant label
+		// bootout returns before the old gateway has stopped, and launchd
+		// refuses to bootstrap a label it still holds ("Bootstrap failed:
+		// 5: Input/output error"), which would leave no service at all.
+		waitUntil(launchdUnloadTimeout, 200*time.Millisecond, func() bool { return !launchdLoaded() })
 		if err := os.WriteFile(path, []byte(launchdPlist(spec)), 0o600); err != nil {
 			return err
 		}
-		if err := runServiceCommand("launchctl", "bootstrap", launchdDomain(), path); err != nil {
+		if err := retry(launchdBootstrapAttempts, time.Second, func() error {
+			return runServiceCommand("launchctl", "bootstrap", launchdDomain(), path)
+		}); err != nil {
 			return err
 		}
 		fmt.Printf("Installed %s\n", path)
