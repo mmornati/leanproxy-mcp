@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"encoding/xml"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -101,9 +103,35 @@ func TestClientSnippets(t *testing.T) {
 		`"Authorization: Bearer <token>"`,
 		"[mcp_servers.leanproxy]",
 		`"type": "http"`,
+		`"command": "leanproxy-mcp", "args": ["connect"]`,
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("snippets lack %q", want)
 		}
+	}
+}
+
+func TestConnectToken(t *testing.T) {
+	home := t.TempDir()
+	// The environment wins; a missing file means no authentication and is
+	// never created.
+	if tok, err := connectToken("from-env", "", home); err != nil || tok != "from-env" {
+		t.Fatalf("env token = %q, %v", tok, err)
+	}
+	if tok, err := connectToken("", "", home); err != nil || tok != "" {
+		t.Fatalf("missing file = %q, %v", tok, err)
+	}
+	if _, err := os.Stat(serveTokenPath(home)); !os.IsNotExist(err) {
+		t.Fatal("connect must not create the token file")
+	}
+	path := filepath.Join(home, "tok")
+	if err := os.WriteFile(path, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if tok, err := connectToken("", path, home); err != nil || tok != "from-file" {
+		t.Fatalf("file token = %q, %v", tok, err)
+	}
+	if got := connectURL("http://example.test/mcp"); got != "http://example.test/mcp" {
+		t.Fatalf("--url ignored: %s", got)
 	}
 }

@@ -19,6 +19,7 @@ wrote, or works offline on files.
 | [`server run --http <addr>`](#streamable-http-front-end-http) | Run the proxy as an MCP Streamable HTTP gateway at `/mcp`, for many clients | **Is** the HTTP front end |
 | [`serve`](#serve-start-proxy-server) | Deprecated line-delimited JSON-RPC over TCP. Not an MCP transport | **Is** the deprecated line-TCP front end |
 | [`daemon install` / `status` / `clients` / `open` / `restart` / `uninstall`](shared-gateway.md) | Run one shared `server run --http` gateway as a background service | Manages the HTTP front end |
+| [`connect`](shared-gateway.md#clients-that-can-only-start-a-command) | Bridge a stdio-only client (Claude Desktop) to the shared gateway | A thin relay to the HTTP front end; starts no upstream server |
 | [`server add` / `remove` / `list` / `enable` / `disable`](#server-manage-mcp-servers) | Edit the servers in `leanproxy_servers.yaml` | Offline; a running `server run` applies the change within seconds |
 | [`server health <name>`](#server-health-health-check) | Ping one server | Reads the status file; otherwise spawns its own temporary copy of the server |
 | [`add` (alias `install`)](#add-install-server-from-registry) | Install a server from the registry cache | Offline (config only) |

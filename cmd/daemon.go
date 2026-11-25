@@ -563,9 +563,13 @@ VS Code / GitHub Copilot (.vscode/mcp.json or the user mcp.json)
   { "servers": { "leanproxy": { "type": "http", "url": "%[1]s",
       "headers": { "Authorization": "%[2]s" } } } }
 
-Cursor (~/.cursor/mcp.json), Claude Desktop and other JSON configs
+Cursor (~/.cursor/mcp.json) and other JSON configs
   { "mcpServers": { "leanproxy": { "url": "%[1]s",
       "headers": { "Authorization": "%[2]s" } } } }
+
+Claude Desktop (claude_desktop_config.json) and any client that can only
+start a command: a thin stdio bridge to the gateway, no token to paste
+  { "mcpServers": { "leanproxy": { "command": "leanproxy-mcp", "args": ["connect"] } } }
 
 OpenCode (opencode.json)
   { "mcp": { "leanproxy": { "type": "remote", "url": "%[1]s",

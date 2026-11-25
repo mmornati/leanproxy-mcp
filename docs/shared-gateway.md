@@ -76,13 +76,30 @@ leanproxy-mcp daemon clients --show-token
 ```
 
 prints the configuration for Claude Code, Codex CLI, VS Code / GitHub
-Copilot, Cursor, Claude Desktop and OpenCode. For Claude Code:
+Copilot, Cursor, OpenCode and Claude Desktop. For Claude Code:
 
 ```bash
 claude mcp remove leanproxy
 claude mcp add --transport http --scope user leanproxy http://127.0.0.1:8765/mcp \
   --header "Authorization: Bearer <token>"
 ```
+
+### Clients that can only start a command
+
+Claude Desktop's `claude_desktop_config.json` (and some older plugins)
+accept a command, not a URL. Give them the bridge:
+
+```json
+{ "mcpServers": { "leanproxy": { "command": "leanproxy-mcp", "args": ["connect"] } } }
+```
+
+`leanproxy-mcp connect` relays the client's stdin and stdout to the
+gateway. Unlike `server run --stdio` it starts no upstream server: the
+client shares the gateway's servers with every other client. It finds the
+gateway and its token by itself (`--url` and `--token-file` override
+them), and if the gateway restarts it initializes again on the next
+request. All the checks (redaction, policy, pinning) still happen in the
+gateway.
 
 Remove the old `server run --stdio` entry from each client, or that client
 keeps starting its own proxy. `leanproxy-mcp daemon status` tells you when

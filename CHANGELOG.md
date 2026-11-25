@@ -9,6 +9,9 @@
   (Linux), instead of one `server run --stdio` (and one copy of every upstream server) per
   client session. `daemon status`, `clients` (the snippet for each client), `open`, `restart`
   and `uninstall`. See [`docs/shared-gateway.md`](docs/shared-gateway.md).
+- **`leanproxy-mcp connect`: a stdio bridge to the gateway** for clients that can only start a
+  command (Claude Desktop's config file). It starts no upstream server, finds the gateway and
+  its token by itself, and initializes again when the gateway restarts.
 - **Admin dashboard.** The dashboard of `server run` now opens with the upstream servers (state,
   one-line diagnosis, tools, calls, errors, latency, last error, recent stderr), the connected
   clients (name, exposure mode, protocol, calls) and the last 500 tool calls (client, server,
