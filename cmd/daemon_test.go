@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"encoding/xml"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func sampleDaemonSpec() daemonSpec {
@@ -183,5 +185,31 @@ func TestStableExecutable(t *testing.T) {
 	t.Setenv("PATH", bin)
 	if got := stableExecutable(real, "leanproxy-mcp"); got != link {
 		t.Errorf("bare name: got %s, want %s", got, link)
+	}
+}
+
+func TestRetryAndWaitUntil(t *testing.T) {
+	calls := 0
+	err := retry(5, time.Millisecond, func() error {
+		calls++
+		if calls < 3 {
+			return errors.New("not yet")
+		}
+		return nil
+	})
+	if err != nil || calls != 3 {
+		t.Fatalf("retry: err=%v calls=%d, want success on the third call", err, calls)
+	}
+	calls = 0
+	if err := retry(2, time.Millisecond, func() error { calls++; return errors.New("always") }); err == nil || calls != 2 {
+		t.Fatalf("retry must give up after its attempts: err=%v calls=%d", err, calls)
+	}
+
+	n := 0
+	if !waitUntil(time.Second, time.Millisecond, func() bool { n++; return n >= 4 }) {
+		t.Fatal("waitUntil must return true once the condition holds")
+	}
+	if waitUntil(10*time.Millisecond, time.Millisecond, func() bool { return false }) {
+		t.Fatal("waitUntil must time out")
 	}
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## Fixed in v1.1.2
+
+- `daemon install` on a machine where the service was already running failed on macOS with
+  "Bootstrap failed: 5: Input/output error" and left the service unloaded: launchd was asked to
+  load the new definition before it had finished stopping the old gateway. The command now
+  waits for the old service to be gone and retries.
+
 ## Fixed in v1.1.1
 
 - `daemon install` recorded the versioned install directory of the binary (Homebrew's
