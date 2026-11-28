@@ -543,7 +543,8 @@ func runDaemonStatus(cmd *cobra.Command, args []string) error {
 	case daemonInstalled(home):
 		fmt.Printf("The service is installed but the gateway is not running. Check %s\n", daemonLogFile(home))
 	default:
-		fmt.Println("The service is not installed. Install it with: leanproxy-mcp daemon install")
+		fmt.Println("No gateway is running and the service is not installed.")
+		fmt.Println("Install it with `leanproxy-mcp daemon install`, or let `leanproxy-mcp connect` start the gateway on demand.")
 	}
 
 	// The reason the daemon exists: say so when it is being bypassed.
@@ -658,6 +659,12 @@ start a command: a thin stdio bridge to the gateway, no token to paste
 OpenCode (opencode.json)
   { "mcp": { "leanproxy": { "type": "remote", "url": "%[1]s",
       "headers": { "Authorization": "%[2]s" } } } }
+
+On demand, without the service: give any client the command
+"leanproxy-mcp connect" instead of the URL. It starts the gateway when a
+session needs it; every session shares it, and it stops by itself some
+time after the last one left. For Claude Code:
+  claude mcp add --scope user leanproxy -- leanproxy-mcp connect
 `, endpoint, auth)
 }
 
@@ -666,7 +673,7 @@ func runDaemonClients(cmd *cobra.Command, args []string) error {
 	if info := gatewayStatus(); info != nil {
 		endpoint = info.HTTP.URL
 	} else {
-		fmt.Println("(The gateway is not running: showing the default address. Start it with `leanproxy-mcp daemon install`.)")
+		fmt.Println("(The gateway is not running: showing the default address. Start it with `leanproxy-mcp daemon install`, or on demand with `connect`.)")
 		fmt.Println()
 	}
 	home, err := os.UserHomeDir()

@@ -98,7 +98,8 @@ gateway. Unlike `server run --stdio` it starts no upstream server: the
 client shares the gateway's servers with every other client. It finds the
 gateway and its token by itself (`--url` and `--token-file` override
 them), and if the gateway restarts it initializes again on the next
-request. All the checks (redaction, policy, pinning) still happen in the
+request. When no gateway runs and the service is not installed, it starts
+one: see [Without a service](#without-a-service-start-on-demand). All the checks (redaction, policy, pinning) still happen in the
 gateway.
 
 Remove the old `server run --stdio` entry from each client, or that client
@@ -116,6 +117,61 @@ policy approvals and its own governed results.
     flight to the same server, LeanProxy refuses the request rather than
     guess: the upstream gets an error and its call fails visibly, instead
     of one user's prompt reaching another user's client.
+
+## Without a service: start on demand
+
+You do not have to install the service. `leanproxy-mcp connect` starts the
+gateway itself when none is running, so the gateway only runs while a
+client needs it:
+
+```bash
+claude mcp remove leanproxy
+claude mcp add --scope user leanproxy -- leanproxy-mcp connect
+```
+
+or, in a JSON configuration, the same entry as above
+(`"command": "leanproxy-mcp", "args": ["connect"]`).
+
+There is still **one** gateway on the machine. Each client session runs
+its own `connect`, which is only a relay; the first one that finds nothing
+listening starts the gateway, and the others use it:
+
+- several sessions opening at the same time start one gateway, not one
+  each: a lock file (`~/.config/leanproxy/gateway.start.lock`) lets a
+  single `connect` do it while the others wait;
+- the gateway is a process of its own, so it survives the session that
+  started it and keeps serving the others;
+- it stops by itself once no client has been connected for `--idle-exit`
+  (10 minutes by default), and the next request starts it again. A
+  `connect` that is still open reconnects without the client noticing.
+
+| `connect` flag | Default | Description |
+|------|---------|-------------|
+| `--idle-exit` | `10m` | How long the gateway it starts outlives its last client. `0` keeps it running until stopped. |
+| `--dashboard` | `127.0.0.1:9090` | Address of the dashboard of the gateway it starts, or `off`. Loopback only. |
+| `--url` | the running gateway, else `http://127.0.0.1:8765/mcp` | The gateway to relay to. A gateway started on demand listens there; only a loopback address is ever started. |
+| `--no-autostart` | off | Only relay; never start a gateway. |
+
+What differs from the service:
+
+| | Service (`daemon install`) | On demand (`connect`) |
+|---|---|---|
+| Runs | From login, restarted if it exits | While a client is connected, plus `--idle-exit` |
+| Started by | launchd / systemd | The first `connect` that needs it |
+| Clients configured by URL | Work | Do not start the gateway: give them `connect` |
+| Dashboard | Always reachable | Only while the gateway runs |
+| Environment (`PATH`, ...) | The shell that ran `daemon install` | The client that started the gateway |
+| First request | Immediate | Waits for the gateway to start |
+
+The last but one row matters for stdio servers: the gateway resolves
+`npx`, `uvx` or `docker` with the `PATH` of the client that happened to
+start it. If a server is not found, give its full path in
+`leanproxy_servers.yaml`.
+
+`connect` never starts a gateway when the service is installed (the
+service manager already restarts it), so the two modes do not mix: run
+`leanproxy-mcp daemon uninstall` to switch to on-demand start. The
+gateway's log is the same in both modes, `~/.leanproxy/logs/daemon.log`.
 
 ## Hot reload of the server list
 

@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -307,5 +309,112 @@ func TestReadSSE(t *testing.T) {
 	want := []string{`{"a":1}`, "{\"b\":\n2}", `{"c":3}`}
 	if strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// wakeable is a gateway that is down until woken, at a fixed address.
+type wakeable struct {
+	t     *testing.T
+	addr  string
+	mu    sync.Mutex
+	srv   *httptest.Server
+	wakes int
+}
+
+func newWakeable(t *testing.T) *wakeable {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	w := &wakeable{t: t, addr: addr}
+	t.Cleanup(w.stop)
+	return w
+}
+
+func (w *wakeable) wake(context.Context) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.wakes++
+	if w.srv != nil {
+		return nil
+	}
+	ln, err := net.Listen("tcp", w.addr)
+	if err != nil {
+		return err
+	}
+	w.srv = httptest.NewUnstartedServer(&fakeGateway{t: w.t, sessions: map[string]bool{}})
+	w.srv.Listener = ln
+	w.srv.Start()
+	return nil
+}
+
+func (w *wakeable) stop() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.srv != nil {
+		w.srv.CloseClientConnections()
+		w.srv.Close()
+		w.srv = nil
+	}
+}
+
+func (w *wakeable) count() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.wakes
+}
+
+func TestBridgeWakesAGatewayThatIsNotRunning(t *testing.T) {
+	gw := newWakeable(t)
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	// No keep-alive: a request after the gateway stopped must dial again,
+	// as it does once the real gateway's idle connections are gone.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}}
+	b := New(Options{URL: "http://" + gw.addr + "/mcp", Token: "tok", Client: client,
+		Logger: slog.New(slog.DiscardHandler), Wake: gw.wake}, outW)
+	h := &harness{in: inW, lines: make(chan string, 64), done: make(chan struct{})}
+	go func() {
+		sc := bufio.NewScanner(outR)
+		for sc.Scan() {
+			h.lines <- sc.Text()
+		}
+	}()
+	go func() {
+		_ = b.Run(context.Background(), inR)
+		outW.Close()
+	}()
+	t.Cleanup(func() { inW.Close() })
+
+	// Cold start: the first message finds nothing listening.
+	h.send(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`)
+	h.expect(t, `"id":1`, `"protocolVersion":"2025-06-18"`)
+	h.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	h.send(t, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	h.expect(t, `"id":2`, `"result"`)
+	if n := gw.count(); n != 1 {
+		t.Fatalf("the gateway was woken %d times for the cold start, want 1", n)
+	}
+
+	// The gateway stopped for lack of clients: the next request starts
+	// it again and replays the handshake it forgot.
+	gw.stop()
+	h.send(t, `{"jsonrpc":"2.0","id":3,"method":"tools/list"}`)
+	h.expect(t, `"id":3`, `"result"`)
+	if n := gw.count(); n != 2 {
+		t.Fatalf("the gateway was woken %d times in all, want 2", n)
+	}
+}
+
+func TestBridgeReportsAGatewayThatCannotBeWoken(t *testing.T) {
+	var out bytes.Buffer
+	wake := func(context.Context) error { return errors.New("the gateway did not come up") }
+	b := New(Options{URL: "http://127.0.0.1:1/mcp", Logger: slog.New(slog.DiscardHandler), Wake: wake}, &out)
+	_ = b.Run(context.Background(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`+"\n"))
+	if !strings.Contains(out.String(), `"id":1`) || !strings.Contains(out.String(), "did not come up") {
+		t.Fatalf("the reason the gateway could not be started is not reported: %s", out.String())
 	}
 }

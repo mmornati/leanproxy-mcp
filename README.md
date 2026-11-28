@@ -80,6 +80,11 @@ leanproxy-mcp daemon clients    # the snippet for Claude Code, Codex, Copilot, C
 leanproxy-mcp daemon open       # the admin dashboard
 ```
 
+No service? Give your client the command `leanproxy-mcp connect` instead of
+a URL: it starts the gateway when a session needs it, every session shares
+it, and it stops by itself when the last one has left
+([details](https://mmornati.github.io/leanproxy-mcp/shared-gateway/#without-a-service-start-on-demand)).
+
 Every client connects to the same gateway by URL and shares one set of
 servers. The dashboard shows each server with a one-line diagnosis, the
 connected clients and the latest tool calls, and can restart, add, disable

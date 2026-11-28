@@ -19,7 +19,7 @@ wrote, or works offline on files.
 | [`server run --http <addr>`](#streamable-http-front-end-http) | Run the proxy as an MCP Streamable HTTP gateway at `/mcp`, for many clients | **Is** the HTTP front end |
 | [`serve`](#serve-start-proxy-server) | Deprecated line-delimited JSON-RPC over TCP. Not an MCP transport | **Is** the deprecated line-TCP front end |
 | [`daemon install` / `status` / `clients` / `open` / `restart` / `uninstall`](shared-gateway.md) | Run one shared `server run --http` gateway as a background service | Manages the HTTP front end |
-| [`connect`](shared-gateway.md#clients-that-can-only-start-a-command) | Bridge a stdio-only client (Claude Desktop) to the shared gateway | A thin relay to the HTTP front end; starts no upstream server |
+| [`connect`](shared-gateway.md#clients-that-can-only-start-a-command) | Bridge a stdio client to the shared gateway, [starting it on demand](shared-gateway.md#without-a-service-start-on-demand) when the service is not installed | A thin relay to the HTTP front end; starts no upstream server |
 | [`server add` / `remove` / `list` / `enable` / `disable`](#server-manage-mcp-servers) | Edit the servers in `leanproxy_servers.yaml` | Offline; a running `server run` applies the change within seconds |
 | [`server health <name>`](#server-health-health-check) | Ping one server | Reads the status file; otherwise spawns its own temporary copy of the server |
 | [`add` (alias `install`)](#add-install-server-from-registry) | Install a server from the registry cache | Offline (config only) |
@@ -194,6 +194,7 @@ leanproxy-mcp server run --http 127.0.0.1:8765 [flags]
 | `--http` | string | `""` | Serve the Streamable HTTP transport on this address, e.g. `127.0.0.1:8765`. The endpoint is `/mcp` |
 | `--http-token` | string | `""` | Bearer token HTTP clients must send (`Authorization: Bearer …`). Default: `$LEANPROXY_SERVE_TOKEN`, else `~/.config/leanproxy/serve.token`, which is the same file as `serve` and is generated on first start. At least 16 characters, no whitespace |
 | `--no-auth` | bool | false | Serve `--http` without a token. Only allowed on a loopback address (`127.0.0.0/8`, `::1`, `localhost`); `server run` refuses to start otherwise. Cannot be combined with `--http-token`. Logs a warning |
+| `--idle-exit` | duration | `0` | With `--http`: stop once no client has been connected for this long (`10m`). `0` keeps running. Set by [`connect`](shared-gateway.md#without-a-service-start-on-demand) on the gateway it starts |
 | `--http-allowed-hosts` | strings | (none) | Extra `Host` header values accepted, beyond the bind host and `localhost`/`127.0.0.1`/`[::1]`. Added to `server.http.allowed_hosts` |
 | `--http-allowed-origins` | strings | (none) | Browser origins (`https://app.example`) allowed to call the endpoint. Added to `server.http.allowed_origins` |
 | `--exposure` | string | `""` | Force how the upstream tools are exposed to every client: `router`, `passthrough` or `hybrid`. Default: per client, from its `clientInfo.name` (see [`exposure`](configuration.md#exposure-modes-exposure)) |
