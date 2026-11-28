@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## Added in v1.2
 
 - **The shared gateway can start on demand, without a service.** `leanproxy-mcp connect` now
   starts the gateway when none is running (and the service is not installed), so an MCP client
