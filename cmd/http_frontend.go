@@ -33,6 +33,48 @@ func checkRunModeFlags(stdio bool, httpAddr, httpToken string, noAuth, httpLists
 	return nil
 }
 
+// checkIdleExit validates --idle-exit: never negative, and only with --http
+// (a stdio proxy already ends with its client).
+func checkIdleExit(idle time.Duration, httpAddr string) error {
+	switch {
+	case idle < 0:
+		return fmt.Errorf("--idle-exit must not be negative, got %s", idle)
+	case idle > 0 && httpAddr == "":
+		return errors.New("--idle-exit only applies to --http")
+	}
+	return nil
+}
+
+// idleCheckInterval is how often the gateway looks at its session count
+// when --idle-exit is set.
+func idleCheckInterval(idle time.Duration) time.Duration {
+	return max(min(idle/10, 5*time.Second), 10*time.Millisecond)
+}
+
+// waitIdle returns true once count has reported no client for a whole idle
+// period, and false when ctx ends first. A client that holds its session
+// open (the stream `connect` keeps for server-initiated messages) keeps
+// the gateway up for as long as it runs.
+func waitIdle(ctx context.Context, count func() int, idle, interval time.Duration) bool {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	since := time.Now()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case now := <-t.C:
+			if count() > 0 {
+				since = now
+				continue
+			}
+			if now.Sub(since) >= idle {
+				return true
+			}
+		}
+	}
+}
+
 // httpAuthSettings resolves the bearer token of the HTTP front end, the
 // same way `serve` resolves its own (#298): --http-token, else
 // $LEANPROXY_SERVE_TOKEN, else the serve token file under home (created
@@ -87,11 +129,12 @@ func checkHTTPOrigins(origins []string) error {
 	return nil
 }
 
-// handleHTTP runs the Streamable HTTP front end until sig (SIGINT/SIGTERM), then
-// ends every session, stops the listener and runs cleanup (which stops
+// handleHTTP runs the Streamable HTTP front end until sig (SIGINT/SIGTERM)
+// or, when idleExit is set, until no client has been connected for that
+// long. It then ends every session, stops the listener and runs cleanup (which stops
 // the health checker and closes the pools, so no child process is
 // orphaned).
-func handleHTTP(handler *mcp.Handler, opts streamhttp.Options, sig <-chan os.Signal, cleanup func(), statusStore *statusfile.FileStatusStore) error {
+func handleHTTP(handler *mcp.Handler, opts streamhttp.Options, sig <-chan os.Signal, cleanup func(), statusStore *statusfile.FileStatusStore, idleExit time.Duration) error {
 	defer cleanup()
 	srv, err := streamhttp.New(handler, opts)
 	if err != nil {
@@ -119,7 +162,21 @@ func handleHTTP(handler *mcp.Handler, opts streamhttp.Options, sig <-chan os.Sig
 		defer statusStore.RemoveFile()
 	}
 
-	<-sig
+	idle := make(chan struct{})
+	if idleExit > 0 {
+		idleCtx, stopIdle := context.WithCancel(context.Background())
+		defer stopIdle()
+		go func() {
+			if waitIdle(idleCtx, srv.SessionCount, idleExit, idleCheckInterval(idleExit)) {
+				close(idle)
+			}
+		}()
+	}
+	select {
+	case <-sig:
+	case <-idle:
+		slog.Info("no client connected, stopping (--idle-exit)", "idle", idleExit)
+	}
 	slog.Info("shutting down the HTTP front end", "sessions", srv.SessionCount())
 	flushUsageSnapshot()
 

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -53,6 +54,11 @@ type Options struct {
 	// timeout (responses may be long-lived streams).
 	Client *http.Client
 	Logger *slog.Logger
+	// Wake, when set, is called when the gateway cannot be reached at
+	// all (nothing listens at URL). It starts the gateway and returns
+	// once it accepts connections; the message is then sent again. It
+	// may be called from several goroutines at once.
+	Wake func(ctx context.Context) error
 }
 
 // Bridge relays one stdio client to the gateway.
@@ -180,16 +186,16 @@ func (b *Bridge) forward(ctx context.Context, msg []byte, env envelope) {
 // post sends msg. retry allows one transparent re-initialization when the
 // gateway no longer knows the session.
 func (b *Bridge) post(ctx context.Context, msg []byte, env envelope, retry bool) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.opts.URL, bytes.NewReader(msg))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
 	isInit := env.Method == methodInitialize
-	b.setHeaders(req, !isInit)
-
-	resp, err := b.client.Do(req)
+	req, resp, err := b.send(ctx, msg, isInit)
+	if err != nil && b.opts.Wake != nil && isDialError(err) && ctx.Err() == nil {
+		// Nothing listens there, so the message was not delivered and
+		// sending it again cannot run anything twice.
+		if wakeErr := b.opts.Wake(ctx); wakeErr != nil {
+			return wakeErr
+		}
+		req, resp, err = b.send(ctx, msg, isInit)
+	}
 	if err != nil {
 		return fmt.Errorf("cannot reach the LeanProxy gateway at %s: %w (is it running? try `leanproxy-mcp daemon status`)", b.opts.URL, err)
 	}
@@ -227,6 +233,26 @@ func (b *Bridge) post(ctx context.Context, msg []byte, env envelope, retry bool)
 		b.startListening(ctx)
 	}
 	return nil
+}
+
+// send posts one message to the gateway.
+func (b *Bridge) send(ctx context.Context, msg []byte, isInit bool) (*http.Request, *http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.opts.URL, bytes.NewReader(msg))
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	b.setHeaders(req, !isInit)
+	resp, err := b.client.Do(req)
+	return req, resp, err
+}
+
+// isDialError reports whether err is a failure to connect, as opposed to
+// one that happened after the request may have reached the gateway.
+func isDialError(err error) bool {
+	var op *net.OpError
+	return errors.As(err, &op) && op.Op == "dial"
 }
 
 func (b *Bridge) setHeaders(req *http.Request, withSession bool) {

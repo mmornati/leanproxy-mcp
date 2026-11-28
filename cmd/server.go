@@ -357,6 +357,7 @@ var runFlags struct {
 	httpAllowedOrigins []string
 	noAuth             bool
 	exposure           string
+	idleExit           time.Duration
 	endpoints          endpointFlags
 }
 
@@ -371,6 +372,7 @@ func init() {
 	runCmd.Flags().StringSliceVar(&runFlags.httpAllowedHosts, "http-allowed-hosts", nil, "Extra Host header values accepted by the HTTP front end, beyond the bind host and loopback names (adds to server.http.allowed_hosts)")
 	runCmd.Flags().StringSliceVar(&runFlags.httpAllowedOrigins, "http-allowed-origins", nil, "Browser origins (https://app.example) allowed to call the HTTP front end (adds to server.http.allowed_origins)")
 	runCmd.Flags().BoolVar(&runFlags.noAuth, "no-auth", false, "Serve --http without a bearer token (only allowed on a loopback address)")
+	runCmd.Flags().DurationVar(&runFlags.idleExit, "idle-exit", 0, "With --http: stop once no client has been connected for this long (e.g. 10m); 0 keeps running. Used by `connect`, which starts the gateway on demand")
 	runFlags.endpoints.register(runCmd, "")
 	runCmd.Flags().StringVar(&runFlags.exposure, "exposure", "", "Force how the upstream tools are exposed to every client: router, passthrough or hybrid (default: per client, see exposure: in the config)")
 	serverCmd.AddCommand(runCmd)
@@ -395,6 +397,9 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 
 	if err := checkRunModeFlags(runFlags.stdio, runFlags.http, runFlags.httpToken, runFlags.noAuth,
 		len(runFlags.httpAllowedHosts)+len(runFlags.httpAllowedOrigins) > 0); err != nil {
+		return err
+	}
+	if err := checkIdleExit(runFlags.idleExit, runFlags.http); err != nil {
 		return err
 	}
 
@@ -675,7 +680,7 @@ func runServerRun(cmd *cobra.Command, args []string) error {
 	}
 
 	if httpOpts != nil {
-		return handleHTTP(handler, *httpOpts, sigChan, closePools, statusStore)
+		return handleHTTP(handler, *httpOpts, sigChan, closePools, statusStore, runFlags.idleExit)
 	}
 
 	frontendOpts := stdioFrontendOptions{

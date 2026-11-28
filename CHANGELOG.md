@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **The shared gateway can start on demand, without a service.** `leanproxy-mcp connect` now
+  starts the gateway when none is running (and the service is not installed), so an MCP client
+  configured with the command `leanproxy-mcp connect` brings it up when a session opens. There
+  is still one gateway per machine: every session's `connect` relays to it, and sessions that
+  open together start a single one. The gateway stops by itself once no client has been
+  connected for `--idle-exit` (10 minutes by default) and the next request starts it again.
+  New flags: `connect --idle-exit`, `--dashboard`, `--no-autostart`, and `server run --http
+  --idle-exit`. See [`docs/shared-gateway.md`](docs/shared-gateway.md#without-a-service-start-on-demand).
+
 ## Fixed in v1.1.2
 
 - `daemon install` on a machine where the service was already running failed on macOS with
